@@ -3,6 +3,7 @@ var roleQueen = require('role.Queen');
 var roleVeinseeker = require('role.Veinseeker');
 var roleUpgrader = require('role.Upgrader');
 var roleTrucker = require('role.Trucker');
+var roleBuilder = require('role.Builder');
 
 var utility_spawn = require('utility.spawn');
 
@@ -116,6 +117,9 @@ module.exports.loop = function () {
         }
         if(creep.memory.role == 'Trucker') {
             roleTrucker.run(creep);
+        }
+        if(creep.memory.role == 'Builder') {
+            roleBuilder.run(creep);
         }
     }
 }

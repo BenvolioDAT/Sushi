@@ -152,6 +152,19 @@ function getUpgraderBody(room) {
     return [WORK, CARRY, MOVE];
 }
 
+function getBuilderBody(room) {
+    var energyCapacity = getRoomEnergyCapacity(room);
+    if (energyCapacity >= 800) {
+        return [WORK, WORK, WORK, CARRY, CARRY, MOVE, MOVE, MOVE];
+    }
+
+    if (energyCapacity >= 550) {
+        return [WORK, WORK, CARRY, CARRY, MOVE, MOVE];
+    }
+
+    return [WORK, CARRY, MOVE];
+}
+
 /**
  * Main body picker.
  *
@@ -174,6 +187,9 @@ function getBody(role, room) {
 
     if (role === 'Upgrader') {
         return getUpgraderBody(room);
+    }
+    if (role === 'Builder') {
+        return getBuilderBody(room);
     }
 
     /*

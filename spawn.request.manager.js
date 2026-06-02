@@ -21,9 +21,10 @@ var creepBodyConfig = require('role.creepBodyConfig');
  */
 var DESIRED_COUNTS = {
     Queen: 1,
-    Veinseeker: 6,
+    Veinseeker: 3,
     Trucker: 2,
-    Upgrader: 12
+    Upgrader: 3,
+    Builder: 2
 };
 
 /*
@@ -35,7 +36,8 @@ var PRIORITY = {
     Queen: 100,
     Veinseeker: 80,
     Trucker: 60,
-    Upgrader: 20
+    Upgrader: 20,
+    Builder: 10
 };
 
 /*
@@ -48,7 +50,8 @@ var REPLACEMENT_BUFFER_TICKS = {
     Queen: 30,
     Veinseeker: 30,
     Trucker: 40,
-    Upgrader: 40
+    Upgrader: 40,
+    Builder: 40
 };
 
 /**
@@ -337,6 +340,7 @@ function run() {
     report.requests.push(requestRoleForRoom(room, 'Veinseeker', DESIRED_COUNTS.Veinseeker));
     report.requests.push(requestRoleForRoom(room, 'Trucker', DESIRED_COUNTS.Trucker));
     report.requests.push(requestRoleForRoom(room, 'Upgrader', DESIRED_COUNTS.Upgrader));
+    report.requests.push(requestRoleForRoom(room, 'Builder', DESIRED_COUNTS.Builder));
 
     return report;
 }
