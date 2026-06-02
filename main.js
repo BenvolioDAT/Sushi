@@ -2,9 +2,12 @@ var roleHarvester = require('role.harvester');
 var roleQueen = require('role.Queen');
 var roleVeinseeker = require('role.Veinseeker');
 var roleUpgrader = require('role.Upgrader');
-var utility_spawn = require('utility.spawn');
-var spawnManager = require('spawn.manager');
 var roleTrucker = require('role.Trucker');
+
+var utility_spawn = require('utility.spawn');
+
+var spawnManager = require('spawn.manager');
+var spawnRequestManager = require('spawn.request.manager');
 
 module.exports.loop = function () {
 
@@ -14,7 +17,22 @@ module.exports.loop = function () {
             console.log('Clearing non-existing creep memory:', name);
         }
     }
-    
+     /*
+     * Step 1:
+     * Decide what the room needs.
+     * This adds requests to Memory.rooms[roomName].spawnQueue.
+     */
+    var requestReport = spawnRequestManager.run();
+
+    /*
+     * Step 2:
+     * Actually try to spawn from the queue.
+     */
+    if (requestReport && requestReport.roomName) {
+        spawnManager.runRoom(requestReport.roomName);
+    }
+
+  /*  
     var roomName = 'W1N1';
 
     spawnManager.requestRoleCount(
