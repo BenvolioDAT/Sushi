@@ -1,5 +1,5 @@
 var roleHarvester = require('role.harvester');
-var roleUpgrader = require('role.upgrader');
+var roleUpgrader = require('role.Upgrader');
 
 module.exports.loop = function () {
 
@@ -10,24 +10,24 @@ module.exports.loop = function () {
         }
     }
     
-    var upgrader = _.filter(Game.creeps, (creep) => creep.memory.role == 'upgrader');
-    console.log('upgrader:' + upgrader.length);
+    var upgrader = _.filter(Game.creeps, (creep) => creep.memory.role == 'Upgrader');
+    console.log('Upgrader:' + upgrader.length);
 
     var harvesters = _.filter(Game.creeps, (creep) => creep.memory.role == 'harvester');
     console.log('Harvesters: ' + harvesters.length);
 
-    if(harvesters.length < 2) {
+    if(harvesters.length < 4) {
         var newName = 'Harvester' + Game.time;
         console.log('Spawning new harvester: ' + newName);
         Game.spawns['Spawn1'].spawnCreep([WORK,CARRY,MOVE], newName, 
             {memory: {role: 'harvester'}});
     }
     
-    else if(upgrader.length <2) {
+    else if(upgrader.length <4) {
         var newName = 'Upgrader' + Game.time;
-        console.log('Spawning new upgrader: ' + newName);
+        console.log('Spawning new Upgrader: ' + newName);
         Game.spawns['Spawn1'].spawnCreep([WORK,CARRY,MOVE], newName, 
-            {memory: {role: 'upgrader'}});
+            {memory: {role: 'Upgrader'}});
     }
     
     if(Game.spawns['Spawn1'].spawning) { 
@@ -44,7 +44,7 @@ module.exports.loop = function () {
         if(creep.memory.role == 'harvester') {
             roleHarvester.run(creep);
         }
-        if(creep.memory.role == 'upgrader') {
+        if(creep.memory.role == 'Upgrader') {
             roleUpgrader.run(creep);
         }
     }
