@@ -1,12 +1,12 @@
-var utils = require('utils');
+var utility = require('utility');
 
 var roleHarvester = {
 
     /** @param {Creep} creep **/
     run: function(creep) {
 
-        utils.scanRoom(creep);
-        utils.createSourceFlagsFromMemory(creep);
+        utility.scanRoom(creep);
+        utility.createSourceFlagsFromMemory(creep);
 
 	    if(creep.store.getFreeCapacity() > 0) {
             var sources = creep.room.find(FIND_SOURCES);

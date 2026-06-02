@@ -256,7 +256,7 @@ function scanRoom(creep) {
 /**
  * Create cyan/white flags directly on top of each source in the creep's room.
  *
- * This uses source memory created by scanRoomSources(creep).
+ * This uses source memory created by scanRoom(creep).
  *
  * Memory path:
  *
@@ -285,10 +285,10 @@ function createSourceFlagsFromMemory(creep) {
     }
 
     // Make sure source memory exists.
-    // If you renamed scanRoomSources(creep) to scanRoom(creep),
+    // If you renamed scanRoom(creep) to scanRoom(creep),
     // change this line to scanRoom(creep).
     if (!Memory.rooms[roomName].sources) {
-        scanRoomSources(creep);
+        scanRoom(creep);
     }
 
     var sourcesMemory = Memory.rooms[roomName].sources;
