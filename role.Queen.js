@@ -1,3 +1,5 @@
+var utility = require('utility');
+
 var roleQueen = {
 
     /** @param {Creep} creep **/
@@ -5,6 +7,9 @@ var roleQueen = {
         if(!creep || creep.spawning) {
             return;
         }
+
+                utility.scanRoom(creep);
+                utility.createSourceFlagsFromMemory(creep);
 
         updateWorkingState(creep, 'queenWorking');
 
