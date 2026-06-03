@@ -403,7 +403,593 @@ function createSourceFlagsFromMemory(creep) {
     return report;
 }
 
+
+
+
+
+/////////////////////////////////////////////////////////////////////////////////////////////////
+/**
+ * Make sure each scanned source has one container planned.
+ *
+ * What this does:
+ * - Reads Memory.rooms[roomName].sources.
+ * - Checks if sourceMemory.containerId is still alive.
+ * - If the container is dead/missing, clears containerId.
+ * - Looks for an existing container near the source and saves its id.
+ * - Looks for an existing container construction site near the source and skips it.
+ * - If no container/site exists, chooses the best source seat and places a container site.
+ * - Stops after placing one construction site to save CPU.
+ *
+ * Smarter placement:
+ * - Picks the tile that can touch the most source seats.
+ * - This helps place the container in the "middle" of the source seats when possible.
+ * - Distance to spawn/storage/controller is only used as a small tie breaker.
+ *
+ * Important:
+ * - The room must be visible.
+ * - Your scan memory should have source pos and seats saved.
+ *
+ * @param {string} roomName
+ * @returns {object}
+ */
+function planSourceContainers(roomName) {
+    if (!roomName) {
+        return {
+            ok: false,
+            reason: "missing roomName"
+        };
+    }
+
+    var room = Game.rooms[roomName];
+
+    if (!room) {
+        return {
+            ok: false,
+            reason: "room is not visible"
+        };
+    }
+
+    if (!Memory.rooms) {
+        return {
+            ok: false,
+            reason: "Memory.rooms does not exist"
+        };
+    }
+
+    if (!Memory.rooms[roomName]) {
+        return {
+            ok: false,
+            reason: "Memory.rooms[roomName] does not exist"
+        };
+    }
+
+    if (!Memory.rooms[roomName].sources) {
+        return {
+            ok: false,
+            reason: "room source memory does not exist"
+        };
+    }
+
+    var sourceMemoryById = Memory.rooms[roomName].sources;
+
+    for (var sourceId in sourceMemoryById) {
+        var sourceMemory = sourceMemoryById[sourceId];
+
+        if (!sourceMemory) {
+            continue;
+        }
+
+        var source = Game.getObjectById(sourceMemory.id || sourceId);
+
+        if (!source) {
+            // The room is visible, but this source could not be found.
+            // Skip it instead of guessing.
+            continue;
+        }
+
+        /*
+         * Step 1:
+         * If memory says this source already has a container,
+         * verify that the container is still alive and still beside this source.
+         *
+         * This is the "do not end early with a dead containerId" safety check.
+         */
+        if (sourceMemory.containerId) {
+            var rememberedContainer = Game.getObjectById(sourceMemory.containerId);
+
+            if (
+                rememberedContainer &&
+                rememberedContainer.structureType === STRUCTURE_CONTAINER &&
+                rememberedContainer.pos.getRangeTo(source.pos) <= 1
+            ) {
+                // Container is alive and beside this source.
+                // This source is good. Check the next source.
+                continue;
+            }
+
+            // Memory had a container id, but it is dead, invalid, or not beside the source.
+            // Clear it so the code can repair the plan.
+            sourceMemory.containerId = null;
+        }
+
+        /*
+         * Step 2:
+         * Look for an already-built container near the source.
+         *
+         * Containers beside sources are usually placed within range 1,
+         * because the miner can stand on the container tile and harvest.
+         */
+        var nearbyContainers = source.pos.findInRange(FIND_STRUCTURES, 1, {
+            filter: function (structure) {
+                return structure.structureType === STRUCTURE_CONTAINER;
+            }
+        });
+
+        if (nearbyContainers.length > 0) {
+            sourceMemory.containerId = nearbyContainers[0].id;
+
+            saveContainerPlannedPosition(sourceMemory, nearbyContainers[0].pos);
+
+            // Existing container found. This source is good. Check next source.
+            continue;
+        }
+
+        /*
+         * Step 3:
+         * Look for an existing container construction site.
+         *
+         * Important:
+         * We do NOT judge if the site is in the best spot.
+         * We do NOT remove it.
+         * If a container site exists beside the source, this source is already planned.
+         */
+        var nearbyContainerSites = source.pos.findInRange(FIND_CONSTRUCTION_SITES, 1, {
+            filter: function (site) {
+                return site.structureType === STRUCTURE_CONTAINER;
+            }
+        });
+
+        if (nearbyContainerSites.length > 0) {
+            sourceMemory.containerPlanned = true;
+            sourceMemory.containerPlannedAt = sourceMemory.containerPlannedAt || Game.time;
+            sourceMemory.containerPlannedPos = {
+                x: nearbyContainerSites[0].pos.x,
+                y: nearbyContainerSites[0].pos.y,
+                roomName: nearbyContainerSites[0].pos.roomName
+            };
+
+            // Site already exists. Do not create another one.
+            continue;
+        }
+
+        /*
+         * Step 4:
+         * No live container and no construction site.
+         * Pick the best source seat and place one container site.
+         */
+        var bestPosition = findBestContainerPositionForSource(room, source, sourceMemory);
+
+        if (!bestPosition) {
+            continue;
+        }
+
+        var result = bestPosition.createConstructionSite(STRUCTURE_CONTAINER);
+
+        if (result === OK) {
+            saveContainerPlannedPosition(sourceMemory, bestPosition);
+
+            // Stop after placing one site.
+            // This saves CPU and avoids trying to place too many sites in one tick.
+            return {
+                ok: true,
+                placed: true,
+                sourceId: source.id,
+                x: bestPosition.x,
+                y: bestPosition.y,
+                result: result
+            };
+        }
+
+        return {
+            ok: false,
+            placed: false,
+            sourceId: source.id,
+            x: bestPosition.x,
+            y: bestPosition.y,
+            result: result,
+            reason: "createConstructionSite failed"
+        };
+    }
+
+    return {
+        ok: true,
+        placed: false,
+        reason: "all sources already have a container or container site"
+    };
+}
+
+/**
+ * Pick the best container position beside a source.
+ *
+ * The old version mostly cared about distance to spawn/storage/controller.
+ * This version cares first about the source seats.
+ *
+ * Smart rules:
+ * - Candidate positions come from your saved source seats.
+ * - If your memory has no seats, it falls back to the 8 tiles around the source.
+ * - The best tile is the tile that can touch the most source seats.
+ * - Then it prefers the most central tile between those seats.
+ * - Then it uses swamp and base distance as small tie breakers.
+ *
+ * @param {Room} room
+ * @param {Source} source
+ * @param {object} sourceMemory
+ * @returns {RoomPosition|null}
+ */
+function findBestContainerPositionForSource(room, source, sourceMemory) {
+    var sourceSeats = getSourceSeatPositions(room, source, sourceMemory);
+
+    if (sourceSeats.length === 0) {
+        return null;
+    }
+
+    var anchor = getContainerPlanningAnchor(room);
+    var bestPosition = null;
+    var bestScore = Infinity;
+
+    for (var i = 0; i < sourceSeats.length; i++) {
+        var position = sourceSeats[i];
+
+        if (!isGoodContainerPosition(room, position)) {
+            continue;
+        }
+
+        var score = scoreContainerPositionForSource(
+            room,
+            position,
+            sourceSeats,
+            anchor
+        );
+
+        if (score < bestScore) {
+            bestScore = score;
+            bestPosition = position;
+        }
+    }
+
+    return bestPosition;
+}
+
+/**
+ * Score one possible container tile.
+ *
+ * Lower score is better.
+ *
+ * The big idea:
+ * - A tile that touches more source seats wins.
+ * - A tile near the middle of all source seats wins tie breakers.
+ * - Swamp and base distance only matter after seat coverage.
+ *
+ * @param {Room} room
+ * @param {RoomPosition} position
+ * @param {RoomPosition[]} sourceSeats
+ * @param {RoomPosition|null} anchor
+ * @returns {number}
+ */
+function scoreContainerPositionForSource(room, position, sourceSeats, anchor) {
+    var coveredSeatCount = 0;
+    var totalSeatRange = 0;
+
+    for (var i = 0; i < sourceSeats.length; i++) {
+        var seat = sourceSeats[i];
+        var rangeToSeat = position.getRangeTo(seat);
+
+        totalSeatRange += rangeToSeat;
+
+        /*
+         * Range 1 means a creep standing on that seat can reach the container.
+         * Range 0 means the container is on that exact seat, which is also fine.
+         */
+        if (rangeToSeat <= 1) {
+            coveredSeatCount++;
+        }
+    }
+
+    var score = 0;
+
+    /*
+     * Main priority:
+     * Cover as many seats as possible.
+     *
+     * This number is huge on purpose.
+     * It makes "touches 3 seats" beat "touches 2 seats",
+     * even if the 2-seat tile is closer to spawn.
+     */
+    score -= coveredSeatCount * 10000;
+
+    /*
+     * Second priority:
+     * Prefer the center of the source seats.
+     *
+     * This helps avoid placing the container off to one side when
+     * a middle tile can reach more creeps.
+     */
+    score += totalSeatRange * 100;
+
+    /*
+     * Small tie breaker:
+     * Prefer plain terrain over swamp.
+     */
+    var terrain = room.getTerrain().get(position.x, position.y);
+
+    if (terrain === TERRAIN_MASK_SWAMP) {
+        score += 25;
+    }
+
+    /*
+     * Tiny tie breaker:
+     * Prefer being closer to your base anchor.
+     * This should never overpower seat coverage.
+     */
+    if (anchor) {
+        score += position.getRangeTo(anchor);
+    }
+
+    /*
+     * Stable tie breaker:
+     * Keeps the result from flipping around between equal choices.
+     */
+    score += position.x * 0.01;
+    score += position.y * 0.001;
+
+    return score;
+}
+
+/**
+ * Get usable source seat positions from memory.
+ * Falls back to scanning the 8 tiles around the source.
+ *
+ * @param {Room} room
+ * @param {Source} source
+ * @param {object} sourceMemory
+ * @returns {RoomPosition[]}
+ */
+function getSourceSeatPositions(room, source, sourceMemory) {
+    var positions = [];
+
+    /*
+     * Preferred:
+     * Use your scanner's saved source seats.
+     *
+     * This supports memory shaped like:
+     * sourceMemory.seats = [
+     *     { x: 10, y: 20 },
+     *     { x: 11, y: 20 },
+     *     { pos: { x: 12, y: 20 } }
+     * ];
+     */
+    if (sourceMemory && sourceMemory.seats) {
+        for (var seatIndex in sourceMemory.seats) {
+            var memoryPosition = getRoomPositionFromSeatMemory(
+                sourceMemory.seats[seatIndex],
+                room.name
+            );
+
+            if (!memoryPosition) {
+                continue;
+            }
+
+            if (isPositionBesideSource(memoryPosition, source)) {
+                positions.push(memoryPosition);
+            }
+        }
+
+        if (positions.length > 0) {
+            return positions;
+        }
+    }
+
+    /*
+     * Fallback:
+     * If your scan did not save seat positions, scan the 8 tiles around source.
+     */
+    for (var x = source.pos.x - 1; x <= source.pos.x + 1; x++) {
+        for (var y = source.pos.y - 1; y <= source.pos.y + 1; y++) {
+            if (x === source.pos.x && y === source.pos.y) {
+                continue;
+            }
+
+            if (x < 1 || x > 48 || y < 1 || y > 48) {
+                continue;
+            }
+
+            var position = new RoomPosition(x, y, room.name);
+            var terrain = room.getTerrain().get(x, y);
+
+            if (terrain !== TERRAIN_MASK_WALL) {
+                positions.push(position);
+            }
+        }
+    }
+
+    return positions;
+}
+
+/**
+ * Convert one saved seat memory entry into a RoomPosition.
+ *
+ * Supports:
+ * - { x: 10, y: 20 }
+ * - { x: 10, y: 20, roomName: "W7N9" }
+ * - { pos: { x: 10, y: 20 } }
+ * - { pos: { x: 10, y: 20, roomName: "W7N9" } }
+ *
+ * @param {object} seatMemory
+ * @param {string} roomName
+ * @returns {RoomPosition|null}
+ */
+function getRoomPositionFromSeatMemory(seatMemory, roomName) {
+    if (!seatMemory) {
+        return null;
+    }
+
+    if (
+        seatMemory.x !== undefined &&
+        seatMemory.y !== undefined
+    ) {
+        return new RoomPosition(
+            seatMemory.x,
+            seatMemory.y,
+            seatMemory.roomName || roomName
+        );
+    }
+
+    if (
+        seatMemory.pos &&
+        seatMemory.pos.x !== undefined &&
+        seatMemory.pos.y !== undefined
+    ) {
+        return new RoomPosition(
+            seatMemory.pos.x,
+            seatMemory.pos.y,
+            seatMemory.pos.roomName || roomName
+        );
+    }
+
+    return null;
+}
+
+/**
+ * Make sure the remembered seat is actually beside this source.
+ *
+ * @param {RoomPosition} position
+ * @param {Source} source
+ * @returns {boolean}
+ */
+function isPositionBesideSource(position, source) {
+    if (!position || !source) {
+        return false;
+    }
+
+    if (position.roomName !== source.pos.roomName) {
+        return false;
+    }
+
+    return position.getRangeTo(source.pos) <= 1;
+}
+
+/**
+ * Check if a tile is okay for a new container construction site.
+ *
+ * Creeps do NOT block this check.
+ * A creep standing there right now should not change the long-term plan.
+ *
+ * @param {Room} room
+ * @param {RoomPosition} position
+ * @returns {boolean}
+ */
+function isGoodContainerPosition(room, position) {
+    var terrain = room.getTerrain().get(position.x, position.y);
+
+    if (terrain === TERRAIN_MASK_WALL) {
+        return false;
+    }
+
+    var structures = position.lookFor(LOOK_STRUCTURES);
+
+    for (var i = 0; i < structures.length; i++) {
+        var structure = structures[i];
+
+        /*
+         * Roads can share a tile with containers.
+         */
+        if (structure.structureType === STRUCTURE_ROAD) {
+            continue;
+        }
+
+        /*
+         * If a container already exists here, this position is not bad,
+         * but the main function should have found that container already.
+         */
+        if (structure.structureType === STRUCTURE_CONTAINER) {
+            continue;
+        }
+
+        /*
+         * Anything else blocks the tile.
+         */
+        return false;
+    }
+
+    var sites = position.lookFor(LOOK_CONSTRUCTION_SITES);
+
+    for (var j = 0; j < sites.length; j++) {
+        var site = sites[j];
+
+        /*
+         * If any construction site is already on this tile,
+         * do not try to place another one here.
+         *
+         * This keeps the planner simple and avoids createConstructionSite failing
+         * because the tile is already busy.
+         */
+        if (site) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+/**
+ * Save planned container position into source memory.
+ *
+ * This does NOT save containerId.
+ * containerId should only be saved when the real container exists.
+ *
+ * @param {object} sourceMemory
+ * @param {RoomPosition} position
+ */
+function saveContainerPlannedPosition(sourceMemory, position) {
+    sourceMemory.containerPlanned = true;
+    sourceMemory.containerPlannedAt = Game.time;
+    sourceMemory.containerPlannedPos = {
+        x: position.x,
+        y: position.y,
+        roomName: position.roomName
+    };
+}
+
+/**
+ * Pick something useful to measure distance from.
+ *
+ * This is only a small tie breaker.
+ * Seat coverage is more important.
+ *
+ * @param {Room} room
+ * @returns {RoomPosition|null}
+ */
+function getContainerPlanningAnchor(room) {
+    if (room.storage) {
+        return room.storage.pos;
+    }
+
+    var spawns = room.find(FIND_MY_SPAWNS);
+
+    if (spawns.length > 0) {
+        return spawns[0].pos;
+    }
+
+    if (room.controller) {
+        return room.controller.pos;
+    }
+
+    return null;
+}
+////////////////////////////////////////////////////////////////////////////
 module.exports = {
-    scanRoom: scanRoom,
-    createSourceFlagsFromMemory: createSourceFlagsFromMemory
+    scanRoom,
+    createSourceFlagsFromMemory,
+
+    planSourceContainers,
 };

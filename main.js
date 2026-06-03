@@ -7,12 +7,178 @@ var roleBuilder = require('role.Builder');
 
 var utility_spawn = require('utility.spawn');
 var utilityVisual = require('utility.Visual');
+var utility = require('utility');/**
+ * Make sure each scanned source has one container planned.
+ *
+ * Simple behavior:
+ * - If sourceMemory.containerId exists, check if the container is still alive.
+ * - If the container is alive, skip this source.
+ * - If the container is dead/missing, clear containerId.
+ * - If a real container exists beside the source, save its id.
+ * - If a container construction site already exists beside the source, skip it.
+ * - If nothing exists, pick the best position and place one container site.
+ * - After placing one site, end early to save CPU.
+ *
+ * @param {string} roomName
+ * @returns {object}
+ */
+function planSourceContainers(roomName) {
+    if (!roomName) {
+        return {
+            ok: false,
+            reason: "missing roomName"
+        };
+    }
+
+    var room = Game.rooms[roomName];
+
+    if (!room) {
+        return {
+            ok: false,
+            reason: "room is not visible"
+        };
+    }
+
+    if (!Memory.rooms || !Memory.rooms[roomName] || !Memory.rooms[roomName].sources) {
+        return {
+            ok: false,
+            reason: "room source memory does not exist"
+        };
+    }
+
+    var sourceMemoryById = Memory.rooms[roomName].sources;
+
+    for (var sourceId in sourceMemoryById) {
+        var sourceMemory = sourceMemoryById[sourceId];
+
+        if (!sourceMemory) {
+            continue;
+        }
+
+        var source = Game.getObjectById(sourceMemory.id || sourceId);
+
+        if (!source) {
+            continue;
+        }
+
+        /*
+         * Step 1:
+         * If memory says this source has a container,
+         * make sure the container is still alive.
+         */
+        if (sourceMemory.containerId) {
+            var rememberedContainer = Game.getObjectById(sourceMemory.containerId);
+
+            if (
+                rememberedContainer &&
+                rememberedContainer.structureType === STRUCTURE_CONTAINER &&
+                rememberedContainer.pos.getRangeTo(source.pos) <= 1
+            ) {
+                // Container is alive and beside this source.
+                // This source is good.
+                continue;
+            }
+
+            // The saved container is gone, invalid, or not beside this source.
+            sourceMemory.containerId = null;
+        }
+
+        /*
+         * Step 2:
+         * Look for an existing real container beside the source.
+         */
+        var nearbyContainers = source.pos.findInRange(FIND_STRUCTURES, 1, {
+            filter: function (structure) {
+                return structure.structureType === STRUCTURE_CONTAINER;
+            }
+        });
+
+        if (nearbyContainers.length > 0) {
+            sourceMemory.containerId = nearbyContainers[0].id;
+            saveContainerPlannedPosition(sourceMemory, nearbyContainers[0].pos);
+
+            continue;
+        }
+
+        /*
+         * Step 3:
+         * Look for an existing container construction site beside the source.
+         *
+         * Important:
+         * We do NOT care if it is the "best" spot.
+         * If a site exists, skip this source and move on.
+         */
+        var nearbyContainerSites = source.pos.findInRange(FIND_CONSTRUCTION_SITES, 1, {
+            filter: function (site) {
+                return site.structureType === STRUCTURE_CONTAINER;
+            }
+        });
+
+        if (nearbyContainerSites.length > 0) {
+            sourceMemory.containerPlanned = true;
+            sourceMemory.containerPlannedAt = sourceMemory.containerPlannedAt || Game.time;
+            sourceMemory.containerPlannedPos = {
+                x: nearbyContainerSites[0].pos.x,
+                y: nearbyContainerSites[0].pos.y,
+                roomName: nearbyContainerSites[0].pos.roomName
+            };
+
+            continue;
+        }
+
+        /*
+         * Step 4:
+         * No container and no construction site.
+         * Pick the best position and place a new container site.
+         */
+        var bestPosition = findBestContainerPositionForSource(room, source, sourceMemory);
+
+        if (!bestPosition) {
+            continue;
+        }
+
+        var result = bestPosition.createConstructionSite(STRUCTURE_CONTAINER);
+
+        if (result === OK) {
+            saveContainerPlannedPosition(sourceMemory, bestPosition);
+
+            return {
+                ok: true,
+                placed: true,
+                sourceId: source.id,
+                x: bestPosition.x,
+                y: bestPosition.y,
+                result: result
+            };
+        }
+
+        return {
+            ok: false,
+            placed: false,
+            sourceId: source.id,
+            x: bestPosition.x,
+            y: bestPosition.y,
+            result: result,
+            reason: "createConstructionSite failed"
+        };
+    }
+
+    return {
+        ok: true,
+        placed: false,
+        reason: "all sources already have a container or container site"
+    };
+}
 
 
 var spawnManager = require('spawn.manager');
 var spawnRequestManager = require('spawn.request.manager');
 
 module.exports.loop = function () {
+    for (var roomName in Game.rooms) {
+    if (Game.time % 10 === 0) {
+        utility.planSourceContainers(roomName);
+    }}
     // Draw a flag on each source on the MAP.
     for (var roomName in Game.rooms) {
         utilityVisual.drawSourceFlags(roomName);
