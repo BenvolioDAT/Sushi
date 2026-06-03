@@ -985,7 +985,9 @@ function getFallbackAssignedSource(creep) {
 
     return source;
 }
-
+// ============================================================================
+// Exports
+// ============================================================================
 module.exports = {
     hasEnergy,
     isEmpty,

@@ -238,7 +238,9 @@ function clearTravelMemory(creep) {
     delete creep.memory._move;
     delete creep.memory._sushiMoveTick;
 }
-
+// ============================================================================
+// Exports
+// ============================================================================
 module.exports = {
     move: move,
     moveToRoom: moveToRoom,

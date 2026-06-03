@@ -89,7 +89,9 @@ function getSpawnName(roomName) {
 
     return firstMatchingSpawnName;
 }
-
+// ============================================================================
+// Exports
+// ============================================================================
 module.exports = {
     genCreepName: genCreepName,
     getSpawnName: getSpawnName
