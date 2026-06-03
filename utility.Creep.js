@@ -10,7 +10,7 @@
  * - role.Queen.js decides "I need energy."
  * - utility.Creep.js handles "withdraw from storage" or "pick up dropped energy."
  */
-
+var utility = require('utility');
 var travel = require('utility.Travel.Creep');
 
 /**
@@ -509,29 +509,512 @@ function dropEnergy(creep) {
     return result === OK;
 }
 
+function updateWorkingState(creep, memoryKey) {
+    if(creep.memory[memoryKey] && creep.store[RESOURCE_ENERGY] === 0) {
+        creep.memory[memoryKey] = false;
+    }
+    if(!creep.memory[memoryKey] && creep.store.getFreeCapacity(RESOURCE_ENERGY) === 0) {
+        creep.memory[memoryKey] = true;
+    }
+}
+
+function collectEnergy(creep) {
+    var target = null;
+
+    // Queen fills the base, so storage is her first and simplest fuel source.
+    if(creep.room.storage && creep.room.storage.store[RESOURCE_ENERGY] > 0) {
+        target = creep.room.storage;
+    }
+
+    if(!target) {
+        target = creep.pos.findClosestByPath(FIND_STRUCTURES, {
+            filter: function(structure) {
+                return (
+                    structure.structureType === STRUCTURE_CONTAINER &&
+                    structure.store &&
+                    structure.store[RESOURCE_ENERGY] > 0
+                );
+            }
+        });
+    }
+
+    if(target) {
+        if(creep.withdraw(target, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
+            creep.moveTo(target, {visualizePathStyle: {stroke: '#ffaa00'}});
+        }
+        return;
+    }
+
+    var dropped = creep.pos.findClosestByPath(FIND_DROPPED_RESOURCES, {
+        filter: function(resource) {
+            return resource.resourceType === RESOURCE_ENERGY && resource.amount > 0;
+        }
+    });
+
+    if(dropped && creep.pickup(dropped) === ERR_NOT_IN_RANGE) {
+        creep.moveTo(dropped, {visualizePathStyle: {stroke: '#ffaa00'}});
+    }
+}
+
+function fillRoomEnergy(creep) {
+    var target = findSpawnOrExtension(creep);
+
+    // Spawn and extensions come first because they unlock more creeps.
+    if(!target) {
+        target = findTower(creep);
+    }
+
+    if(!target) {
+        idleNearBase(creep);
+        return;
+    }
+
+    if(creep.transfer(target, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
+        creep.moveTo(target, {visualizePathStyle: {stroke: '#ffffff'}});
+    }
+}
+
+function findSpawnOrExtension(creep) {
+    return creep.pos.findClosestByPath(FIND_MY_STRUCTURES, {
+        filter: function(structure) {
+            return (
+                (structure.structureType === STRUCTURE_SPAWN ||
+                 structure.structureType === STRUCTURE_EXTENSION) &&
+                structure.store &&
+                structure.store.getFreeCapacity(RESOURCE_ENERGY) > 0
+            );
+        }
+    });
+}
+
+function findTower(creep) {
+    return creep.pos.findClosestByPath(FIND_MY_STRUCTURES, {
+        filter: function(structure) {
+            return (
+                structure.structureType === STRUCTURE_TOWER &&
+                structure.store &&
+                structure.store.getFreeCapacity(RESOURCE_ENERGY) > 0
+            );
+        }
+    });
+}
+
+function idleNearBase(creep) {
+    var anchor = creep.room.storage || creep.pos.findClosestByPath(FIND_MY_SPAWNS);
+    if(anchor && creep.pos.getRangeTo(anchor) > 2) {
+        creep.moveTo(anchor, {visualizePathStyle: {stroke: '#bbbbbb'}});
+    }
+}
+
+/**
+ * Find or claim the best source for this Veinseeker.
+ *
+ * This function does several jobs:
+ * 1. Looks at Memory.rooms[roomName].sources.
+ * 2. Cleans dead creep IDs out of each source's assignedMinner list.
+ * 3. Keeps this creep on its old source if the assignment is still valid.
+ * 4. Otherwise picks the source with the fewest assigned miners.
+ * 5. Respects seatCount, so a source with 3 seats can hold up to 3 miners.
+ *
+ * @param {Creep} creep
+ * @returns {Source|null}
+ */
+function getAssignedSource(creep) {
+    if(!creep || !creep.room) {
+        return null;
+    }
+
+    var sourceRecords = getSourceRecordsFromRoomMemory(creep);
+
+    if(!sourceRecords || sourceRecords.length === 0) {
+        return getFallbackAssignedSource(creep);
+    }
+
+    // Make sure this creep is not listed under more than one source.
+    removeCreepFromAllSourceAssignments(sourceRecords, creep.id);
+
+    // If this creep already remembers a source, try to keep that source.
+    // Stable assignments are good because they stop creeps from bouncing around.
+    var existingSource = reclaimRememberedSource(creep, sourceRecords);
+
+    if(existingSource) {
+        return existingSource;
+    }
+
+    // No valid old source was found, so pick the best source now.
+    var bestRecord = findBestSourceRecord(creep, sourceRecords);
+
+    if(!bestRecord) {
+        return null;
+    }
+
+    claimSourceRecord(creep, bestRecord);
+
+    return bestRecord.source;
+}
+
+/**
+ * Build a clean list of source records from room memory.
+ *
+ * A "source record" is just a small helper object that keeps the real Source,
+ * the source memory, the source ID, and the seat count together.
+ *
+ * @param {Creep} creep
+ * @returns {Array}
+ */
+function getSourceRecordsFromRoomMemory(creep) {
+    var roomMemory = Memory.rooms && Memory.rooms[creep.room.name];
+
+    if(!roomMemory || !roomMemory.sources) {
+        return [];
+    }
+
+    var sourceRecords = [];
+
+    for(var sourceId in roomMemory.sources) {
+        if(!roomMemory.sources.hasOwnProperty(sourceId)) {
+            continue;
+        }
+
+        var sourceMemory = roomMemory.sources[sourceId];
+
+        if(!sourceMemory) {
+            continue;
+        }
+
+        // Your room scanner stores the ID inside the source memory,
+        // but the memory key also appears to be the source ID.
+        // This supports both formats.
+        var realSourceId = sourceMemory.id || sourceId;
+        var source = Game.getObjectById(realSourceId);
+
+        if(!source) {
+            continue;
+        }
+
+        normalizeAssignedMinnerList(sourceMemory);
+        cleanDeadAssignedMinners(sourceMemory);
+
+        sourceRecords.push({
+            sourceId: realSourceId,
+            source: source,
+            sourceMemory: sourceMemory,
+            seatCount: getSafeSeatCount(sourceMemory)
+        });
+    }
+
+    return sourceRecords;
+}
+
+/**
+ * Make sure sourceMemory.assignedMinner is always an array.
+ *
+ * This lets the code support:
+ * - assignedMinner: null
+ * - assignedMinner: "oneCreepId"
+ * - assignedMinner: ["creepIdOne", "creepIdTwo"]
+ *
+ * @param {*} sourceMemory
+ */
+function normalizeAssignedMinnerList(sourceMemory) {
+    if(!sourceMemory.assignedMinner) {
+        sourceMemory.assignedMinner = [];
+        return;
+    }
+
+    if(Array.isArray(sourceMemory.assignedMinner)) {
+        return;
+    }
+
+    if(typeof sourceMemory.assignedMinner === 'string') {
+        sourceMemory.assignedMinner = [sourceMemory.assignedMinner];
+        return;
+    }
+
+    sourceMemory.assignedMinner = [];
+}
+
+/**
+ * Remove dead creep IDs and duplicate creep IDs from one source's assignedMinner list.
+ *
+ * Game.getObjectById(id) returns the object if it can be found, or null if it
+ * cannot be found. That makes it useful for clearing dead creep IDs.
+ *
+ * @param {*} sourceMemory
+ */
+function cleanDeadAssignedMinners(sourceMemory) {
+    var cleanList = [];
+    var seenIds = {};
+
+    for(var i = 0; i < sourceMemory.assignedMinner.length; i++) {
+        var creepId = sourceMemory.assignedMinner[i];
+
+        if(!creepId) {
+            continue;
+        }
+
+        if(seenIds[creepId]) {
+            continue;
+        }
+
+        var assignedCreep = Game.getObjectById(creepId);
+
+        if(!assignedCreep || !assignedCreep.my) {
+            continue;
+        }
+
+        seenIds[creepId] = true;
+        cleanList.push(creepId);
+    }
+
+    sourceMemory.assignedMinner = cleanList;
+}
+
+/**
+ * Read seatCount safely.
+ *
+ * If the room scanner did not save seatCount yet, use 1 as the safe default.
+ *
+ * @param {*} sourceMemory
+ * @returns {number}
+ */
+function getSafeSeatCount(sourceMemory) {
+    if(!sourceMemory.seatCount || sourceMemory.seatCount < 1) {
+        return 1;
+    }
+
+    return sourceMemory.seatCount;
+}
+
+/**
+ * Remove this creep from every source assignment list.
+ *
+ * This prevents one creep from accidentally being claimed by Source A and Source B.
+ *
+ * @param {Array} sourceRecords
+ * @param {string} creepId
+ */
+function removeCreepFromAllSourceAssignments(sourceRecords, creepId) {
+    for(var i = 0; i < sourceRecords.length; i++) {
+        var sourceMemory = sourceRecords[i].sourceMemory;
+        var newList = [];
+
+        for(var j = 0; j < sourceMemory.assignedMinner.length; j++) {
+            if(sourceMemory.assignedMinner[j] !== creepId) {
+                newList.push(sourceMemory.assignedMinner[j]);
+            }
+        }
+
+        sourceMemory.assignedMinner = newList;
+    }
+}
+
+/**
+ * Try to keep the creep on the source saved in creep.memory.sourceId.
+ *
+ * @param {Creep} creep
+ * @param {Array} sourceRecords
+ * @returns {Source|null}
+ */
+function reclaimRememberedSource(creep, sourceRecords) {
+    if(!creep.memory.sourceId) {
+        return null;
+    }
+
+    for(var i = 0; i < sourceRecords.length; i++) {
+        var record = sourceRecords[i];
+
+        if(record.sourceId !== creep.memory.sourceId) {
+            continue;
+        }
+
+        // If this source has an open seat, claim it again.
+        if(record.sourceMemory.assignedMinner.length < record.seatCount) {
+            record.sourceMemory.assignedMinner.push(creep.id);
+            return record.source;
+        }
+
+        // If this source is full, forget it and pick a new one.
+        delete creep.memory.sourceId;
+        return null;
+    }
+
+    // The remembered source no longer exists in room memory.
+    delete creep.memory.sourceId;
+    return null;
+}
+
+/**
+ * Pick the best source for this creep.
+ *
+ * Rule:
+ * - Prefer sources that still have open seats.
+ * - Among open sources, pick the one with the fewest assigned miners.
+ * - If tied, pick the closer one.
+ * - If all sources are full, pick the least crowded source anyway.
+ *
+ * @param {Creep} creep
+ * @param {Array} sourceRecords
+ * @returns {*|null}
+ */
+function findBestSourceRecord(creep, sourceRecords) {
+    var bestOpenRecord = null;
+    var bestOverflowRecord = null;
+
+    for(var i = 0; i < sourceRecords.length; i++) {
+        var record = sourceRecords[i];
+        var assignedCount = record.sourceMemory.assignedMinner.length;
+
+        if(assignedCount < record.seatCount) {
+            if(isBetterSourceChoice(creep, record, bestOpenRecord)) {
+                bestOpenRecord = record;
+            }
+
+            continue;
+        }
+
+        if(isBetterOverflowChoice(creep, record, bestOverflowRecord)) {
+            bestOverflowRecord = record;
+        }
+    }
+
+    return bestOpenRecord || bestOverflowRecord;
+}
+
+/**
+ * Decide if this source is better than the current best open source.
+ *
+ * @param {Creep} creep
+ * @param {*} candidateRecord
+ * @param {*} bestRecord
+ * @returns {boolean}
+ */
+function isBetterSourceChoice(creep, candidateRecord, bestRecord) {
+    if(!bestRecord) {
+        return true;
+    }
+
+    var candidateCount = candidateRecord.sourceMemory.assignedMinner.length;
+    var bestCount = bestRecord.sourceMemory.assignedMinner.length;
+
+    if(candidateCount < bestCount) {
+        return true;
+    }
+
+    if(candidateCount > bestCount) {
+        return false;
+    }
+
+    return creep.pos.getRangeTo(candidateRecord.source) < creep.pos.getRangeTo(bestRecord.source);
+}
+
+/**
+ * Decide if this source is the least bad overflow choice.
+ *
+ * This only matters when all sources are already at or above seatCount.
+ *
+ * @param {Creep} creep
+ * @param {*} candidateRecord
+ * @param {*} bestRecord
+ * @returns {boolean}
+ */
+function isBetterOverflowChoice(creep, candidateRecord, bestRecord) {
+    if(!bestRecord) {
+        return true;
+    }
+
+    var candidatePressure = candidateRecord.sourceMemory.assignedMinner.length / candidateRecord.seatCount;
+    var bestPressure = bestRecord.sourceMemory.assignedMinner.length / bestRecord.seatCount;
+
+    if(candidatePressure < bestPressure) {
+        return true;
+    }
+
+    if(candidatePressure > bestPressure) {
+        return false;
+    }
+
+    return creep.pos.getRangeTo(candidateRecord.source) < creep.pos.getRangeTo(bestRecord.source);
+}
+
+/**
+ * Claim a source for this creep.
+ *
+ * This writes both:
+ * - creep.memory.sourceId
+ * - Memory.rooms[roomName].sources[sourceId].assignedMinner
+ *
+ * @param {Creep} creep
+ * @param {*} sourceRecord
+ */
+function claimSourceRecord(creep, sourceRecord) {
+    sourceRecord.sourceMemory.assignedMinner.push(creep.id);
+    creep.memory.sourceId = sourceRecord.sourceId;
+}
+
+/**
+ * Fallback for rooms that do not have source memory yet.
+ *
+ * This keeps your Veinseeker from completely shutting down if your room scanner
+ * has not created Memory.rooms[roomName].sources yet.
+ *
+ * @param {Creep} creep
+ * @returns {Source|null}
+ */
+function getFallbackAssignedSource(creep) {
+    var source = null;
+
+    if(creep.memory.sourceId) {
+        source = Game.getObjectById(creep.memory.sourceId);
+
+        if(source) {
+            return source;
+        }
+
+        delete creep.memory.sourceId;
+    }
+
+    var sources = creep.room.find(FIND_SOURCES);
+
+    if(!sources || sources.length === 0) {
+        return null;
+    }
+
+    source = creep.pos.findClosestByPath(sources) || sources[0];
+    creep.memory.sourceId = source.id;
+
+    return source;
+}
+
 module.exports = {
-    hasEnergy: hasEnergy,
-    isEmpty: isEmpty,
-    isFull: isFull,
+    hasEnergy,
+    isEmpty,
+    isFull,
 
-    pickupEnergy: pickupEnergy,
-    pickupClosestDroppedEnergy: pickupClosestDroppedEnergy,
+    updateWorkingState,
+    collectEnergy,
+    fillRoomEnergy,
 
-    withdrawEnergy: withdrawEnergy,
-    withdrawFromStorage: withdrawFromStorage,
-    withdrawFromClosestContainer: withdrawFromClosestContainer,
-    withdrawFromClosestTombstone: withdrawFromClosestTombstone,
-    withdrawFromClosestRuin: withdrawFromClosestRuin,
+    pickupEnergy,
+    pickupClosestDroppedEnergy,
 
-    harvestEnergy: harvestEnergy,
-    harvestClosestSource: harvestClosestSource,
+    withdrawEnergy,
+    withdrawFromStorage,
+    withdrawFromClosestContainer,
+    withdrawFromClosestTombstone,
+    withdrawFromClosestRuin,
 
-    getEnergy: getEnergy,
+    harvestEnergy,
+    harvestClosestSource,
 
-    transferEnergy: transferEnergy,
-    findClosestSpawnOrExtensionNeedingEnergy: findClosestSpawnOrExtensionNeedingEnergy,
-    findClosestTowerNeedingEnergy: findClosestTowerNeedingEnergy,
-    fillBaseEnergy: fillBaseEnergy,
+    getEnergy,
 
-    dropEnergy: dropEnergy
+    transferEnergy,
+    findClosestSpawnOrExtensionNeedingEnergy,
+    findClosestTowerNeedingEnergy,
+    fillBaseEnergy,
+
+    getAssignedSource,
+
+    dropEnergy,
 };

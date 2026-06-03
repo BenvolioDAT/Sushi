@@ -1,3 +1,7 @@
+var utility = require('utility');
+var utilityCreep = require('utility.Creep');
+var utilityTravelCreep = require('utility.Travel.Creep');
+
 var roleVeinseeker = {
 
     /** @param {Creep} creep **/
@@ -7,7 +11,8 @@ var roleVeinseeker = {
         }
 
         // A Veinseeker is a basic source miner. It remembers one source if it can.
-        var source = getAssignedSource(creep);
+        var source = utilityCreep.getAssignedSource(creep);
+        //var source = getAssignedSource(creep);
         if(!source) {
             return;
         }

@@ -21,10 +21,10 @@ var creepBodyConfig = require('role.creepBodyConfig');
  */
 var DESIRED_COUNTS = {
     Queen: 1,
-    Veinseeker: 3,
+    Veinseeker: 6,
     Trucker: 2,
-    Upgrader: 3,
-    Builder: 2
+    Upgrader: 1,
+    Builder: 1
 };
 
 /*
