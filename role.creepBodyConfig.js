@@ -94,7 +94,7 @@ function getQueenBody(room) {
  */
 function getVeinseekerBody(room) {
     var energyCapacity = getRoomEnergyCapacity(room);
-
+/*
     if (energyCapacity >= 800) {
         return [WORK, WORK, WORK, WORK, WORK, CARRY, MOVE, MOVE, MOVE];
     }
@@ -102,7 +102,7 @@ function getVeinseekerBody(room) {
     if (energyCapacity >= 550) {
         return [WORK, WORK, WORK, CARRY, MOVE, MOVE];
     }
-
+*/
     if (energyCapacity >= 300) {
         return [WORK, WORK, CARRY, MOVE];
     }
