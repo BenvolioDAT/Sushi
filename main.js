@@ -6,11 +6,17 @@ var roleTrucker = require('role.Trucker');
 var roleBuilder = require('role.Builder');
 
 var utility_spawn = require('utility.spawn');
+var utilityVisual = require('utility.Visual');
+
 
 var spawnManager = require('spawn.manager');
 var spawnRequestManager = require('spawn.request.manager');
 
 module.exports.loop = function () {
+    // Draw a flag on each source on the MAP.
+    for (var roomName in Game.rooms) {
+        utilityVisual.drawSourceFlags(roomName);
+    }
 
     for(var name in Memory.creeps) {
         if(!Game.creeps[name]) {
