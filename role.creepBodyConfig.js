@@ -4,7 +4,7 @@
  * This file chooses creep bodies.
  *
  * The spawn request manager can ask:
- * "What body should Queen use in this room?"
+ * "What body should Foreman use in this room?"
  *
  * Later you can make this smarter.
  * For now, keep it simple and readable.
@@ -58,15 +58,15 @@ function getBodyCost(body) {
 }
 
 /**
- * Queen body.
+ * Foreman body.
  *
- * Queen moves energy into spawn/extensions/towers.
- * So Queen mostly needs CARRY and MOVE.
+ * Foreman moves energy into spawn/extensions/towers.
+ * So Foreman mostly needs CARRY and MOVE.
  *
  * @param {Room} room
  * @returns {array}
  */
-function getQueenBody(room) {
+function getForemanBody(room) {
     var energyCapacity = getRoomEnergyCapacity(room);
 
     if (energyCapacity >= 800) {
@@ -85,14 +85,14 @@ function getQueenBody(room) {
 }
 
 /**
- * Veinseeker body.
+ * Extractor body.
  *
- * Veinseeker is your source harvester.
+ * Extractor is your source harvester.
  *
  * @param {Room} room
  * @returns {array}
  */
-function getVeinseekerBody(room) {
+function getExtractorBody(room) {
     var energyCapacity = getRoomEnergyCapacity(room);
 /*
     if (energyCapacity >= 800) {
@@ -111,14 +111,14 @@ function getVeinseekerBody(room) {
 }
 
 /**
- * Trucker body.
+ * Freighter body.
  *
- * Trucker hauls energy.
+ * Freighter hauls energy.
  *
  * @param {Room} room
  * @returns {array}
  */
-function getTruckerBody(room) {
+function getFreighterBody(room) {
     var energyCapacity = getRoomEnergyCapacity(room);
 
     if (energyCapacity >= 800) {
@@ -133,12 +133,12 @@ function getTruckerBody(room) {
 }
 
 /**
- * Upgrader body.
+ * Tech body.
  *
  * @param {Room} room
  * @returns {array}
  */
-function getUpgraderBody(room) {
+function getTechBody(room) {
     var energyCapacity = getRoomEnergyCapacity(room);
 
     if (energyCapacity >= 800) {
@@ -152,7 +152,7 @@ function getUpgraderBody(room) {
     return [WORK, CARRY, MOVE];
 }
 
-function getBuilderBody(room) {
+function getArtificerBody(room) {
     var energyCapacity = getRoomEnergyCapacity(room);
     if (energyCapacity >= 800) {
         return [WORK, WORK, WORK, CARRY, CARRY, MOVE, MOVE, MOVE];
@@ -173,23 +173,24 @@ function getBuilderBody(room) {
  * @returns {array}
  */
 function getBody(role, room) {
-    if (role === 'Queen') {
-        return getQueenBody(room);
+    if (role === 'Foreman') {
+        return getForemanBody(room);
     }
 
-    if (role === 'Veinseeker') {
-        return getVeinseekerBody(room);
+    if (role === 'Extractor') {
+        return getExtractorBody(room);
     }
 
-    if (role === 'Trucker') {
-        return getTruckerBody(room);
+    if (role === 'Freighter') {
+        return getFreighterBody(room);
     }
 
-    if (role === 'Upgrader') {
-        return getUpgraderBody(room);
+    if (role === 'Tech') {
+        return getTechBody(room);
     }
-    if (role === 'Builder') {
-        return getBuilderBody(room);
+
+    if (role === 'Artificer') {
+        return getArtificerBody(room);
     }
 
     /*
@@ -199,11 +200,12 @@ function getBody(role, room) {
 }
 
 module.exports = {
-    getBody: getBody,
-    getBodyCost: getBodyCost,
+    getBody,
+    getBodyCost,
 
-    getQueenBody: getQueenBody,
-    getVeinseekerBody: getVeinseekerBody,
-    getTruckerBody: getTruckerBody,
-    getUpgraderBody: getUpgraderBody
+    getForemanBody,
+    getExtractorBody,
+    getFreighterBody,
+    getTechBody,
+    getArtificerBody
 };
