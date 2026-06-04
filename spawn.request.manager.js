@@ -23,8 +23,8 @@ var DESIRED_COUNTS = {
     Foreman: 1,
     Extractor: 6,
     Freighter: 4,
-    Tech: 4,
-    Artificer: 4,
+    Tech: 3,
+    Artificer: 3,
     Scout: 1
 };
 
@@ -335,6 +335,163 @@ function requestRoleForRoom(room, role, desiredCount) {
     };
 }
 
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+function getCheaperBodyForRole(role) {
+    /*
+     * These are emergency / recovery bodies.
+     *
+     * They are not the best bodies.
+     * They are the "please spawn something useful before the colony turns into soup" bodies.
+     */
+
+    if (role === 'Extractor') {
+        return [WORK, CARRY, MOVE];
+    }
+
+    if (role === 'Foreman') {
+        return [CARRY, MOVE];
+    }
+
+    if (role === 'Freighter') {
+        return [CARRY, MOVE];
+    }
+
+    if (role === 'Tech') {
+        return [WORK, CARRY, MOVE];
+    }
+
+    if (role === 'Artificer') {
+        return [WORK, CARRY, MOVE];
+    }
+
+    if (role === 'Scout') {
+        return [MOVE];
+    }
+
+    return null;
+}
+
+function getBodyCost(body) {
+    var cost = 0;
+
+    if (!body) {
+        return cost;
+    }
+
+    for (var index = 0; index < body.length; index++) {
+        cost += BODYPART_COST[body[index]] || 0;
+    }
+
+    return cost;
+}
+
+function downgradeFrontQueuedBodyIfNeeded(room) {
+    if (!room) {
+        return {
+            ok: false,
+            changed: false,
+            reason: 'missing room'
+        };
+    }
+
+    var queue = spawnManager.getSpawnQueue(room.name);
+
+    if (!queue || queue.length === 0) {
+        return {
+            ok: true,
+            changed: false,
+            reason: 'queue empty'
+        };
+    }
+
+    /*
+     * Match spawn.manager.js sorting so we inspect the same request
+     * that the spawn will try first.
+     */
+    queue.sort(function(a, b) {
+        if (b.priority !== a.priority) {
+            return b.priority - a.priority;
+        }
+
+        return a.requestedAt - b.requestedAt;
+    });
+
+    var request = queue[0];
+
+    if (!request || !request.role || !request.body) {
+        return {
+            ok: false,
+            changed: false,
+            reason: 'front request is invalid'
+        };
+    }
+
+    var currentBodyCost = getBodyCost(request.body);
+
+    /*
+     * If the room can already afford the current body, do nothing.
+     */
+    if (currentBodyCost <= room.energyAvailable) {
+        return {
+            ok: true,
+            changed: false,
+            reason: 'front body is affordable'
+        };
+    }
+
+    var cheaperBody = getCheaperBodyForRole(request.role);
+
+    if (!cheaperBody) {
+        return {
+            ok: false,
+            changed: false,
+            role: request.role,
+            reason: 'no cheaper body exists for this role'
+        };
+    }
+
+    var cheaperBodyCost = getBodyCost(cheaperBody);
+
+    /*
+     * If even the cheaper body cannot spawn right now, do not change anything.
+     * The room still needs to wait for more energy.
+     */
+    if (cheaperBodyCost > room.energyAvailable) {
+        return {
+            ok: true,
+            changed: false,
+            role: request.role,
+            currentBodyCost: currentBodyCost,
+            cheaperBodyCost: cheaperBodyCost,
+            energyAvailable: room.energyAvailable,
+            reason: 'cheaper body is still not affordable'
+        };
+    }
+
+    /*
+     * Replace the expensive queued body with the cheaper one.
+     * This keeps the same role, priority, requestedAt, and memory.
+     */
+    request.originalBody = request.originalBody || request.body;
+    request.originalBodyCost = request.originalBodyCost || currentBodyCost;
+    request.body = cheaperBody;
+    request.downgradedAt = Game.time;
+    request.downgradeReason = 'front queued body was too expensive for current room energy';
+
+    return {
+        ok: true,
+        changed: true,
+        role: request.role,
+        oldCost: currentBodyCost,
+        newCost: cheaperBodyCost,
+        energyAvailable: room.energyAvailable,
+        reason: 'downgraded front queued body'
+    };
+}
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
 /**
  * Run spawn requests for the current simple managed room.
  *
@@ -351,7 +508,6 @@ function requestRoleForRoom(room, role, desiredCount) {
  */
 function run() {
     var room = getManagedRoom();
-
     /*
      * No managed room is not an error during startup or after losing all spawns.
      * Returning null lets main.js skip spawnManager.runRoom safely.
@@ -359,6 +515,13 @@ function run() {
     if (!room) {
         return null;
     }
+
+    /*
+     * Before adding more requests, check the front of the queue.
+     * If it is too expensive for the room right now, replace it with
+     * a cheaper body for the same role.
+     */
+    downgradeFrontQueuedBodyIfNeeded(room);
 
     var report = {
         roomName: room.name,
@@ -388,6 +551,8 @@ module.exports = {
     /*
      * Exporting these helps testing from console later.
      */
+    downgradeFrontQueuedBodyIfNeeded: downgradeFrontQueuedBodyIfNeeded,
+    getCheaperBodyForRole: getCheaperBodyForRole,
     getFirstSpawn: getFirstSpawn,
     getManagedRoom: getManagedRoom,
     requestRoleForRoom: requestRoleForRoom,
