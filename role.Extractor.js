@@ -9,6 +9,7 @@ var roleExtractor = {
         if(!creep || creep.spawning) {
             return;
         }
+        utility.planSourceContainers(creep.room.name);
 
         // A Veinseeker is a basic source miner. It remembers one source if it can.
         var source = utilityCreep.getAssignedSource(creep);
