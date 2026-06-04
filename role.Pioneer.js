@@ -1,4 +1,4 @@
-var roleClaimer = {
+var rolePioneer = {
 
     /** @param {Creep} creep **/
     run: function(creep) {
@@ -89,4 +89,4 @@ function moveToRoom(creep, roomName) {
     return true;
 }
 
-module.exports = roleClaimer;
+module.exports = rolePioneer;

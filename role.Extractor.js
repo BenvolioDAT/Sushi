@@ -2,7 +2,7 @@ var utility = require('utility');
 var utilityCreep = require('utility.Creep');
 var utilityTravelCreep = require('utility.Travel.Creep');
 
-var roleVeinseeker = {
+var roleExtractor = {
 
     /** @param {Creep} creep **/
     run: function(creep) {
@@ -114,4 +114,4 @@ function offloadEnergy(creep, source) {
     return false;
 }
 
-module.exports = roleVeinseeker;
+module.exports = roleExtractor;

@@ -1,4 +1,4 @@
-var roleTrucker = {
+var roleFreighter = {
 
     /** @param {Creep} creep **/
     run: function(creep) {
@@ -111,4 +111,4 @@ function idleNearSource(creep) {
     }
 }
 
-module.exports = roleTrucker;
+module.exports = roleFreighter;

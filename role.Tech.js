@@ -1,7 +1,7 @@
 var creepUtility = require('utility.Creep');
 var travel = require('utility.Travel.Creep');
 
-var roleUpgrader = {
+var roleTech = {
     run: function(creep) {
         if (creep.memory.upgrading && creepUtility.isEmpty(creep)) {
             creep.memory.upgrading = false;
@@ -27,4 +27,4 @@ var roleUpgrader = {
     }
 };
 
-module.exports = roleUpgrader;
+module.exports = roleTech;

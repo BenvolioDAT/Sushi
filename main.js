@@ -1,9 +1,8 @@
-var roleHarvester = require('role.harvester');
-var roleQueen = require('role.Queen');
-var roleVeinseeker = require('role.Veinseeker');
-var roleUpgrader = require('role.Upgrader');
-var roleTrucker = require('role.Trucker');
-var roleBuilder = require('role.Builder');
+var roleForeman = require('role.Foreman');
+var roleExtractor = require('role.Extractor');
+var roleTech = require('role.Tech');
+var roleFreighter = require('role.Freighter');
+var roleArtificer = require('role.Artificer');
 
 var utility_spawn = require('utility.spawn');
 var utilityVisual = require('utility.Visual');
@@ -275,23 +274,20 @@ module.exports.loop = function () {
 
     for(var name in Game.creeps) {
         var creep = Game.creeps[name];
-        if(creep.memory.role == 'harvester') {
-            roleHarvester.run(creep);
+        if(creep.memory.role == 'Tech') {
+            roleTech.run(creep);
         }
-        if(creep.memory.role == 'Upgrader') {
-            roleUpgrader.run(creep);
+        if(creep.memory.role == 'Foreman') {
+            roleForeman.run(creep);
         }
-        if(creep.memory.role == 'Queen') {
-            roleQueen.run(creep);
+        if(creep.memory.role == 'Extractor') {
+            roleExtractor.run(creep);
         }
-        if(creep.memory.role == 'Veinseeker') {
-            roleVeinseeker.run(creep);
+        if(creep.memory.role == 'Freighter') {
+            roleFreighter.run(creep);
         }
-        if(creep.memory.role == 'Trucker') {
-            roleTrucker.run(creep);
-        }
-        if(creep.memory.role == 'Builder') {
-            roleBuilder.run(creep);
+        if(creep.memory.role == 'Artificer') {
+            roleArtificer.run(creep);
         }
     }
 }

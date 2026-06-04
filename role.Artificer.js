@@ -1,4 +1,4 @@
-var roleBuilder = {
+var roleArtificer = {
 
     /** @param {Creep} creep **/
     run: function(creep) {
@@ -88,4 +88,4 @@ function findStoredEnergy(creep) {
     });
 }
 
-module.exports = roleBuilder;
+module.exports = roleArtificer;

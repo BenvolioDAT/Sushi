@@ -20,24 +20,24 @@ var creepBodyConfig = require('role.creepBodyConfig');
  * Later, room.manager.js can calculate these numbers dynamically.
  */
 var DESIRED_COUNTS = {
-    Queen: 1,
-    Veinseeker: 6,
-    Trucker: 4,
-    Upgrader: 2,
-    Builder: 1
+    Foreman: 1,
+    Extractor: 6,
+    Freighter: 4,
+    Tech: 2,
+    Artificer: 1
 };
 
 /*
  * Higher number = more important.
  *
- * Queen is highest because you said Queen should always be alive.
+ * Foreman is highest because you said Foreman should always be alive.
  */
 var PRIORITY = {
-    Queen: 100,
-    Veinseeker: 80,
-    Trucker: 60,
-    Upgrader: 20,
-    Builder: 10
+    Foreman: 100,
+    Extractor: 80,
+    Freighter: 60,
+    Tech: 20,
+    Artificer: 10
 };
 
 /*
@@ -47,11 +47,11 @@ var PRIORITY = {
  * This buffer gives the new creep a little time to move into position.
  */
 var REPLACEMENT_BUFFER_TICKS = {
-    Queen: 30,
-    Veinseeker: 30,
-    Trucker: 40,
-    Upgrader: 40,
-    Builder: 40
+    Foreman: 30,
+    Extractor: 30,
+    Freighter: 40,
+    Tech: 40,
+    Artificer: 40
 };
 
 /**
@@ -251,10 +251,10 @@ function requestRoleForRoom(room, role, desiredCount) {
     /*
      * This is the number we want the spawn queue to think about.
      *
-     * If desired is 1 Queen:
-     * - healthy Queen = 1, queued = 0 -> no request
-     * - healthy Queen = 0, queued = 0 -> queue 1
-     * - healthy Queen = 0, queued = 1 -> no extra spam
+     * If desired is 1 Foreman:
+     * - healthy Foreman = 1, queued = 0 -> no request
+     * - healthy Foreman = 0, queued = 0 -> queue 1
+     * - healthy Foreman = 0, queued = 1 -> no extra spam
      */
     var plannedCount = healthyCount + queuedCount;
     var missingCount = desiredCount - plannedCount;
@@ -330,17 +330,17 @@ function run() {
     };
 
     /*
-     * Queen first.
+     * Foreman first.
      *
-     * This matters because Queen has the highest priority and should always
+     * This matters because Foreman has the highest priority and should always
      * be considered before the other roles.
      */
-    report.requests.push(requestRoleForRoom(room, 'Queen', DESIRED_COUNTS.Queen));
+    report.requests.push(requestRoleForRoom(room, 'Foreman', DESIRED_COUNTS.Foreman));
 
-    report.requests.push(requestRoleForRoom(room, 'Veinseeker', DESIRED_COUNTS.Veinseeker));
-    report.requests.push(requestRoleForRoom(room, 'Trucker', DESIRED_COUNTS.Trucker));
-    report.requests.push(requestRoleForRoom(room, 'Upgrader', DESIRED_COUNTS.Upgrader));
-    report.requests.push(requestRoleForRoom(room, 'Builder', DESIRED_COUNTS.Builder));
+    report.requests.push(requestRoleForRoom(room, 'Extractor', DESIRED_COUNTS.Extractor));
+    report.requests.push(requestRoleForRoom(room, 'Freighter', DESIRED_COUNTS.Freighter));
+    report.requests.push(requestRoleForRoom(room, 'Tech', DESIRED_COUNTS.Tech));
+    report.requests.push(requestRoleForRoom(room, 'Artificer', DESIRED_COUNTS.Artificer));
 
     return report;
 }

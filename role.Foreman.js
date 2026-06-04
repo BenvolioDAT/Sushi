@@ -1,7 +1,7 @@
 var utility = require('utility');
 var utilityCreep = require('utility.Creep');
 
-var roleQueen = {
+var roleForeman = {
 
     /** @param {Creep} creep **/
     run: function(creep) {
@@ -11,9 +11,9 @@ var roleQueen = {
 
         utility.scanRoom(creep);
         utility.createSourceFlagsFromMemory(creep);
-        utilityCreep.updateWorkingState(creep, 'queenWorking');
+        utilityCreep.updateWorkingState(creep, 'foremanWorking');
 
-        if(creep.memory.queenWorking) {
+        if(creep.memory.foremanWorking) {
             utilityCreep.fillRoomEnergy(creep);
         } else {
             utilityCreep.collectEnergy(creep);
@@ -21,4 +21,4 @@ var roleQueen = {
     }
 };
 
-module.exports = roleQueen;
+module.exports = roleForeman;
