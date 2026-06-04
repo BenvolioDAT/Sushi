@@ -71,43 +71,6 @@ module.exports.loop = function () {
      * The large block below is old experimental spawn code kept as a reference.
      * Because it is inside a block comment, JavaScript ignores it completely.
      */
-  /*  
-    var roomName = 'W1N1';
-
-    spawnManager.requestRoleCount(
-        roomName,
-        'Veinseeker',
-        4,
-        [WORK, CARRY, MOVE],
-        20
-    );
-
-    spawnManager.requestRoleCount(
-        roomName,
-        'Upgrader',
-        2,
-        [WORK, CARRY, MOVE],
-        5
-    );
-
-    spawnManager.requestRoleCount(
-        roomName,
-        'Queen',
-        1,
-        [CARRY, CARRY, MOVE],
-        30
-    );
-
-    spawnManager.requestRoleCount(
-        roomName,
-        'Trucker',
-        2,
-        [CARRY, MOVE],
-        10
-    );
-
-    spawnManager.runRoom(roomName);
-   /* 
     
     var upgrader = _.filter(Game.creeps, (creep) => creep.memory.role == 'Upgrader');
     //console.log('Upgrader:' + upgrader.length);
