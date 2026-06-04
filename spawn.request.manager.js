@@ -491,6 +491,58 @@ function downgradeFrontQueuedBodyIfNeeded(room) {
 }
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+function getPlannedRoleCount(room, role) {
+    var body = creepBodyConfig.getBody(role, room);
+    var replacementLeadTicks = getReplacementLeadTicks(role, body);
+
+    var healthyCount = countHealthyCreeps(room.name, role, replacementLeadTicks);
+    var queuedCount = countQueuedRequests(room.name, role);
+
+    return healthyCount + queuedCount;
+}
+
+function runStartupBootstrap(room, report) {
+    /*
+     * Startup order:
+     * 1. Foreman first.
+     * 2. Then two Extractors.
+     * 3. Then one Freighter.
+     * 4. Then one Tech.
+     *
+     * This prevents the queue from filling every long-term desired role
+     * before the room has a basic working economy.
+     */
+
+    if (getPlannedRoleCount(room, 'Foreman') < 1) {
+        report.requests.push(requestRoleForRoom(room, 'Foreman', 1));
+        return true;
+    }
+
+    if (getPlannedRoleCount(room, 'Extractor') < 2) {
+        report.requests.push(requestRoleForRoom(room, 'Foreman', 1));
+        report.requests.push(requestRoleForRoom(room, 'Extractor', 2));
+        return true;
+    }
+
+    if (getPlannedRoleCount(room, 'Freighter') < 1) {
+        report.requests.push(requestRoleForRoom(room, 'Foreman', 1));
+        report.requests.push(requestRoleForRoom(room, 'Extractor', 2));
+        report.requests.push(requestRoleForRoom(room, 'Freighter', 1));
+        return true;
+    }
+
+    if (getPlannedRoleCount(room, 'Tech') < 1) {
+        report.requests.push(requestRoleForRoom(room, 'Foreman', 1));
+        report.requests.push(requestRoleForRoom(room, 'Extractor', 2));
+        report.requests.push(requestRoleForRoom(room, 'Freighter', 1));
+        report.requests.push(requestRoleForRoom(room, 'Tech', 1));
+        return true;
+    }
+
+    return false;
+}
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 /**
  * Run spawn requests for the current simple managed room.
@@ -527,6 +579,10 @@ function run() {
         roomName: room.name,
         requests: []
     };
+
+    if (runStartupBootstrap(room, report)) {
+        return report;
+    }
 
     /*
      * Foreman first.
