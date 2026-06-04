@@ -165,6 +165,13 @@ function getArtificerBody(room) {
     return [WORK, CARRY, MOVE];
 }
 
+function getScoutBody(room) {
+    var energyCapacity = getRoomEnergyCapacity(room);
+    if (energyCapacity >= 50) {
+        return [MOVE];
+    }
+}
+
 /**
  * Main body picker.
  *
@@ -193,6 +200,10 @@ function getBody(role, room) {
         return getArtificerBody(room);
     }
 
+    if (role === 'Scout') {
+        return getScoutBody(room);
+    }
+
     /*
      * Safe fallback body.
      */
@@ -203,6 +214,7 @@ module.exports = {
     getBody,
     getBodyCost,
 
+    getScoutBody,
     getForemanBody,
     getExtractorBody,
     getFreighterBody,

@@ -24,7 +24,8 @@ var DESIRED_COUNTS = {
     Extractor: 6,
     Freighter: 4,
     Tech: 2,
-    Artificer: 1
+    Artificer: 1,
+    Scout: 1
 };
 
 /*
@@ -37,7 +38,8 @@ var PRIORITY = {
     Extractor: 80,
     Freighter: 60,
     Tech: 20,
-    Artificer: 10
+    Artificer: 10,
+    Scout: 5,
 };
 
 /*
@@ -51,7 +53,8 @@ var REPLACEMENT_BUFFER_TICKS = {
     Extractor: 30,
     Freighter: 40,
     Tech: 40,
-    Artificer: 40
+    Artificer: 40,
+    scout: 10
 };
 
 /**
@@ -341,6 +344,7 @@ function run() {
     report.requests.push(requestRoleForRoom(room, 'Freighter', DESIRED_COUNTS.Freighter));
     report.requests.push(requestRoleForRoom(room, 'Tech', DESIRED_COUNTS.Tech));
     report.requests.push(requestRoleForRoom(room, 'Artificer', DESIRED_COUNTS.Artificer));
+    report.requests.push(requestRoleForRoom(room, 'Scout', DESIRED_COUNTS.Scout));
 
     return report;
 }

@@ -1,3 +1,6 @@
+var utility = require('utility');
+
+
 var roleScout = {
 
     /** @param {Creep} creep **/
@@ -6,7 +9,7 @@ var roleScout = {
             return;
         }
 
-        rememberRoomVisit(creep);
+        utility.scanRoom(creep);
 
         if(creep.memory.targetRoom) {
             moveToTargetRoom(creep, creep.memory.targetRoom);
