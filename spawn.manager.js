@@ -23,10 +23,18 @@ var spawnUtility = require('utility.spawn');
  * @returns {array|null}
  */
 function getSpawnQueue(roomName) {
+    /*
+     * A room name is required because each room keeps its own queue under
+     * Memory.rooms[roomName].spawnQueue.
+     */
     if (!roomName) {
         return null;
     }
 
+    /*
+     * Memory is persistent between ticks. These checks create the nested objects
+     * before code tries to read or write spawnQueue.
+     */
     if (!Memory.rooms) {
         Memory.rooms = {};
     }
@@ -59,6 +67,10 @@ function getSpawnQueue(roomName) {
 function countAliveRole(roomName, role) {
     var count = 0;
 
+    /*
+     * Game.creeps is all living owned creeps. Looping by name lets us inspect
+     * each creep's memory and decide if it belongs to this count.
+     */
     for (var creepName in Game.creeps) {
         if (!Game.creeps.hasOwnProperty(creepName)) {
             continue;
@@ -98,6 +110,10 @@ function countAliveRole(roomName, role) {
 function countQueuedRole(roomName, role) {
     var queue = getSpawnQueue(roomName);
 
+    /*
+     * If the queue cannot be created or found, there are zero queued requests
+     * for this role.
+     */
     if (!queue) {
         return 0;
     }
@@ -107,6 +123,10 @@ function countQueuedRole(roomName, role) {
     for (var index = 0; index < queue.length; index++) {
         var request = queue[index];
 
+        /*
+         * Each request is a plain object saved in Memory. Bad or empty entries
+         * are skipped so one damaged queue item does not crash the count.
+         */
         if (!request) {
             continue;
         }
@@ -139,6 +159,10 @@ function countQueuedRole(roomName, role) {
 function requestRoleCount(roomName, role, desiredCount, body, priority, extraMemory) {
     var queue = getSpawnQueue(roomName);
 
+    /*
+     * Validate important inputs before writing to Memory. Returning an object
+     * instead of throwing keeps the caller able to report what happened.
+     */
     if (!queue || !role || !body || desiredCount <= 0) {
         return {
             ok: false,
@@ -167,6 +191,10 @@ function requestRoleCount(roomName, role, desiredCount, body, priority, extraMem
     }
 
     for (var missingIndex = 0; missingIndex < missingCount; missingIndex++) {
+        /*
+         * This memory object will become creep.memory when spawnCreep succeeds.
+         * role drives main.js dispatch, and homeRoom lets counting stay room-aware.
+         */
         var memory = {
             role: role,
             homeRoom: roomName
@@ -192,6 +220,10 @@ function requestRoleCount(roomName, role, desiredCount, body, priority, extraMem
             requestedAt: Game.time
         });
 
+        /*
+         * queue.push writes the new request into Memory.rooms[roomName].spawnQueue.
+         * The actual creep is not spawned yet; runRoom will process it later.
+         */
         added++;
     }
 
@@ -223,6 +255,10 @@ function requestRoleCount(roomName, role, desiredCount, body, priority, extraMem
  * @returns {StructureSpawn|null}
  */
 function findIdleSpawn(roomName) {
+    /*
+     * Game.spawns contains every spawn you own, keyed by spawn name.
+     * This loop finds the first spawn in the requested room that is not busy.
+     */
     for (var spawnName in Game.spawns) {
         if (!Game.spawns.hasOwnProperty(spawnName)) {
             continue;
@@ -263,6 +299,10 @@ function findIdleSpawn(roomName) {
 function runRoom(roomName) {
     var queue = getSpawnQueue(roomName);
 
+    /*
+     * Empty queue is a normal success state. Nothing is wrong; there is simply
+     * no creep request to process this tick.
+     */
     if (!queue || queue.length === 0) {
         return {
             ok: true,
@@ -273,6 +313,10 @@ function runRoom(roomName) {
 
     var spawn = findIdleSpawn(roomName);
 
+    /*
+     * Spawns can only create one creep at a time. If none are idle, keep the
+     * request in queue and try again on a future tick.
+     */
     if (!spawn) {
         return {
             ok: false,
@@ -310,6 +354,10 @@ function runRoom(roomName) {
 
     var creepName = spawnUtility.genCreepName(request.role);
 
+    /*
+     * genCreepName reads Game.creeps and Memory.creeps to avoid collisions.
+     * If it returns null, this request stays queued until a name frees up.
+     */
     if (!creepName) {
         return {
             ok: false,
@@ -318,6 +366,11 @@ function runRoom(roomName) {
         };
     }
 
+    /*
+     * spawn.spawnCreep is the Screeps API call that starts spawning a creep.
+     * The body controls parts, creepName is the unique name, and memory becomes
+     * the new creep's creep.memory when it exists.
+     */
     var result = spawn.spawnCreep(
         request.body,
         creepName,

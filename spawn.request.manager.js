@@ -23,8 +23,8 @@ var DESIRED_COUNTS = {
     Foreman: 1,
     Extractor: 6,
     Freighter: 4,
-    Tech: 2,
-    Artificer: 1,
+    Tech: 4,
+    Artificer: 4,
     Scout: 1
 };
 
@@ -32,6 +32,8 @@ var DESIRED_COUNTS = {
  * Higher number = more important.
  *
  * Foreman is highest because you said Foreman should always be alive.
+ * These priorities are saved onto spawn queue requests. spawn.manager.js sorts
+ * the queue so higher priority requests are attempted first.
  */
 var PRIORITY = {
     Foreman: 100,
@@ -71,6 +73,10 @@ var REPLACEMENT_BUFFER_TICKS = {
  * @returns {StructureSpawn|null}
  */
 function getFirstSpawn() {
+    /*
+     * Game.spawns is an object keyed by spawn name. This loop returns the first
+     * owned spawn it finds, which is enough while Sushi manages one main room.
+     */
     for (var spawnName in Game.spawns) {
         if (!Game.spawns.hasOwnProperty(spawnName)) {
             continue;
@@ -93,6 +99,10 @@ function getFirstSpawn() {
 function getManagedRoom() {
     var spawn = getFirstSpawn();
 
+    /*
+     * If there are no spawns, there is no owned room anchor for this simple
+     * manager yet, so return null and let run() exit quietly.
+     */
     if (!spawn || !spawn.room) {
         return null;
     }
@@ -116,6 +126,10 @@ function getManagedRoom() {
  * @returns {number}
  */
 function getReplacementLeadTicks(role, body) {
+    /*
+     * In Screeps, spawning takes 3 ticks per body part. A larger body needs to
+     * be requested earlier so the replacement finishes before the old creep dies.
+     */
     var bodyPartCount = body ? body.length : 0;
     var spawnTime = bodyPartCount * 3;
     var buffer = REPLACEMENT_BUFFER_TICKS[role] || 30;
@@ -137,6 +151,10 @@ function getReplacementLeadTicks(role, body) {
 function countHealthyCreeps(roomName, role, replacementLeadTicks) {
     var count = 0;
 
+    /*
+     * Loop through living creeps and count only matching role/homeRoom creeps
+     * that are not too close to death.
+     */
     for (var creepName in Game.creeps) {
         if (!Game.creeps.hasOwnProperty(creepName)) {
             continue;
@@ -196,6 +214,9 @@ function countHealthyCreeps(roomName, role, replacementLeadTicks) {
  * @returns {number}
  */
 function countQueuedRequests(roomName, role) {
+    /*
+     * This reads Memory.rooms[roomName].spawnQueue through spawn.manager.js.
+     */
     var queue = spawnManager.getSpawnQueue(roomName);
 
     if (!queue) {
@@ -235,6 +256,10 @@ function countQueuedRequests(roomName, role) {
  * @returns {object}
  */
 function requestRoleForRoom(room, role, desiredCount) {
+    /*
+     * Validate the request before doing body calculations or writing anything to
+     * the spawn queue.
+     */
     if (!room || !role || desiredCount <= 0) {
         return {
             ok: false,
@@ -244,6 +269,10 @@ function requestRoleForRoom(room, role, desiredCount) {
     }
 
     var roomName = room.name;
+    /*
+     * Body selection is separated into role.creepBodyConfig.js so this manager
+     * only decides "how many" and not the exact body-part layout.
+     */
     var body = creepBodyConfig.getBody(role, room);
     var priority = PRIORITY[role] || 0;
     var replacementLeadTicks = getReplacementLeadTicks(role, body);
@@ -323,6 +352,10 @@ function requestRoleForRoom(room, role, desiredCount) {
 function run() {
     var room = getManagedRoom();
 
+    /*
+     * No managed room is not an error during startup or after losing all spawns.
+     * Returning null lets main.js skip spawnManager.runRoom safely.
+     */
     if (!room) {
         return null;
     }

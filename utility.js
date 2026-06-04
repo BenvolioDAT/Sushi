@@ -1,10 +1,9 @@
 /*
- * Module code goes here. Use 'module.exports' to export things:
- * module.exports.thing = 'a thing';
+ * utility.js
  *
- * You can import it from another modules like this:
- * var mod = require('utils');
- * mod.thing == 'a thing'; // true
+ * Room-memory and room-planning helpers for Sushi.
+ * These functions teach the colony what is in a room and where source
+ * containers should be planned.
  */
 /**
  * First-scan the creep's current room and save important room data into memory.
@@ -27,6 +26,10 @@
  * @returns {object|null} The saved room memory, or null if something is wrong.
  */
 function scanRoom(creep) {
+    /*
+     * This function uses the creep's current room as the room to scan. In
+     * Screeps, you can only inspect rooms where you currently have vision.
+     */
     if (!creep || !creep.room) {
         return null;
     }
@@ -34,6 +37,10 @@ function scanRoom(creep) {
     var room = creep.room;
     var roomName = room.name;
 
+    /*
+     * Memory.rooms is persistent storage organized by room name. These checks
+     * create the room's memory object before writing scan results into it.
+     */
     if (!Memory.rooms) {
         Memory.rooms = {};
     }
@@ -134,6 +141,10 @@ function scanRoom(creep) {
     var terrain = room.getTerrain();
     var sources = room.find(FIND_SOURCES);
 
+    /*
+     * room.find(FIND_SOURCES) returns an array of Source objects. This loop
+     * creates one memory record for each source id.
+     */
     for (var sourceIndex = 0; sourceIndex < sources.length; sourceIndex++) {
         var source = sources[sourceIndex];
 
@@ -168,6 +179,8 @@ function scanRoom(creep) {
 
         /*
          * Check all 8 tiles around the source for valid mining seats.
+         * dx and dy are offsets from the source position. For example, dx=-1
+         * checks one tile to the left, and dy=1 checks one tile down.
          */
         for (var dx = -1; dx <= 1; dx++) {
             for (var dy = -1; dy <= 1; dy++) {
@@ -269,6 +282,10 @@ function scanRoom(creep) {
  * @returns {object|null} A small report showing what happened.
  */
 function createSourceFlagsFromMemory(creep) {
+    /*
+     * This function reads the source positions saved by scanRoom and creates
+     * real Screeps flags with room.createFlag.
+     */
     if (!creep || !creep.room) {
         return null;
     }
@@ -284,9 +301,10 @@ function createSourceFlagsFromMemory(creep) {
         Memory.rooms[roomName] = {};
     }
 
-    // Make sure source memory exists.
-    // If you renamed scanRoom(creep) to scanRoom(creep),
-    // change this line to scanRoom(creep).
+    /*
+     * Make sure source memory exists. If it is missing, scan the room first so
+     * the flag-creation loop has source positions to read.
+     */
     if (!Memory.rooms[roomName].sources) {
         scanRoom(creep);
     }
@@ -313,8 +331,10 @@ function createSourceFlagsFromMemory(creep) {
 
         var sourceMemory = sourcesMemory[sourceId];
 
-        // If the source memory or position is missing, just skip it quietly.
-        // No error log/report entry.
+        /*
+         * If the source memory or position is missing, skip it quietly. This
+         * protects the loop from one damaged memory record.
+         */
         if (!sourceMemory || !sourceMemory.pos) {
             report.skipped++;
             continue;
@@ -377,6 +397,10 @@ function createSourceFlagsFromMemory(creep) {
          */
         sourceMemory.Flag = false;
 
+        /*
+         * room.createFlag creates an actual in-game Flag at the source position.
+         * On success, Screeps returns the flag name string.
+         */
         var result = room.createFlag(
             sourceMemory.pos.x,
             sourceMemory.pos.y,
@@ -433,6 +457,10 @@ function createSourceFlagsFromMemory(creep) {
  * @returns {object}
  */
 function planSourceContainers(roomName) {
+    /*
+     * This planner runs from main.js every few ticks. It reads source scan
+     * memory and may write container planning fields back into each source.
+     */
     if (!roomName) {
         return {
             ok: false,
@@ -442,6 +470,10 @@ function planSourceContainers(roomName) {
 
     var room = Game.rooms[roomName];
 
+    /*
+     * Game.rooms only contains rooms where you have vision this tick. Planning
+     * cannot inspect terrain, structures, or construction sites without vision.
+     */
     if (!room) {
         return {
             ok: false,
@@ -472,6 +504,10 @@ function planSourceContainers(roomName) {
 
     var sourceMemoryById = Memory.rooms[roomName].sources;
 
+    /*
+     * Loop through each remembered source. The memory key is normally the source
+     * id, and the value contains position, seats, and container planning data.
+     */
     for (var sourceId in sourceMemoryById) {
         var sourceMemory = sourceMemoryById[sourceId];
 
@@ -479,6 +515,10 @@ function planSourceContainers(roomName) {
             continue;
         }
 
+        /*
+         * Game.getObjectById converts the saved id back into the live Source
+         * object. It returns null if the object cannot be seen or found.
+         */
         var source = Game.getObjectById(sourceMemory.id || sourceId);
 
         if (!source) {
@@ -573,6 +613,10 @@ function planSourceContainers(roomName) {
             continue;
         }
 
+        /*
+         * createConstructionSite asks Screeps to place a construction site on
+         * this RoomPosition. OK means the site was successfully created.
+         */
         var result = bestPosition.createConstructionSite(STRUCTURE_CONTAINER);
 
         if (result === OK) {
@@ -627,6 +671,10 @@ function planSourceContainers(roomName) {
  * @returns {RoomPosition|null}
  */
 function findBestContainerPositionForSource(room, source, sourceMemory) {
+    /*
+     * Start with the possible mining seats, then score each usable seat as a
+     * potential container tile.
+     */
     var sourceSeats = getSourceSeatPositions(room, source, sourceMemory);
 
     if (sourceSeats.length === 0) {
@@ -640,6 +688,9 @@ function findBestContainerPositionForSource(room, source, sourceMemory) {
     for (var i = 0; i < sourceSeats.length; i++) {
         var position = sourceSeats[i];
 
+        /*
+         * Skip walls or occupied tiles before spending CPU scoring the position.
+         */
         if (!isGoodContainerPosition(room, position)) {
             continue;
         }
@@ -680,6 +731,10 @@ function scoreContainerPositionForSource(room, position, sourceSeats, anchor) {
     var coveredSeatCount = 0;
     var totalSeatRange = 0;
 
+    /*
+     * Loop over all known mining seats and measure how well this candidate
+     * container position serves them.
+     */
     for (var i = 0; i < sourceSeats.length; i++) {
         var seat = sourceSeats[i];
         var rangeToSeat = position.getRangeTo(seat);
@@ -769,6 +824,10 @@ function getSourceSeatPositions(room, source, sourceMemory) {
      * ];
      */
     if (sourceMemory && sourceMemory.seats) {
+        /*
+         * Loop through saved seat entries. They are plain memory objects, so
+         * each one must be converted back into a RoomPosition before use.
+         */
         for (var seatIndex in sourceMemory.seats) {
             var memoryPosition = getRoomPositionFromSeatMemory(
                 sourceMemory.seats[seatIndex],
@@ -792,6 +851,10 @@ function getSourceSeatPositions(room, source, sourceMemory) {
     /*
      * Fallback:
      * If your scan did not save seat positions, scan the 8 tiles around source.
+     */
+    /*
+     * Fallback loop over the 3x3 square centered on the source. The source tile
+     * itself is skipped because creeps cannot stand on a Source.
      */
     for (var x = source.pos.x - 1; x <= source.pos.x + 1; x++) {
         for (var y = source.pos.y - 1; y <= source.pos.y + 1; y++) {
@@ -889,12 +952,20 @@ function isPositionBesideSource(position, source) {
  * @returns {boolean}
  */
 function isGoodContainerPosition(room, position) {
+    /*
+     * Terrain is checked first because walls can never hold a construction site
+     * or a creep.
+     */
     var terrain = room.getTerrain().get(position.x, position.y);
 
     if (terrain === TERRAIN_MASK_WALL) {
         return false;
     }
 
+    /*
+     * lookFor reads objects on this exact tile. This prevents planning a
+     * container on top of an incompatible structure.
+     */
     var structures = position.lookFor(LOOK_STRUCTURES);
 
     for (var i = 0; i < structures.length; i++) {
@@ -951,6 +1022,10 @@ function isGoodContainerPosition(room, position) {
  * @param {RoomPosition} position
  */
 function saveContainerPlannedPosition(sourceMemory, position) {
+    /*
+     * These fields are written into Memory.rooms[roomName].sources[sourceId].
+     * They let later ticks know that a container site has already been planned.
+     */
     sourceMemory.containerPlanned = true;
     sourceMemory.containerPlannedAt = Game.time;
     sourceMemory.containerPlannedPos = {

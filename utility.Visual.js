@@ -37,9 +37,17 @@ function drawSourceFlags(roomName) {
     }
 
     // Find all sources in the visible room.
+    /*
+     * room.find(FIND_SOURCES) asks Screeps for Source objects in this visible
+     * room. It returns an array, even if there is only one source.
+     */
     var sources = room.find(FIND_SOURCES);
 
     // Draw one map flag over each source.
+    /*
+     * This loop visits each source object and draws text at source.pos. The text
+     * is only a visual overlay; it does not create a real in-game Flag object.
+     */
     for (var i = 0; i < sources.length; i++) {
         var source = sources[i];
 

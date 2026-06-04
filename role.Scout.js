@@ -4,6 +4,10 @@ var roleScout = {
 
     /** @param {Creep} creep **/
     run: function(creep) {
+        /*
+         * Scouts only need MOVE parts, but they still cannot do anything while
+         * spawning. This guard keeps the rest of the role from using bad data.
+         */
         if(!creep || creep.spawning) {
             return;
         }
@@ -46,6 +50,11 @@ var roleScout = {
 };
 
 function rememberRoomVisit(creep) {
+    /*
+     * This helper is currently not called by run(), but it shows how Scout intel
+     * can be stored. Memory.rooms is the long-term memory object organized by
+     * room name.
+     */
     if(!Memory.rooms) {
         Memory.rooms = {};
     }
@@ -54,6 +63,10 @@ function rememberRoomVisit(creep) {
         Memory.rooms[creep.room.name] = {};
     }
 
+    /*
+     * This writes a compact scouting snapshot to Memory.rooms[roomName].scout.
+     * The live room.find calls count visible objects at the time of the visit.
+     */
     Memory.rooms[creep.room.name].scout = {
         lastVisited: Game.time,
         sources: creep.room.find(FIND_SOURCES).length,
@@ -86,11 +99,19 @@ function rememberRoomVisit(creep) {
  * @returns {boolean}
  */
 function chooseRandomNeighborRoom(creep) {
+    /*
+     * Return false instead of throwing if the caller gives bad input. That makes
+     * the Scout role safe to run every tick.
+     */
     if(!creep || !creep.room) {
         return false;
     }
 
     var currentRoomName = creep.room.name;
+    /*
+     * Game.map.describeExits does not require vision in neighboring rooms. It
+     * reads map topology and tells us which rooms border the current room.
+     */
     var exits = Game.map.describeExits(currentRoomName);
 
     if(!exits) {
@@ -125,7 +146,7 @@ function chooseRandomNeighborRoom(creep) {
 
         /*
          * Prefer not to go straight back into the room we just came from.
-         * This stops the Scout from doing the classic border-bounce clown dance.
+         * This reduces back-and-forth movement across the same border.
          */
         if(neighborRoomName !== creep.memory.previousRoom) {
             preferredChoices.push(neighborRoomName);
@@ -145,6 +166,10 @@ function chooseRandomNeighborRoom(creep) {
     var randomIndex = Math.floor(Math.random() * choices.length);
     var selectedRoomName = choices[randomIndex];
 
+    /*
+     * Remember where we came from and where we are going. Both values are saved
+     * in creep.memory so they survive into future ticks.
+     */
     creep.memory.previousRoom = currentRoomName;
     creep.memory.targetRoom = selectedRoomName;
 
@@ -157,10 +182,18 @@ function moveToTargetRoom(creep, roomName) {
      * Next tick, it will pick a new neighboring room from this new location.
      */
     if(creep.room.name === roomName) {
+        /*
+         * Deleting targetRoom makes run() choose a new neighboring room on a
+         * later tick. This is how the Scout keeps exploring instead of stopping.
+         */
         delete creep.memory.targetRoom;
 
         var controller = creep.room.controller;
 
+        /*
+         * Move near the controller after entering the room. This can improve
+         * vision around the controller area before the next room is selected.
+         */
         if(controller && creep.pos.getRangeTo(controller) > 3) {
             creep.moveTo(controller, {
                 visualizePathStyle: {
@@ -175,10 +208,17 @@ function moveToTargetRoom(creep, roomName) {
     var exitDir = Game.map.findExit(creep.room, roomName);
 
     if(exitDir < 0) {
+        /*
+         * If Screeps cannot find an exit route, forget this target so the Scout
+         * can choose a different neighbor later instead of getting stuck.
+         */
         delete creep.memory.targetRoom;
         return;
     }
 
+    /*
+     * Find the closest border tile for the chosen exit direction and walk to it.
+     */
     var exit = creep.pos.findClosestByRange(exitDir);
 
     if(exit) {
@@ -191,6 +231,9 @@ function moveToTargetRoom(creep, roomName) {
 }
 
 function idleOrWander(creep) {
+    /*
+     * If no target room could be selected, stay near a spawn when possible.
+     */
     var spawn = creep.pos.findClosestByPath(FIND_MY_SPAWNS);
 
     if(spawn && creep.pos.getRangeTo(spawn) > 3) {
@@ -203,6 +246,10 @@ function idleOrWander(creep) {
         return;
     }
 
+    /*
+     * Last fallback: every 10 ticks, move in a random direction number from 1
+     * to 8. Screeps direction constants use 1=top, then clockwise.
+     */
     if(Game.time % 10 === 0) {
         creep.move(Math.floor(Math.random() * 8) + 1);
     }

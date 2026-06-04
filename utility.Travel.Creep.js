@@ -39,6 +39,10 @@ require('Traveler');
  * @returns {RoomPosition|null}
  */
 function getTargetPosition(target) {
+    /*
+     * Many Screeps APIs accept either a RoomPosition or an object with .pos.
+     * This helper normalizes both shapes so movement code can be called simply.
+     */
     if (!target) {
         return null;
     }
@@ -80,6 +84,10 @@ function getTargetPosition(target) {
  * @returns {number} Screeps result code.
  */
 function move(creep, target, options) {
+    /*
+     * Return Screeps error constants instead of throwing. That lets callers
+     * inspect the result code if they need to debug movement behavior.
+     */
     if (!creep || !target) {
         return ERR_INVALID_ARGS;
     }
@@ -97,7 +105,8 @@ function move(creep, target, options) {
      * - move to energy
      * - then also move to controller
      *
-     * Same tick double-move bugs are sneaky little goblins.
+     * Same-tick double-move bugs are difficult to diagnose because the later
+     * move request can silently override the earlier movement plan.
      */
     if (creep.memory._sushiMoveTick === Game.time) {
         return ERR_BUSY;
@@ -139,6 +148,8 @@ function move(creep, target, options) {
 
     /*
      * If the creep is already close enough, do not move.
+     * Returning OK here means "movement goal is satisfied", even though no
+     * actual move command was sent this tick.
      */
     if (
         creep.pos.roomName === targetPosition.roomName &&
@@ -166,6 +177,8 @@ function move(creep, target, options) {
 
     /*
      * Mark that this creep already tried to move this tick.
+     * This writes to creep.memory._sushiMoveTick so later role logic can avoid
+     * issuing a second movement command in the same tick.
      */
     if (
         result === OK ||
@@ -196,6 +209,10 @@ function move(creep, target, options) {
  * @returns {number}
  */
 function moveToRoom(creep, roomName, options) {
+    /*
+     * roomName should be a string such as "W1N1". Without a valid creep and
+     * target room, there is no safe movement request to make.
+     */
     if (!creep || !roomName) {
         return ERR_INVALID_ARGS;
     }
@@ -224,6 +241,10 @@ function moveToRoom(creep, roomName, options) {
  * @param {Creep} creep
  */
 function clearTravelMemory(creep) {
+    /*
+     * Movement caches live inside creep.memory. Clearing them forces future
+     * movement calls to calculate a fresh path.
+     */
     if (!creep || !creep.memory) {
         return;
     }

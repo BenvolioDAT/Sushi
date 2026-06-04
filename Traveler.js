@@ -2,6 +2,15 @@
  * To start using Traveler, require it in main.js:
  * Example: var Traveler = require('Traveler.js');
  */
+/*
+ * Traveler is a movement/pathfinding helper. Sushi's utility.Travel.Creep
+ * wrapper loads this file so creeps gain creep.travelTo(destination, options).
+ *
+ * The important beginner idea:
+ * - PathFinder.search calculates a path.
+ * - Traveler stores a short path string in creep.memory._trav.
+ * - Later ticks reuse that path to save CPU.
+ */
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 class Traveler {
@@ -15,9 +24,18 @@ class Traveler {
     static travelTo(creep, destination, options = {}) {
         // uncomment if you would like to register hostile rooms entered
         // this.updateRoomStatus(creep.room);
+        /*
+         * travelTo is called by a creep. destination can be a RoomPosition or a
+         * game object with .pos. Returning ERR_INVALID_ARGS matches Screeps API
+         * style instead of throwing a JavaScript error.
+         */
         if (!destination) {
             return ERR_INVALID_ARGS;
         }
+        /*
+         * Fatigue means the creep is too tired to move this tick. Returning
+         * ERR_TIRED tells the caller no movement was possible.
+         */
         if (creep.fatigue > 0) {
             Traveler.circle(creep.pos, "aqua", .3);
             return ERR_TIRED;
@@ -25,6 +43,10 @@ class Traveler {
         destination = this.normalizePos(destination);
         // manage case where creep is nearby destination
         let rangeToDestination = creep.pos.getRangeTo(destination);
+        /*
+         * If the creep is already close enough, there is no need to pathfind.
+         * This early exit saves CPU.
+         */
         if (options.range && rangeToDestination <= options.range) {
             return OK;
         }
@@ -44,6 +66,10 @@ class Traveler {
             delete creep.memory._travel;
             creep.memory._trav = {};
         }
+        /*
+         * creep.memory._trav is Traveler's persistent per-creep movement cache.
+         * It survives across ticks just like any other creep memory.
+         */
         let travelData = creep.memory._trav;
         let state = this.deserializeState(travelData, destination);
         // uncomment to visualize destination
@@ -68,6 +94,10 @@ class Traveler {
         // TODO:handle case where creep moved by some other function, but destination is still the same
         // delete path cache if destination is different
         if (!this.samePos(state.destination, destination)) {
+            /*
+             * If the destination changed, the old cached path may point to the
+             * wrong place. Delete it so a new path can be calculated.
+             */
             if (options.movingTarget && state.destination.isNearTo(destination)) {
                 travelData.path += state.destination.getDirectionTo(destination);
                 state.destination = destination;
@@ -88,6 +118,10 @@ class Traveler {
                 return ERR_BUSY;
             }
             state.destination = destination;
+            /*
+             * PathFinder can be CPU-heavy, so Traveler measures CPU and reports
+             * unusually expensive path searches.
+             */
             let cpu = Game.cpu.getUsed();
             let ret = this.findTravelPath(creep.pos, destination, options);
             let cpuUsed = Game.cpu.getUsed() - cpu;
@@ -113,6 +147,11 @@ class Traveler {
             return ERR_NO_PATH;
         }
         // consume path
+        /*
+         * The cached path is a string of direction numbers. After a successful
+         * unstuck tick, Traveler removes the first direction so next tick uses
+         * the next step.
+         */
         if (state.stuckCount === 0 && !newPath) {
             travelData.path = travelData.path.substr(1);
         }
@@ -210,6 +249,10 @@ class Traveler {
      * @returns {PathfinderReturn}
      */
     static findTravelPath(origin, destination, options = {}) {
+        /*
+         * This is the main PathFinder wrapper. It builds a room callback so
+         * PathFinder knows which terrain, structures, and creeps to avoid.
+         */
         _.defaults(options, {
             ignoreCreeps: true,
             maxOps: DEFAULT_MAXOPS,
@@ -233,6 +276,10 @@ class Traveler {
         }
         let roomsSearched = 0;
         let callback = (roomName) => {
+            /*
+             * PathFinder calls this function for each room it wants to search.
+             * Returning false tells PathFinder that room is blocked.
+             */
             if (allowedRooms) {
                 if (!allowedRooms[roomName]) {
                     return false;
@@ -246,6 +293,10 @@ class Traveler {
             let matrix;
             let room = Game.rooms[roomName];
             if (room) {
+                /*
+                 * A CostMatrix assigns movement costs to positions in a room.
+                 * High values block tiles; low values make tiles preferred.
+                 */
                 if (options.ignoreStructures) {
                     matrix = new PathFinder.CostMatrix();
                     if (!options.ignoreCreeps) {
@@ -280,6 +331,10 @@ class Traveler {
             return matrix;
         };
         let ret = PathFinder.search(origin, { pos: destination, range: options.range }, {
+            /*
+             * plainCost and swampCost tell PathFinder how expensive terrain is.
+             * Roads are handled through the room callback's CostMatrix.
+             */
             maxOps: options.maxOps,
             maxRooms: options.maxRooms,
             plainCost: options.offRoad ? 1 : options.ignoreRoads ? 1 : 2,
@@ -314,6 +369,10 @@ class Traveler {
      * @returns {{}}
      */
     static findRoute(origin, destination, options = {}) {
+        /*
+         * Game.map.findRoute works at the room level, not the tile level. It
+         * chooses which rooms are allowed before tile pathfinding starts.
+         */
         let restrictDistance = options.restrictDistance || Game.map.getRoomLinearDistance(origin, destination) + 10;
         let allowedRooms = { [origin]: true, [destination]: true };
         let highwayBias = 1;
@@ -398,6 +457,10 @@ class Traveler {
      * @returns {any}
      */
     static getStructureMatrix(room, freshMatrix) {
+        /*
+         * Structure matrices are cached by room name so repeated movement calls
+         * in the same tick do not rebuild the same costs over and over.
+         */
         if (!this.structureMatrixCache[room.name] || (freshMatrix && Game.time !== this.structureMatrixTick)) {
             this.structureMatrixTick = Game.time;
             let matrix = new PathFinder.CostMatrix();
@@ -425,6 +488,11 @@ class Traveler {
      * @returns {CostMatrix}
      */
     static addStructuresToMatrix(room, matrix, roadCost) {
+        /*
+         * This loop reads every visible structure and marks how it affects
+         * movement: roads are cheap, containers are passable but costly, and
+         * most other structures are blocked.
+         */
         let impassibleStructures = [];
         for (let structure of room.find(FIND_STRUCTURES)) {
             if (structure instanceof StructureRampart) {
@@ -531,6 +599,10 @@ class Traveler {
         console.log(`TRAVELER: room avoidance data patched for ${count} rooms`);
     }
     static deserializeState(travelData, destination) {
+        /*
+         * Memory cannot store RoomPosition objects directly in a useful way, so
+         * Traveler stores small arrays and rebuilds the state object each tick.
+         */
         let state = {};
         if (travelData.state) {
             state.lastCoord = { x: travelData.state[STATE_PREV_X], y: travelData.state[STATE_PREV_Y] };
@@ -579,6 +651,10 @@ const STATE_DEST_X = 4;
 const STATE_DEST_Y = 5;
 const STATE_DEST_ROOMNAME = 6;
 // assigns a function to Creep.prototype: creep.travelTo(destination)
+/*
+ * This extends the Screeps Creep prototype. After Traveler is required, every
+ * creep can call creep.travelTo(...) as if it were a built-in method.
+ */
 Creep.prototype.travelTo = function (destination, options) {
     return Traveler.travelTo(this, destination, options);
 };

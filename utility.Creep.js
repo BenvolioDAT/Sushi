@@ -20,6 +20,10 @@ var travel = require('utility.Travel.Creep');
  * @returns {boolean}
  */
 function hasEnergy(creep) {
+    /*
+     * creep.store is the Screeps inventory object for creeps. Guarding it keeps
+     * this helper safe if a bad value is passed from a role.
+     */
     if (!creep || !creep.store) {
         return false;
     }
@@ -62,6 +66,10 @@ function isFull(creep) {
  * @returns {boolean}
  */
 function pickupEnergy(creep, droppedEnergy) {
+    /*
+     * A dropped resource is different from a structure. It has resourceType and
+     * amount instead of a store.
+     */
     if (!creep || !droppedEnergy) {
         return false;
     }
@@ -72,6 +80,10 @@ function pickupEnergy(creep, droppedEnergy) {
 
     var result = creep.pickup(droppedEnergy);
 
+    /*
+     * OK means the pickup happened this tick. ERR_NOT_IN_RANGE means the target
+     * exists but the creep must walk closer before picking it up.
+     */
     if (result === OK) {
         return true;
     }
@@ -96,6 +108,10 @@ function pickupEnergy(creep, droppedEnergy) {
  * @returns {boolean}
  */
 function pickupClosestDroppedEnergy(creep) {
+    /*
+     * findClosestByPath uses Screeps pathfinding to choose a reachable target,
+     * which is usually better than simply choosing the closest by range.
+     */
     if (!creep || !creep.room) {
         return false;
     }
@@ -132,6 +148,10 @@ function pickupClosestDroppedEnergy(creep) {
  * @returns {boolean}
  */
 function withdrawEnergy(creep, target) {
+    /*
+     * withdraw only works on objects with a .store, such as storage,
+     * containers, links, tombstones, and ruins.
+     */
     if (!creep || !target || !target.store) {
         return false;
     }
@@ -144,6 +164,9 @@ function withdrawEnergy(creep, target) {
         return false;
     }
 
+    /*
+     * creep.withdraw moves energy from the target store into the creep store.
+     */
     var result = creep.withdraw(target, RESOURCE_ENERGY);
 
     if (result === OK) {
@@ -190,6 +213,10 @@ function withdrawFromClosestContainer(creep) {
         return false;
     }
 
+    /*
+     * FIND_STRUCTURES includes all visible structures. The filter narrows this
+     * to containers that actually have energy available.
+     */
     var container = creep.pos.findClosestByPath(FIND_STRUCTURES, {
         filter: function(structure) {
             return structure.structureType === STRUCTURE_CONTAINER &&
@@ -220,6 +247,9 @@ function withdrawFromClosestTombstone(creep) {
         return false;
     }
 
+    /*
+     * Tombstones appear when creeps die. Recovering their energy prevents waste.
+     */
     var tombstone = creep.pos.findClosestByPath(FIND_TOMBSTONES, {
         filter: function(target) {
             return target.store &&
@@ -249,6 +279,10 @@ function withdrawFromClosestRuin(creep) {
         return false;
     }
 
+    /*
+     * Ruins can contain resources after structures are destroyed. They use the
+     * same store API as many structures.
+     */
     var ruin = creep.pos.findClosestByPath(FIND_RUINS, {
         filter: function(target) {
             return target.store &&
@@ -279,6 +313,10 @@ function harvestEnergy(creep, source) {
         return false;
     }
 
+    /*
+     * harvest uses the creep's WORK parts. It returns OK when energy is gained,
+     * or ERR_NOT_IN_RANGE when the creep needs to stand next to the source.
+     */
     var result = creep.harvest(source);
 
     if (result === OK) {
@@ -346,6 +384,11 @@ function getEnergy(creep) {
         return false;
     }
 
+    /*
+     * Each helper returns true if it took action or started moving toward a
+     * target. Returning immediately prevents the creep from trying multiple
+     * energy jobs in the same tick.
+     */
     if (pickupClosestDroppedEnergy(creep)) {
         return true;
     }
@@ -388,6 +431,9 @@ function getEnergy(creep) {
  * @returns {boolean}
  */
 function transferEnergy(creep, target) {
+    /*
+     * transfer only works on targets with a store and free capacity.
+     */
     if (!creep || !target || !target.store) {
         return false;
     }
@@ -400,6 +446,10 @@ function transferEnergy(creep, target) {
         return false;
     }
 
+    /*
+     * creep.transfer moves energy from the creep into the target. It returns
+     * ERR_NOT_IN_RANGE if the target is valid but too far away.
+     */
     var result = creep.transfer(target, RESOURCE_ENERGY);
 
     if (result === OK) {
@@ -430,6 +480,11 @@ function findClosestSpawnOrExtensionNeedingEnergy(creep) {
         return null;
     }
 
+    /*
+     * Spawns and extensions are the first priority because they are required to
+     * create new creeps. This search includes only structures with free energy
+     * capacity.
+     */
     return creep.pos.findClosestByPath(FIND_STRUCTURES, {
         filter: function(structure) {
             var isSpawnOrExtension =
@@ -510,6 +565,10 @@ function dropEnergy(creep) {
 }
 
 function updateWorkingState(creep, memoryKey) {
+    /*
+     * memoryKey lets several roles reuse the same two-state pattern while each
+     * role keeps its own flag, such as foremanWorking or repairWorking.
+     */
     if(creep.memory[memoryKey] && creep.store[RESOURCE_ENERGY] === 0) {
         creep.memory[memoryKey] = false;
     }
@@ -522,6 +581,10 @@ function collectEnergy(creep) {
     var target = null;
 
     // Queen fills the base, so storage is her first and simplest fuel source.
+    /*
+     * This shared collector reads room storage first, then containers, then
+     * dropped energy. It writes no Memory, but it may issue movement commands.
+     */
     if(creep.room.storage && creep.room.storage.store[RESOURCE_ENERGY] > 0) {
         target = creep.room.storage;
     }
@@ -557,6 +620,10 @@ function collectEnergy(creep) {
 }
 
 function fillRoomEnergy(creep) {
+    /*
+     * This helper is used by Foreman. It chooses a structure that needs energy
+     * and transfers to it, or idles near base if everything is full.
+     */
     var target = findSpawnOrExtension(creep);
 
     // Spawn and extensions come first because they unlock more creeps.
@@ -575,6 +642,10 @@ function fillRoomEnergy(creep) {
 }
 
 function findSpawnOrExtension(creep) {
+    /*
+     * FIND_MY_STRUCTURES returns only your structures. The filter keeps spawns
+     * and extensions with remaining energy capacity.
+     */
     return creep.pos.findClosestByPath(FIND_MY_STRUCTURES, {
         filter: function(structure) {
             return (
@@ -588,6 +659,10 @@ function findSpawnOrExtension(creep) {
 }
 
 function findTower(creep) {
+    /*
+     * Towers use energy for attacks, healing, and repairs. This helper finds
+     * the closest owned tower that can accept more energy.
+     */
     return creep.pos.findClosestByPath(FIND_MY_STRUCTURES, {
         filter: function(structure) {
             return (
@@ -600,6 +675,10 @@ function findTower(creep) {
 }
 
 function idleNearBase(creep) {
+    /*
+     * Use storage as the home anchor when it exists. Otherwise, fall back to the
+     * closest owned spawn. Staying near the base reduces future travel time.
+     */
     var anchor = creep.room.storage || creep.pos.findClosestByPath(FIND_MY_SPAWNS);
     if(anchor && creep.pos.getRangeTo(anchor) > 2) {
         creep.moveTo(anchor, {visualizePathStyle: {stroke: '#bbbbbb'}});

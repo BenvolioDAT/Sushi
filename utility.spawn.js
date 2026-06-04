@@ -1,10 +1,21 @@
 function genCreepName(creepType) {
+    /*
+     * Screeps creep names must be unique. This helper builds names like
+     * Foreman_001, Foreman_002, and so on, then checks whether each is free.
+     */
     var maxNumber = 100;
     var creepMemory = Memory.creeps || {};
 
+    /*
+     * Try a fixed range of numbers so the function always finishes quickly.
+     * This prevents an accidental infinite loop if many names are taken.
+     */
     for (var number = 1; number <= maxNumber; number++) {
         var paddedNumber = '';
 
+        /*
+         * Pad the number to three digits to keep creep names sorted and readable.
+         */
         if (number < 10) {
             paddedNumber = '00' + number;
         } else if (number < 100) {
@@ -53,6 +64,10 @@ function genCreepName(creepType) {
 function getSpawnName(roomName) {
     var firstMatchingSpawnName = null;
 
+    /*
+     * Loop through all owned spawns. Game.spawns is keyed by spawn name, so
+     * spawnName is the string needed later for Game.spawns[spawnName].
+     */
     for (var spawnName in Game.spawns) {
         if (!Game.spawns.hasOwnProperty(spawnName)) {
             continue;
