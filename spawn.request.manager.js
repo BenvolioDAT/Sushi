@@ -491,6 +491,14 @@ function downgradeFrontQueuedBodyIfNeeded(room) {
 }
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+function getHealthyRoleCount(room, role) {
+    var body = creepBodyConfig.getBody(role, room);
+    var replacementLeadTicks = getReplacementLeadTicks(role, body);
+
+    return countHealthyCreeps(room.name, role, replacementLeadTicks);
+}
+
+
 function getPlannedRoleCount(room, role) {
     var body = creepBodyConfig.getBody(role, room);
     var replacementLeadTicks = getReplacementLeadTicks(role, body);
@@ -508,34 +516,35 @@ function runStartupBootstrap(room, report) {
      * 2. Then two Extractors.
      * 3. Then one Freighter.
      * 4. Then one Tech.
+     * 5. Then one Artificer.
      *
-     * This prevents the queue from filling every long-term desired role
-     * before the room has a basic working economy.
+     * Important:
+     * This checks healthy living creeps first.
+     * Queued creeps should prevent duplicate requests,
+     * but queued creeps should not trick startup into thinking the room is already alive.
      */
 
-    if (getPlannedRoleCount(room, 'Foreman') < 1) {
+    if (getHealthyRoleCount(room, 'Foreman') < 1) {
         report.requests.push(requestRoleForRoom(room, 'Foreman', 1));
         return true;
     }
 
-    if (getPlannedRoleCount(room, 'Extractor') < 2) {
-        report.requests.push(requestRoleForRoom(room, 'Foreman', 1));
+    if (getHealthyRoleCount(room, 'Extractor') < 2) {
         report.requests.push(requestRoleForRoom(room, 'Extractor', 2));
         return true;
     }
 
-    if (getPlannedRoleCount(room, 'Freighter') < 1) {
-        report.requests.push(requestRoleForRoom(room, 'Foreman', 1));
-        report.requests.push(requestRoleForRoom(room, 'Extractor', 2));
+    if (getHealthyRoleCount(room, 'Freighter') < 1) {
         report.requests.push(requestRoleForRoom(room, 'Freighter', 1));
         return true;
     }
 
-    if (getPlannedRoleCount(room, 'Tech') < 1) {
-        report.requests.push(requestRoleForRoom(room, 'Foreman', 1));
-        report.requests.push(requestRoleForRoom(room, 'Extractor', 2));
-        report.requests.push(requestRoleForRoom(room, 'Freighter', 1));
+    if (getHealthyRoleCount(room, 'Tech') < 1) {
         report.requests.push(requestRoleForRoom(room, 'Tech', 1));
+        return true;
+    }
+    if (getHealthyRoleCount(room, 'Artificer') < 1) {
+        report.requests.push(requestRoleForRoom(room, 'Artificer', 1));
         return true;
     }
 
