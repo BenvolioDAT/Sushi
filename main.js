@@ -9,6 +9,8 @@ var utility_spawn = require('utility.spawn');
 var utilityVisual = require('utility.Visual');
 var utility = require('utility');
 
+var TowerLogic = require('Logic.Tower');
+
 var spawnManager = require('spawn.manager');
 var spawnRequestManager = require('spawn.request.manager');
 
@@ -18,6 +20,11 @@ var spawnRequestManager = require('spawn.request.manager');
  * construction progresses, and your JavaScript runs from top to bottom.
  */
 module.exports.loop = function () {
+    for (const room of Object.values(Game.rooms)) {
+    if (room.controller && room.controller.my) {
+        TowerLogic.run(room);
+    }
+}
     /*
      * Game.rooms is a Screeps object containing only rooms you can currently see.
      * This loop asks the utility planner to check visible rooms every 10 ticks,
