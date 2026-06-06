@@ -1,18 +1,3 @@
-/*
- * Logic.Tower.js
- *
- * Simple Sushi Tower Logic
- *
- * Job:
- * - If enemy creeps are in the room, towers shoot them.
- * - No healing.
- * - No repairing.
- * - No fancy scoring.
- *
- * Simple rule:
- * One enemy target. All towers shoot it.
- */
-
 var TowerLogic = {};
 
 /*
