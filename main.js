@@ -14,6 +14,80 @@ var TowerLogic = require('Logic.Tower');
 var spawnManager = require('spawn.manager');
 var spawnRequestManager = require('spawn.request.manager');
 
+
+/*
+ * Save damaged structures into room memory.
+ *
+ * Memory path:
+ * Memory.rooms[room.name].RepairStructure
+ *
+ * Example:
+ * Memory.rooms.W39S47.RepairStructure = [
+ *     "abc123",
+ *     "def456"
+ * ];
+ */
+function updateRepairStructureMemory(room) {
+    /*
+     * Safety check.
+     * If no room was passed in, stop.
+     */
+    if (!room) {
+        return;
+    }
+
+    /*
+     * Make sure Memory.rooms exists.
+     */
+    if (!Memory.rooms) {
+        Memory.rooms = {};
+    }
+
+    /*
+     * Make sure this room has a memory object.
+     *
+     * Example:
+     * Memory.rooms["W39S47"]
+     */
+    if (!Memory.rooms[room.name]) {
+        Memory.rooms[room.name] = {};
+    }
+
+    /*
+     * Find all structures in the room that are damaged.
+     *
+     * A structure needs repair when:
+     * structure.hits < structure.hitsMax
+     */
+    var damagedStructures = room.find(FIND_STRUCTURES, {
+        filter: function(structure) {
+            return structure.hits < structure.hitsMax;
+        }
+    });
+
+    /*
+     * Clear the old repair list.
+     *
+     * This is important because some structures may get repaired later.
+     * We do not want old repaired structures staying in memory forever.
+     */
+    Memory.rooms[room.name].RepairStructure = [];
+
+    /*
+     * Save only the structure IDs into memory.
+     *
+     * We save IDs because Memory should store simple data:
+     * strings, numbers, arrays, objects.
+     *
+     * Do not store the full structure object in Memory.
+     */
+    for (var i = 0; i < damagedStructures.length; i++) {
+        Memory.rooms[room.name].RepairStructure.push(damagedStructures[i].id);
+    }
+}
+
+
+
 /*
  * Screeps calls module.exports.loop once every game tick.
  * A "tick" is one step of the simulation: creeps move once, spawns work once,
@@ -25,6 +99,15 @@ module.exports.loop = function () {
         TowerLogic.run(room);
     }
 }
+
+
+    for (var roomName in Game.rooms) {
+    var room = Game.rooms[roomName];
+
+    if (room.controller && room.controller.my) {
+        updateRepairStructureMemory(room);
+        }
+    }
     /*
      * Game.rooms is a Screeps object containing only rooms you can currently see.
      * This loop asks the utility planner to check visible rooms every 10 ticks,
