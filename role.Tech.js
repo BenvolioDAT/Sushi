@@ -93,6 +93,18 @@ function getEnergyForTech(creep) {
 
     /*
      * Priority 4:
+     * Pull energy from tombstones.
+     * Tombstones are fallen creeps. If they have nergy, grab it bfore checking
+     * ruins because tombstones decay away faster and are basically free snacks.
+     * Grave robbery? Maybe. Efficient? Absolutely.
+     */
+
+    if (creepUtility.withdrawFromClosestTombstone(creep)) {
+        return true;
+    }
+
+    /*
+     * Priority 5:
      * Pull energy from ruins.
      */
     if (creepUtility.withdrawFromClosestRuin(creep)) {
@@ -100,7 +112,7 @@ function getEnergyForTech(creep) {
     }
 
     /*
-     * Priority 5:
+     * Priority 6:
      * Withdraw from source containers.
      *
      * This comes after storage because Tech should not steal source-container
@@ -111,7 +123,7 @@ function getEnergyForTech(creep) {
     }
 
     /*
-     * Priority 6:
+     * Priority 7:
      * Last resort. Mine its own energy.
      *
      * This is slow, but it keeps the Tech alive in a weak room.
