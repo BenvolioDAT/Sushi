@@ -4,49 +4,222 @@ var travel = require('utility.Travel.Creep');
 var roleTech = {
     run: function(creep) {
         /*
-         * Tech is the upgrader role. creep.memory.upgrading is its mode flag:
-         * true means spend energy on the controller, false means collect energy.
+         * Tech is the upgrader role.
+         *
+         * creep.memory.upgrading:
+         * false = collect energy
+         * true  = upgrade controller
          */
         if (creep.memory.upgrading && creepUtility.isEmpty(creep)) {
             creep.memory.upgrading = false;
         }
 
-        /*
-         * When the creep becomes full, switch to upgrade mode. The helper hides
-         * the store-capacity check so this role stays easy to read.
-         */
         if (!creep.memory.upgrading && creepUtility.isFull(creep)) {
             creep.memory.upgrading = true;
         }
 
         if (creep.memory.upgrading) {
-            /*
-             * creep.room.controller is the controller in the room the creep is
-             * currently standing in. Some rooms may not have one, so check first.
-             */
-            if (creep.room.controller) {
-                /*
-                 * upgradeController returns ERR_NOT_IN_RANGE when the controller
-                 * is valid but too far away. The travel wrapper moves to range 3,
-                 * which is enough for controller upgrading.
-                 */
-                if (creep.upgradeController(creep.room.controller) === ERR_NOT_IN_RANGE) {
-                    travel.move(creep, creep.room.controller, {
-                        range: 3
-                    });
-                }
-            }
-
+            upgradeRoomController(creep);
             return;
         }
 
         /*
-         * Not upgrading means the Tech needs energy. getEnergy tries several
-         * sources in order: dropped energy, tombstones, ruins, storage,
-         * containers, and finally harvesting.
+         * Tech uses its own energy order now:
+         *
+         * 1. Controller container
+         * 2. Storage
+         * 3. Dropped energy near sources
+         * 4. Ruins
+         * 5. Source containers
+         * 6. Mine its own energy
          */
-        creepUtility.getEnergy(creep);
+        getEnergyForTech(creep);
     }
 };
+
+function upgradeRoomController(creep) {
+    if (!creep.room.controller) {
+        return;
+    }
+
+    /*
+     * Upgrading works from range 3.
+     * So we move to range 3 instead of standing directly on top of the controller.
+     */
+    if (creep.upgradeController(creep.room.controller) === ERR_NOT_IN_RANGE) {
+        travel.move(creep, creep.room.controller, {
+            range: 3
+        });
+    }
+}
+
+function getEnergyForTech(creep) {
+    if (!creep || !creep.room) {
+        return false;
+    }
+
+    if (creepUtility.isFull(creep)) {
+        return false;
+    }
+
+    /*
+     * Priority 1:
+     * Use the controller container first.
+     *
+     * This keeps the Tech working near the controller instead of running across
+     * the room like a confused shopping cart.
+     */
+    if (withdrawFromControllerContainer(creep)) {
+        return true;
+    }
+
+    /*
+     * Priority 2:
+     * If the controller container is empty, use storage next.
+     */
+    if (creepUtility.withdrawFromStorage(creep)) {
+        return true;
+    }
+
+    /*
+     * Priority 3:
+     * Pick up dropped energy near sources.
+     *
+     * This is useful when miners overflow, die, or drop extra energy.
+     */
+    if (pickupDroppedEnergyNearSource(creep)) {
+        return true;
+    }
+
+    /*
+     * Priority 4:
+     * Pull energy from ruins.
+     */
+    if (creepUtility.withdrawFromClosestRuin(creep)) {
+        return true;
+    }
+
+    /*
+     * Priority 5:
+     * Withdraw from source containers.
+     *
+     * This comes after storage because Tech should not steal source-container
+     * energy unless the better upgrader fuel spots are empty.
+     */
+    if (withdrawFromSourceContainer(creep)) {
+        return true;
+    }
+
+    /*
+     * Priority 6:
+     * Last resort. Mine its own energy.
+     *
+     * This is slow, but it keeps the Tech alive in a weak room.
+     */
+    if (creepUtility.harvestClosestSource(creep)) {
+        return true;
+    }
+
+    return false;
+}
+
+function withdrawFromControllerContainer(creep) {
+    var container = findControllerContainerWithEnergy(creep);
+
+    if (!container) {
+        return false;
+    }
+
+    return creepUtility.withdrawEnergy(creep, container);
+}
+
+function findControllerContainerWithEnergy(creep) {
+    if (!creep || !creep.room || !creep.room.controller) {
+        return null;
+    }
+
+    /*
+     * Range 3 is intentional.
+     *
+     * A Tech can stand near this container, withdraw energy, and still be close
+     * enough to upgrade the controller. This catches both truly adjacent
+     * containers and good upgrader containers placed a couple tiles away.
+     */
+    return creep.pos.findClosestByPath(FIND_STRUCTURES, {
+        filter: function(structure) {
+            return (
+                structure.structureType === STRUCTURE_CONTAINER &&
+                structure.store &&
+                structure.store.getUsedCapacity(RESOURCE_ENERGY) > 0 &&
+                structure.pos.getRangeTo(creep.room.controller) <= 3
+            );
+        }
+    });
+}
+
+function pickupDroppedEnergyNearSource(creep) {
+    var droppedEnergy = findDroppedEnergyNearSource(creep);
+
+    if (!droppedEnergy) {
+        return false;
+    }
+
+    return creepUtility.pickupEnergy(creep, droppedEnergy);
+}
+
+function findDroppedEnergyNearSource(creep) {
+    if (!creep || !creep.room) {
+        return null;
+    }
+
+    /*
+     * Only pick dropped energy that is close to a source.
+     *
+     * This avoids the Tech chasing random tiny crumbs across the room when it
+     * should mostly live near the controller.
+     */
+    return creep.pos.findClosestByPath(FIND_DROPPED_RESOURCES, {
+        filter: function(resource) {
+            return (
+                resource.resourceType === RESOURCE_ENERGY &&
+                resource.amount > 0 &&
+                resource.pos.findInRange(FIND_SOURCES, 2).length > 0
+            );
+        }
+    });
+}
+
+function withdrawFromSourceContainer(creep) {
+    var container = findSourceContainerWithEnergy(creep);
+
+    if (!container) {
+        return false;
+    }
+
+    return creepUtility.withdrawEnergy(creep, container);
+}
+
+function findSourceContainerWithEnergy(creep) {
+    if (!creep || !creep.room) {
+        return null;
+    }
+
+    /*
+     * Source containers are containers within range 2 of a source.
+     *
+     * This keeps the Tech from treating the controller container as a source
+     * container too. We already checked the controller container first.
+     */
+    return creep.pos.findClosestByPath(FIND_STRUCTURES, {
+        filter: function(structure) {
+            return (
+                structure.structureType === STRUCTURE_CONTAINER &&
+                structure.store &&
+                structure.store.getUsedCapacity(RESOURCE_ENERGY) > 0 &&
+                structure.pos.findInRange(FIND_SOURCES, 2).length > 0
+            );
+        }
+    });
+}
 
 module.exports = roleTech;

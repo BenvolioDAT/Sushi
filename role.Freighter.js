@@ -10,13 +10,9 @@ var roleFreighter = {
             return;
         }
 
-        /*
-         * truckerWorking is this role's memory flag even though the file is
-         * named Freighter. false = collect energy, true = deliver energy.
-         */
         updateWorkingState(creep);
 
-        if(creep.memory.truckerWorking) {
+        if(creep.memory.FreighterWorking) {
             deliverEnergy(creep);
         } else {
             collectEnergy(creep);
@@ -28,15 +24,16 @@ function updateWorkingState(creep) {
     /*
      * If the hauler was delivering but has zero energy, it must go collect more.
      */
-    if(creep.memory.truckerWorking && creep.store[RESOURCE_ENERGY] === 0) {
-        creep.memory.truckerWorking = false;
+    if(creep.memory.FreighterWorking && creep.store[RESOURCE_ENERGY] === 0) {
+        creep.memory.FreighterWorking = false;
     }
+
     /*
      * If the hauler was collecting and has no free energy capacity, it is full
      * and should switch to delivery mode.
      */
-    if(!creep.memory.truckerWorking && creep.store.getFreeCapacity(RESOURCE_ENERGY) === 0) {
-        creep.memory.truckerWorking = true;
+    if(!creep.memory.FreighterWorking && creep.store.getFreeCapacity(RESOURCE_ENERGY) === 0) {
+        creep.memory.FreighterWorking = true;
     }
 }
 
@@ -70,46 +67,40 @@ function collectEnergy(creep) {
 }
 
 function deliverEnergy(creep) {
-    /*
-     * Delivery priority starts with storage if it exists and has room. This makes
-     * the Freighter act like a source-to-storage hauler in developed rooms.
-     */
     var target = null;
 
-    if(creep.room.storage && creep.room.storage.store.getFreeCapacity(RESOURCE_ENERGY) > 0) {
-        target = creep.room.storage;
+    /*
+     * Priority 1:
+     * Fill spawn and extensions first so the room can keep making creeps.
+     * If these are empty, the whole bee hive starts coughing dust.
+     */
+    target = findSpawnOrExtensionToFill(creep);
+
+    /*
+     * Priority 2:
+     * Fill towers after spawn/extensions. Towers keep the room defended and
+     * can repair when they have energy.
+     */
+    if(!target) {
+        target = findTowerToFill(creep);
     }
 
     /*
-     * If storage is not available, fill spawn and extensions so the room can
-     * keep producing creeps.
+     * Priority 3:
+     * Fill the controller container. This gives Upgraders a local energy buffer
+     * so they do not have to waddle back and forth like tired penguins.
      */
     if(!target) {
-        target = creep.pos.findClosestByPath(FIND_MY_STRUCTURES, {
-            filter: function(structure) {
-                return (
-                    (structure.structureType === STRUCTURE_SPAWN ||
-                     structure.structureType === STRUCTURE_EXTENSION) &&
-                    structure.store &&
-                    structure.store.getFreeCapacity(RESOURCE_ENERGY) > 0
-                );
-            }
-        });
+        target = findControllerContainerToFill(creep);
     }
 
     /*
-     * Towers are useful, but this role fills them after spawn/extensions.
+     * Priority 4:
+     * Put leftover energy into storage. Storage is last because it has huge
+     * capacity and would otherwise steal all Freighter deliveries forever.
      */
     if(!target) {
-        target = creep.pos.findClosestByPath(FIND_MY_STRUCTURES, {
-            filter: function(structure) {
-                return (
-                    structure.structureType === STRUCTURE_TOWER &&
-                    structure.store &&
-                    structure.store.getFreeCapacity(RESOURCE_ENERGY) > 0
-                );
-            }
-        });
+        target = findStorageToFill(creep);
     }
 
     if(!target) {
@@ -127,6 +118,83 @@ function deliverEnergy(creep) {
     if(creep.transfer(target, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
         creep.moveTo(target, {visualizePathStyle: {stroke: '#ffffff'}});
     }
+}
+
+function findSpawnOrExtensionToFill(creep) {
+    /*
+     * Spawns and extensions are the highest-priority delivery target because
+     * they directly control whether the room can spawn new creeps.
+     */
+    return creep.pos.findClosestByPath(FIND_MY_STRUCTURES, {
+        filter: function(structure) {
+            return (
+                (structure.structureType === STRUCTURE_SPAWN ||
+                 structure.structureType === STRUCTURE_EXTENSION) &&
+                structure.store &&
+                structure.store.getFreeCapacity(RESOURCE_ENERGY) > 0
+            );
+        }
+    });
+}
+
+function findTowerToFill(creep) {
+    /*
+     * Towers are useful for defense and repairs. This fills any tower that has
+     * room for more energy.
+     */
+    return creep.pos.findClosestByPath(FIND_MY_STRUCTURES, {
+        filter: function(structure) {
+            return (
+                structure.structureType === STRUCTURE_TOWER &&
+                structure.store &&
+                structure.store.getFreeCapacity(RESOURCE_ENERGY) > 0
+            );
+        }
+    });
+}
+
+function findControllerContainerToFill(creep) {
+    /*
+     * This looks for a container near the room controller.
+     *
+     * Range 3 is used because Upgraders can usually stand around the controller
+     * and withdraw from a nearby container without the container needing to be
+     * directly touching the controller.
+     *
+     * This ignores source containers because source containers are near sources,
+     * while this function only cares about containers near the controller.
+     */
+    if(!creep.room.controller) {
+        return null;
+    }
+
+    return creep.pos.findClosestByPath(FIND_STRUCTURES, {
+        filter: function(structure) {
+            return (
+                structure.structureType === STRUCTURE_CONTAINER &&
+                structure.store &&
+                structure.store.getFreeCapacity(RESOURCE_ENERGY) > 0 &&
+                structure.pos.getRangeTo(creep.room.controller) <= 3
+            );
+        }
+    });
+}
+
+function findStorageToFill(creep) {
+    /*
+     * Storage is the fallback delivery target. It should not be first because
+     * storage has so much capacity that it can prevent smaller important targets,
+     * like the controller container, from being filled.
+     */
+    if(
+        creep.room.storage &&
+        creep.room.storage.store &&
+        creep.room.storage.store.getFreeCapacity(RESOURCE_ENERGY) > 0
+    ) {
+        return creep.room.storage;
+    }
+
+    return null;
 }
 
 function findSourceContainer(creep) {
