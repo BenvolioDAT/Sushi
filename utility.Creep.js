@@ -701,12 +701,12 @@ function getCreepWorkParts(creep) {
 function getAssignedWorkTotal(sourceMemory) {
     var totalWork = 0;
 
-    if (!sourceMemory || !sourceMemory.assignedMinner) {
+    if (!sourceMemory || !sourceMemory.assignedMiner) {
         return totalWork;
     }
 
-    for (var i = 0; i < sourceMemory.assignedMinner.length; i++) {
-        var creepId = sourceMemory.assignedMinner[i];
+    for (var i = 0; i < sourceMemory.assignedMiner.length; i++) {
+        var creepId = sourceMemory.assignedMiner[i];
         var assignedCreep = Game.getObjectById(creepId);
 
         if (!assignedCreep || !assignedCreep.my) {
@@ -733,7 +733,7 @@ function sourceHasOpenWorkCapacity(sourceRecord) {
  *
  * This function does several jobs:
  * 1. Looks at Memory.rooms[roomName].sources.
- * 2. Cleans dead creep IDs out of each source's assignedMinner list.
+ * 2. Cleans dead creep IDs out of each source's assignedMiner list.
  * 3. Keeps this creep on its old source if the assignment is still valid.
  * 4. Otherwise picks the source with the fewest assigned miners.
  * 5. Respects seatCount, so a source with 3 seats can hold up to 3 miners.
@@ -1164,8 +1164,8 @@ function getSourceRecordsFromRoomMemory(creep) {
             continue;
         }
 
-        normalizeAssignedMinnerList(sourceMemory);
-        cleanDeadAssignedMinners(sourceMemory);
+        normalizeassignedMinerList(sourceMemory);
+        cleanDeadassignedMiners(sourceMemory);
 
         sourceRecords.push({
             sourceId: realSourceId,
@@ -1179,47 +1179,47 @@ function getSourceRecordsFromRoomMemory(creep) {
 }
 
 /**
- * Make sure sourceMemory.assignedMinner is always an array.
+ * Make sure sourceMemory.assignedMiner is always an array.
  *
  * This lets the code support:
- * - assignedMinner: null
- * - assignedMinner: "oneCreepId"
- * - assignedMinner: ["creepIdOne", "creepIdTwo"]
+ * - assignedMiner: null
+ * - assignedMiner: "oneCreepId"
+ * - assignedMiner: ["creepIdOne", "creepIdTwo"]
  *
  * @param {*} sourceMemory
  */
-function normalizeAssignedMinnerList(sourceMemory) {
-    if(!sourceMemory.assignedMinner) {
-        sourceMemory.assignedMinner = [];
+function normalizeassignedMinerList(sourceMemory) {
+    if(!sourceMemory.assignedMiner) {
+        sourceMemory.assignedMiner = [];
         return;
     }
 
-    if(Array.isArray(sourceMemory.assignedMinner)) {
+    if(Array.isArray(sourceMemory.assignedMiner)) {
         return;
     }
 
-    if(typeof sourceMemory.assignedMinner === 'string') {
-        sourceMemory.assignedMinner = [sourceMemory.assignedMinner];
+    if(typeof sourceMemory.assignedMiner === 'string') {
+        sourceMemory.assignedMiner = [sourceMemory.assignedMiner];
         return;
     }
 
-    sourceMemory.assignedMinner = [];
+    sourceMemory.assignedMiner = [];
 }
 
 /**
- * Remove dead creep IDs and duplicate creep IDs from one source's assignedMinner list.
+ * Remove dead creep IDs and duplicate creep IDs from one source's assignedMiner list.
  *
  * Game.getObjectById(id) returns the object if it can be found, or null if it
  * cannot be found. That makes it useful for clearing dead creep IDs.
  *
  * @param {*} sourceMemory
  */
-function cleanDeadAssignedMinners(sourceMemory) {
+function cleanDeadassignedMiners(sourceMemory) {
     var cleanList = [];
     var seenIds = {};
 
-    for(var i = 0; i < sourceMemory.assignedMinner.length; i++) {
-        var creepId = sourceMemory.assignedMinner[i];
+    for(var i = 0; i < sourceMemory.assignedMiner.length; i++) {
+        var creepId = sourceMemory.assignedMiner[i];
 
         if(!creepId) {
             continue;
@@ -1239,7 +1239,7 @@ function cleanDeadAssignedMinners(sourceMemory) {
         cleanList.push(creepId);
     }
 
-    sourceMemory.assignedMinner = cleanList;
+    sourceMemory.assignedMiner = cleanList;
 }
 
 /**
@@ -1271,13 +1271,13 @@ function removeCreepFromAllSourceAssignments(sourceRecords, creepId) {
         var sourceMemory = sourceRecords[i].sourceMemory;
         var newList = [];
 
-        for(var j = 0; j < sourceMemory.assignedMinner.length; j++) {
-            if(sourceMemory.assignedMinner[j] !== creepId) {
-                newList.push(sourceMemory.assignedMinner[j]);
+        for(var j = 0; j < sourceMemory.assignedMiner.length; j++) {
+            if(sourceMemory.assignedMiner[j] !== creepId) {
+                newList.push(sourceMemory.assignedMiner[j]);
             }
         }
 
-        sourceMemory.assignedMinner = newList;
+        sourceMemory.assignedMiner = newList;
     }
 }
 
@@ -1302,7 +1302,7 @@ function reclaimRememberedSource(creep, sourceRecords) {
 
         // If this source has an open seat, claim it again.
         if(sourceHasOpenWorkCapacity(record)) {
-            record.sourceMemory.assignedMinner.push(creep.id);
+            record.sourceMemory.assignedMiner.push(creep.id);
             return record.source;
         }
 
@@ -1406,8 +1406,8 @@ function isBetterOverflowChoice(creep, candidateRecord, bestRecord) {
         return true;
     }
 
-    var candidatePressure = candidateRecord.sourceMemory.assignedMinner.length / candidateRecord.seatCount;
-    var bestPressure = bestRecord.sourceMemory.assignedMinner.length / bestRecord.seatCount;
+    var candidatePressure = candidateRecord.sourceMemory.assignedMiner.length / candidateRecord.seatCount;
+    var bestPressure = bestRecord.sourceMemory.assignedMiner.length / bestRecord.seatCount;
 
     if(candidatePressure < bestPressure) {
         return true;
@@ -1425,13 +1425,13 @@ function isBetterOverflowChoice(creep, candidateRecord, bestRecord) {
  *
  * This writes both:
  * - creep.memory.sourceId
- * - Memory.rooms[roomName].sources[sourceId].assignedMinner
+ * - Memory.rooms[roomName].sources[sourceId].assignedMiner
  *
  * @param {Creep} creep
  * @param {*} sourceRecord
  */
 function claimSourceRecord(creep, sourceRecord) {
-    sourceRecord.sourceMemory.assignedMinner.push(creep.id);
+    sourceRecord.sourceMemory.assignedMiner.push(creep.id);
     creep.memory.sourceId = sourceRecord.sourceId;
 }
 
