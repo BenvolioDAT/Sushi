@@ -1064,6 +1064,143 @@ function getFallbackAssignedSource(creep) {
 
     return source;
 }
+/////////////////////////////////////////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////////////////////
+var REPAIR_LIMITS = {
+    /*
+     * Roads and containers decay over time, so repair them when they drop below
+     * 80%, then repair them all the way to full.
+     */
+    normalRepairPercent: 0.80,
+
+    /*
+     * Ramparts and walls have crazy huge max hits.
+     * Do NOT repair them to full. That is how your energy goes into the shadow realm.
+     */
+    rampartTargetHits: 10000,
+    wallTargetHits: 10000
+};
+
+function shouldRepairStructure(structure) {
+    /*
+     * Safety check.
+     */
+    if (!structure) {
+        return false;
+    }
+
+    /*
+     * If it is already fully repaired, skip it.
+     */
+    if (structure.hits >= structure.hitsMax) {
+        return false;
+    }
+
+    /*
+     * Ramparts:
+     * Only repair if below our chosen rampart limit.
+     *
+     * Example:
+     * If rampartTargetHits is 10000, repair ramparts until they reach 10000.
+     */
+    if (structure.structureType === STRUCTURE_RAMPART) {
+        return structure.hits < REPAIR_LIMITS.rampartTargetHits;
+    }
+
+    /*
+     * Walls:
+     * Same idea as ramparts. Do not try to repair walls to hitsMax.
+     */
+    if (structure.structureType === STRUCTURE_WALL) {
+        return structure.hits < REPAIR_LIMITS.wallTargetHits;
+    }
+
+    /*
+     * Everything else:
+     * Repair only when it drops below 80%.
+     *
+     * Example:
+     * Container max hits = 250000.
+     * 80% damaged threshold means start repairing below 200000.
+     */
+    return structure.hits < structure.hitsMax * REPAIR_LIMITS.normalRepairPercent;
+}
+
+
+function getRepairTargetFromMemory(creep) {
+    /*
+     * Safety check.
+     */
+    if (!creep || !creep.room) {
+        return null;
+    }
+
+    /*
+     * Get this room's repair list.
+     *
+     * Memory path:
+     * Memory.rooms[roomName].RepairStructure
+     */
+    var roomMemory = Memory.rooms && Memory.rooms[creep.room.name];
+
+    if (!roomMemory || !roomMemory.RepairStructure) {
+        return null;
+    }
+
+    var repairList = roomMemory.RepairStructure;
+
+    /*
+     * Go through the saved structure IDs.
+     */
+    for (var i = 0; i < repairList.length; i++) {
+        var structureId = repairList[i];
+
+        /*
+         * Convert ID back into the real structure object.
+         */
+        var structure = Game.getObjectById(structureId);
+
+        /*
+         * If the object is gone, skip it.
+         */
+        if (!structure) {
+            continue;
+        }
+
+        /*
+         * Ask our repair rule:
+         * "Is this worth repairing right now?"
+         */
+        if (shouldRepairStructure(structure)) {
+            return structure;
+        }
+    }
+
+    return null;
+}
+
+function repairFromMemory(creep) {
+    var target = getRepairTargetFromMemory(creep);
+
+    if (!target) {
+        return false;
+    }
+
+    /*
+     * Creep repair works within range 3.
+     * If too far away, move closer.
+     */
+    if (creep.repair(target) === ERR_NOT_IN_RANGE) {
+        creep.moveTo(target, {
+            visualizePathStyle: {
+                stroke: '#ffaa00'
+            }
+        });
+    }
+
+    return true;
+}
+
 // ============================================================================
 // Exports
 // ============================================================================
