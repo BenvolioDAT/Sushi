@@ -263,7 +263,7 @@ function clearTravelMemory(creep) {
 // Exports
 // ============================================================================
 module.exports = {
-    move: move,
-    moveToRoom: moveToRoom,
-    clearTravelMemory: clearTravelMemory
+    move,
+    moveToRoom,
+    clearTravelMemory,
 };

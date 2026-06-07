@@ -1,26 +1,38 @@
+var creepUtility = require('utility.Creep');
+
+var MAX_REPAIR_ARTIFICERS = 2;
+
+var REPAIR_LIST_MEMORY_KEY = 'RepairStructure';
+var REPAIR_WORKERS_MEMORY_KEY = 'ArtificerRepairWorkers';
+var REPAIR_CLAIMS_MEMORY_KEY = 'ArtificerRepairClaims';
+
+var REPAIR_WORKER_STALE_TICKS = 25;
+
 var roleArtificer = {
 
     /** @param {Creep} creep **/
     run: function(creep) {
-        /*
-         * Safety check:
-         * - !creep protects against accidentally calling run with no creep.
-         * - creep.spawning means the creep is still inside the spawn and cannot act.
-         * Returning early saves CPU and prevents errors from using an invalid creep.
-         */
         if(!creep || creep.spawning) {
             return;
         }
 
-        /*
-         * builderWorking is this role's "mode" flag in creep.memory.
-         * false = collect energy.
-         * true = spend energy on construction or controller upgrading.
-         */
+        setupRepairMemory(creep.room);
+        cleanRepairMemory(creep.room);
+
         updateWorkingState(creep);
 
+        /*
+         * If there is repair work, only 2 Artificers get repair-worker slots.
+         * The 3rd Artificer keeps building.
+         */
+        if(hasRepairWork(creep.room)) {
+            claimRepairWorkerSlot(creep);
+        } else {
+            clearRepairDuty(creep);
+        }
+
         if(creep.memory.builderWorking) {
-            buildOrUpgrade(creep);
+            repairBuildOrUpgrade(creep);
         } else {
             collectEnergy(creep);
         }
@@ -28,107 +40,375 @@ var roleArtificer = {
 };
 
 function updateWorkingState(creep) {
-    /*
-     * If the Artificer was working but ran out of energy, switch back to
-     * collection mode. creep.store[RESOURCE_ENERGY] reads how much energy
-     * this creep is carrying right now.
-     */
     if(creep.memory.builderWorking && creep.store[RESOURCE_ENERGY] === 0) {
         creep.memory.builderWorking = false;
     }
-    /*
-     * If the Artificer was collecting and its energy storage is full, switch
-     * to working mode. getFreeCapacity(RESOURCE_ENERGY) returns empty carry
-     * space for energy; zero means no more energy fits.
-     */
+
     if(!creep.memory.builderWorking && creep.store.getFreeCapacity(RESOURCE_ENERGY) === 0) {
         creep.memory.builderWorking = true;
     }
 }
 
-function collectEnergy(creep) {
+function repairBuildOrUpgrade(creep) {
     /*
-     * Find stored or dropped energy before harvesting. Using existing energy is
-     * usually faster than spending WORK time on a source.
+     * Repair comes before building, but only if this Artificer has one of the
+     * 2 repair-worker slots.
      */
+    if(isRepairWorker(creep)) {
+        if(repairClaimedTarget(creep)) {
+            return;
+        }
+    }
+
+    /*
+     * If this Artificer is not a repair worker, or there is no repair target
+     * available, do normal Artificer work.
+     */
+    buildOrUpgrade(creep);
+}
+
+function setupRepairMemory(room) {
+    if(!Memory.rooms) {
+        Memory.rooms = {};
+    }
+
+    if(!Memory.rooms[room.name]) {
+        Memory.rooms[room.name] = {};
+    }
+
+    if(!Memory.rooms[room.name][REPAIR_LIST_MEMORY_KEY]) {
+        Memory.rooms[room.name][REPAIR_LIST_MEMORY_KEY] = [];
+    }
+
+    if(!Memory.rooms[room.name][REPAIR_WORKERS_MEMORY_KEY]) {
+        Memory.rooms[room.name][REPAIR_WORKERS_MEMORY_KEY] = {};
+    }
+
+    if(!Memory.rooms[room.name][REPAIR_CLAIMS_MEMORY_KEY]) {
+        Memory.rooms[room.name][REPAIR_CLAIMS_MEMORY_KEY] = {};
+    }
+}
+
+function cleanRepairMemory(room) {
+    var roomMemory = Memory.rooms[room.name];
+    var workers = roomMemory[REPAIR_WORKERS_MEMORY_KEY];
+    var claims = roomMemory[REPAIR_CLAIMS_MEMORY_KEY];
+
+    var creepName;
+
+    /*
+     * Remove dead or stale repair workers.
+     */
+    for(creepName in workers) {
+        if(!workers.hasOwnProperty(creepName)) {
+            continue;
+        }
+
+        if(!Game.creeps[creepName]) {
+            delete workers[creepName];
+            continue;
+        }
+
+        if(Game.time - workers[creepName] > REPAIR_WORKER_STALE_TICKS) {
+            delete workers[creepName];
+        }
+    }
+
+    /*
+     * Remove bad target claims.
+     */
+    for(var targetId in claims) {
+        if(!claims.hasOwnProperty(targetId)) {
+            continue;
+        }
+
+        creepName = claims[targetId];
+
+        var target = Game.getObjectById(targetId);
+
+        if(!Game.creeps[creepName]) {
+            delete claims[targetId];
+            continue;
+        }
+
+        if(!target) {
+            delete claims[targetId];
+            continue;
+        }
+
+        if(!structureNeedsRepair(target)) {
+            delete claims[targetId];
+            continue;
+        }
+
+        if(!workers[creepName]) {
+            delete claims[targetId];
+        }
+    }
+}
+
+function claimRepairWorkerSlot(creep) {
+    var roomMemory = Memory.rooms[creep.room.name];
+    var workers = roomMemory[REPAIR_WORKERS_MEMORY_KEY];
+
+    /*
+     * If this creep already has a repair-worker slot, keep it fresh.
+     */
+    if(workers[creep.name]) {
+        workers[creep.name] = Game.time;
+        return true;
+    }
+
+    /*
+     * Count current repair workers.
+     */
+    var count = 0;
+
+    for(var creepName in workers) {
+        if(workers.hasOwnProperty(creepName)) {
+            count++;
+        }
+    }
+
+    /*
+     * Only allow 2 Artificers to be repair workers.
+     */
+    if(count >= MAX_REPAIR_ARTIFICERS) {
+        return false;
+    }
+
+    workers[creep.name] = Game.time;
+    return true;
+}
+
+function isRepairWorker(creep) {
+    var roomMemory = Memory.rooms[creep.room.name];
+    var workers = roomMemory[REPAIR_WORKERS_MEMORY_KEY];
+
+    return !!workers[creep.name];
+}
+
+function hasRepairWork(room) {
+    var roomMemory = Memory.rooms[room.name];
+    var repairList = roomMemory[REPAIR_LIST_MEMORY_KEY];
+
+    if(!repairList || repairList.length === 0) {
+        return false;
+    }
+
+    for(var i = 0; i < repairList.length; i++) {
+        var target = Game.getObjectById(repairList[i]);
+
+        if(target && structureNeedsRepair(target)) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+function repairClaimedTarget(creep) {
+    /*
+     * First try to keep repairing the target this creep already picked.
+     * This makes the Artificer stay on one job until it is done.
+     */
+    var oldTarget = getRememberedRepairTarget(creep);
+
+    if(oldTarget) {
+        return repairTarget(creep, oldTarget);
+    }
+
+    /*
+     * No remembered target, so claim a new one from room memory.
+     */
+    var newTarget = claimNewRepairTarget(creep);
+
+    if(newTarget) {
+        return repairTarget(creep, newTarget);
+    }
+
+    return false;
+}
+
+function getRememberedRepairTarget(creep) {
+    if(!creep.memory.repairTargetId) {
+        return null;
+    }
+
+    var target = Game.getObjectById(creep.memory.repairTargetId);
+
+    if(!target || !structureNeedsRepair(target)) {
+        releaseRepairTarget(creep);
+        return null;
+    }
+
+    var roomMemory = Memory.rooms[creep.room.name];
+    var claims = roomMemory[REPAIR_CLAIMS_MEMORY_KEY];
+    var claimedBy = claims[target.id];
+
+    /*
+     * If nobody has the target, claim it.
+     */
+    if(!claimedBy) {
+        claims[target.id] = creep.name;
+        return target;
+    }
+
+    /*
+     * If this creep has the claim, keep it.
+     */
+    if(claimedBy === creep.name) {
+        return target;
+    }
+
+    /*
+     * Someone else has it. Forget this target.
+     */
+    delete creep.memory.repairTargetId;
+    return null;
+}
+
+function claimNewRepairTarget(creep) {
+    var roomMemory = Memory.rooms[creep.room.name];
+    var repairList = roomMemory[REPAIR_LIST_MEMORY_KEY];
+    var claims = roomMemory[REPAIR_CLAIMS_MEMORY_KEY];
+
+    if(!repairList || repairList.length === 0) {
+        return null;
+    }
+
+    for(var i = 0; i < repairList.length; i++) {
+        var targetId = repairList[i];
+        var target = Game.getObjectById(targetId);
+
+        if(!target) {
+            continue;
+        }
+
+        if(!structureNeedsRepair(target)) {
+            continue;
+        }
+
+        /*
+         * If another Artificer already claimed this target, skip it.
+         */
+        if(claims[targetId] && claims[targetId] !== creep.name) {
+            continue;
+        }
+
+        /*
+         * Claim the target.
+         */
+        claims[targetId] = creep.name;
+        creep.memory.repairTargetId = targetId;
+
+        return target;
+    }
+
+    return null;
+}
+
+function releaseRepairTarget(creep) {
+    if(!creep || !creep.room || !creep.memory.repairTargetId) {
+        return;
+    }
+
+    var roomMemory = Memory.rooms[creep.room.name];
+
+    if(roomMemory && roomMemory[REPAIR_CLAIMS_MEMORY_KEY]) {
+        var claims = roomMemory[REPAIR_CLAIMS_MEMORY_KEY];
+
+        if(claims[creep.memory.repairTargetId] === creep.name) {
+            delete claims[creep.memory.repairTargetId];
+        }
+    }
+
+    delete creep.memory.repairTargetId;
+}
+
+function clearRepairDuty(creep) {
+    var roomMemory = Memory.rooms[creep.room.name];
+
+    roomMemory[REPAIR_WORKERS_MEMORY_KEY] = {};
+    roomMemory[REPAIR_CLAIMS_MEMORY_KEY] = {};
+
+    delete creep.memory.repairTargetId;
+}
+
+function structureNeedsRepair(structure) {
+    /*
+     * This uses the repair rule you added to utility.Creep.js.
+     *
+     * If utility.Creep.js does not export shouldRepairStructure yet,
+     * this fallback still works, but it will repair anything damaged.
+     */
+    if(creepUtility.shouldRepairStructure) {
+        return creepUtility.shouldRepairStructure(structure);
+    }
+
+    return structure && structure.hits < structure.hitsMax;
+}
+
+function repairTarget(creep, target) {
+    /*
+     * creep.repair works from range 3.
+     */
+    var result = creep.repair(target);
+
+    if(result === ERR_NOT_IN_RANGE) {
+        creep.moveTo(target, {
+            visualizePathStyle: {
+                stroke: '#ffaa00'
+            }
+        });
+    }
+
+    return true;
+}
+
+function collectEnergy(creep) {
     var target = findStoredEnergy(creep);
 
     if(target) {
-        /*
-         * Dropped Resource objects have resourceType. Structures like storage
-         * and containers do not use resourceType, so this distinguishes pickup
-         * from withdraw.
-         */
         if(target.resourceType) {
-            /*
-             * creep.pickup returns ERR_NOT_IN_RANGE when the target is valid but
-             * too far away. In that case, moveTo starts walking toward it.
-             */
             if(creep.pickup(target) === ERR_NOT_IN_RANGE) {
                 creep.moveTo(target, {visualizePathStyle: {stroke: '#ffaa00'}});
             }
         } else if(creep.withdraw(target, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
-            /*
-             * creep.withdraw takes energy out of a structure's store. It also
-             * returns ERR_NOT_IN_RANGE when the creep needs to move closer.
-             */
             creep.moveTo(target, {visualizePathStyle: {stroke: '#ffaa00'}});
         }
+
         return;
     }
 
-    // Last fallback: harvest directly if no stored energy is available.
-    /*
-     * findClosestByPath asks Screeps to choose a reachable source using pathing,
-     * not just straight-line range. harvest uses WORK parts to gather energy.
-     */
     var source = creep.pos.findClosestByPath(FIND_SOURCES);
+
     if(source && creep.harvest(source) === ERR_NOT_IN_RANGE) {
         creep.moveTo(source, {visualizePathStyle: {stroke: '#ffaa00'}});
     }
 }
 
 function buildOrUpgrade(creep) {
-    /*
-     * Construction sites are unfinished buildings. Artificers build first
-     * because construction turns planned sites into useful structures.
-     */
     var target = creep.pos.findClosestByPath(FIND_CONSTRUCTION_SITES);
 
     if(target) {
-        /*
-         * creep.build spends carried energy on the site. If the site is too far
-         * away, moveTo starts moving the creep toward build range.
-         */
         if(creep.build(target) === ERR_NOT_IN_RANGE) {
             creep.moveTo(target, {visualizePathStyle: {stroke: '#ffffff'}});
         }
+
         return;
     }
 
-    // Builders can help the controller when there is nothing to build.
-    /*
-     * creep.room.controller is the room controller object when the room has one.
-     * upgradeController spends energy to improve your Room Controller Level.
-     */
     if(creep.room.controller && creep.upgradeController(creep.room.controller) === ERR_NOT_IN_RANGE) {
         creep.moveTo(creep.room.controller, {visualizePathStyle: {stroke: '#ffffff'}});
     }
 }
 
 function findStoredEnergy(creep) {
-    /*
-     * Prefer storage first because it is the central room energy bank.
-     * creep.room.storage is undefined until the room owns a storage structure.
-     */
     if(creep.room.storage && creep.room.storage.store[RESOURCE_ENERGY] > 0) {
         return creep.room.storage;
     }
 
-    /*
-     * FIND_STRUCTURES returns all visible structures in the room. The filter
-     * keeps only containers with at least one energy available.
-     */
     var container = creep.pos.findClosestByPath(FIND_STRUCTURES, {
         filter: function(structure) {
             return (
@@ -143,10 +423,6 @@ function findStoredEnergy(creep) {
         return container;
     }
 
-    /*
-     * Last stored-energy choice is dropped energy on the ground. This returns
-     * a Resource object, which collectEnergy later handles with creep.pickup.
-     */
     return creep.pos.findClosestByPath(FIND_DROPPED_RESOURCES, {
         filter: function(resource) {
             return resource.resourceType === RESOURCE_ENERGY && resource.amount > 0;

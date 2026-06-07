@@ -1241,4 +1241,6 @@ module.exports = {
     getAssignedSource,
 
     dropEnergy,
+
+    shouldRepairStructure,
 };
