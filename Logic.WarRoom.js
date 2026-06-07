@@ -32,6 +32,306 @@ var TARGET_FLAG_MEMORY_KEY = 'targetFlag';
 var COMBAT_TARGET_MEMORY_KEY = 'combatTargetId';
 
 /*
+ * WarRoom radar settings.
+ *
+ * The WarRoom only reacts to threats near owned rooms. This keeps one scout in
+ * a far-away room from pulling all combat creeps across the map.
+ */
+var MAX_THREAT_ROOM_DISTANCE = 2;
+var THREAT_FORGET_TICKS = 50;
+var WAR_ROOM_ATTACK_FLAG_NAME = 'WarRoom_Attack';
+
+/*
+ * Run the shared WarRoom brain once per tick.
+ *
+ * Jobs:
+ * - scan every visible room in Game.rooms
+ * - ignore rooms too far from owned rooms
+ * - find the best hostile creep or hostile structure
+ * - create or move one shared attack flag
+ * - remember the active threat in Memory.WarRoom.activeThreat
+ * - remove old memory and the flag after the threat is stale
+ */
+WarRoom.run = function() {
+    WarRoom.ensureMemory();
+
+    var ownedRoomNames = WarRoom.getOwnedRoomNames();
+    var bestThreatInfo = null;
+
+    for(var roomName in Game.rooms) {
+        var room = Game.rooms[roomName];
+
+        if(!room) {
+            continue;
+        }
+
+        var closestOwnedDistance = WarRoom.getClosestOwnedRoomDistance(roomName, ownedRoomNames);
+
+        /*
+         * If there are no owned rooms, or this visible room is too far away,
+         * do not count threats in this room.
+         */
+        if(closestOwnedDistance === null || closestOwnedDistance > MAX_THREAT_ROOM_DISTANCE) {
+            continue;
+        }
+
+        var roomThreatInfo = WarRoom.findBestThreatInRoom(room);
+
+        if(!roomThreatInfo) {
+            continue;
+        }
+
+        /*
+         * The room picked its best local threat. Now add a simple distance
+         * bonus before comparing it against threats from other rooms.
+         */
+        roomThreatInfo.score += WarRoom.getDistanceScoreBonus(closestOwnedDistance);
+
+        if(!bestThreatInfo || roomThreatInfo.score > bestThreatInfo.score) {
+            bestThreatInfo = roomThreatInfo;
+        }
+    }
+
+    if(bestThreatInfo && bestThreatInfo.target) {
+        WarRoom.saveActiveThreat(bestThreatInfo.target, bestThreatInfo.type);
+        WarRoom.placeAttackFlag(bestThreatInfo.target);
+        return;
+    }
+
+    WarRoom.forgetStaleThreat();
+};
+
+/*
+ * Make sure the WarRoom memory object exists before reading or writing it.
+ */
+WarRoom.ensureMemory = function() {
+    if(!Memory.WarRoom) {
+        Memory.WarRoom = {};
+    }
+};
+
+/*
+ * Find visible rooms that are owned by us.
+ */
+WarRoom.getOwnedRoomNames = function() {
+    var ownedRoomNames = [];
+
+    for(var roomName in Game.rooms) {
+        var room = Game.rooms[roomName];
+
+        if(room && room.controller && room.controller.my) {
+            ownedRoomNames.push(roomName);
+        }
+    }
+
+    return ownedRoomNames;
+};
+
+/*
+ * Find the closest owned room by linear room distance.
+ */
+WarRoom.getClosestOwnedRoomDistance = function(roomName, ownedRoomNames) {
+    if(!roomName || !ownedRoomNames || ownedRoomNames.length === 0) {
+        return null;
+    }
+
+    var closestDistance = null;
+
+    for(var i = 0; i < ownedRoomNames.length; i++) {
+        var ownedRoomName = ownedRoomNames[i];
+        var distance = Game.map.getRoomLinearDistance(roomName, ownedRoomName);
+
+        if(closestDistance === null || distance < closestDistance) {
+            closestDistance = distance;
+        }
+    }
+
+    return closestDistance;
+};
+
+/*
+ * Nearby threats should beat similar far-away threats.
+ */
+WarRoom.getDistanceScoreBonus = function(distance) {
+    var remainingDistance = MAX_THREAT_ROOM_DISTANCE - distance;
+
+    if(remainingDistance < 0) {
+        return 0;
+    }
+
+    return remainingDistance * 2000;
+};
+
+/*
+ * Pick the best threat inside one visible room.
+ */
+WarRoom.findBestThreatInRoom = function(room) {
+    if(!room) {
+        return null;
+    }
+
+    var bestCreepInfo = WarRoom.findBestHostileCreepInRoom(room);
+    var bestStructureInfo = WarRoom.findBestHostileStructureInRoom(room);
+
+    if(bestCreepInfo && (!bestStructureInfo || bestCreepInfo.score >= bestStructureInfo.score)) {
+        return bestCreepInfo;
+    }
+
+    if(bestStructureInfo) {
+        return bestStructureInfo;
+    }
+
+    return null;
+};
+
+/*
+ * Find the highest-scoring hostile creep in a visible room.
+ */
+WarRoom.findBestHostileCreepInRoom = function(room) {
+    var hostiles = room.find(FIND_HOSTILE_CREEPS);
+
+    if(hostiles.length === 0) {
+        return null;
+    }
+
+    var bestTarget = null;
+    var bestScore = -1;
+
+    for(var i = 0; i < hostiles.length; i++) {
+        var hostile = hostiles[i];
+        var score = WarRoom.getHostileCreepScore(hostile);
+
+        if(!bestTarget || score > bestScore) {
+            bestTarget = hostile;
+            bestScore = score;
+        }
+    }
+
+    return {
+        type: 'creep',
+        target: bestTarget,
+        score: bestScore
+    };
+};
+
+/*
+ * Find the highest-scoring hostile structure in a visible room.
+ */
+WarRoom.findBestHostileStructureInRoom = function(room) {
+    var structures = room.find(FIND_HOSTILE_STRUCTURES, {
+        filter: function(structure) {
+            /*
+             * Normal combat creeps cannot attack controllers directly.
+             */
+            if(structure.structureType === STRUCTURE_CONTROLLER) {
+                return false;
+            }
+
+            return true;
+        }
+    });
+
+    if(structures.length === 0) {
+        return null;
+    }
+
+    var bestTarget = null;
+    var bestScore = -1;
+
+    for(var i = 0; i < structures.length; i++) {
+        var structure = structures[i];
+        var score = WarRoom.getHostileStructureScore(structure);
+
+        if(!bestTarget || score > bestScore) {
+            bestTarget = structure;
+            bestScore = score;
+        }
+    }
+
+    return {
+        type: 'structure',
+        target: bestTarget,
+        score: bestScore
+    };
+};
+
+/*
+ * Save simple threat data in Memory.
+ *
+ * Memory should hold plain values, not full game objects.
+ */
+WarRoom.saveActiveThreat = function(threat, type) {
+    if(!threat || !threat.pos) {
+        return;
+    }
+
+    WarRoom.ensureMemory();
+
+    var ownerName = 'unknown';
+
+    if(threat.owner && threat.owner.username) {
+        ownerName = threat.owner.username;
+    }
+
+    Memory.WarRoom.activeThreat = {
+        type: type,
+        id: threat.id,
+        roomName: threat.pos.roomName,
+        x: threat.pos.x,
+        y: threat.pos.y,
+        owner: ownerName,
+        structureType: threat.structureType || null,
+        lastSeen: Game.time
+    };
+};
+
+/*
+ * Create the shared attack flag, or move it to the current threat.
+ */
+WarRoom.placeAttackFlag = function(threat) {
+    if(!threat || !threat.pos) {
+        return false;
+    }
+
+    var flag = Game.flags[WAR_ROOM_ATTACK_FLAG_NAME];
+
+    if(flag) {
+        flag.setPosition(threat.pos);
+        return true;
+    }
+
+    threat.pos.createFlag(WAR_ROOM_ATTACK_FLAG_NAME);
+    return true;
+};
+
+/*
+ * If the WarRoom has not seen a threat recently, forget it and remove the flag.
+ */
+WarRoom.forgetStaleThreat = function() {
+    WarRoom.ensureMemory();
+
+    var activeThreat = Memory.WarRoom.activeThreat;
+
+    if(!activeThreat || activeThreat.lastSeen === undefined) {
+        return false;
+    }
+
+    if(Game.time - activeThreat.lastSeen <= THREAT_FORGET_TICKS) {
+        return false;
+    }
+
+    delete Memory.WarRoom.activeThreat;
+
+    var flag = Game.flags[WAR_ROOM_ATTACK_FLAG_NAME];
+
+    if(flag) {
+        flag.remove();
+    }
+
+    return true;
+};
+
+/*
  * Get the room name this combat creep should move toward.
  *
  * You can set either:
@@ -55,6 +355,18 @@ WarRoom.getTargetRoomName = function(creep) {
         if(flag && flag.pos) {
             return flag.pos.roomName;
         }
+
+        return null;
+    }
+
+    var sharedFlag = Game.flags[WAR_ROOM_ATTACK_FLAG_NAME];
+
+    if(sharedFlag && sharedFlag.pos) {
+        return sharedFlag.pos.roomName;
+    }
+
+    if(Memory.WarRoom && Memory.WarRoom.activeThreat && Memory.WarRoom.activeThreat.roomName) {
+        return Memory.WarRoom.activeThreat.roomName;
     }
 
     return null;
@@ -98,11 +410,31 @@ WarRoom.moveToTargetRoom = function(creep) {
  * This is useful when the creep reaches the attack room but sees no enemies yet.
  */
 WarRoom.moveToTargetFlag = function(creep, range) {
-    if(!creep || !creep.memory || !creep.memory[TARGET_FLAG_MEMORY_KEY]) {
+    if(!creep || !creep.memory) {
         return false;
     }
 
-    var flag = Game.flags[creep.memory[TARGET_FLAG_MEMORY_KEY]];
+    var flag = null;
+
+    if(creep.memory[TARGET_FLAG_MEMORY_KEY]) {
+        flag = Game.flags[creep.memory[TARGET_FLAG_MEMORY_KEY]];
+    } else {
+        flag = Game.flags[WAR_ROOM_ATTACK_FLAG_NAME];
+
+        /*
+         * Manual targetRoom still wins over automatic WarRoom targeting.
+         * If the shared flag is in a different room, do not pull this creep
+         * away from its manually assigned room.
+         */
+        if(
+            flag &&
+            flag.pos &&
+            creep.memory[TARGET_ROOM_MEMORY_KEY] &&
+            flag.pos.roomName !== creep.memory[TARGET_ROOM_MEMORY_KEY]
+        ) {
+            return false;
+        }
+    }
 
     if(!flag) {
         return false;
@@ -294,7 +626,12 @@ WarRoom.getCombatTarget = function(creep) {
     if(creep.memory[COMBAT_TARGET_MEMORY_KEY]) {
         var oldTarget = Game.getObjectById(creep.memory[COMBAT_TARGET_MEMORY_KEY]);
 
-        if(oldTarget && oldTarget.hits > 0) {
+        if(
+            oldTarget &&
+            oldTarget.hits > 0 &&
+            oldTarget.pos &&
+            oldTarget.pos.roomName === creep.room.name
+        ) {
             return oldTarget;
         }
 
@@ -333,7 +670,7 @@ WarRoom.findBestHealTarget = function(creep) {
 
     var hurtCreeps = creep.room.find(FIND_MY_CREEPS, {
         filter: function(friendly) {
-            return friendly.hits < friendly.hitsMax;
+            return friendly.hits < friendly.hitsMax && WarRoom.isCombatCreep(friendly);
         }
     });
 
@@ -359,6 +696,21 @@ WarRoom.findBestHealTarget = function(creep) {
     }
 
     return bestTarget;
+};
+
+/*
+ * Combat healers should focus on the combat team, not every worker in the room.
+ */
+WarRoom.isCombatCreep = function(creep) {
+    if(!creep || !creep.memory) {
+        return false;
+    }
+
+    return (
+        creep.memory.role === COMBAT_ROLE_RONIN ||
+        creep.memory.role === COMBAT_ROLE_VOLLEY ||
+        creep.memory.role === COMBAT_ROLE_CLERIC
+    );
 };
 
 /*

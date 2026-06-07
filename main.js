@@ -4,12 +4,16 @@ var roleTech = require('role.Tech');
 var roleFreighter = require('role.Freighter');
 var roleArtificer = require('role.Artificer');
 var roleScout = require('role.Scout');
+var roleRonin = require('role.Ronin');
+var roleVolley = require('role.Volley');
+var roleCleric = require('role.Cleric');
 
 var utility_spawn = require('utility.spawn');
 var utilityVisual = require('utility.Visual');
 var utility = require('utility');
 
 var TowerLogic = require('Logic.Tower');
+var WarRoom = require('Logic.WarRoom');
 
 var spawnManager = require('spawn.manager');
 var spawnRequestManager = require('spawn.request.manager');
@@ -94,11 +98,19 @@ function updateRepairStructureMemory(room) {
  * construction progresses, and your JavaScript runs from top to bottom.
  */
 module.exports.loop = function () {
-    for (const room of Object.values(Game.rooms)) {
-    if (room.controller && room.controller.my) {
-        TowerLogic.run(room);
+    /*
+     * WarRoom is the shared combat radar.
+     * It scans visible rooms before combat creep role logic runs.
+     */
+    WarRoom.run();
+
+    for (var towerRoomName in Game.rooms) {
+        var towerRoom = Game.rooms[towerRoomName];
+
+        if (towerRoom.controller && towerRoom.controller.my) {
+            TowerLogic.run(towerRoom);
+        }
     }
-}
 
 
     for (var roomName in Game.rooms) {
@@ -186,6 +198,15 @@ module.exports.loop = function () {
         }
         if(creep.memory.role == 'Scout') {
             roleScout.run(creep);
+        }
+        if(creep.memory.role == 'Ronin') {
+            roleRonin.run(creep);
+        }
+        if(creep.memory.role == 'Volley') {
+            roleVolley.run(creep);
+        }
+        if(creep.memory.role == 'Cleric') {
+            roleCleric.run(creep);
         }
     }
 }
