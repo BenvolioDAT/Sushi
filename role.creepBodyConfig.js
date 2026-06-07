@@ -77,6 +77,36 @@ function getBodyCost(body) {
     return cost;
 }
 
+function buildBody(bodyPlan) {
+    var body = [];
+
+    for(var i = 0; i < bodyPlan.length; i++) {
+        var bodyPart = bodyPlan[i][0];
+        var count = bodyPlan[i][1];
+
+        for(var j = 0; j < count; j++) {
+            body.push(bodyPart);
+        }
+    }
+
+    return body;
+}
+
+function chooseBestAffordableBody(room, bodyPlans) {
+    var energyCapacity = getRoomEnergyCapacity(room);
+
+    for(var i = 0; i < bodyPlans.length; i++) {
+        var body = buildBody(bodyPlans[i]);
+        var bodyCost = getBodyCost(body);
+
+        if(energyCapacity >= bodyCost) {
+            return body;
+        }
+    }
+
+    return [WORK, CARRY, MOVE];
+}
+
 /**
  * Foreman body.
  *
@@ -117,28 +147,29 @@ function getForemanBody(room) {
  * @returns {array}
  */
 function getExtractorBody(room) {
-    var energyCapacity = getRoomEnergyCapacity(room);
-/*
-    if (energyCapacity >= 800) {
-        return [WORK, WORK, WORK, WORK, WORK, CARRY, MOVE, MOVE, MOVE];
-    }
-
-    if (energyCapacity >= 550) {
-        return [WORK, WORK, WORK, CARRY, MOVE, MOVE];
-    }
-*/
-    /*
-     * Extractors need WORK parts to harvest and enough CARRY/MOVE to handle
-     * early-room offloading. Larger commented-out versions above are preserved
-     * for later tuning but are not active code.
-     */
-    if (energyCapacity >= 300) {
-        return [WORK, WORK, CARRY, MOVE];
-    }
-
-    return [WORK, CARRY, MOVE];
+    return chooseBestAffordableBody(room, [
+        [
+            [WORK, 6],
+            [MOVE, 3],
+            [CARRY, 1],
+        ],
+        [
+            [WORK, 4],
+            [MOVE, 2], 
+            [CARRY, 1], 
+        ],
+        [
+            [WORK, 2],
+            [MOVE, 1],
+            [CARRY, 1],
+        ],
+        [
+            [WORK, 1],
+            [MOVE, 1],
+            [CARRY, 1],
+        ],
+    ]);
 }
-
 /**
  * Freighter body.
  *
@@ -148,25 +179,28 @@ function getExtractorBody(room) {
  * @returns {array}
  */
 function getFreighterBody(room) {
-    var energyCapacity = getRoomEnergyCapacity(room);
-
-    /*
-     * Freighters haul energy, so the body scales mostly by adding more CARRY
-     * parts and matching MOVE parts to keep travel reasonable.
-     */
-    if (energyCapacity >= 950) {
-        return [CARRY, CARRY, CARRY, CARRY, CARRY, CARRY, 
-            MOVE, MOVE, MOVE, MOVE, MOVE, MOVE];
-    }
-    if (energyCapacity >= 800) {
-        return [CARRY, CARRY, CARRY, CARRY, CARRY, CARRY, MOVE, MOVE, MOVE];
-    }
-
-    if (energyCapacity >= 550) {
-        return [CARRY, CARRY, CARRY, CARRY, MOVE, MOVE];
-    }
-
-    return [CARRY, CARRY, MOVE];
+    return chooseBestAffordableBody(room, [
+        [
+            [CARRY, 12],
+            [MOVE, 12]
+        ],
+        [
+            [CARRY, 6],
+            [MOVE, 6]
+        ],
+        [
+            [CARRY, 6],
+            [MOVE, 3]
+        ],
+        [
+            [CARRY, 4],
+            [MOVE, 2]
+        ],
+        [
+            [CARRY, 2],
+            [MOVE, 1]
+        ]
+    ]);
 }
 
 /**
