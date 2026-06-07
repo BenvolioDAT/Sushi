@@ -1,0 +1,108 @@
+/*
+ * role.Cleric.js
+ *
+ * Cleric is the healing combat creep.
+ *
+ * Primary job:
+ * - heal wounded friendly creeps
+ * - follow Ronin or Volley when nobody needs healing
+ *
+ * Memory used:
+ * creep.memory.targetRoom = 'W39S48';
+ * creep.memory.targetFlag = 'AttackRoom';
+ */
+
+var WarRoom = require('Logic.WarRoom');
+
+var roleCleric = {
+
+    /** @param {Creep} creep **/
+    run: function(creep) {
+        if(!creep || creep.spawning) {
+            return;
+        }
+
+        /*
+         * A Cleric should heal itself first if hurt.
+         * A dead healer heals nobody. Very rude.
+         */
+        if(creep.hits < creep.hitsMax) {
+            creep.heal(creep);
+        }
+
+        /*
+         * Move to remote combat room if assigned.
+         */
+        if(WarRoom.moveToTargetRoom(creep)) {
+            creep.say('march');
+            return;
+        }
+
+        /*
+         * Heal the most damaged friendly creep in the room.
+         */
+        var healTarget = WarRoom.findBestHealTarget(creep);
+
+        if(healTarget) {
+            healFriendly(creep, healTarget);
+            return;
+        }
+
+        /*
+         * If nobody needs healing, follow a combat buddy.
+         */
+        followCombatBuddy(creep);
+    }
+};
+
+function healFriendly(creep, target) {
+    var range = creep.pos.getRangeTo(target);
+
+    /*
+     * Direct heal is strongest but requires range 1.
+     */
+    if(range <= 1) {
+        creep.heal(target);
+        creep.say('heal');
+        return;
+    }
+
+    /*
+     * Ranged heal works from farther away.
+     */
+    if(range <= 3) {
+        creep.rangedHeal(target);
+        creep.say('mend');
+
+        /*
+         * Move closer so next tick we may direct heal.
+         */
+        WarRoom.moveToRange(creep, target, 1, '#00ff88');
+        return;
+    }
+
+    /*
+     * Too far away, move closer.
+     */
+    WarRoom.moveToRange(creep, target, 1, '#00ff88');
+}
+
+function followCombatBuddy(creep) {
+    var buddy = WarRoom.findCombatBuddy(creep);
+
+    if(buddy) {
+        /*
+         * Stay within range 1 of a fighter.
+         */
+        WarRoom.moveToRange(creep, buddy, 1, '#00ff88');
+        creep.say('guard');
+        return;
+    }
+
+    /*
+     * If no buddy exists, move to the target flag if one exists.
+     */
+    WarRoom.idleCombat(creep);
+}
+
+module.exports = roleCleric;
