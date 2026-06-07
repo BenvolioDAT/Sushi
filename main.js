@@ -108,9 +108,9 @@ function maybeGeneratePixel() {
      * - Use 1 if you want to allow the check every tick.
      */
     var pixelCfg = {
-        enabled: false,
-        bucketThreshold: 9500,
-        tickModulo: 100
+        enabled: true,
+        bucketThreshold: 9800,
+        tickModulo: 10
     };
 
     if (!pixelCfg.enabled) {
