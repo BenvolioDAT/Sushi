@@ -529,8 +529,10 @@ function runStartupBootstrap(room, report) {
         return true;
     }
 
-    if (getHealthyRoleCount(room, 'Extractor') < 2) {
-        report.requests.push(requestRoleForRoom(room, 'Extractor', 2));
+    var startupExtractorCount = getStartupExtractorCount(room);
+
+    if (getHealthyRoleCount(room, 'Extractor') < startupExtractorCount) {
+        report.requests.push(requestRoleForRoom(room, 'Extractor', startupExtractorCount));
         return true;
     }
 
@@ -552,7 +554,102 @@ function runStartupBootstrap(room, report) {
 }
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+var SOURCE_WORK_TARGET = 5;
 
+function countBodyParts(body, bodyPartType) {
+    var count = 0;
+
+    if (!body) {
+        return count;
+    }
+
+    for (var i = 0; i < body.length; i++) {
+        if (body[i] === bodyPartType) {
+            count++;
+        }
+    }
+
+    return count;
+}
+
+function getSourceCount(room) {
+    if (!room) {
+        return 0;
+    }
+
+    var sources = room.find(FIND_SOURCES);
+
+    if (!sources) {
+        return 0;
+    }
+
+    return sources.length;
+}
+
+function getDesiredExtractorCount(room) {
+    var sourceCount = getSourceCount(room);
+
+    if (sourceCount <= 0) {
+        return 0;
+    }
+
+    var extractorBody = creepBodyConfig.getBody('Extractor', room);
+    var workPartsPerExtractor = countBodyParts(extractorBody, WORK);
+
+    /*
+     * Safety fallback:
+     * If something goes wrong and the Extractor body has no WORK parts,
+     * ask for one per source instead of crashing or asking for zero forever.
+     */
+    if (workPartsPerExtractor <= 0) {
+        return sourceCount;
+    }
+
+    /*
+     * Each normal source wants about 5 WORK parts.
+     *
+     * Example:
+     * 2 sources * 5 WORK = 10 total WORK wanted.
+     *
+     * If each Extractor has 6 WORK:
+     * Math.ceil(10 / 6) = 2 Extractors.
+     *
+     * If each Extractor has 2 WORK:
+     * Math.ceil(10 / 2) = 5 Extractors.
+     */
+    var desiredCount = Math.ceil((sourceCount * SOURCE_WORK_TARGET) / workPartsPerExtractor);
+
+    /*
+     * Keep at least one Extractor per source.
+     */
+    if (desiredCount < sourceCount) {
+        desiredCount = sourceCount;
+    }
+
+    /*
+     * Do not go above your old emergency cap.
+     * This prevents early tiny bodies from requesting a silly swarm.
+     */
+    if (desiredCount > DESIRED_COUNTS.Extractor) {
+        desiredCount = DESIRED_COUNTS.Extractor;
+    }
+
+    return desiredCount;
+}
+
+function getStartupExtractorCount(room) {
+    var sourceCount = getSourceCount(room);
+
+    if (sourceCount <= 0) {
+        return 1;
+    }
+
+    /*
+     * Startup only needs basic coverage before moving on to Freighter, Tech,
+     * and Artificer.
+     */
+    return sourceCount;
+}
 /**
  * Run spawn requests for the current simple managed room.
  *
@@ -601,7 +698,7 @@ function run() {
      */
     report.requests.push(requestRoleForRoom(room, 'Foreman', DESIRED_COUNTS.Foreman));
 
-    report.requests.push(requestRoleForRoom(room, 'Extractor', DESIRED_COUNTS.Extractor));
+    report.requests.push(requestRoleForRoom(room, 'Extractor', getDesiredExtractorCount(room)));
     report.requests.push(requestRoleForRoom(room, 'Freighter', DESIRED_COUNTS.Freighter));
     report.requests.push(requestRoleForRoom(room, 'Tech', DESIRED_COUNTS.Tech));
     report.requests.push(requestRoleForRoom(room, 'Artificer', DESIRED_COUNTS.Artificer));
