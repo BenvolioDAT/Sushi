@@ -1,4 +1,5 @@
 var creepUtility = require('utility.Creep');
+var utilityTravelCreep = require('utility.Travel.Creep');
 
 var MAX_REPAIR_ARTIFICERS = 2;
 
@@ -356,7 +357,7 @@ function repairTarget(creep, target) {
     var result = creep.repair(target);
 
     if(result === ERR_NOT_IN_RANGE) {
-        creep.moveTo(target, {
+        utilityTravelCreep.move(creep, target, {
             visualizePathStyle: {
                 stroke: '#ffaa00'
             }
@@ -372,10 +373,10 @@ function collectEnergy(creep) {
     if(target) {
         if(target.resourceType) {
             if(creep.pickup(target) === ERR_NOT_IN_RANGE) {
-                creep.moveTo(target, {visualizePathStyle: {stroke: '#ffaa00'}});
+                utilityTravelCreep.move(creep, target, {visualizePathStyle: {stroke: '#ffaa00'}});
             }
         } else if(creep.withdraw(target, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
-            creep.moveTo(target, {visualizePathStyle: {stroke: '#ffaa00'}});
+            utilityTravelCreep.move(creep, target, {visualizePathStyle: {stroke: '#ffaa00'}});
         }
 
         return;
@@ -384,7 +385,7 @@ function collectEnergy(creep) {
     var source = creep.pos.findClosestByPath(FIND_SOURCES);
 
     if(source && creep.harvest(source) === ERR_NOT_IN_RANGE) {
-        creep.moveTo(source, {visualizePathStyle: {stroke: '#ffaa00'}});
+        utilityTravelCreep.move(creep, source, {visualizePathStyle: {stroke: '#ffaa00'}});
     }
 }
 
@@ -393,14 +394,14 @@ function buildOrUpgrade(creep) {
 
     if(target) {
         if(creep.build(target) === ERR_NOT_IN_RANGE) {
-            creep.moveTo(target, {visualizePathStyle: {stroke: '#ffffff'}});
+            utilityTravelCreep.move(creep, target, {visualizePathStyle: {stroke: '#ffffff'}});
         }
 
         return;
     }
 
     if(creep.room.controller && creep.upgradeController(creep.room.controller) === ERR_NOT_IN_RANGE) {
-        creep.moveTo(creep.room.controller, {visualizePathStyle: {stroke: '#ffffff'}});
+        utilityTravelCreep.move(creep, creep.room.controller, {visualizePathStyle: {stroke: '#ffffff'}});
     }
 }
 

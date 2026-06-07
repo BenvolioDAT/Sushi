@@ -1,3 +1,5 @@
+var utilityTravelCreep = require('utility.Travel.Creep');
+
 var roleCombatMelee = {
 
     /** @param {Creep} creep **/
@@ -35,7 +37,7 @@ var roleCombatMelee = {
          * target is valid, but the creep must walk closer first.
          */
         if(creep.attack(target) === ERR_NOT_IN_RANGE) {
-            creep.moveTo(target, {visualizePathStyle: {stroke: '#ff0000'}});
+            utilityTravelCreep.move(creep, target, {visualizePathStyle: {stroke: '#ff0000'}});
         }
     }
 };
@@ -77,7 +79,7 @@ function moveToRoom(creep, roomName) {
      */
     var exit = creep.pos.findClosestByRange(exitDir);
     if(exit) {
-        creep.moveTo(exit, {visualizePathStyle: {stroke: '#ff0000'}});
+        utilityTravelCreep.move(creep, exit, {visualizePathStyle: {stroke: '#ff0000'}});
     }
     return true;
 }
@@ -89,7 +91,7 @@ function idleNearSpawn(creep) {
      */
     var spawn = creep.pos.findClosestByPath(FIND_MY_SPAWNS);
     if(spawn && creep.pos.getRangeTo(spawn) > 3) {
-        creep.moveTo(spawn, {visualizePathStyle: {stroke: '#bbbbbb'}});
+        utilityTravelCreep.move(creep, spawn, {visualizePathStyle: {stroke: '#bbbbbb'}});
     }
 }
 

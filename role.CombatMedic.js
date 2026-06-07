@@ -1,3 +1,5 @@
+var utilityTravelCreep = require('utility.Travel.Creep');
+
 var roleCombatMedic = {
 
     /** @param {Creep} creep **/
@@ -52,7 +54,7 @@ var roleCombatMedic = {
          */
         if(creep.heal(target) === ERR_NOT_IN_RANGE) {
             if(creep.rangedHeal(target) === ERR_NOT_IN_RANGE) {
-                creep.moveTo(target, {visualizePathStyle: {stroke: '#00ff00'}});
+                utilityTravelCreep.move(creep, target, {visualizePathStyle: {stroke: '#00ff00'}});
             }
         }
     }
@@ -74,7 +76,7 @@ function followCombatCreep(creep) {
     });
 
     if(ally && creep.pos.getRangeTo(ally) > 2) {
-        creep.moveTo(ally, {visualizePathStyle: {stroke: '#00ff00'}});
+        utilityTravelCreep.move(creep, ally, {visualizePathStyle: {stroke: '#00ff00'}});
         return;
     }
 
@@ -84,7 +86,7 @@ function followCombatCreep(creep) {
      */
     var spawn = creep.pos.findClosestByPath(FIND_MY_SPAWNS);
     if(spawn && creep.pos.getRangeTo(spawn) > 3) {
-        creep.moveTo(spawn, {visualizePathStyle: {stroke: '#bbbbbb'}});
+        utilityTravelCreep.move(creep, spawn, {visualizePathStyle: {stroke: '#bbbbbb'}});
     }
 }
 
@@ -104,7 +106,7 @@ function moveToRoom(creep, roomName) {
      */
     var exit = creep.pos.findClosestByRange(exitDir);
     if(exit) {
-        creep.moveTo(exit, {visualizePathStyle: {stroke: '#00ff00'}});
+        utilityTravelCreep.move(creep, exit, {visualizePathStyle: {stroke: '#00ff00'}});
     }
     return true;
 }

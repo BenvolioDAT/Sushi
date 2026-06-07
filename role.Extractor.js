@@ -127,7 +127,7 @@ function harvestSource(creep, source) {
      */
     var result = creep.harvest(source);
     if(result === ERR_NOT_IN_RANGE) {
-        creep.moveTo(source, {visualizePathStyle: {stroke: '#ffaa00'}});
+        utilityTravelCreep.move(creep, source, {visualizePathStyle: {stroke: '#ffaa00'}});
     }
 }
 
@@ -155,7 +155,7 @@ function offloadEnergy(creep, source) {
          * Returning true tells run() that offloading was handled this tick.
          */
         if(creep.transfer(nearbyStores[0], RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
-            creep.moveTo(nearbyStores[0], {visualizePathStyle: {stroke: '#ffffff'}});
+            utilityTravelCreep.move(creep, nearbyStores[0], {visualizePathStyle: {stroke: '#ffffff'}});
         }
         return true;
     }

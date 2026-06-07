@@ -1,3 +1,5 @@
+var utilityTravelCreep = require('utility.Travel.Creep');
+
 var roleDismantler = {
 
     /** @param {Creep} creep **/
@@ -143,7 +145,7 @@ function dismantleOrAttack(creep, target) {
      * ERR_NOT_IN_RANGE, the target is valid but the creep must walk closer.
      */
     if(result === ERR_NOT_IN_RANGE) {
-        creep.moveTo(target, {visualizePathStyle: {stroke: '#ff0000'}});
+        utilityTravelCreep.move(creep, target, {visualizePathStyle: {stroke: '#ff0000'}});
     }
 
     /*
@@ -162,7 +164,7 @@ function idleNearAttackFlag(creep) {
      */
     var flag = Game.flags.Attack;
     if(flag) {
-        creep.moveTo(flag, {visualizePathStyle: {stroke: '#bbbbbb'}});
+        utilityTravelCreep.move(creep, flag, {visualizePathStyle: {stroke: '#bbbbbb'}});
     }
 }
 
@@ -178,7 +180,7 @@ function moveToRoom(creep, roomName) {
 
     var exit = creep.pos.findClosestByRange(exitDir);
     if(exit) {
-        creep.moveTo(exit, {visualizePathStyle: {stroke: '#ff0000'}});
+        utilityTravelCreep.move(creep, exit, {visualizePathStyle: {stroke: '#ff0000'}});
     }
     return true;
 }

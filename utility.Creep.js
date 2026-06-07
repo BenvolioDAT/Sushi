@@ -603,7 +603,7 @@ function collectEnergy(creep) {
 
     if(target) {
         if(creep.withdraw(target, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
-            creep.moveTo(target, {visualizePathStyle: {stroke: '#ffaa00'}});
+            travel.move(creep, target, {visualizePathStyle: {stroke: '#ffaa00'}});
         }
         return;
     }
@@ -615,7 +615,7 @@ function collectEnergy(creep) {
     });
 
     if(dropped && creep.pickup(dropped) === ERR_NOT_IN_RANGE) {
-        creep.moveTo(dropped, {visualizePathStyle: {stroke: '#ffaa00'}});
+        travel.move(creep, dropped, {visualizePathStyle: {stroke: '#ffaa00'}});
     }
 }
 
@@ -637,7 +637,7 @@ function fillRoomEnergy(creep) {
     }
 
     if(creep.transfer(target, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
-        creep.moveTo(target, {visualizePathStyle: {stroke: '#ffffff'}});
+        travel.move(creep, target, {visualizePathStyle: {stroke: '#ffffff'}});
     }
 }
 
@@ -681,7 +681,7 @@ function idleNearBase(creep) {
      */
     var anchor = creep.room.storage || creep.pos.findClosestByPath(FIND_MY_SPAWNS);
     if(anchor && creep.pos.getRangeTo(anchor) > 2) {
-        creep.moveTo(anchor, {visualizePathStyle: {stroke: '#bbbbbb'}});
+        travel.move(creep, anchor, {visualizePathStyle: {stroke: '#bbbbbb'}});
     }
 }
 var SOURCE_WORK_TARGET = 5;
@@ -1600,7 +1600,7 @@ function repairFromMemory(creep) {
      * If too far away, move closer.
      */
     if (creep.repair(target) === ERR_NOT_IN_RANGE) {
-        creep.moveTo(target, {
+        travel.move(creep, target, {
             visualizePathStyle: {
                 stroke: '#ffaa00'
             }

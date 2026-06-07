@@ -731,10 +731,10 @@ function collectEnergy(creep) {
      
     if(target.resourceType) {
         if(creep.pickup(target) === ERR_NOT_IN_RANGE) {
-            creep.moveTo(target, {visualizePathStyle: {stroke: '#ffaa00'}});
+            travel.move(creep, target, {visualizePathStyle: {stroke: '#ffaa00'}});
         }
     } else if(creep.withdraw(target, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
-        creep.moveTo(target, {visualizePathStyle: {stroke: '#ffaa00'}});
+        travel.move(creep, target, {visualizePathStyle: {stroke: '#ffaa00'}});
     }
 }
 
@@ -788,7 +788,7 @@ function deliverEnergy(creep) {
      // away. moveTo starts pathing toward transfer range.
      
     if(creep.transfer(target, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
-        creep.moveTo(target, {visualizePathStyle: {stroke: '#ffffff'}});
+        travel.move(creep, target, {visualizePathStyle: {stroke: '#ffffff'}});
     }
 }
 
@@ -905,7 +905,7 @@ function idleNearSource(creep) {
      
     var source = creep.pos.findClosestByPath(FIND_SOURCES);
     if(source && creep.pos.getRangeTo(source) > 3) {
-        creep.moveTo(source, {visualizePathStyle: {stroke: '#bbbbbb'}});
+        travel.move(creep, source, {visualizePathStyle: {stroke: '#bbbbbb'}});
     }
 }
 

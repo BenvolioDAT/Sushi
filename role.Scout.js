@@ -1,4 +1,5 @@
 var utility = require('utility');
+var utilityTravelCreep = require('utility.Travel.Creep');
 
 var roleScout = {
 
@@ -195,7 +196,7 @@ function moveToTargetRoom(creep, roomName) {
          * vision around the controller area before the next room is selected.
          */
         if(controller && creep.pos.getRangeTo(controller) > 3) {
-            creep.moveTo(controller, {
+            utilityTravelCreep.move(creep, controller, {
                 visualizePathStyle: {
                     stroke: '#ffffff'
                 }
@@ -222,7 +223,7 @@ function moveToTargetRoom(creep, roomName) {
     var exit = creep.pos.findClosestByRange(exitDir);
 
     if(exit) {
-        creep.moveTo(exit, {
+        utilityTravelCreep.move(creep, exit, {
             visualizePathStyle: {
                 stroke: '#ffffff'
             }
@@ -237,7 +238,7 @@ function idleOrWander(creep) {
     var spawn = creep.pos.findClosestByPath(FIND_MY_SPAWNS);
 
     if(spawn && creep.pos.getRangeTo(spawn) > 3) {
-        creep.moveTo(spawn, {
+        utilityTravelCreep.move(creep, spawn, {
             visualizePathStyle: {
                 stroke: '#bbbbbb'
             }

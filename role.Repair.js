@@ -1,3 +1,5 @@
+var utilityTravelCreep = require('utility.Travel.Creep');
+
 var WALL_REPAIR_CAP = 10000;
 var RAMPART_REPAIR_CAP = 10000;
 
@@ -57,10 +59,10 @@ function collectEnergy(creep) {
          */
         if(target.resourceType) {
             if(creep.pickup(target) === ERR_NOT_IN_RANGE) {
-                creep.moveTo(target, {visualizePathStyle: {stroke: '#ffaa00'}});
+                utilityTravelCreep.move(creep, target, {visualizePathStyle: {stroke: '#ffaa00'}});
             }
         } else if(creep.withdraw(target, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
-            creep.moveTo(target, {visualizePathStyle: {stroke: '#ffaa00'}});
+            utilityTravelCreep.move(creep, target, {visualizePathStyle: {stroke: '#ffaa00'}});
         }
         return;
     }
@@ -71,7 +73,7 @@ function collectEnergy(creep) {
      */
     var source = creep.pos.findClosestByPath(FIND_SOURCES);
     if(source && creep.harvest(source) === ERR_NOT_IN_RANGE) {
-        creep.moveTo(source, {visualizePathStyle: {stroke: '#ffaa00'}});
+        utilityTravelCreep.move(creep, source, {visualizePathStyle: {stroke: '#ffaa00'}});
     }
 }
 
@@ -94,7 +96,7 @@ function repairTarget(creep) {
      * must move closer before repairing.
      */
     if(creep.repair(target) === ERR_NOT_IN_RANGE) {
-        creep.moveTo(target, {visualizePathStyle: {stroke: '#ffffff'}});
+        utilityTravelCreep.move(creep, target, {visualizePathStyle: {stroke: '#ffffff'}});
     }
 }
 

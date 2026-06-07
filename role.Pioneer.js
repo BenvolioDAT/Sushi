@@ -1,3 +1,5 @@
+var utilityTravelCreep = require('utility.Travel.Creep');
+
 var rolePioneer = {
 
     /** @param {Creep} creep **/
@@ -78,7 +80,7 @@ function claimController(creep, controller) {
      */
     if(controller.owner && !controller.my) {
         if(creep.attackController(controller) === ERR_NOT_IN_RANGE) {
-            creep.moveTo(controller, {visualizePathStyle: {stroke: '#ff0000'}});
+            utilityTravelCreep.move(creep, controller, {visualizePathStyle: {stroke: '#ff0000'}});
         }
         return;
     }
@@ -89,7 +91,7 @@ function claimController(creep, controller) {
      */
     var result = creep.claimController(controller);
     if(result === ERR_NOT_IN_RANGE) {
-        creep.moveTo(controller, {visualizePathStyle: {stroke: '#ffffff'}});
+        utilityTravelCreep.move(creep, controller, {visualizePathStyle: {stroke: '#ffffff'}});
     } else if(result === ERR_GCL_NOT_ENOUGH) {
         reserveController(creep, controller);
     }
@@ -102,7 +104,7 @@ function reserveController(creep, controller) {
      */
     if(controller.reservation && controller.reservation.username !== creep.owner.username) {
         if(creep.attackController(controller) === ERR_NOT_IN_RANGE) {
-            creep.moveTo(controller, {visualizePathStyle: {stroke: '#ff0000'}});
+            utilityTravelCreep.move(creep, controller, {visualizePathStyle: {stroke: '#ff0000'}});
         }
         return;
     }
@@ -112,7 +114,7 @@ function reserveController(creep, controller) {
      * ERR_NOT_IN_RANGE means the creep must move closer to the controller.
      */
     if(creep.reserveController(controller) === ERR_NOT_IN_RANGE) {
-        creep.moveTo(controller, {visualizePathStyle: {stroke: '#ffffff'}});
+        utilityTravelCreep.move(creep, controller, {visualizePathStyle: {stroke: '#ffffff'}});
     }
 }
 
@@ -127,7 +129,7 @@ function moveToRoom(creep, roomName) {
 
     var exit = creep.pos.findClosestByRange(exitDir);
     if(exit) {
-        creep.moveTo(exit, {visualizePathStyle: {stroke: '#ffffff'}});
+        utilityTravelCreep.move(creep, exit, {visualizePathStyle: {stroke: '#ffffff'}});
     }
     return true;
 }
