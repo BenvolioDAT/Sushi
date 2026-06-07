@@ -684,9 +684,52 @@ function idleNearBase(creep) {
         creep.moveTo(anchor, {visualizePathStyle: {stroke: '#bbbbbb'}});
     }
 }
+var SOURCE_WORK_TARGET = 5;
 
+function getCreepWorkParts(creep) {
+    if (!creep) {
+        return 0;
+    }
+
+    if (typeof creep.getActiveBodyparts === 'function') {
+        return creep.getActiveBodyparts(WORK);
+    }
+
+    return 0;
+}
+
+function getAssignedWorkTotal(sourceMemory) {
+    var totalWork = 0;
+
+    if (!sourceMemory || !sourceMemory.assignedMinner) {
+        return totalWork;
+    }
+
+    for (var i = 0; i < sourceMemory.assignedMinner.length; i++) {
+        var creepId = sourceMemory.assignedMinner[i];
+        var assignedCreep = Game.getObjectById(creepId);
+
+        if (!assignedCreep || !assignedCreep.my) {
+            continue;
+        }
+
+        totalWork += getCreepWorkParts(assignedCreep);
+    }
+
+    return totalWork;
+}
+
+function sourceHasOpenWorkCapacity(sourceRecord) {
+    var assignedWork = getAssignedWorkTotal(sourceRecord.sourceMemory);
+
+    /*
+     * A normal source only needs about 5 WORK parts.
+     * If it already has 5 or more, do not assign more Extractors there.
+     */
+    return assignedWork < SOURCE_WORK_TARGET;
+}
 /**
- * Find or claim the best source for this Veinseeker.
+ * Find or claim the best source for this creep to harvest from.
  *
  * This function does several jobs:
  * 1. Looks at Memory.rooms[roomName].sources.
@@ -908,7 +951,7 @@ function reclaimRememberedSource(creep, sourceRecords) {
         }
 
         // If this source has an open seat, claim it again.
-        if(record.sourceMemory.assignedMinner.length < record.seatCount) {
+        if(sourceHasOpenWorkCapacity(record)) {
             record.sourceMemory.assignedMinner.push(creep.id);
             return record.source;
         }
@@ -938,26 +981,30 @@ function reclaimRememberedSource(creep, sourceRecords) {
  */
 function findBestSourceRecord(creep, sourceRecords) {
     var bestOpenRecord = null;
-    var bestOverflowRecord = null;
 
     for(var i = 0; i < sourceRecords.length; i++) {
         var record = sourceRecords[i];
-        var assignedCount = record.sourceMemory.assignedMinner.length;
 
-        if(assignedCount < record.seatCount) {
-            if(isBetterSourceChoice(creep, record, bestOpenRecord)) {
-                bestOpenRecord = record;
-            }
-
+        /*
+         * Skip sources that already have enough WORK assigned.
+         */
+        if(!sourceHasOpenWorkCapacity(record)) {
             continue;
         }
 
-        if(isBetterOverflowChoice(creep, record, bestOverflowRecord)) {
-            bestOverflowRecord = record;
+        if(isBetterSourceChoice(creep, record, bestOpenRecord)) {
+            bestOpenRecord = record;
         }
     }
 
-    return bestOpenRecord || bestOverflowRecord;
+    /*
+     * Important:
+     * Return null if all sources already have enough WORK.
+     *
+     * Old behavior picked an overflow source anyway.
+     * New behavior lets the extra Extractor idle instead of overcrowding.
+     */
+    return bestOpenRecord;
 }
 
 /**
@@ -973,17 +1020,24 @@ function isBetterSourceChoice(creep, candidateRecord, bestRecord) {
         return true;
     }
 
-    var candidateCount = candidateRecord.sourceMemory.assignedMinner.length;
-    var bestCount = bestRecord.sourceMemory.assignedMinner.length;
+    var candidateWork = getAssignedWorkTotal(candidateRecord.sourceMemory);
+    var bestWork = getAssignedWorkTotal(bestRecord.sourceMemory);
 
-    if(candidateCount < bestCount) {
+    /*
+     * Prefer the source with less assigned WORK.
+     */
+    if(candidateWork < bestWork) {
         return true;
     }
 
-    if(candidateCount > bestCount) {
+    if(candidateWork > bestWork) {
         return false;
     }
 
+    /*
+     * If both sources have the same assigned WORK,
+     * pick the closer source.
+     */
     return creep.pos.getRangeTo(candidateRecord.source) < creep.pos.getRangeTo(bestRecord.source);
 }
 
