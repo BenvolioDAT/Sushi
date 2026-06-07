@@ -1165,7 +1165,7 @@ function getSourceRecordsFromRoomMemory(creep) {
         }
 
         normalizeAssignedMinerList(sourceMemory);
-        cleanDeadassignedMiners(sourceMemory);
+        cleanDeadAssignedMiners(sourceMemory);
 
         sourceRecords.push({
             sourceId: realSourceId,
@@ -1214,7 +1214,7 @@ function normalizeAssignedMinerList(sourceMemory) {
  *
  * @param {*} sourceMemory
  */
-function cleanDeadassignedMiners(sourceMemory) {
+function cleanDeadAssignedMiners(sourceMemory) {
     var cleanList = [];
     var seenIds = {};
 
