@@ -38,6 +38,28 @@ var roleExtractor = {
          * If the creep has free energy capacity, keep harvesting. The RESOURCE_ENERGY
          * argument asks Screeps specifically about energy space, not other resources.
          */
+        var miningSeat = utilityCreep.getAssignedMiningSeat(creep, source);
+
+        if (miningSeat && !isCreepOnPosition(creep, miningSeat)) {
+            /*
+            * If the creep is already beside the source, let it harvest while it moves
+            * onto the better seat. This keeps it productive instead of waddling with
+            * empty hands like a confused Roomba.
+            */
+            if (creep.pos.getRangeTo(source.pos) <= 1 && creep.store.getFreeCapacity(RESOURCE_ENERGY) > 0) {
+                creep.harvest(source);
+            }
+
+            utilityTravelCreep.move(creep, miningSeat, {
+                range: 0,
+                visualizePathStyle: {
+                    stroke: '#ffaa00'
+                }
+            });
+
+            return;
+        }
+
         if(creep.store.getFreeCapacity(RESOURCE_ENERGY) > 0) {
             harvestSource(creep, source);
             return;
@@ -50,6 +72,18 @@ var roleExtractor = {
         }
     }
 };
+
+function isCreepOnPosition(creep, position) {
+    if (!creep || !position) {
+        return false;
+    }
+
+    return (
+        creep.pos.x === position.x &&
+        creep.pos.y === position.y &&
+        creep.pos.roomName === position.roomName
+    );
+}
 
 function getAssignedSource(creep) {
     /*

@@ -774,6 +774,356 @@ function getAssignedSource(creep) {
 
     return bestRecord.source;
 }
+function getAssignedMiningSeat(creep, source) {
+    /*
+     * This function gives an Extractor one exact mining tile.
+     *
+     * Priority:
+     * 1. If this source has a live container, reserve the container tile first.
+     * 2. If the container tile is already reserved/occupied, use another source seat.
+     * 3. If no seat is open, return null and let the role decide what to do.
+     */
+    if (!creep || !source || !creep.room) {
+        return null;
+    }
+
+    var sourceMemory = getSourceMemoryForSource(creep.room.name, source.id);
+
+    if (!sourceMemory) {
+        return null;
+    }
+
+    /*
+     * First priority:
+     * Use the live container tile if this source has one.
+     */
+    var containerPosition = getLiveSourceContainerPosition(source, sourceMemory);
+
+    if (containerPosition) {
+        /*
+         * If this creep already owns the container seat, keep it.
+         */
+        if (creepHasRememberedMiningSeat(creep, source.id, containerPosition)) {
+            return containerPosition;
+        }
+
+        /*
+         * If nobody else owns or occupies the container tile, claim it.
+         */
+        if (!isMiningSeatTakenByOtherCreep(creep, containerPosition)) {
+            rememberMiningSeat(creep, source.id, containerPosition, 'container');
+            return containerPosition;
+        }
+    }
+
+    /*
+     * Second priority:
+     * Keep this creep's remembered non-container seat if it is still valid.
+     */
+    var rememberedPosition = getRememberedMiningSeat(creep, source);
+
+    if (rememberedPosition) {
+        /*
+         * If the remembered seat is not taken by somebody else, keep using it.
+         */
+        if (!isMiningSeatTakenByOtherCreep(creep, rememberedPosition)) {
+            return rememberedPosition;
+        }
+
+        clearMiningSeatMemory(creep);
+    }
+
+    /*
+     * Third priority:
+     * Pick an open saved source seat.
+     */
+    var seats = getMiningSeatPositions(creep.room, source, sourceMemory);
+
+    for (var i = 0; i < seats.length; i++) {
+        var seatPosition = seats[i];
+
+        /*
+         * Do not assign normal creeps to the container tile here.
+         * The container tile is handled above as the special first-choice seat.
+         */
+        if (containerPosition && sameRoomPosition(seatPosition, containerPosition)) {
+            continue;
+        }
+
+        if (isMiningSeatTakenByOtherCreep(creep, seatPosition)) {
+            continue;
+        }
+
+        rememberMiningSeat(creep, source.id, seatPosition, 'seat');
+        return seatPosition;
+    }
+
+    return null;
+}
+
+function getSourceMemoryForSource(roomName, sourceId) {
+    if (!Memory.rooms) {
+        return null;
+    }
+
+    if (!Memory.rooms[roomName]) {
+        return null;
+    }
+
+    if (!Memory.rooms[roomName].sources) {
+        return null;
+    }
+
+    return Memory.rooms[roomName].sources[sourceId] || null;
+}
+
+function getLiveSourceContainerPosition(source, sourceMemory) {
+    /*
+     * Best case:
+     * Memory already knows the container id.
+     */
+    if (sourceMemory.containerId) {
+        var container = Game.getObjectById(sourceMemory.containerId);
+
+        if (
+            container &&
+            container.structureType === STRUCTURE_CONTAINER &&
+            container.pos.getRangeTo(source.pos) <= 1
+        ) {
+            return container.pos;
+        }
+
+        /*
+         * If memory points to a dead or wrong container, clear it.
+         */
+        sourceMemory.containerId = null;
+    }
+
+    /*
+     * Fallback:
+     * Search beside the source for a container and repair memory.
+     */
+    var nearbyContainers = source.pos.findInRange(FIND_STRUCTURES, 1, {
+        filter: function(structure) {
+            return structure.structureType === STRUCTURE_CONTAINER;
+        }
+    });
+
+    if (nearbyContainers.length > 0) {
+        sourceMemory.containerId = nearbyContainers[0].id;
+        return nearbyContainers[0].pos;
+    }
+
+    return null;
+}
+
+function getMiningSeatPositions(room, source, sourceMemory) {
+    var positions = [];
+
+    /*
+     * Use sourceMemory.seats first because your scanner already mapped them.
+     */
+    if (sourceMemory && sourceMemory.seats) {
+        for (var i = 0; i < sourceMemory.seats.length; i++) {
+            var position = getRoomPositionFromMemory(sourceMemory.seats[i], room.name);
+
+            if (!position) {
+                continue;
+            }
+
+            if (position.getRangeTo(source.pos) <= 1) {
+                positions.push(position);
+            }
+        }
+
+        if (positions.length > 0) {
+            return positions;
+        }
+    }
+
+    /*
+     * Fallback:
+     * If memory seats are missing, scan the 8 tiles around the source.
+     */
+    var terrain = room.getTerrain();
+
+    for (var x = source.pos.x - 1; x <= source.pos.x + 1; x++) {
+        for (var y = source.pos.y - 1; y <= source.pos.y + 1; y++) {
+            if (x === source.pos.x && y === source.pos.y) {
+                continue;
+            }
+
+            if (x < 0 || x > 49 || y < 0 || y > 49) {
+                continue;
+            }
+
+            if (terrain.get(x, y) === TERRAIN_MASK_WALL) {
+                continue;
+            }
+
+            positions.push(new RoomPosition(x, y, room.name));
+        }
+    }
+
+    return positions;
+}
+
+function getRoomPositionFromMemory(memoryPosition, fallbackRoomName) {
+    if (!memoryPosition) {
+        return null;
+    }
+
+    if (
+        memoryPosition.x !== undefined &&
+        memoryPosition.y !== undefined
+    ) {
+        return new RoomPosition(
+            memoryPosition.x,
+            memoryPosition.y,
+            memoryPosition.roomName || fallbackRoomName
+        );
+    }
+
+    if (
+        memoryPosition.pos &&
+        memoryPosition.pos.x !== undefined &&
+        memoryPosition.pos.y !== undefined
+    ) {
+        return new RoomPosition(
+            memoryPosition.pos.x,
+            memoryPosition.pos.y,
+            memoryPosition.pos.roomName || fallbackRoomName
+        );
+    }
+
+    return null;
+}
+
+function rememberMiningSeat(creep, sourceId, position, seatType) {
+    creep.memory.miningSeat = {
+        sourceId: sourceId,
+        x: position.x,
+        y: position.y,
+        roomName: position.roomName,
+        type: seatType
+    };
+
+    creep.memory.miningSeatKey = getMiningSeatKey(position);
+}
+
+function clearMiningSeatMemory(creep) {
+    delete creep.memory.miningSeat;
+    delete creep.memory.miningSeatKey;
+}
+
+function getRememberedMiningSeat(creep, source) {
+    if (!creep.memory.miningSeat) {
+        return null;
+    }
+
+    var seatMemory = creep.memory.miningSeat;
+
+    /*
+     * If the creep changed sources, clear the old seat.
+     */
+    if (seatMemory.sourceId !== source.id) {
+        clearMiningSeatMemory(creep);
+        return null;
+    }
+
+    var position = getRoomPositionFromMemory(seatMemory, creep.room.name);
+
+    if (!position) {
+        clearMiningSeatMemory(creep);
+        return null;
+    }
+
+    /*
+     * The mining seat must still be beside the source.
+     */
+    if (position.getRangeTo(source.pos) > 1) {
+        clearMiningSeatMemory(creep);
+        return null;
+    }
+
+    return position;
+}
+
+function creepHasRememberedMiningSeat(creep, sourceId, position) {
+    if (!creep.memory.miningSeat) {
+        return false;
+    }
+
+    if (creep.memory.miningSeat.sourceId !== sourceId) {
+        return false;
+    }
+
+    return creep.memory.miningSeatKey === getMiningSeatKey(position);
+}
+
+function isMiningSeatTakenByOtherCreep(creep, position) {
+    var seatKey = getMiningSeatKey(position);
+
+    /*
+     * Check reservations first.
+     *
+     * This catches creeps walking toward the seat before they arrive.
+     */
+    for (var creepName in Game.creeps) {
+        if (!Game.creeps.hasOwnProperty(creepName)) {
+            continue;
+        }
+
+        var otherCreep = Game.creeps[creepName];
+
+        if (!otherCreep || !otherCreep.memory) {
+            continue;
+        }
+
+        if (otherCreep.name === creep.name) {
+            continue;
+        }
+
+        if (otherCreep.memory.role !== 'Extractor') {
+            continue;
+        }
+
+        if (otherCreep.memory.miningSeatKey === seatKey) {
+            return true;
+        }
+    }
+
+    /*
+     * Check actual tile occupation too.
+     *
+     * This catches a creep standing there even if it has bad/missing memory.
+     */
+    var creepsOnTile = position.lookFor(LOOK_CREEPS);
+
+    for (var i = 0; i < creepsOnTile.length; i++) {
+        if (creepsOnTile[i].name !== creep.name) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+function getMiningSeatKey(position) {
+    return position.roomName + ':' + position.x + ':' + position.y;
+}
+
+function sameRoomPosition(a, b) {
+    if (!a || !b) {
+        return false;
+    }
+
+    return (
+        a.x === b.x &&
+        a.y === b.y &&
+        a.roomName === b.roomName
+    );
+}
 
 /**
  * Build a clean list of source records from room memory.
@@ -1293,8 +1643,11 @@ module.exports = {
     fillBaseEnergy,
 
     getAssignedSource,
+    getAssignedMiningSeat,
 
     dropEnergy,
 
     shouldRepairStructure,
+
+
 };
