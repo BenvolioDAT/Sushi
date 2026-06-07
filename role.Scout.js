@@ -252,7 +252,7 @@ function idleOrWander(creep) {
      * to 8. Screeps direction constants use 1=top, then clockwise.
      */
     if(Game.time % 10 === 0) {
-        creep.move(Math.floor(Math.random() * 8) + 1);
+        utilityTravelCreep.moveDirection(creep, Math.floor(Math.random() * 8) + 1);
     }
 }
 

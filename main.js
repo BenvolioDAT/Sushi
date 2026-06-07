@@ -92,31 +92,61 @@ function updateRepairStructureMemory(room) {
 
 
 function maybeGeneratePixel() {
-    // Optional cosmetic pixel generation when CPU bucket is healthy.
-    const pixelCfg = true; // Set to false to disable pixel generation.
-    //---Environment guards ---
-    // 1) No Game.cpu or no generatePixel: sim/private/older envs.
+    /*
+     * Pixel generation is optional.
+     *
+     * enabled:
+     * - false means Sushi will never generate pixels.
+     * - true means Sushi may generate pixels when the bucket is healthy.
+     *
+     * bucketThreshold:
+     * - Only generate pixels when Game.cpu.bucket is at or above this number.
+     * - Higher numbers are safer because they leave more CPU saved for creeps.
+     *
+     * tickModulo:
+     * - 100 means "only check every 100 ticks."
+     * - Use 1 if you want to allow the check every tick.
+     */
+    var pixelCfg = {
+        enabled: false,
+        bucketThreshold: 9500,
+        tickModulo: 100
+    };
+
+    if (!pixelCfg.enabled) {
+        return;
+    }
+
+    /*
+     * Some environments do not support pixel generation.
+     */
     if (!Game.cpu || typeof Game.cpu.generatePixel !== 'function') {
         return;
     }
-    // 2) Explicityly skip in SIM shard.
+
+    /*
+     * The sim shard is for simulation, not real pixel generation.
+     */
     if (Game.shard && Game.shard.name === 'sim') {
         return;
     }
-    //--- Config guards ---
-    if (!pixelCfg.enabled) return;
-    // Some evironments may not have bucket; guard the check:
+
+    /*
+     * Some environments may not expose Game.cpu.bucket.
+     */
     if (typeof Game.cpu.bucket !== 'number') {
         return;
     }
-    // Bucket check
-    if (Game.cpu.bucket < pixelCfg.bucketThreshold) return;
-    if (pixelCfg.tickModulo > 1 && (Game.time % pixelCfg.tickModulo) !== 0) return;
-    //--- Pixel Generation ---
-    var result = Game.cpu.generatePixel();
-    if (result === OK) {
-        mainLog.info('Pixel generated successfully.');
+
+    if (Game.cpu.bucket < pixelCfg.bucketThreshold) {
+        return;
     }
+
+    if (pixelCfg.tickModulo > 1 && (Game.time % pixelCfg.tickModulo) !== 0) {
+        return;
+    }
+
+    Game.cpu.generatePixel();
 }
 
 

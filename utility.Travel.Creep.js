@@ -234,6 +234,67 @@ function moveToRoom(creep, roomName, options) {
 }
 
 /**
+ * Move a creep one step in a direction.
+ *
+ * Use this for simple movement like:
+ *
+ * travel.moveDirection(creep, TOP);
+ * travel.moveDirection(creep, Math.floor(Math.random() * 8) + 1);
+ *
+ * Screeps directions are numbers from 1 to 8:
+ * 1 is top, then the numbers go clockwise around the creep.
+ *
+ * @param {Creep} creep
+ * @param {number} direction
+ * @returns {number} Screeps result code.
+ */
+function moveDirection(creep, direction) {
+    /*
+     * Return an error instead of throwing if the caller gives bad input.
+     * This keeps role code simple and safe.
+     */
+    if (!creep || !creep.memory) {
+        return ERR_INVALID_ARGS;
+    }
+
+    /*
+     * Screeps direction numbers are whole numbers from 1 through 8.
+     */
+    if (
+        typeof direction !== 'number' ||
+        direction < 1 ||
+        direction > 8 ||
+        Math.floor(direction) !== direction
+    ) {
+        return ERR_INVALID_ARGS;
+    }
+
+    /*
+     * Do not let the same creep move more than once in the same tick.
+     */
+    if (creep.memory._sushiMoveTick === Game.time) {
+        return ERR_BUSY;
+    }
+
+    var result = creep.move(direction);
+
+    /*
+     * These results mean the wrapper safely handled this tick's movement
+     * request, even if the creep could not physically move right now.
+     */
+    if (
+        result === OK ||
+        result === ERR_BUSY ||
+        result === ERR_TIRED ||
+        result === ERR_NO_BODYPART
+    ) {
+        creep.memory._sushiMoveTick = Game.time;
+    }
+
+    return result;
+}
+
+/**
  * Clear this creep's movement cache.
  *
  * Useful if a creep gets stuck, changes jobs, or changes target.
@@ -263,7 +324,8 @@ function clearTravelMemory(creep) {
 // Exports
 // ============================================================================
 module.exports = {
-    move,
-    moveToRoom,
-    clearTravelMemory,
+    move: move,
+    moveToRoom: moveToRoom,
+    moveDirection: moveDirection,
+    clearTravelMemory: clearTravelMemory
 };
