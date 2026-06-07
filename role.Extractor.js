@@ -85,42 +85,6 @@ function isCreepOnPosition(creep, position) {
     );
 }
 
-function getAssignedSource(creep) {
-    /*
-     * Local helper kept in this file for reference. The active role uses
-     * utilityCreep.getAssignedSource above, but this function shows the same
-     * basic idea: remember a source id in creep memory.
-     */
-    var source = null;
-
-    if(creep.memory.sourceId) {
-        /*
-         * Game.getObjectById turns a saved id back into the live Source object.
-         * If it returns null, the object is not available and memory is cleared.
-         */
-        source = Game.getObjectById(creep.memory.sourceId);
-        if(source) {
-            return source;
-        }
-        delete creep.memory.sourceId;
-    }
-
-    source = getSourceFromRoomMemory(creep);
-    if(source) {
-        creep.memory.sourceId = source.id;
-        return source;
-    }
-
-    var sources = creep.room.find(FIND_SOURCES);
-    if(!sources || sources.length === 0) {
-        return null;
-    }
-
-    source = creep.pos.findClosestByPath(sources) || sources[0];
-    creep.memory.sourceId = source.id;
-    return source;
-}
-
 function getSourceFromRoomMemory(creep) {
     /*
      * Room scan data lives under Memory.rooms[roomName]. If the room has never
