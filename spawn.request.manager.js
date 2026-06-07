@@ -23,8 +23,8 @@ var DESIRED_COUNTS = {
     Foreman: 1,
     Extractor: 6,
     Freighter: 4,
-    Tech: 3,
-    Artificer: 3,
+    Tech: 2,
+    Artificer: 2,
     Scout: 1
 };
 
