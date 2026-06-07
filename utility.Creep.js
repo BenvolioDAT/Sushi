@@ -1066,6 +1066,11 @@ function getFallbackAssignedSource(creep) {
 }
 /////////////////////////////////////////////////////////////////////////////////////
 /////////////////////////////////////////////////////////////////////////////////////
+// Repair helpers. These are used by creeps but they are separate from
+// the main energy collection and transfer helpers because repair logic can be
+// complex and you may want to reuse the repair rules in other roles later, such
+// as Foreman or other creeps with WORK parts that can repair as a side job.
+
 var REPAIR_LIMITS = {
     /*
      * Roads and containers decay over time, so repair them when they drop below
@@ -1200,7 +1205,8 @@ function repairFromMemory(creep) {
 
     return true;
 }
-
+///////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////
 // ============================================================================
 // Exports
 // ============================================================================
