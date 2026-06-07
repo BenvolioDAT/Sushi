@@ -91,6 +91,34 @@ function updateRepairStructureMemory(room) {
 }
 
 
+function maybeGeneratePixel() {
+    // Optional cosmetic pixel generation when CPU bucket is healthy.
+    const pixelCfg = true; // Set to false to disable pixel generation.
+    //---Environment guards ---
+    // 1) No Game.cpu or no generatePixel: sim/private/older envs.
+    if (!Game.cpu || typeof Game.cpu.generatePixel !== 'function') {
+        return;
+    }
+    // 2) Explicityly skip in SIM shard.
+    if (Game.shard && Game.shard.name === 'sim') {
+        return;
+    }
+    //--- Config guards ---
+    if (!pixelCfg.enabled) return;
+    // Some evironments may not have bucket; guard the check:
+    if (typeof Game.cpu.bucket !== 'number') {
+        return;
+    }
+    // Bucket check
+    if (Game.cpu.bucket < pixelCfg.bucketThreshold) return;
+    if (pixelCfg.tickModulo > 1 && (Game.time % pixelCfg.tickModulo) !== 0) return;
+    //--- Pixel Generation ---
+    var result = Game.cpu.generatePixel();
+    if (result === OK) {
+        mainLog.info('Pixel generated successfully.');
+    }
+}
+
 
 /*
  * Screeps calls module.exports.loop once every game tick.
@@ -98,6 +126,8 @@ function updateRepairStructureMemory(room) {
  * construction progresses, and your JavaScript runs from top to bottom.
  */
 module.exports.loop = function () {
+
+        maybeGeneratePixel();
     /*
      * WarRoom is the shared combat radar.
      * It scans visible rooms before combat creep role logic runs.
