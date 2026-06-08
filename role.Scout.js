@@ -1,6 +1,11 @@
 var utility = require('utility');
 var utilityTravelCreep = require('utility.Travel.Creep');
 
+var SCOUT_RADIUS = 5;
+var SCOUT_RESCAN_AFTER_TICKS = 3000;
+var SCOUT_PLAN_MEMORY_KEY = 'scoutPlan';
+var SCOUT_UNREACHABLE_TICKS = 1500;
+
 var roleScout = {
 
     /** @param {Creep} creep **/
@@ -13,246 +18,480 @@ var roleScout = {
             return;
         }
 
+        ensureScoutHomeRoom(creep);
+
+        ensureScoutPlan(creep);
+
         /*
-         * Scan the room the Scout is currently standing in.
-         * This helps Sushi remember sources, controller info, minerals, and other room data.
+         * Keep the normal Sushi room scan. This records sources, controller
+         * info, minerals, and other room planning data.
          */
         utility.scanRoom(creep);
 
         /*
-         * Save small Scout intel every tick the Scout is alive.
-         * This is useful because utility.scanRoom exits early after the first scan,
-         * but hostile counts and reservations can change later.
+         * Save simple scouting data every time the Scout has vision in a room.
          */
-        //rememberRoomVisit(creep);
+        saveScoutVisit(creep);
 
         /*
-         * If the Scout does not currently have a target room,
-         * choose one random neighboring room from the current room.
+         * If the Scout just arrived, clear targetRoom so the next choice comes
+         * from the planned scout list instead of old memory.
          */
-        if(!creep.memory.targetRoom) {
-            chooseRandomNeighborRoom(creep);
+        if(creep.memory.targetRoom && creep.room.name === creep.memory.targetRoom) {
+            delete creep.memory.targetRoom;
         }
 
-        /*
-         * If we now have a target room, walk toward it.
-         */
+        if(!creep.memory.targetRoom) {
+            chooseNextScoutRoom(creep);
+        }
+
         if(creep.memory.targetRoom) {
             moveToTargetRoom(creep, creep.memory.targetRoom);
             return;
         }
 
-        /*
-         * Fallback only.
-         * This happens if the room has no valid exits or something went wrong.
-         */
-        idleOrWander(creep);
+        idleNearHome(creep);
     }
 };
 
-function rememberRoomVisit(creep) {
+function ensureScoutHomeRoom(creep) {
     /*
-     * This helper is currently not called by run(), but it shows how Scout intel
-     * can be stored. Memory.rooms is the long-term memory object organized by
-     * room name.
+     * A Scout plans around its home room. Use existing memory first so a Scout
+     * keeps the same center even after it travels far away.
      */
+    if(!creep || !creep.memory || !creep.room) {
+        return null;
+    }
+
+    var homeRoom = creep.memory.homeRoom ||
+        creep.memory.spawnRoom ||
+        creep.memory.birthRoom ||
+        creep.room.name;
+
+    creep.memory.homeRoom = homeRoom;
+
+    return homeRoom;
+}
+
+function ensureRoomMemory(roomName) {
+    /*
+     * Memory.rooms is the long-term storage object organized by room name.
+     */
+    if(!roomName) {
+        return null;
+    }
+
     if(!Memory.rooms) {
         Memory.rooms = {};
     }
 
-    if(!Memory.rooms[creep.room.name]) {
-        Memory.rooms[creep.room.name] = {};
+    if(!Memory.rooms[roomName]) {
+        Memory.rooms[roomName] = {};
     }
 
+    return Memory.rooms[roomName];
+}
+
+function ensureScoutPlan(creep) {
     /*
-     * This writes a compact scouting snapshot to Memory.rooms[roomName].scout.
-     * The live room.find calls count visible objects at the time of the visit.
+     * The plan lives in the home room memory so all Scouts from that room can
+     * share one predictable room list.
      */
-    Memory.rooms[creep.room.name].scout = {
-        lastVisited: Game.time,
-        sources: creep.room.find(FIND_SOURCES).length,
-        hostiles: creep.room.find(FIND_HOSTILE_CREEPS).length,
-        controllerOwner: creep.room.controller && creep.room.controller.owner ? creep.room.controller.owner.username : null,
-        controllerReservation: creep.room.controller && creep.room.controller.reservation ? creep.room.controller.reservation.username : null
+    var homeRoom = ensureScoutHomeRoom(creep);
+    var homeMemory = ensureRoomMemory(homeRoom);
+
+    if(!homeMemory) {
+        return null;
+    }
+
+    var plan = homeMemory[SCOUT_PLAN_MEMORY_KEY];
+
+    if(
+        !plan ||
+        plan.homeRoom !== homeRoom ||
+        plan.radius !== SCOUT_RADIUS ||
+        !plan.rooms
+    ) {
+        homeMemory[SCOUT_PLAN_MEMORY_KEY] = buildScoutPlan(homeRoom, SCOUT_RADIUS);
+    }
+
+    return homeMemory[SCOUT_PLAN_MEMORY_KEY];
+}
+
+function getScoutPlan(creep) {
+    /*
+     * Read the existing plan without rebuilding it. This is useful for small
+     * helper functions that only want to update a known record.
+     */
+    var homeRoom = creep && creep.memory ? creep.memory.homeRoom : null;
+
+    if(!homeRoom || !Memory.rooms || !Memory.rooms[homeRoom]) {
+        return null;
+    }
+
+    return Memory.rooms[homeRoom][SCOUT_PLAN_MEMORY_KEY] || null;
+}
+
+function parseRoomName(roomName) {
+    /*
+     * Screeps room names are split into horizontal and vertical parts.
+     *
+     * This helper converts them into simple internal x/y numbers:
+     * E0 = 0, E1 = 1, W0 = -1, W1 = -2
+     * S0 = 0, S1 = 1, N0 = -1, N1 = -2
+     *
+     * That model avoids off-by-one bugs around the W0/E0 and N0/S0 borders.
+     */
+    if(typeof roomName !== 'string') {
+        return null;
+    }
+
+    var match = /^([WE])(\d+)([NS])(\d+)$/.exec(roomName);
+
+    if(!match) {
+        return null;
+    }
+
+    var horizontalDirection = match[1];
+    var horizontalNumber = parseInt(match[2], 10);
+    var verticalDirection = match[3];
+    var verticalNumber = parseInt(match[4], 10);
+
+    return {
+        x: horizontalDirection === 'E' ? horizontalNumber : -horizontalNumber - 1,
+        y: verticalDirection === 'S' ? verticalNumber : -verticalNumber - 1
     };
 }
 
-/**
- * Pick one random neighboring room from the Scout's current room.
- *
- * This uses Game.map.describeExits(roomName), which returns nearby room names.
- * Example shape:
- *
- * {
- *     "1": "W8N4",
- *     "3": "W7N3",
- *     "5": "W8N2",
- *     "7": "W9N3"
- * }
- *
- * The numbers are exit direction constants:
- * 1 = top
- * 3 = right
- * 5 = bottom
- * 7 = left
- *
- * @param {Creep} creep
- * @returns {boolean}
- */
-function chooseRandomNeighborRoom(creep) {
+function roomNameFromXY(x, y) {
     /*
-     * Return false instead of throwing if the caller gives bad input. That makes
-     * the Scout role safe to run every tick.
+     * Convert the internal x/y numbers back into Screeps room names.
+     */
+    if(typeof x !== 'number' || typeof y !== 'number') {
+        return null;
+    }
+
+    var horizontalName = x >= 0 ? 'E' + x : 'W' + (-x - 1);
+    var verticalName = y >= 0 ? 'S' + y : 'N' + (-y - 1);
+
+    return horizontalName + verticalName;
+}
+
+function buildScoutPlan(homeRoom, radius) {
+    /*
+     * Build a square list of rooms around the home room. Distance is Chebyshev
+     * distance, so every room in the same square ring has the same distance.
+     */
+    var plan = {
+        homeRoom: homeRoom,
+        radius: radius,
+        createdAt: Game.time,
+        rooms: {}
+    };
+
+    var center = parseRoomName(homeRoom);
+
+    if(!center) {
+        return plan;
+    }
+
+    for(var dx = -radius; dx <= radius; dx++) {
+        for(var dy = -radius; dy <= radius; dy++) {
+            var roomName = roomNameFromXY(center.x + dx, center.y + dy);
+
+            if(!roomName) {
+                continue;
+            }
+
+            var roomStatus = getRoomStatusString(roomName);
+
+            if(!isScoutRoomStatusAllowed(roomStatus)) {
+                continue;
+            }
+
+            plan.rooms[roomName] = {
+                roomName: roomName,
+                distance: Math.max(Math.abs(dx), Math.abs(dy)),
+                status: roomStatus,
+                lastScanTick: null,
+                unreachableUntil: 0
+            };
+        }
+    }
+
+    return plan;
+}
+
+function isScoutRoomStatusAllowed(roomStatus) {
+    /*
+     * Plan only rooms Screeps says are available for normal play.
+     */
+    return roomStatus === 'normal' ||
+        roomStatus === 'novice' ||
+        roomStatus === 'respawn';
+}
+
+function getRoomStatusString(roomName) {
+    /*
+     * getRoomStatus lets us avoid closed or unavailable rooms before travel.
+     */
+    if(!roomName || !Game.map || typeof Game.map.getRoomStatus !== 'function') {
+        return 'unknown';
+    }
+
+    var roomStatus = Game.map.getRoomStatus(roomName);
+
+    if(!roomStatus || !roomStatus.status) {
+        return 'unknown';
+    }
+
+    return roomStatus.status;
+}
+
+function saveScoutVisit(creep) {
+    /*
+     * This stores the latest room visit in Memory.rooms[roomName]. The plan also
+     * gets updated if this room belongs to the Scout's home-room plan.
      */
     if(!creep || !creep.room) {
+        return;
+    }
+
+    var roomName = creep.room.name;
+    var roomMemory = ensureRoomMemory(roomName);
+
+    if(!roomMemory) {
+        return;
+    }
+
+    roomMemory.lastScanTick = Game.time;
+    roomMemory.scoutIntel = {
+        lastScanTick: Game.time,
+        roomName: roomName,
+        roomStatus: getRoomStatusString(roomName),
+        sourceCount: creep.room.find(FIND_SOURCES).length,
+        hostileCreepCount: creep.room.find(FIND_HOSTILE_CREEPS).length,
+        hostileStructureCount: creep.room.find(FIND_HOSTILE_STRUCTURES).length,
+        invaderCore: hasInvaderCore(creep.room),
+        controllerOwner: getControllerOwnerName(creep.room),
+        controllerReservation: getControllerReservationName(creep.room),
+        controllerLevel: getControllerLevel(creep.room)
+    };
+
+    var plan = getScoutPlan(creep);
+
+    if(plan && plan.rooms && plan.rooms[roomName]) {
+        plan.rooms[roomName].lastScanTick = Game.time;
+        plan.rooms[roomName].status = getRoomStatusString(roomName);
+    }
+}
+
+function hasInvaderCore(room) {
+    /*
+     * Some private servers or older environments may not define this constant,
+     * so check it before using it.
+     */
+    if(!room || typeof STRUCTURE_INVADER_CORE === 'undefined') {
         return false;
     }
 
-    var currentRoomName = creep.room.name;
-    /*
-     * Game.map.describeExits does not require vision in neighboring rooms. It
-     * reads map topology and tells us which rooms border the current room.
-     */
-    var exits = Game.map.describeExits(currentRoomName);
+    var invaderCores = room.find(FIND_HOSTILE_STRUCTURES, {
+        filter: function(structure) {
+            return structure.structureType === STRUCTURE_INVADER_CORE;
+        }
+    });
 
-    if(!exits) {
+    return invaderCores.length > 0;
+}
+
+function getControllerOwnerName(room) {
+    if(!room || !room.controller || !room.controller.owner) {
+        return null;
+    }
+
+    return room.controller.owner.username || null;
+}
+
+function getControllerReservationName(room) {
+    if(!room || !room.controller || !room.controller.reservation) {
+        return null;
+    }
+
+    return room.controller.reservation.username || null;
+}
+
+function getControllerLevel(room) {
+    if(!room || !room.controller) {
+        return null;
+    }
+
+    return room.controller.level || 0;
+}
+
+function chooseNextScoutRoom(creep) {
+    /*
+     * First visit every room in the plan once. After that, revisit the oldest
+     * stale room so intel stays fresh without random wandering.
+     */
+    var plan = ensureScoutPlan(creep);
+
+    if(!plan || !plan.rooms) {
+        delete creep.memory.targetRoom;
         return false;
     }
 
-    var allChoices = [];
-    var preferredChoices = [];
+    var bestNeverScanned = null;
+    var oldestScanned = null;
 
-    for(var direction in exits) {
-        if(!exits.hasOwnProperty(direction)) {
+    for(var roomName in plan.rooms) {
+        if(!plan.rooms.hasOwnProperty(roomName)) {
             continue;
         }
 
-        var neighborRoomName = exits[direction];
+        var roomRecord = plan.rooms[roomName];
 
-        if(!neighborRoomName) {
+        if(!roomRecord || roomName === creep.room.name) {
             continue;
         }
 
-        /*
-         * Skip closed rooms.
-         * This matters more on official servers, but it is still safe on private servers.
-         */
-        var roomStatus = Game.map.getRoomStatus(neighborRoomName);
-
-        if(roomStatus && roomStatus.status === 'closed') {
+        if(roomRecord.unreachableUntil && roomRecord.unreachableUntil > Game.time) {
             continue;
         }
 
-        allChoices.push(neighborRoomName);
+        var roomStatus = getRoomStatusString(roomName);
+        roomRecord.status = roomStatus;
 
-        /*
-         * Prefer not to go straight back into the room we just came from.
-         * This reduces back-and-forth movement across the same border.
-         */
-        if(neighborRoomName !== creep.memory.previousRoom) {
-            preferredChoices.push(neighborRoomName);
+        if(!isScoutRoomStatusAllowed(roomStatus)) {
+            continue;
+        }
+
+        if(roomRecord.lastScanTick === null || roomRecord.lastScanTick === undefined) {
+            if(
+                !bestNeverScanned ||
+                roomRecord.distance < bestNeverScanned.distance ||
+                (
+                    roomRecord.distance === bestNeverScanned.distance &&
+                    roomName < bestNeverScanned.roomName
+                )
+            ) {
+                bestNeverScanned = roomRecord;
+            }
+
+            continue;
+        }
+
+        if(
+            !oldestScanned ||
+            roomRecord.lastScanTick < oldestScanned.lastScanTick ||
+            (
+                roomRecord.lastScanTick === oldestScanned.lastScanTick &&
+                roomRecord.distance < oldestScanned.distance
+            )
+        ) {
+            oldestScanned = roomRecord;
         }
     }
 
-    /*
-     * Prefer a room that is not the previous room.
-     * But if the only valid room is the previous room, allow it.
-     */
-    var choices = preferredChoices.length > 0 ? preferredChoices : allChoices;
-
-    if(choices.length === 0) {
-        return false;
+    if(bestNeverScanned) {
+        creep.memory.targetRoom = bestNeverScanned.roomName;
+        return true;
     }
 
-    var randomIndex = Math.floor(Math.random() * choices.length);
-    var selectedRoomName = choices[randomIndex];
+    if(
+        oldestScanned &&
+        Game.time - oldestScanned.lastScanTick >= SCOUT_RESCAN_AFTER_TICKS
+    ) {
+        creep.memory.targetRoom = oldestScanned.roomName;
+        return true;
+    }
 
-    /*
-     * Remember where we came from and where we are going. Both values are saved
-     * in creep.memory so they survive into future ticks.
-     */
-    creep.memory.previousRoom = currentRoomName;
-    creep.memory.targetRoom = selectedRoomName;
-
-    return true;
+    delete creep.memory.targetRoom;
+    return false;
 }
 
 function moveToTargetRoom(creep, roomName) {
     /*
-     * If the Scout reached the target room, clear targetRoom.
-     * Next tick, it will pick a new neighboring room from this new location.
+     * The Scout moves room-to-room by walking to the nearest exit for the
+     * target room. The actual movement still goes through Sushi's travel wrapper.
      */
+    if(!creep || !creep.room || !roomName) {
+        return false;
+    }
+
     if(creep.room.name === roomName) {
-        /*
-         * Deleting targetRoom makes run() choose a new neighboring room on a
-         * later tick. This is how the Scout keeps exploring instead of stopping.
-         */
-        delete creep.memory.targetRoom;
-
-        var controller = creep.room.controller;
-
-        /*
-         * Move near the controller after entering the room. This can improve
-         * vision around the controller area before the next room is selected.
-         */
-        if(controller && creep.pos.getRangeTo(controller) > 3) {
-            utilityTravelCreep.move(creep, controller, {
-                visualizePathStyle: {
-                    stroke: '#ffffff'
-                }
-            });
-        }
-
-        return;
+        return true;
     }
 
     var exitDir = Game.map.findExit(creep.room, roomName);
 
     if(exitDir < 0) {
-        /*
-         * If Screeps cannot find an exit route, forget this target so the Scout
-         * can choose a different neighbor later instead of getting stuck.
-         */
+        markScoutRoomUnreachable(creep, roomName, SCOUT_UNREACHABLE_TICKS);
         delete creep.memory.targetRoom;
+        return false;
+    }
+
+    var exit = creep.pos.findClosestByRange(exitDir);
+
+    if(!exit) {
+        markScoutRoomUnreachable(creep, roomName, SCOUT_UNREACHABLE_TICKS);
+        delete creep.memory.targetRoom;
+        return false;
+    }
+
+    var moveResult = utilityTravelCreep.move(creep, exit, {
+        visualizePathStyle: {
+            stroke: '#ffffff'
+        }
+    });
+
+    if(moveResult === ERR_NO_PATH || moveResult === ERR_INVALID_TARGET) {
+        markScoutRoomUnreachable(creep, roomName, SCOUT_UNREACHABLE_TICKS);
+        delete creep.memory.targetRoom;
+        return false;
+    }
+
+    return true;
+}
+
+function markScoutRoomUnreachable(creep, roomName, ticks) {
+    /*
+     * If routing fails, pause this room instead of deleting it. The Scout can
+     * try again later in case the map or route becomes available.
+     */
+    var plan = getScoutPlan(creep);
+
+    if(!plan || !plan.rooms || !plan.rooms[roomName]) {
         return;
     }
 
-    /*
-     * Find the closest border tile for the chosen exit direction and walk to it.
-     */
-    var exit = creep.pos.findClosestByRange(exitDir);
-
-    if(exit) {
-        utilityTravelCreep.move(creep, exit, {
-            visualizePathStyle: {
-                stroke: '#ffffff'
-            }
-        });
-    }
+    plan.rooms[roomName].unreachableUntil = Game.time + ticks;
 }
 
-function idleOrWander(creep) {
+function idleNearHome(creep) {
     /*
-     * If no target room could be selected, stay near a spawn when possible.
+     * When no planned room needs a scan, wait near home. This keeps the Scout
+     * predictable and close to the next scan cycle.
      */
+    var homeRoom = ensureScoutHomeRoom(creep);
+
+    if(!homeRoom) {
+        return;
+    }
+
+    if(creep.room.name !== homeRoom) {
+        moveToTargetRoom(creep, homeRoom);
+        return;
+    }
+
     var spawn = creep.pos.findClosestByPath(FIND_MY_SPAWNS);
 
     if(spawn && creep.pos.getRangeTo(spawn) > 3) {
         utilityTravelCreep.move(creep, spawn, {
+            range: 3,
             visualizePathStyle: {
                 stroke: '#bbbbbb'
             }
         });
-
-        return;
-    }
-
-    /*
-     * Last fallback: every 10 ticks, move in a random direction number from 1
-     * to 8. Screeps direction constants use 1=top, then clockwise.
-     */
-    if(Game.time % 10 === 0) {
-        utilityTravelCreep.moveDirection(creep, Math.floor(Math.random() * 8) + 1);
     }
 }
 
