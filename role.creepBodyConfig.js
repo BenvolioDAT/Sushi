@@ -255,6 +255,24 @@ function getScoutBody(room) {
     }
 }
 
+function getScoreRunnerBody(room) {
+    var energyCapacity = getRoomEnergyCapacity(room);
+
+    /*
+     * ScoreRunners only need to step onto Score objects.
+     * MOVE parts keep the body cheap and fast to replace.
+     */
+    if(energyCapacity >= 300) {
+        return [TOUGH, MOVE, MOVE, MOVE, MOVE, MOVE];
+    }
+
+    if(energyCapacity >= 150) {
+        return [MOVE, MOVE, MOVE];
+    }
+
+    return [MOVE];
+}
+
 /**
  * Main body picker.
  *
@@ -291,6 +309,10 @@ function getBody(role, room) {
         return getScoutBody(room);
     }
 
+    if (role === 'ScoreRunner') {
+        return getScoreRunnerBody(room);
+    }
+
     /*
      * Safe fallback body.
      */
@@ -306,5 +328,6 @@ module.exports = {
     getExtractorBody,
     getFreighterBody,
     getTechBody,
-    getArtificerBody
+    getArtificerBody,
+    getScoreRunnerBody: getScoreRunnerBody
 };

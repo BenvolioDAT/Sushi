@@ -7,6 +7,7 @@ var roleScout = require('role.Scout');
 var roleRonin = require('role.Ronin');
 var roleVolley = require('role.Volley');
 var roleCleric = require('role.Cleric');
+var roleScoreRunner = require('role.scorerunner');
 
 var utility_spawn = require('utility.spawn');
 var utilityVisual = require('utility.Visual');
@@ -191,7 +192,7 @@ module.exports.loop = function () {
          * planSourceContainers(roomName) reads Memory.rooms[roomName].sources
          * and may write container planning data back into that room memory.
          */
-        utility.planSourceContainers(roomName);
+       //utility.planSourceContainers(roomName);
     }}
     // Draw a flag on each source on the MAP.
     /*
@@ -241,6 +242,10 @@ module.exports.loop = function () {
          * Each if-statement checks one possible role name. The role names are
          * plain strings stored in creep memory when the creep is spawned.
          */
+        if(creep.memory.role == 'ScoreRunner') {
+            roleScoreRunner.run(creep);
+            continue;
+        }
         if(creep.memory.role == 'Tech') {
             roleTech.run(creep);
         }
