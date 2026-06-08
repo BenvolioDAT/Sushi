@@ -23,16 +23,11 @@ var DESIRED_COUNTS = {
     Foreman: 1,
     Extractor: 6,
     Freighter: 4,
+    ScoreRunner: 1,
     Tech: 2,
     Artificer: 2,
     Scout: 1
 };
-
-var SCORE_RUNNER_ENABLED = true;
-var SCORE_RUNNER_MIN_RCL = 1;
-var SCORE_RUNNER_MAX_PER_ROOM = 2;
-var SCORE_MEMORY_TTL = 1000;
-var SCORE_RUNNER_NEARBY_ROOM_RANGE = 3;
 
 /*
  * Higher number = more important.
@@ -246,108 +241,6 @@ function countQueuedRequests(roomName, role) {
     }
 
     return count;
-}
-
-function getScoreSeasonMemory() {
-    if(!Memory.scoreSeason) {
-        Memory.scoreSeason = {};
-    }
-
-    if(!Memory.scoreSeason.knownScores) {
-        Memory.scoreSeason.knownScores = {};
-    }
-
-    return Memory.scoreSeason;
-}
-
-function cleanOldKnownScores() {
-    var scoreMemory = getScoreSeasonMemory();
-    var knownScores = scoreMemory.knownScores;
-    var oldestAllowedSeenTick = Game.time - SCORE_MEMORY_TTL;
-
-    for(var scoreId in knownScores) {
-        if(!knownScores.hasOwnProperty(scoreId)) {
-            continue;
-        }
-
-        var record = knownScores[scoreId];
-
-        if(!record || record.seen < oldestAllowedSeenTick) {
-            delete knownScores[scoreId];
-        }
-    }
-}
-
-function isRoomStatusAllowed(roomName) {
-    if(!roomName || !Game.map || typeof Game.map.getRoomStatus !== 'function') {
-        return true;
-    }
-
-    var roomStatus = Game.map.getRoomStatus(roomName);
-
-    if(!roomStatus || !roomStatus.status) {
-        return true;
-    }
-
-    return roomStatus.status !== 'closed';
-}
-
-function hasKnownScoreNearRoom(room) {
-    if(!room || !Game.map || typeof Game.map.getRoomLinearDistance !== 'function') {
-        return false;
-    }
-
-    var scoreMemory = getScoreSeasonMemory();
-    var knownScores = scoreMemory.knownScores;
-
-    cleanOldKnownScores();
-
-    for(var scoreId in knownScores) {
-        if(!knownScores.hasOwnProperty(scoreId)) {
-            continue;
-        }
-
-        var record = knownScores[scoreId];
-
-        if(!record || !record.roomName || !isRoomStatusAllowed(record.roomName)) {
-            continue;
-        }
-
-        if(Game.map.getRoomLinearDistance(room.name, record.roomName) <= SCORE_RUNNER_NEARBY_ROOM_RANGE) {
-            return true;
-        }
-    }
-
-    return false;
-}
-
-function getDesiredScoreRunnerCount(room) {
-    if(!SCORE_RUNNER_ENABLED || !room || !room.controller || !room.controller.my) {
-        return 0;
-    }
-
-    if((room.controller.level || 0) < SCORE_RUNNER_MIN_RCL) {
-        return 0;
-    }
-
-    /*
-     * Season mode keeps one ScoreRunner alive. A nearby known Score lets the
-     * room temporarily keep a second runner if the room has enough energy.
-     */
-    var desiredCount = 1;
-
-    if(
-        hasKnownScoreNearRoom(room) &&
-        room.energyCapacityAvailable >= 300
-    ) {
-        desiredCount = SCORE_RUNNER_MAX_PER_ROOM;
-    }
-
-    if(desiredCount > SCORE_RUNNER_MAX_PER_ROOM) {
-        desiredCount = SCORE_RUNNER_MAX_PER_ROOM;
-    }
-
-    return desiredCount;
 }
 
 /**
@@ -814,13 +707,7 @@ function run() {
 
     report.requests.push(requestRoleForRoom(room, 'Extractor', getDesiredExtractorCount(room)));
     report.requests.push(requestRoleForRoom(room, 'Freighter', DESIRED_COUNTS.Freighter));
-
-    var desiredScoreRunnerCount = getDesiredScoreRunnerCount(room);
-
-    if(desiredScoreRunnerCount > 0) {
-        report.requests.push(requestRoleForRoom(room, 'ScoreRunner', desiredScoreRunnerCount));
-    }
-
+    report.requests.push(requestRoleForRoom(room, 'ScoreRunner', DESIRED_COUNTS.ScoreRunner));
     report.requests.push(requestRoleForRoom(room, 'Tech', DESIRED_COUNTS.Tech));
     report.requests.push(requestRoleForRoom(room, 'Artificer', DESIRED_COUNTS.Artificer));
     report.requests.push(requestRoleForRoom(room, 'Scout', DESIRED_COUNTS.Scout));
@@ -839,7 +726,6 @@ module.exports = {
     getFirstSpawn: getFirstSpawn,
     getManagedRoom: getManagedRoom,
     requestRoleForRoom: requestRoleForRoom,
-    getDesiredScoreRunnerCount: getDesiredScoreRunnerCount,
     countHealthyCreeps: countHealthyCreeps,
     getReplacementLeadTicks: getReplacementLeadTicks
 };
