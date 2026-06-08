@@ -385,51 +385,20 @@ function tryRoomFind(room, findConstant, options) {
     }
 }
 
-function getScoreResourceTypeMap() {
-    var scoreTypes = {
-        score: true,
-        Score: true,
-        SCORE: true
-    };
-
-    if(typeof RESOURCE_SCORE !== 'undefined') {
-        scoreTypes[RESOURCE_SCORE] = true;
-    }
-
-    return scoreTypes;
-}
-
-function isScoreResource(resource) {
-    if(!resource || !resource.resourceType) {
-        return false;
-    }
-
-    var scoreTypes = getScoreResourceTypeMap();
-
-    return scoreTypes[resource.resourceType] === true;
-}
-
 function isScoreLikeObject(target) {
     if(!target || !target.id || !target.pos) {
         return false;
     }
 
     /*
-     * Official Season 10 Score objects have a numeric .score field.
+     * ScoreRunners collect Season 10 Score objects by stepping onto their tile.
+     * A valid remembered target must be a real map object with an id and a
+     * concrete RoomPosition-like shape. Do not treat resource names, controller
+     * score stats, store contents, or value-only memory records as targets.
      */
-    if(typeof target.score === 'number') {
-        return true;
-    }
-
-    /*
-     * This fallback supports older or private-server implementations that might
-     * expose score as a dropped resource instead of a Score object.
-     */
-    if(isScoreResource(target)) {
-        return true;
-    }
-
-    return false;
+    return typeof target.pos.x === 'number' &&
+        typeof target.pos.y === 'number' &&
+        typeof target.pos.roomName === 'string';
 }
 
 function getScoreObjectValue(target) {
@@ -439,10 +408,6 @@ function getScoreObjectValue(target) {
 
     if(typeof target.score === 'number') {
         return target.score;
-    }
-
-    if(typeof target.amount === 'number') {
-        return target.amount;
     }
 
     return 0;
@@ -513,18 +478,6 @@ function findScoreObjects(room) {
 
     if(typeof FIND_SCORE !== 'undefined') {
         addScoreList(scores, seenIds, tryRoomFind(room, FIND_SCORE));
-    }
-
-    /*
-     * Resource-style fallback. It is skipped safely when the normal Screeps
-     * resource constant is not available.
-     */
-    if(typeof FIND_DROPPED_RESOURCES !== 'undefined') {
-        addScoreList(scores, seenIds, tryRoomFind(room, FIND_DROPPED_RESOURCES, {
-            filter: function(resource) {
-                return isScoreResource(resource);
-            }
-        }));
     }
 
     /*
