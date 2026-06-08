@@ -1,10 +1,10 @@
 var utility = require('utility');
 var utilityTravelCreep = require('utility.Travel.Creep');
 
-var SCOUT_RADIUS = 5;
+var SCOUT_RADIUS = 3;
 var SCOUT_RESCAN_AFTER_TICKS = 3000;
 var SCOUT_PLAN_MEMORY_KEY = 'scoutPlan';
-var SCOUT_UNREACHABLE_TICKS = 1500;
+var SCOUT_UNREACHABLE_TICKS = 300;
 
 var roleScout = {
 
