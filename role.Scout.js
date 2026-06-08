@@ -411,8 +411,14 @@ function chooseNextScoutRoom(creep) {
 
 function moveToTargetRoom(creep, roomName) {
     /*
-     * The Scout moves room-to-room by walking to the nearest exit for the
-     * target room. The actual movement still goes through Sushi's travel wrapper.
+     * Move the Scout to another room.
+     *
+     * Important:
+     * Do NOT move to the closest exit tile with default range 1.
+     * That can make the Scout stop beside the exit instead of crossing rooms.
+     *
+     * Instead, use utilityTravelCreep.moveToRoom(), which targets a position
+     * inside the target room and lets Traveler handle the room transition.
      */
     if(!creep || !creep.room || !roomName) {
         return false;
@@ -422,6 +428,10 @@ function moveToTargetRoom(creep, roomName) {
         return true;
     }
 
+    /*
+     * Quick route check.
+     * If Screeps says there is no route, pause this target room for a while.
+     */
     var exitDir = Game.map.findExit(creep.room, roomName);
 
     if(exitDir < 0) {
@@ -430,21 +440,20 @@ function moveToTargetRoom(creep, roomName) {
         return false;
     }
 
-    var exit = creep.pos.findClosestByRange(exitDir);
-
-    if(!exit) {
-        markScoutRoomUnreachable(creep, roomName, SCOUT_UNREACHABLE_TICKS);
-        delete creep.memory.targetRoom;
-        return false;
-    }
-
-    var moveResult = utilityTravelCreep.move(creep, exit, {
+    /*
+     * Move toward the center of the target room.
+     * range 22 means the Scout only needs to enter the room area, not walk
+     * all the way to the center like it is reporting for military inspection.
+     */
+    var moveResult = utilityTravelCreep.moveToRoom(creep, roomName, {
+        range: 22,
+        reusePath: 20,
         visualizePathStyle: {
             stroke: '#ffffff'
         }
     });
 
-    if(moveResult === ERR_NO_PATH || moveResult === ERR_INVALID_TARGET) {
+    if(moveResult === ERR_NO_PATH || moveResult === ERR_INVALID_TARGET || moveResult === ERR_INVALID_ARGS) {
         markScoutRoomUnreachable(creep, roomName, SCOUT_UNREACHABLE_TICKS);
         delete creep.memory.targetRoom;
         return false;
