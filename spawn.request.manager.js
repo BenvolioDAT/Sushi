@@ -13,6 +13,7 @@
 
 var spawnManager = require('spawn.manager');
 var creepBodyConfig = require('role.creepBodyConfig');
+var utilityCreep = require('utility.Creep');
 
 /*
  * How many creeps we want for now.
@@ -263,7 +264,19 @@ function requestRoleForRoom(room, role, desiredCount) {
      * Validate the request before doing body calculations or writing anything to
      * the spawn queue.
      */
-    if (!room || !role || desiredCount <= 0) {
+    if (!room || !role) {
+        return {
+            ok: false,
+            role: role,
+            reason: 'Invalid requestRoleForRoom input'
+        };
+    }
+
+    if (role === 'Extractor') {
+        return requestExtractorsForRoom(room);
+    }
+
+    if (desiredCount <= 0) {
         return {
             ok: false,
             role: role,
@@ -516,6 +529,313 @@ function getPlannedRoleCount(room, role) {
     return healthyCount + queuedCount;
 }
 
+function getSourcesMemoryForRoom(room) {
+    if(!room || !Memory.rooms || !Memory.rooms[room.name]) {
+        return null;
+    }
+
+    return Memory.rooms[room.name].sources || null;
+}
+
+function getSourceIdFromMemory(sourceId, sourceMemory) {
+    if(sourceMemory && sourceMemory.id) {
+        return sourceMemory.id;
+    }
+
+    return sourceId;
+}
+
+function getMemorySourceId(memory) {
+    if(!memory) {
+        return null;
+    }
+
+    if(memory.sourceId) {
+        return memory.sourceId;
+    }
+
+    if(memory.targetSourceId) {
+        return memory.targetSourceId;
+    }
+
+    if(memory.assignedSource) {
+        if(typeof memory.assignedSource === 'string') {
+            return memory.assignedSource;
+        }
+
+        if(memory.assignedSource.id) {
+            return memory.assignedSource.id;
+        }
+    }
+
+    return null;
+}
+
+function getRequestSourceId(request) {
+    if(!request) {
+        return null;
+    }
+
+    if(request.sourceId) {
+        return request.sourceId;
+    }
+
+    return getMemorySourceId(request.memory);
+}
+
+function getRequestRoomName(request, fallbackRoomName) {
+    if(!request) {
+        return fallbackRoomName;
+    }
+
+    if(request.roomName) {
+        return request.roomName;
+    }
+
+    if(request.memory) {
+        return request.memory.sourceRoom ||
+            request.memory.homeRoom ||
+            request.memory.targetRoom ||
+            fallbackRoomName;
+    }
+
+    return fallbackRoomName;
+}
+
+function isExtractorRequest(request) {
+    if(!request) {
+        return false;
+    }
+
+    var memory = request.memory || {};
+    var roleOrTask = request.role || request.task || memory.role || memory.task;
+
+    return roleOrTask === 'Extractor' ||
+        roleOrTask === 'Miner' ||
+        roleOrTask === 'miner';
+}
+
+function writeExtractorSourceMemory(memory, roomName, sourceId) {
+    memory.role = 'Extractor';
+    memory.homeRoom = roomName;
+    memory.sourceRoom = roomName;
+    memory.sourceId = sourceId;
+    memory.targetSourceId = sourceId;
+    memory.assignedSource = sourceId;
+}
+
+function hasQueuedExtractorForSource(queue, roomName, sourceId) {
+    if(!queue) {
+        return false;
+    }
+
+    for(var i = 0; i < queue.length; i++) {
+        var request = queue[i];
+
+        if(!isExtractorRequest(request)) {
+            continue;
+        }
+
+        if(getRequestRoomName(request, roomName) !== roomName) {
+            continue;
+        }
+
+        if(getRequestSourceId(request) === sourceId) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+function hasSpawningExtractorForSource(roomName, sourceId) {
+    for(var creepName in Game.creeps) {
+        if(!Game.creeps.hasOwnProperty(creepName)) {
+            continue;
+        }
+
+        var creep = Game.creeps[creepName];
+
+        if(!creep || !creep.memory || !creep.spawning) {
+            continue;
+        }
+
+        if(!isExtractorRequest({role: creep.memory.role, memory: creep.memory})) {
+            continue;
+        }
+
+        if(getRequestRoomName({memory: creep.memory}, roomName) !== roomName) {
+            continue;
+        }
+
+        if(getMemorySourceId(creep.memory) === sourceId) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+function adoptUnassignedQueuedExtractor(queue, roomName, sourceId) {
+    if(!queue) {
+        return false;
+    }
+
+    for(var i = 0; i < queue.length; i++) {
+        var request = queue[i];
+
+        if(!isExtractorRequest(request)) {
+            continue;
+        }
+
+        if(getRequestRoomName(request, roomName) !== roomName) {
+            continue;
+        }
+
+        if(getRequestSourceId(request)) {
+            continue;
+        }
+
+        request.role = 'Extractor';
+        request.roomName = roomName;
+        request.sourceId = sourceId;
+        request.memory = request.memory || {};
+        writeExtractorSourceMemory(request.memory, roomName, sourceId);
+
+        return true;
+    }
+
+    return false;
+}
+
+function queueExtractorForSource(queue, roomName, sourceId, body, priority) {
+    var memory = {};
+    writeExtractorSourceMemory(memory, roomName, sourceId);
+
+    queue.push({
+        role: 'Extractor',
+        body: body,
+        priority: priority || 0,
+        roomName: roomName,
+        sourceId: sourceId,
+        memory: memory,
+        requestedAt: Game.time
+    });
+}
+
+function sortSpawnQueue(queue) {
+    queue.sort(function(a, b) {
+        if (b.priority !== a.priority) {
+            return b.priority - a.priority;
+        }
+
+        return a.requestedAt - b.requestedAt;
+    });
+}
+
+function requestExtractorsForRoom(room) {
+    if(!room) {
+        return {
+            ok: false,
+            role: 'Extractor',
+            requested: 0,
+            reason: 'missing room'
+        };
+    }
+
+    var roomName = room.name;
+    var sourcesMemory = getSourcesMemoryForRoom(room);
+
+    if(!sourcesMemory) {
+        return {
+            ok: false,
+            role: 'Extractor',
+            requested: 0,
+            reason: 'missing source memory'
+        };
+    }
+
+    var body = creepBodyConfig.getBody('Extractor', room);
+    var queue = spawnManager.getSpawnQueue(roomName);
+
+    if(!body || !queue) {
+        return {
+            ok: false,
+            role: 'Extractor',
+            requested: 0,
+            reason: 'missing body or queue'
+        };
+    }
+
+    var requested = 0;
+    var adoptedQueued = 0;
+    var sourceReports = [];
+
+    for(var sourceId in sourcesMemory) {
+        if(!sourcesMemory.hasOwnProperty(sourceId)) {
+            continue;
+        }
+
+        var sourceMemory = sourcesMemory[sourceId];
+
+        if(!sourceMemory) {
+            continue;
+        }
+
+        var realSourceId = getSourceIdFromMemory(sourceId, sourceMemory);
+        var stats = utilityCreep.getSourceAssignmentStats(roomName, realSourceId, sourceMemory);
+
+        /*
+         * seatCount is the maximum allowed miner count. 6 total living WORK
+         * parts is enough mining power. A source asks for another Extractor
+         * only when both caps are still open and no same-source request exists.
+         */
+        var needsExtractor = stats.livingAssignedCount < stats.maxSeats &&
+            stats.totalAssignedWorkParts < SOURCE_WORK_TARGET;
+        var pendingExtractor = hasQueuedExtractorForSource(queue, roomName, realSourceId) ||
+            hasSpawningExtractorForSource(roomName, realSourceId);
+        var queuedNow = false;
+
+        if(needsExtractor && !pendingExtractor) {
+            if(adoptUnassignedQueuedExtractor(queue, roomName, realSourceId)) {
+                adoptedQueued++;
+                queuedNow = true;
+            } else {
+                queueExtractorForSource(
+                    queue,
+                    roomName,
+                    realSourceId,
+                    body,
+                    PRIORITY.Extractor
+                );
+                requested++;
+                queuedNow = true;
+            }
+        }
+
+        sourceReports.push({
+            sourceId: realSourceId,
+            livingAssignedCount: stats.livingAssignedCount,
+            totalAssignedWorkParts: stats.totalAssignedWorkParts,
+            maxSeats: stats.maxSeats,
+            needsExtractor: needsExtractor,
+            pendingExtractor: pendingExtractor || queuedNow
+        });
+    }
+
+    if(requested > 0 || adoptedQueued > 0) {
+        sortSpawnQueue(queue);
+    }
+
+    return {
+        ok: true,
+        role: 'Extractor',
+        requested: requested,
+        adoptedQueued: adoptedQueued,
+        sources: sourceReports
+    };
+}
+
 function runStartupBootstrap(room, report) {
     /*
      * Startup order:
@@ -539,7 +859,7 @@ function runStartupBootstrap(room, report) {
     var startupExtractorCount = getStartupExtractorCount(room);
 
     if (getHealthyRoleCount(room, 'Extractor') < startupExtractorCount) {
-        report.requests.push(requestRoleForRoom(room, 'Extractor', startupExtractorCount));
+        report.requests.push(requestExtractorsForRoom(room));
         return true;
     }
 
@@ -561,7 +881,7 @@ function runStartupBootstrap(room, report) {
 }
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-var SOURCE_WORK_TARGET = 5;
+var SOURCE_WORK_TARGET = 6;
 
 function countBodyParts(body, bodyPartType) {
     var count = 0;
@@ -613,16 +933,16 @@ function getDesiredExtractorCount(room) {
     }
 
     /*
-     * Each normal source wants about 5 WORK parts.
+     * Each normal source wants about 6 WORK parts.
      *
      * Example:
-     * 2 sources * 5 WORK = 10 total WORK wanted.
+     * 2 sources * 6 WORK = 12 total WORK wanted.
      *
      * If each Extractor has 6 WORK:
-     * Math.ceil(10 / 6) = 2 Extractors.
+     * Math.ceil(12 / 6) = 2 Extractors.
      *
      * If each Extractor has 2 WORK:
-     * Math.ceil(10 / 2) = 5 Extractors.
+     * Math.ceil(12 / 2) = 6 Extractors.
      */
     var desiredCount = Math.ceil((sourceCount * SOURCE_WORK_TARGET) / workPartsPerExtractor);
 
@@ -705,7 +1025,7 @@ function run() {
      */
     report.requests.push(requestRoleForRoom(room, 'Foreman', DESIRED_COUNTS.Foreman));
 
-    report.requests.push(requestRoleForRoom(room, 'Extractor', getDesiredExtractorCount(room)));
+    report.requests.push(requestExtractorsForRoom(room));
     report.requests.push(requestRoleForRoom(room, 'Freighter', DESIRED_COUNTS.Freighter));
     report.requests.push(requestRoleForRoom(room, 'ScoreRunner', DESIRED_COUNTS.ScoreRunner));
     report.requests.push(requestRoleForRoom(room, 'Tech', DESIRED_COUNTS.Tech));
@@ -725,6 +1045,7 @@ module.exports = {
     getCheaperBodyForRole: getCheaperBodyForRole,
     getFirstSpawn: getFirstSpawn,
     getManagedRoom: getManagedRoom,
+    requestExtractorsForRoom: requestExtractorsForRoom,
     requestRoleForRoom: requestRoleForRoom,
     countHealthyCreeps: countHealthyCreeps,
     getReplacementLeadTicks: getReplacementLeadTicks
