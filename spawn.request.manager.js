@@ -283,6 +283,322 @@ function requestRoleForRoom(room, role, desiredCount) {
     var healthyCount = countHealthyCreeps(roomName, role, replacementLeadTicks);
     var queuedCount = countQueuedRequests(roomName, role);
 
+    if (
+        role === 'Extractor' &&
+        Memory.rooms &&
+        Memory.rooms[roomName] &&
+        Memory.rooms[roomName].sources
+    ) {
+        var queue = spawnManager.getSpawnQueue(roomName);
+        var sourcesMemory = Memory.rooms[roomName].sources;
+        var sourceRequestsAdded = 0;
+        var managedSourceCount = 0;
+
+        if (!queue) {
+            return {
+                ok: false,
+                role: role,
+                requested: 0,
+                healthy: healthyCount,
+                queued: queuedCount,
+                desired: desiredCount,
+                reason: 'Missing spawn queue'
+            };
+        }
+
+        for (var sourceId in sourcesMemory) {
+            if (!sourcesMemory.hasOwnProperty(sourceId)) {
+                continue;
+            }
+
+            var sourceMemory = sourcesMemory[sourceId];
+
+            if (!sourceMemory) {
+                continue;
+            }
+
+            managedSourceCount++;
+
+            if (!sourceMemory.assignedMiner) {
+                sourceMemory.assignedMiner = [];
+            }
+            else if (typeof sourceMemory.assignedMiner === 'string') {
+                sourceMemory.assignedMiner = [sourceMemory.assignedMiner];
+            }
+            else if (!Array.isArray(sourceMemory.assignedMiner)) {
+                sourceMemory.assignedMiner = [];
+            }
+
+            var realSourceId = sourceMemory.id || sourceId;
+            var maxSeats = 1;
+            var livingAssignedCount = 0;
+            var totalAssignedWorkParts = 0;
+            var cleanAssignedMiners = [];
+            var seenAssignedCreeps = {};
+
+            if (sourceMemory.seatCount && sourceMemory.seatCount > 0) {
+                maxSeats = sourceMemory.seatCount;
+            }
+            else if (sourceMemory.seats && sourceMemory.seats.length > 0) {
+                maxSeats = sourceMemory.seats.length;
+            }
+
+            for (var assignedIndex = 0; assignedIndex < sourceMemory.assignedMiner.length; assignedIndex++) {
+                var assignedReference = sourceMemory.assignedMiner[assignedIndex];
+                var assignedCreep = Game.getObjectById(assignedReference) || Game.creeps[assignedReference];
+
+                if (!assignedCreep || !assignedCreep.my || !assignedCreep.memory) {
+                    continue;
+                }
+
+                var assignedRole = assignedCreep.memory.role;
+                var assignedTask = assignedCreep.memory.task;
+
+                if (
+                    assignedRole !== 'Extractor' &&
+                    assignedRole !== 'Miner' &&
+                    assignedTask !== 'Extractor' &&
+                    assignedTask !== 'Miner' &&
+                    assignedTask !== 'extractor' &&
+                    assignedTask !== 'miner'
+                ) {
+                    continue;
+                }
+
+                if (
+                    assignedCreep.memory.sourceId !== realSourceId &&
+                    assignedCreep.memory.targetSourceId !== realSourceId &&
+                    assignedCreep.memory.assignedSource !== realSourceId
+                ) {
+                    continue;
+                }
+
+                if (assignedCreep.memory.sourceRoom && assignedCreep.memory.sourceRoom !== roomName) {
+                    continue;
+                }
+
+                if (assignedCreep.memory.targetRoom && assignedCreep.memory.targetRoom !== roomName) {
+                    continue;
+                }
+
+                if (
+                    !assignedCreep.memory.sourceRoom &&
+                    !assignedCreep.memory.targetRoom &&
+                    assignedCreep.memory.homeRoom &&
+                    assignedCreep.memory.homeRoom !== roomName
+                ) {
+                    continue;
+                }
+
+                if (seenAssignedCreeps[assignedCreep.id]) {
+                    continue;
+                }
+
+                seenAssignedCreeps[assignedCreep.id] = true;
+                cleanAssignedMiners.push(assignedCreep.id);
+                livingAssignedCount++;
+
+                var assignedWorkParts = 0;
+
+                if (typeof assignedCreep.getActiveBodyparts === 'function') {
+                    assignedWorkParts = assignedCreep.getActiveBodyparts(WORK);
+                }
+
+                if (assignedWorkParts <= 0 && assignedCreep.spawning && assignedCreep.body) {
+                    for (var bodyIndex = 0; bodyIndex < assignedCreep.body.length; bodyIndex++) {
+                        if (assignedCreep.body[bodyIndex] && assignedCreep.body[bodyIndex].type === WORK) {
+                            assignedWorkParts++;
+                        }
+                    }
+                }
+
+                totalAssignedWorkParts += assignedWorkParts;
+            }
+
+            /*
+             * Include living or spawning creeps that already have this targeted
+             * source memory, even if assignedMiner has not caught up yet.
+             */
+            for (var creepName in Game.creeps) {
+                if (!Game.creeps.hasOwnProperty(creepName)) {
+                    continue;
+                }
+
+                var livingCreep = Game.creeps[creepName];
+
+                if (!livingCreep || !livingCreep.my || !livingCreep.memory) {
+                    continue;
+                }
+
+                var livingRole = livingCreep.memory.role;
+                var livingTask = livingCreep.memory.task;
+
+                if (
+                    livingRole !== 'Extractor' &&
+                    livingRole !== 'Miner' &&
+                    livingTask !== 'Extractor' &&
+                    livingTask !== 'Miner' &&
+                    livingTask !== 'extractor' &&
+                    livingTask !== 'miner'
+                ) {
+                    continue;
+                }
+
+                if (
+                    livingCreep.memory.sourceId !== realSourceId &&
+                    livingCreep.memory.targetSourceId !== realSourceId &&
+                    livingCreep.memory.assignedSource !== realSourceId
+                ) {
+                    continue;
+                }
+
+                if (livingCreep.memory.sourceRoom && livingCreep.memory.sourceRoom !== roomName) {
+                    continue;
+                }
+
+                if (livingCreep.memory.targetRoom && livingCreep.memory.targetRoom !== roomName) {
+                    continue;
+                }
+
+                if (
+                    !livingCreep.memory.sourceRoom &&
+                    !livingCreep.memory.targetRoom &&
+                    livingCreep.memory.homeRoom &&
+                    livingCreep.memory.homeRoom !== roomName
+                ) {
+                    continue;
+                }
+
+                if (seenAssignedCreeps[livingCreep.id]) {
+                    continue;
+                }
+
+                seenAssignedCreeps[livingCreep.id] = true;
+                cleanAssignedMiners.push(livingCreep.id);
+                livingAssignedCount++;
+
+                var livingWorkParts = 0;
+
+                if (typeof livingCreep.getActiveBodyparts === 'function') {
+                    livingWorkParts = livingCreep.getActiveBodyparts(WORK);
+                }
+
+                if (livingWorkParts <= 0 && livingCreep.spawning && livingCreep.body) {
+                    for (var livingBodyIndex = 0; livingBodyIndex < livingCreep.body.length; livingBodyIndex++) {
+                        if (livingCreep.body[livingBodyIndex] && livingCreep.body[livingBodyIndex].type === WORK) {
+                            livingWorkParts++;
+                        }
+                    }
+                }
+
+                totalAssignedWorkParts += livingWorkParts;
+            }
+
+            sourceMemory.assignedMiner = cleanAssignedMiners;
+
+            var hasPendingSourceRequest = false;
+
+            for (var queueIndex = 0; queueIndex < queue.length; queueIndex++) {
+                var queuedRequest = queue[queueIndex];
+
+                if (!queuedRequest) {
+                    continue;
+                }
+
+                var queuedMemory = queuedRequest.memory || {};
+                var queuedRole = queuedRequest.role || queuedMemory.role;
+                var queuedTask = queuedRequest.task || queuedMemory.task;
+
+                if (
+                    queuedRole !== 'Extractor' &&
+                    queuedRole !== 'Miner' &&
+                    queuedTask !== 'Extractor' &&
+                    queuedTask !== 'Miner' &&
+                    queuedTask !== 'extractor' &&
+                    queuedTask !== 'miner'
+                ) {
+                    continue;
+                }
+
+                var queuedRoom = (
+                    queuedRequest.roomName ||
+                    queuedMemory.sourceRoom ||
+                    queuedMemory.targetRoom ||
+                    queuedMemory.homeRoom ||
+                    roomName
+                );
+
+                if (queuedRoom !== roomName) {
+                    continue;
+                }
+
+                var queuedSourceId = (
+                    queuedRequest.sourceId ||
+                    queuedRequest.targetSourceId ||
+                    queuedRequest.assignedSource ||
+                    queuedMemory.sourceId ||
+                    queuedMemory.targetSourceId ||
+                    queuedMemory.assignedSource
+                );
+
+                if (queuedSourceId === realSourceId) {
+                    hasPendingSourceRequest = true;
+                    break;
+                }
+            }
+
+            /*
+             * seatCount is the miner parking limit. Six combined living WORK
+             * parts is enough mining power for one source. A source is skipped
+             * once either cap is reached, or once a matching source request is
+             * already pending in this room's spawnQueue.
+             */
+            if (
+                livingAssignedCount >= maxSeats ||
+                totalAssignedWorkParts >= SOURCE_WORK_TARGET ||
+                hasPendingSourceRequest
+            ) {
+                continue;
+            }
+
+            queue.push({
+                role: role,
+                body: body,
+                priority: priority,
+                memory: {
+                    role: role,
+                    homeRoom: roomName,
+                    sourceRoom: roomName,
+                    targetRoom: roomName,
+                    sourceId: realSourceId,
+                    targetSourceId: realSourceId
+                },
+                requestedAt: Game.time
+            });
+
+            sourceRequestsAdded++;
+        }
+
+        if (managedSourceCount > 0) {
+            queue.sort(function(a, b) {
+                if (b.priority !== a.priority) {
+                    return b.priority - a.priority;
+                }
+
+                return a.requestedAt - b.requestedAt;
+            });
+
+            return {
+                ok: true,
+                role: role,
+                requested: sourceRequestsAdded,
+                healthy: healthyCount,
+                queued: queuedCount,
+                desired: desiredCount
+            };
+        }
+    }
+
     /*
      * This is the number we want the spawn queue to think about.
      *
@@ -561,7 +877,7 @@ function runStartupBootstrap(room, report) {
 }
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-var SOURCE_WORK_TARGET = 5;
+var SOURCE_WORK_TARGET = 6;
 
 function countBodyParts(body, bodyPartType) {
     var count = 0;
@@ -613,16 +929,16 @@ function getDesiredExtractorCount(room) {
     }
 
     /*
-     * Each normal source wants about 5 WORK parts.
+     * Each normal source wants 6 WORK parts.
      *
      * Example:
-     * 2 sources * 5 WORK = 10 total WORK wanted.
+     * 2 sources * 6 WORK = 12 total WORK wanted.
      *
      * If each Extractor has 6 WORK:
-     * Math.ceil(10 / 6) = 2 Extractors.
+     * Math.ceil(12 / 6) = 2 Extractors.
      *
      * If each Extractor has 2 WORK:
-     * Math.ceil(10 / 2) = 5 Extractors.
+     * Math.ceil(12 / 2) = 6 Extractors.
      */
     var desiredCount = Math.ceil((sourceCount * SOURCE_WORK_TARGET) / workPartsPerExtractor);
 
