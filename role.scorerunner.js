@@ -70,10 +70,6 @@ function ensureScoreMemory() {
         scoreMemory.rooms = {};
     }
 
-    if(!isPlainObject(scoreMemory.exploreRooms)) {
-        scoreMemory.exploreRooms = {};
-    }
-
     if(!isPlainObject(scoreMemory.runnerIntents)) {
         scoreMemory.runnerIntents = {};
     }
@@ -252,7 +248,6 @@ function updateVisibleRoomMemory(room, scores, scanner) {
     }
 
     updateHostileRoomMemory(room, roomMemory);
-    updateExploreRoomMemory(room, scoreCount, scanner);
 }
 
 function updateHostileRoomMemory(room, roomMemory) {
@@ -329,104 +324,6 @@ function isHostileRoomBlacklisted(roomName) {
     var roomRecord = scoreMemory.rooms[roomName];
 
     return !!(roomRecord && roomRecord.hostileUntil > Game.time);
-}
-
-function ensureExploreRoomMemory(roomName) {
-    if(!roomName) {
-        return null;
-    }
-
-    var scoreMemory = ensureScoreMemory();
-
-    if(!isPlainObject(scoreMemory.exploreRooms[roomName])) {
-        scoreMemory.exploreRooms[roomName] = {
-            roomName: roomName,
-            discovered: Game.time,
-            discoveredFrom: null,
-            lastSeen: 0,
-            lastChecked: 0,
-            lastCheckedBy: null,
-            lastScoreSeen: 0,
-            scoreCountSeen: 0
-        };
-    }
-
-    scoreMemory.exploreRooms[roomName].roomName = roomName;
-
-    return scoreMemory.exploreRooms[roomName];
-}
-
-function rememberExploreRoom(roomName, discoveredFrom) {
-    if(!roomName || !isRoomStatusAllowed(roomName)) {
-        return null;
-    }
-
-    var roomRecord = ensureExploreRoomMemory(roomName);
-
-    if(!roomRecord) {
-        return null;
-    }
-
-    if(discoveredFrom && !roomRecord.discoveredFrom) {
-        roomRecord.discoveredFrom = discoveredFrom;
-    }
-
-    if(!roomRecord.discovered) {
-        roomRecord.discovered = Game.time;
-    }
-
-    return roomRecord;
-}
-
-function rememberAdjacentExploreRooms(room) {
-    if(
-        !room ||
-        !Game.map ||
-        typeof Game.map.describeExits !== 'function'
-    ) {
-        return;
-    }
-
-    var exitsByDirection;
-
-    try {
-        exitsByDirection = Game.map.describeExits(room.name);
-    } catch(error) {
-        return;
-    }
-
-    if(!exitsByDirection) {
-        return;
-    }
-
-    for(var direction in exitsByDirection) {
-        if(!exitsByDirection.hasOwnProperty(direction)) {
-            continue;
-        }
-
-        rememberExploreRoom(exitsByDirection[direction], room.name);
-    }
-}
-
-function updateExploreRoomMemory(room, scoreCount, scanner) {
-    if(!room) {
-        return;
-    }
-
-    var roomRecord = rememberExploreRoom(room.name, null);
-
-    if(roomRecord) {
-        roomRecord.lastSeen = Game.time;
-        roomRecord.lastChecked = Game.time;
-        roomRecord.lastCheckedBy = getScannerName(scanner);
-        roomRecord.scoreCountSeen = scoreCount || 0;
-
-        if(scoreCount > 0) {
-            roomRecord.lastScoreSeen = Game.time;
-        }
-    }
-
-    rememberAdjacentExploreRooms(room);
 }
 
 function rememberAllVisibleScores(scanner) {
@@ -1322,10 +1219,6 @@ function getScoutPlanLastScan(roomRecord) {
         return roomRecord.lastScanTick;
     }
 
-    if(roomRecord && typeof roomRecord.lastChecked === 'number') {
-        return roomRecord.lastChecked;
-    }
-
     return null;
 }
 
@@ -1404,7 +1297,7 @@ function scoreExploreRoom(creep, roomName, roomRecord, summary) {
 
     /*
      * Lower is better. Old checks are attractive; current assignments are
-     * expensive so a wave of ScoreRunners fans out across exploration rooms.
+     * expensive so a wave of ScoreRunners fans out across the scout plan.
      */
     return routeDistance * 100 +
         assignedCount * 2000 +
@@ -1413,7 +1306,7 @@ function scoreExploreRoom(creep, roomName, roomRecord, summary) {
         Math.min(1200, checkAge / 5);
 }
 
-function getScoutPlanExploreRoom(creep) {
+function getScoutRoomFromMemory(creep) {
     var homeRoom = getHomeRoomName(creep);
 
     if(
@@ -1423,7 +1316,20 @@ function getScoutPlanExploreRoom(creep) {
         !Memory.rooms[homeRoom].scoutPlan ||
         !Memory.rooms[homeRoom].scoutPlan.rooms
     ) {
+        clearCreepExploreTarget(creep);
         return null;
+    }
+
+    if(
+        creep.memory.scoreExploreRoom &&
+        creep.memory.scoreExploreUntil > Game.time &&
+        isExploreRoomStillValid(creep, creep.memory.scoreExploreRoom)
+    ) {
+        return creep.memory.scoreExploreRoom;
+    }
+
+    if(creep.memory.scoreExploreRoom === creep.room.name) {
+        clearCreepExploreTarget(creep);
     }
 
     var planRooms = Memory.rooms[homeRoom].scoutPlan.rooms;
@@ -1449,61 +1355,6 @@ function getScoutPlanExploreRoom(creep) {
             bestRoom = roomName;
             bestScore = candidateScore;
         }
-    }
-
-    return bestRoom;
-}
-
-function getScoreRunnerExploreRoom(creep) {
-    var scoreMemory = ensureScoreMemory();
-    var exploreRooms = scoreMemory.exploreRooms;
-    var summary = getRunnerIntentSummary(creep.name);
-    var bestRoom = null;
-    var bestScore = ROUTE_IMPOSSIBLE;
-
-    rememberExploreRoom(creep.room.name, null);
-    rememberAdjacentExploreRooms(creep.room);
-
-    for(var roomKey in exploreRooms) {
-        if(!exploreRooms.hasOwnProperty(roomKey)) {
-            continue;
-        }
-
-        var roomRecord = exploreRooms[roomKey];
-        var roomName = roomRecord && roomRecord.roomName ? roomRecord.roomName : roomKey;
-
-        if(!roomName || roomName === creep.room.name) {
-            continue;
-        }
-
-        var candidateScore = scoreExploreRoom(creep, roomName, roomRecord, summary);
-
-        if(candidateScore < bestScore) {
-            bestRoom = roomName;
-            bestScore = candidateScore;
-        }
-    }
-
-    return bestRoom;
-}
-
-function getScoutRoomFromMemory(creep) {
-    if(
-        creep.memory.scoreExploreRoom &&
-        creep.memory.scoreExploreUntil > Game.time &&
-        isExploreRoomStillValid(creep, creep.memory.scoreExploreRoom)
-    ) {
-        return creep.memory.scoreExploreRoom;
-    }
-
-    if(creep.memory.scoreExploreRoom === creep.room.name) {
-        clearCreepExploreTarget(creep);
-    }
-
-    var bestRoom = getScoutPlanExploreRoom(creep);
-
-    if(!bestRoom) {
-        bestRoom = getScoreRunnerExploreRoom(creep);
     }
 
     if(bestRoom) {
