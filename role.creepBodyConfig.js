@@ -262,12 +262,8 @@ function getScoreRunnerBody(room) {
      * ScoreRunners only need to step onto Score objects.
      * MOVE parts keep the body cheap and fast to replace.
      */
-    if(energyCapacity >= 300) {
-        return [TOUGH, MOVE, MOVE, MOVE, MOVE, MOVE];
-    }
-
-    if(energyCapacity >= 150) {
-        return [MOVE, MOVE, MOVE];
+    if(energyCapacity >= 50) {
+        return [MOVE];
     }
 
     return [MOVE];
