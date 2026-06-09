@@ -2,6 +2,9 @@
  * This version does not ensure optimal solution but more cpu efficient
  */
 
+const config = require("./config")
+const screepsProfiler = require("./screeps-profiler")
+
 // Room-local movement matching state. These variables are rebuilt for each room
 // run so the DFS can quickly see which creep currently owns each tile.
 let movementMap
@@ -22,11 +25,6 @@ const trafficManager = {
         // Screeps move directions are accepted for compatibility with direct
         // movement code. Convert them into target coordinates for matching.
         const deltaCoords = directionDelta[target]
-
-        if (!deltaCoords) {
-          return ERR_INVALID_ARGS
-        }
-
         targetPosition = {
           x: Math.max(0, Math.min(49, this.pos.x + deltaCoords.x)),
           y: Math.max(0, Math.min(49, this.pos.y + deltaCoords.y)),
@@ -35,18 +33,12 @@ const trafficManager = {
         targetPosition = target
       }
 
-      if (!targetPosition) {
-        return ERR_INVALID_TARGET
-      }
-
       if (visual) {
         new RoomVisual(this.room.name).arrow(this.pos, targetPosition)
       }
 
       const packedCoord = packCoordinates(targetPosition)
       this._intendedPackedCoord = packedCoord
-
-      return OK
     }
 
     /**
@@ -125,13 +117,6 @@ function getPossibleMoves(creep, costs, threshold = 255) {
   if (creep.fatigue > 0) {
     // Fatigued creeps cannot move, so they cannot contribute alternate tiles to
     // the matching search.
-    return possibleMoves
-  }
-
-  if (creep._skipTrafficMove || creep.spawning || !hasActiveMovePart(creep)) {
-    // Spawning creeps and creeps with no usable MOVE parts cannot be pushed out
-    // of the way by traffic matching. _skipTrafficMove is used for room exits,
-    // which are issued directly because they have no in-room destination tile.
     return possibleMoves
   }
 
@@ -272,14 +257,6 @@ function assignCreepToCoordinate(creep, coord) {
   movementMap.set(packedCoord, creep)
 }
 
-function hasActiveMovePart(creep) {
-  if (!creep.body) {
-    return false
-  }
-
-  return creep.body.some((part) => part.type === MOVE && part.hits > 0)
-}
-
 function packCoordinates(coord) {
   // Same compact 50x50 packing scheme used by coordinate utilities.
   return 50 * coord.y + coord.x
@@ -290,6 +267,10 @@ function unpackCoordinates(packedCoord) {
   const x = packedCoord % 50
   const y = (packedCoord - x) / 50
   return { x, y }
+}
+
+if (config.test.profiler) {
+  screepsProfiler.registerObject(trafficManager, "trafficManager")
 }
 
 module.exports = trafficManager
