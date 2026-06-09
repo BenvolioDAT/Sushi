@@ -418,7 +418,8 @@ function moveToTargetRoom(creep, roomName) {
      * That can make the Scout stop beside the exit instead of crossing rooms.
      *
      * Instead, use utilityTravelCreep.moveToRoom(), which targets a position
-     * inside the target room and lets Traveler handle the room transition.
+     * inside the target room and lets the Sushi travel wrapper handle the
+     * room transition.
      */
     if(!creep || !creep.room || !roomName) {
         return false;
