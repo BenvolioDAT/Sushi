@@ -684,7 +684,7 @@ function idleNearBase(creep) {
         travel.move(creep, anchor, {visualizePathStyle: {stroke: '#bbbbbb'}});
     }
 }
-var SOURCE_WORK_TARGET = 6;
+var SOURCE_WORK_TARGET = 5;
 
 function getCreepWorkParts(creep) {
     if (!creep) {
@@ -698,173 +698,45 @@ function getCreepWorkParts(creep) {
     return 0;
 }
 
-function isExtractorMinerCreep(creep) {
-    if(!creep || !creep.memory) {
-        return false;
+function getAssignedWorkTotal(sourceMemory) {
+    var totalWork = 0;
+
+    if (!sourceMemory || !sourceMemory.assignedMiner) {
+        return totalWork;
     }
 
-    return creep.memory.role === 'Extractor' ||
-        creep.memory.role === 'Miner' ||
-        creep.memory.role === 'miner';
-}
-
-function getCreepAssignedSourceId(creep) {
-    if(!creep || !creep.memory) {
-        return null;
-    }
-
-    if(creep.memory.sourceId) {
-        return creep.memory.sourceId;
-    }
-
-    if(creep.memory.targetSourceId) {
-        return creep.memory.targetSourceId;
-    }
-
-    if(creep.memory.assignedSource) {
-        if(typeof creep.memory.assignedSource === 'string') {
-            return creep.memory.assignedSource;
-        }
-
-        if(creep.memory.assignedSource.id) {
-            return creep.memory.assignedSource.id;
-        }
-    }
-
-    return null;
-}
-
-function cleanAssignedMinersForSource(roomName, sourceId, sourceMemory) {
-    if(!sourceMemory || !sourceId) {
-        return [];
-    }
-
-    normalizeAssignedMinerList(sourceMemory);
-
-    var cleanList = [];
-    var seenIds = {};
-
-    for(var i = 0; i < sourceMemory.assignedMiner.length; i++) {
+    for (var i = 0; i < sourceMemory.assignedMiner.length; i++) {
         var creepId = sourceMemory.assignedMiner[i];
-
-        if(!creepId || seenIds[creepId]) {
-            continue;
-        }
-
         var assignedCreep = Game.getObjectById(creepId);
 
-        if(!assignedCreep || !assignedCreep.my || assignedCreep.spawning) {
+        if (!assignedCreep || !assignedCreep.my) {
             continue;
         }
 
-        if(!isExtractorMinerCreep(assignedCreep)) {
-            continue;
-        }
-
-        if(getCreepAssignedSourceId(assignedCreep) !== sourceId) {
-            continue;
-        }
-
-        seenIds[creepId] = true;
-        cleanList.push(creepId);
+        totalWork += getCreepWorkParts(assignedCreep);
     }
 
-    /*
-     * Repair missing valid entries too. If a live Extractor remembers this
-     * source but assignedMiner lost its id, counting only assignedMiner would
-     * make the source look empty and cause duplicate spawns.
-     */
-    for(var creepName in Game.creeps) {
-        if(!Game.creeps.hasOwnProperty(creepName)) {
-            continue;
-        }
-
-        var rememberedCreep = Game.creeps[creepName];
-
-        if(!rememberedCreep || !rememberedCreep.my || rememberedCreep.spawning) {
-            continue;
-        }
-
-        if(!isExtractorMinerCreep(rememberedCreep)) {
-            continue;
-        }
-
-        if(getCreepAssignedSourceId(rememberedCreep) !== sourceId) {
-            continue;
-        }
-
-        if(seenIds[rememberedCreep.id]) {
-            continue;
-        }
-
-        seenIds[rememberedCreep.id] = true;
-        cleanList.push(rememberedCreep.id);
-    }
-
-    sourceMemory.assignedMiner = cleanList;
-
-    return cleanList;
-}
-
-function getSourceAssignmentStats(roomName, sourceId, sourceMemory) {
-    var assignedMiners = cleanAssignedMinersForSource(roomName, sourceId, sourceMemory);
-    var livingAssignedCount = 0;
-    var totalAssignedWorkParts = 0;
-
-    for(var i = 0; i < assignedMiners.length; i++) {
-        var assignedCreep = Game.getObjectById(assignedMiners[i]);
-
-        if(!assignedCreep || !assignedCreep.my || assignedCreep.spawning) {
-            continue;
-        }
-
-        livingAssignedCount++;
-        totalAssignedWorkParts += getCreepWorkParts(assignedCreep);
-    }
-
-    return {
-        livingAssignedCount: livingAssignedCount,
-        totalAssignedWorkParts: totalAssignedWorkParts,
-        maxSeats: getSafeSeatCount(sourceMemory)
-    };
-}
-
-function getAssignedWorkTotal(sourceMemory) {
-    if(!sourceMemory) {
-        return 0;
-    }
-
-    var sourceId = sourceMemory.id;
-    var roomName = sourceMemory.pos ? sourceMemory.pos.roomName : null;
-    var stats = getSourceAssignmentStats(roomName, sourceId, sourceMemory);
-
-    return stats.totalAssignedWorkParts;
+    return totalWork;
 }
 
 function sourceHasOpenWorkCapacity(sourceRecord) {
-    var stats = getSourceAssignmentStats(
-        sourceRecord.roomName,
-        sourceRecord.sourceId,
-        sourceRecord.sourceMemory
-    );
+    var assignedWork = getAssignedWorkTotal(sourceRecord.sourceMemory);
 
     /*
-     * seatCount is the maximum number of miners that can stand at the source.
-     * 6 total WORK parts is enough mining power for one source. If either cap
-     * is reached, skip the source instead of filling every physical seat.
+     * A normal source only needs about 5 WORK parts.
+     * If it already has 5 or more, do not assign more Extractors there.
      */
-    return stats.livingAssignedCount < stats.maxSeats &&
-        stats.totalAssignedWorkParts < SOURCE_WORK_TARGET;
+    return assignedWork < SOURCE_WORK_TARGET;
 }
 /**
  * Find or claim the best source for this creep to harvest from.
  *
  * This function does several jobs:
  * 1. Looks at Memory.rooms[roomName].sources.
- * 2. Cleans dead, wrong-source, and duplicate assignedMiner entries.
+ * 2. Cleans dead creep IDs out of each source's assignedMiner list.
  * 3. Keeps this creep on its old source if the assignment is still valid.
- * 4. Otherwise picks the source with the least assigned WORK.
- * 5. Respects seatCount as the miner cap and 6 WORK as the mining target.
+ * 4. Otherwise picks the source with the fewest assigned miners.
+ * 5. Respects seatCount, so a source with 3 seats can hold up to 3 miners.
  *
  * @param {Creep} creep
  * @returns {Source|null}
@@ -1292,10 +1164,10 @@ function getSourceRecordsFromRoomMemory(creep) {
             continue;
         }
 
-        cleanAssignedMinersForSource(creep.room.name, realSourceId, sourceMemory);
+        normalizeAssignedMinerList(sourceMemory);
+        cleanDeadAssignedMiners(sourceMemory);
 
         sourceRecords.push({
-            roomName: creep.room.name,
             sourceId: realSourceId,
             source: source,
             sourceMemory: sourceMemory,
@@ -1379,15 +1251,11 @@ function cleanDeadAssignedMiners(sourceMemory) {
  * @returns {number}
  */
 function getSafeSeatCount(sourceMemory) {
-    if(sourceMemory && sourceMemory.seatCount && sourceMemory.seatCount > 0) {
-        return sourceMemory.seatCount;
+    if(!sourceMemory.seatCount || sourceMemory.seatCount < 1) {
+        return 1;
     }
 
-    if(sourceMemory && Array.isArray(sourceMemory.seats) && sourceMemory.seats.length > 0) {
-        return sourceMemory.seats.length;
-    }
-
-    return 1;
+    return sourceMemory.seatCount;
 }
 
 /**
@@ -1432,9 +1300,9 @@ function reclaimRememberedSource(creep, sourceRecords) {
             continue;
         }
 
-        // If this source has open seat and WORK capacity, claim it again.
+        // If this source has an open seat, claim it again.
         if(sourceHasOpenWorkCapacity(record)) {
-            claimSourceRecord(creep, record);
+            record.sourceMemory.assignedMiner.push(creep.id);
             return record.source;
         }
 
@@ -1452,10 +1320,10 @@ function reclaimRememberedSource(creep, sourceRecords) {
  * Pick the best source for this creep.
  *
  * Rule:
- * - Prefer sources that are below both seatCount and 6 assigned WORK.
- * - Among open sources, pick the one with the least assigned WORK.
+ * - Prefer sources that still have open seats.
+ * - Among open sources, pick the one with the fewest assigned miners.
  * - If tied, pick the closer one.
- * - If all sources are full, return null and do not overcrowd them.
+ * - If all sources are full, pick the least crowded source anyway.
  *
  * @param {Creep} creep
  * @param {Array} sourceRecords
@@ -1502,25 +1370,17 @@ function isBetterSourceChoice(creep, candidateRecord, bestRecord) {
         return true;
     }
 
-    var candidateStats = getSourceAssignmentStats(
-        candidateRecord.roomName,
-        candidateRecord.sourceId,
-        candidateRecord.sourceMemory
-    );
-    var bestStats = getSourceAssignmentStats(
-        bestRecord.roomName,
-        bestRecord.sourceId,
-        bestRecord.sourceMemory
-    );
+    var candidateWork = getAssignedWorkTotal(candidateRecord.sourceMemory);
+    var bestWork = getAssignedWorkTotal(bestRecord.sourceMemory);
 
     /*
      * Prefer the source with less assigned WORK.
      */
-    if(candidateStats.totalAssignedWorkParts < bestStats.totalAssignedWorkParts) {
+    if(candidateWork < bestWork) {
         return true;
     }
 
-    if(candidateStats.totalAssignedWorkParts > bestStats.totalAssignedWorkParts) {
+    if(candidateWork > bestWork) {
         return false;
     }
 
@@ -1571,27 +1431,8 @@ function isBetterOverflowChoice(creep, candidateRecord, bestRecord) {
  * @param {*} sourceRecord
  */
 function claimSourceRecord(creep, sourceRecord) {
-    normalizeAssignedMinerList(sourceRecord.sourceMemory);
-
-    if(sourceRecord.sourceMemory.assignedMiner.indexOf(creep.id) === -1) {
-        sourceRecord.sourceMemory.assignedMiner.push(creep.id);
-    }
-
-    rememberCreepSourceAssignment(creep, sourceRecord.sourceId, sourceRecord.roomName);
-}
-
-function rememberCreepSourceAssignment(creep, sourceId, roomName) {
-    creep.memory.sourceId = sourceId;
-    creep.memory.targetSourceId = sourceId;
-    creep.memory.assignedSource = sourceId;
-
-    if(roomName) {
-        creep.memory.sourceRoom = roomName;
-
-        if(!creep.memory.homeRoom) {
-            creep.memory.homeRoom = roomName;
-        }
-    }
+    sourceRecord.sourceMemory.assignedMiner.push(creep.id);
+    creep.memory.sourceId = sourceRecord.sourceId;
 }
 
 /**
@@ -1623,7 +1464,7 @@ function getFallbackAssignedSource(creep) {
     }
 
     source = creep.pos.findClosestByPath(sources) || sources[0];
-    rememberCreepSourceAssignment(creep, source.id, creep.room.name);
+    creep.memory.sourceId = source.id;
 
     return source;
 }
@@ -1803,8 +1644,6 @@ module.exports = {
 
     getAssignedSource,
     getAssignedMiningSeat,
-    getSourceAssignmentStats,
-    cleanAssignedMinersForSource,
 
     dropEnergy,
 
