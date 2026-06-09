@@ -7,6 +7,10 @@ var RUNNER_INTENT_TTL = 50;
 var HOSTILE_ROOM_TTL = 2000;
 var EXPLORE_MIN_TTL = 50;
 var EXPLORE_MAX_TTL = 150;
+var FALLBACK_EXPLORE_MAX_RING = 6;
+var FALLBACK_EXPLORE_REBUILD_TTL = 5000;
+var FALLBACK_EXPLORE_UNREACHABLE_TICKS = 300;
+var FALLBACK_EXPLORE_RECENT_CHECK_TTL = 500;
 var ROUTE_IMPOSSIBLE = 999999;
 
 var routeDistanceCacheTick = -1;
@@ -48,6 +52,7 @@ function run(creep) {
         return;
     }
 
+    maybeLeaveCurrentRoomAfterScan(creep);
     idleScoreRunner(creep);
 }
 
@@ -76,6 +81,10 @@ function ensureScoreMemory() {
 
     if(!isPlainObject(scoreMemory.hostileRooms)) {
         scoreMemory.hostileRooms = {};
+    }
+
+    if(!isPlainObject(scoreMemory.exploreRooms)) {
+        scoreMemory.exploreRooms = {};
     }
 
     return scoreMemory;
@@ -557,6 +566,8 @@ function clearCreepExploreTarget(creep) {
 
     delete creep.memory.scoreExploreRoom;
     delete creep.memory.scoreExploreUntil;
+    delete creep.memory.scoreExploreSource;
+    delete creep.memory.scoreExploreHome;
 }
 
 function rememberCreepScoreTarget(creep, target) {
@@ -735,7 +746,8 @@ function getRunnerIntentSummary(ignoreCreepName) {
     var summary = {
         targetCounts: {},
         roomCounts: {},
-        recentRoomCounts: {}
+        recentRoomCounts: {},
+        thisTickRoomCounts: {}
     };
 
     for(var creepName in scoreMemory.runnerIntents) {
@@ -757,6 +769,10 @@ function getRunnerIntentSummary(ignoreCreepName) {
 
         if(intent.updated && intent.updated >= Game.time - 10) {
             summary.recentRoomCounts[intent.targetRoom] = (summary.recentRoomCounts[intent.targetRoom] || 0) + 1;
+        }
+
+        if(intent.updated === Game.time) {
+            summary.thisTickRoomCounts[intent.targetRoom] = (summary.thisTickRoomCounts[intent.targetRoom] || 0) + 1;
         }
 
         if(intent.targetId) {
@@ -1202,6 +1218,270 @@ function getHomeRoomName(creep) {
     return creep.memory.homeRoom || creep.memory.spawnRoom || creep.room.name;
 }
 
+function parseRoomName(roomName) {
+    if(typeof roomName !== 'string') {
+        return null;
+    }
+
+    var match = /^([WE])(\d+)([NS])(\d+)$/.exec(roomName);
+
+    if(!match) {
+        return null;
+    }
+
+    var x = parseInt(match[2], 10);
+    var y = parseInt(match[4], 10);
+
+    /*
+     * Screeps room coordinates cross through W0/E0 and N0/S0. Internally it is
+     * easier to treat W0 as -1 and E0 as 0, then convert back when needed.
+     */
+    if(match[1] === 'W') {
+        x = -x - 1;
+    }
+
+    if(match[3] === 'N') {
+        y = -y - 1;
+    }
+
+    return {
+        x: x,
+        y: y
+    };
+}
+
+function roomNameFromXY(x, y) {
+    var horizontal;
+    var vertical;
+
+    if(x < 0) {
+        horizontal = 'W' + ((-x) - 1);
+    } else {
+        horizontal = 'E' + x;
+    }
+
+    if(y < 0) {
+        vertical = 'N' + ((-y) - 1);
+    } else {
+        vertical = 'S' + y;
+    }
+
+    return horizontal + vertical;
+}
+
+function addFallbackExploreCandidate(plan, roomName, ring, source) {
+    if(!plan || !roomName || roomName === plan.homeRoom) {
+        return;
+    }
+
+    if(!isPlainObject(plan.rooms[roomName])) {
+        plan.rooms[roomName] = {
+            roomName: roomName,
+            homeRoom: plan.homeRoom,
+            ring: ring,
+            source: source || 'ring',
+            created: Game.time,
+            unreachableUntil: 0
+        };
+        return;
+    }
+
+    plan.rooms[roomName].roomName = roomName;
+    plan.rooms[roomName].homeRoom = plan.homeRoom;
+
+    if(
+        typeof plan.rooms[roomName].ring !== 'number' ||
+        ring < plan.rooms[roomName].ring
+    ) {
+        plan.rooms[roomName].ring = ring;
+    }
+
+    if(!plan.rooms[roomName].source || source === 'exit') {
+        plan.rooms[roomName].source = source || 'ring';
+    }
+
+    if(!plan.rooms[roomName].unreachableUntil) {
+        plan.rooms[roomName].unreachableUntil = 0;
+    }
+}
+
+function describeRoomExits(roomName) {
+    if(!Game.map || typeof Game.map.describeExits !== 'function') {
+        return null;
+    }
+
+    try {
+        return Game.map.describeExits(roomName);
+    } catch(error) {
+        return null;
+    }
+}
+
+function buildFallbackExploreRooms(homeRoom) {
+    var plan = {
+        homeRoom: homeRoom,
+        built: Game.time,
+        maxRing: FALLBACK_EXPLORE_MAX_RING,
+        rooms: {}
+    };
+    var homePosition = parseRoomName(homeRoom);
+
+    if(homePosition) {
+        for(var ring = 1; ring <= FALLBACK_EXPLORE_MAX_RING; ring++) {
+            for(var dx = -ring; dx <= ring; dx++) {
+                for(var dy = -ring; dy <= ring; dy++) {
+                    if(Math.max(Math.abs(dx), Math.abs(dy)) !== ring) {
+                        continue;
+                    }
+
+                    addFallbackExploreCandidate(
+                        plan,
+                        roomNameFromXY(homePosition.x + dx, homePosition.y + dy),
+                        ring,
+                        'ring'
+                    );
+                }
+            }
+        }
+    }
+
+    /*
+     * Coordinate rings are a safe fallback, but describeExits knows the actual
+     * room graph. When it is available, breadth-first exits give better nearby
+     * candidates around portals, highway edges, and private-server quirks.
+     */
+    var queue = [{
+        roomName: homeRoom,
+        ring: 0
+    }];
+    var visited = {};
+    var queueIndex = 0;
+
+    visited[homeRoom] = true;
+
+    while(queueIndex < queue.length) {
+        var current = queue[queueIndex++];
+
+        if(current.ring >= FALLBACK_EXPLORE_MAX_RING) {
+            continue;
+        }
+
+        var exits = describeRoomExits(current.roomName);
+
+        if(!exits) {
+            continue;
+        }
+
+        for(var directionText in exits) {
+            if(!exits.hasOwnProperty(directionText)) {
+                continue;
+            }
+
+            var nextRoom = exits[directionText];
+
+            if(!nextRoom || visited[nextRoom]) {
+                continue;
+            }
+
+            visited[nextRoom] = true;
+            addFallbackExploreCandidate(plan, nextRoom, current.ring + 1, 'exit');
+            queue.push({
+                roomName: nextRoom,
+                ring: current.ring + 1
+            });
+        }
+    }
+
+    return plan;
+}
+
+function copyFallbackExploreState(oldPlan, newPlan) {
+    if(!isPlainObject(oldPlan) || !isPlainObject(oldPlan.rooms) || !newPlan) {
+        return;
+    }
+
+    for(var roomName in oldPlan.rooms) {
+        if(!oldPlan.rooms.hasOwnProperty(roomName)) {
+            continue;
+        }
+
+        var oldRecord = oldPlan.rooms[roomName];
+        var newRecord = newPlan.rooms[roomName];
+
+        if(!oldRecord || !newRecord) {
+            continue;
+        }
+
+        newRecord.unreachableUntil = oldRecord.unreachableUntil || 0;
+        newRecord.lastFailed = oldRecord.lastFailed || 0;
+        newRecord.failCount = oldRecord.failCount || 0;
+    }
+}
+
+function getFallbackExplorePlan(homeRoom) {
+    if(!homeRoom) {
+        return null;
+    }
+
+    var scoreMemory = ensureScoreMemory();
+    var plan = scoreMemory.exploreRooms[homeRoom];
+    var needsBuild = !isPlainObject(plan) ||
+        !isPlainObject(plan.rooms) ||
+        plan.maxRing !== FALLBACK_EXPLORE_MAX_RING ||
+        !plan.built ||
+        plan.built < Game.time - FALLBACK_EXPLORE_REBUILD_TTL;
+
+    if(needsBuild) {
+        var oldPlan = plan;
+        plan = buildFallbackExploreRooms(homeRoom);
+        copyFallbackExploreState(oldPlan, plan);
+        scoreMemory.exploreRooms[homeRoom] = plan;
+    }
+
+    return plan;
+}
+
+function getFallbackExploreUnreachableUntil(homeRoom, roomName) {
+    if(!homeRoom || !roomName) {
+        return 0;
+    }
+
+    var scoreMemory = ensureScoreMemory();
+    var homePlan = scoreMemory.exploreRooms[homeRoom];
+
+    if(!isPlainObject(homePlan) || !isPlainObject(homePlan.rooms)) {
+        return 0;
+    }
+
+    var record = homePlan.rooms[roomName];
+
+    if(!record || typeof record.unreachableUntil !== 'number') {
+        return 0;
+    }
+
+    return record.unreachableUntil;
+}
+
+function getExploreRoomUnreachableUntil(creep, roomName, roomRecord) {
+    var homeRoom = getHomeRoomName(creep);
+
+    return Math.max(
+        getScoutPlanUnreachableUntil(roomRecord),
+        getFallbackExploreUnreachableUntil(homeRoom, roomName)
+    );
+}
+
+function rememberExploreTarget(creep, roomName, source) {
+    if(!creep || !creep.memory || !roomName) {
+        return;
+    }
+
+    creep.memory.scoreExploreRoom = roomName;
+    creep.memory.scoreExploreUntil = Game.time + getExploreStickTicks(creep, roomName);
+    creep.memory.scoreExploreSource = source || 'fallback';
+    creep.memory.scoreExploreHome = getHomeRoomName(creep);
+}
+
 function getScoutPlanRoomName(roomKey, roomRecord) {
     if(typeof roomRecord === 'string') {
         return roomRecord;
@@ -1273,7 +1553,7 @@ function scoreExploreRoom(creep, roomName, roomRecord, summary) {
         return ROUTE_IMPOSSIBLE;
     }
 
-    if(getScoutPlanUnreachableUntil(roomRecord) > Game.time) {
+    if(getExploreRoomUnreachableUntil(creep, roomName, roomRecord) > Game.time) {
         return ROUTE_IMPOSSIBLE;
     }
 
@@ -1293,6 +1573,7 @@ function scoreExploreRoom(creep, roomName, roomRecord, summary) {
     var checkAge = lastKnownCheck === null || lastKnownCheck === undefined ? 10000 : Math.max(0, Game.time - lastKnownCheck);
     var assignedCount = summary.roomCounts[roomName] || 0;
     var recentAssignedCount = summary.recentRoomCounts[roomName] || 0;
+    var thisTickAssignedCount = summary.thisTickRoomCounts[roomName] || 0;
     var tieBreak = hashString(creep.name + ':' + roomName) % 25;
 
     /*
@@ -1302,6 +1583,7 @@ function scoreExploreRoom(creep, roomName, roomRecord, summary) {
     return routeDistance * 100 +
         assignedCount * 2000 +
         recentAssignedCount * 500 +
+        thisTickAssignedCount * 5000 +
         tieBreak -
         Math.min(1200, checkAge / 5);
 }
@@ -1316,12 +1598,15 @@ function getScoutRoomFromMemory(creep) {
         !Memory.rooms[homeRoom].scoutPlan ||
         !Memory.rooms[homeRoom].scoutPlan.rooms
     ) {
-        clearCreepExploreTarget(creep);
+        if(creep.memory.scoreExploreSource === 'scoutPlan') {
+            clearCreepExploreTarget(creep);
+        }
         return null;
     }
 
     if(
         creep.memory.scoreExploreRoom &&
+        creep.memory.scoreExploreSource === 'scoutPlan' &&
         creep.memory.scoreExploreUntil > Game.time &&
         isExploreRoomStillValid(creep, creep.memory.scoreExploreRoom)
     ) {
@@ -1358,13 +1643,311 @@ function getScoutRoomFromMemory(creep) {
     }
 
     if(bestRoom) {
-        creep.memory.scoreExploreRoom = bestRoom;
-        creep.memory.scoreExploreUntil = Game.time + getExploreStickTicks(creep, bestRoom);
+        rememberExploreTarget(creep, bestRoom, 'scoutPlan');
+        return bestRoom;
+    }
+
+    if(creep.memory.scoreExploreSource === 'scoutPlan') {
+        clearCreepExploreTarget(creep);
+    }
+    return null;
+}
+
+function scoreFallbackExploreRoom(creep, roomName, roomRecord, summary) {
+    if(!isExploreRoomStillValid(creep, roomName)) {
+        return ROUTE_IMPOSSIBLE;
+    }
+
+    if(roomRecord && roomRecord.unreachableUntil > Game.time) {
+        return ROUTE_IMPOSSIBLE;
+    }
+
+    var routeDistance = getRouteDistance(creep.room.name, roomName);
+
+    if(routeDistance >= ROUTE_IMPOSSIBLE) {
+        return ROUTE_IMPOSSIBLE;
+    }
+
+    var scoreMemory = ensureScoreMemory();
+    var scoreRoomRecord = scoreMemory.rooms[roomName];
+    var lastChecked = scoreRoomRecord && scoreRoomRecord.lastChecked ? scoreRoomRecord.lastChecked : 0;
+    var checkAge = lastChecked ? Math.max(0, Game.time - lastChecked) : 10000;
+    var recentlyCheckedPenalty = lastChecked ?
+        Math.max(0, FALLBACK_EXPLORE_RECENT_CHECK_TTL - checkAge) * 6 :
+        0;
+    var assignedCount = summary.roomCounts[roomName] || 0;
+    var recentAssignedCount = summary.recentRoomCounts[roomName] || 0;
+    var thisTickAssignedCount = summary.thisTickRoomCounts[roomName] || 0;
+    var ring = roomRecord && typeof roomRecord.ring === 'number' ? roomRecord.ring : FALLBACK_EXPLORE_MAX_RING;
+    var tieBreak = hashString(creep.name + ':fallback:' + roomName) % 100;
+
+    /*
+     * Lower is better. Recent checks are possible, but stale rooms win. Intent
+     * penalties are intentionally large so simultaneous runners choose
+     * different rooms before distance or tie-breaks matter.
+     */
+    return routeDistance * 120 +
+        ring * 15 +
+        assignedCount * 4500 +
+        recentAssignedCount * 1200 +
+        thisTickAssignedCount * 12000 +
+        recentlyCheckedPenalty +
+        tieBreak -
+        Math.min(3000, checkAge * 2);
+}
+
+function getFallbackExploreRoom(creep) {
+    if(!creep || !creep.room) {
+        return null;
+    }
+
+    var homeRoom = getHomeRoomName(creep);
+    var plan = getFallbackExplorePlan(homeRoom);
+
+    if(!plan || !isPlainObject(plan.rooms)) {
+        clearCreepExploreTarget(creep);
+        return null;
+    }
+
+    if(
+        creep.memory.scoreExploreRoom &&
+        creep.memory.scoreExploreSource === 'fallback' &&
+        creep.memory.scoreExploreHome === homeRoom &&
+        creep.memory.scoreExploreUntil > Game.time &&
+        isExploreRoomStillValid(creep, creep.memory.scoreExploreRoom) &&
+        getFallbackExploreUnreachableUntil(homeRoom, creep.memory.scoreExploreRoom) <= Game.time
+    ) {
+        return creep.memory.scoreExploreRoom;
+    }
+
+    if(creep.memory.scoreExploreRoom === creep.room.name) {
+        clearCreepExploreTarget(creep);
+    }
+
+    var summary = getRunnerIntentSummary(creep.name);
+    var bestRoom = null;
+    var bestScore = ROUTE_IMPOSSIBLE;
+
+    for(var roomName in plan.rooms) {
+        if(!plan.rooms.hasOwnProperty(roomName)) {
+            continue;
+        }
+
+        var candidateScore = scoreFallbackExploreRoom(creep, roomName, plan.rooms[roomName], summary);
+
+        if(candidateScore < bestScore) {
+            bestRoom = roomName;
+            bestScore = candidateScore;
+        }
+    }
+
+    if(bestRoom) {
+        rememberExploreTarget(creep, bestRoom, 'fallback');
         return bestRoom;
     }
 
     clearCreepExploreTarget(creep);
     return null;
+}
+
+function markScoutPlanRoomUnreachable(homeRoom, roomName, unreachableUntil) {
+    if(
+        !homeRoom ||
+        !roomName ||
+        !Memory.rooms ||
+        !Memory.rooms[homeRoom] ||
+        !Memory.rooms[homeRoom].scoutPlan ||
+        !Memory.rooms[homeRoom].scoutPlan.rooms
+    ) {
+        return;
+    }
+
+    var planRooms = Memory.rooms[homeRoom].scoutPlan.rooms;
+
+    for(var roomKey in planRooms) {
+        if(!planRooms.hasOwnProperty(roomKey)) {
+            continue;
+        }
+
+        var roomRecord = planRooms[roomKey];
+        var scoutRoomName = getScoutPlanRoomName(roomKey, roomRecord);
+
+        if(scoutRoomName !== roomName) {
+            continue;
+        }
+
+        /*
+         * Some scout plans store plain strings. Convert only the failed room to
+         * an object so future selection can skip it until the cooldown expires.
+         */
+        if(!isPlainObject(roomRecord)) {
+            planRooms[roomKey] = {
+                roomName: scoutRoomName
+            };
+            roomRecord = planRooms[roomKey];
+        }
+
+        roomRecord.unreachableUntil = unreachableUntil;
+        return;
+    }
+}
+
+function markExploreRoomUnreachable(creep, roomName, ticks) {
+    if(!roomName) {
+        return;
+    }
+
+    var unreachableUntil = Game.time + (ticks || FALLBACK_EXPLORE_UNREACHABLE_TICKS);
+    var homeRoom = getHomeRoomName(creep);
+    var plan = getFallbackExplorePlan(homeRoom);
+
+    if(plan) {
+        if(!isPlainObject(plan.rooms[roomName])) {
+            addFallbackExploreCandidate(plan, roomName, FALLBACK_EXPLORE_MAX_RING, 'failed');
+        }
+
+        plan.rooms[roomName].unreachableUntil = unreachableUntil;
+        plan.rooms[roomName].lastFailed = Game.time;
+        plan.rooms[roomName].failCount = (plan.rooms[roomName].failCount || 0) + 1;
+    }
+
+    markScoutPlanRoomUnreachable(homeRoom, roomName, unreachableUntil);
+    clearCreepExploreTarget(creep);
+    clearTravelMemory(creep);
+}
+
+function clearTravelMemory(creep) {
+    if(!creep || !creep.memory) {
+        return;
+    }
+
+    if(travel && typeof travel.clearTravelMemory === 'function') {
+        travel.clearTravelMemory(creep);
+        return;
+    }
+
+    delete creep.memory._trav;
+    delete creep.memory._move;
+    delete creep.memory._sushiMoveTick;
+}
+
+function isTerrainWall(roomName, x, y) {
+    if(
+        typeof TERRAIN_MASK_WALL === 'undefined' ||
+        !Game.map ||
+        typeof Game.map.getRoomTerrain !== 'function'
+    ) {
+        return false;
+    }
+
+    try {
+        return Game.map.getRoomTerrain(roomName).get(x, y) === TERRAIN_MASK_WALL;
+    } catch(error) {
+        return false;
+    }
+}
+
+function getExploreTargetPosition(creep, roomName) {
+    var seed = hashString((creep ? creep.name : '') + ':' + roomName);
+    var preferredX = 20 + (seed % 11);
+    var preferredY = 20 + (Math.floor(seed / 11) % 11);
+
+    /*
+     * The target is inside the room, not exactly at 25,25. Different creeps get
+     * different inner points, which reduces exit pileups after they cross rooms.
+     */
+    for(var radius = 0; radius <= 5; radius++) {
+        for(var dx = -radius; dx <= radius; dx++) {
+            for(var dy = -radius; dy <= radius; dy++) {
+                if(Math.max(Math.abs(dx), Math.abs(dy)) !== radius) {
+                    continue;
+                }
+
+                var x = preferredX + dx;
+                var y = preferredY + dy;
+
+                if(x < 2 || x > 47 || y < 2 || y > 47) {
+                    continue;
+                }
+
+                if(!isTerrainWall(roomName, x, y)) {
+                    return new RoomPosition(x, y, roomName);
+                }
+            }
+        }
+    }
+
+    return new RoomPosition(preferredX, preferredY, roomName);
+}
+
+function getExploreTargetRange(creep, roomName) {
+    return 1 + (hashString((creep ? creep.name : '') + ':range:' + roomName) % 3);
+}
+
+function maybeLeaveCurrentRoomAfterScan(creep) {
+    if(
+        !creep ||
+        !creep.room ||
+        !creep.memory ||
+        creep.memory.scoreExploreRoom !== creep.room.name
+    ) {
+        return;
+    }
+
+    if(findScoreObjects(creep.room).length > 0) {
+        return;
+    }
+
+    /*
+     * Reaching an explore room and seeing no Score is still useful intel. Mark
+     * the room checked, clear the old target, and let the next selection pick a
+     * different room instead of parking here.
+     */
+    var roomMemory = ensureScoreRoomMemory(creep.room.name);
+
+    if(roomMemory) {
+        roomMemory.lastSeen = Game.time;
+        roomMemory.lastChecked = Game.time;
+        roomMemory.lastCheckedBy = creep.name;
+        roomMemory.scoreCountSeen = 0;
+
+        if(!roomMemory.lastScoreSeen) {
+            roomMemory.lastScoreSeen = 0;
+        }
+    }
+
+    clearCreepExploreTarget(creep);
+}
+
+function moveToExploreRoom(creep, roomName, label, color) {
+    if(!creep || !creep.room || !roomName || roomName === creep.room.name) {
+        return ERR_INVALID_TARGET;
+    }
+
+    var targetPosition = getExploreTargetPosition(creep, roomName);
+
+    writeRunnerIntent(creep, 'explore', roomName, null, targetPosition);
+    drawIntentVisual(creep, label + ' ' + roomName, color);
+
+    var result = travel.move(creep, targetPosition, {
+        range: getExploreTargetRange(creep, roomName),
+        reusePath: 25,
+        routeCallback: getAvoidanceRouteCallback(roomName, creep.room.name),
+        visualizePathStyle: {
+            stroke: color
+        }
+    });
+
+    if(
+        result === ERR_NO_PATH ||
+        result === ERR_NOT_FOUND ||
+        result === ERR_INVALID_TARGET ||
+        result === ERR_INVALID_ARGS
+    ) {
+        markExploreRoomUnreachable(creep, roomName, FALLBACK_EXPLORE_UNREACHABLE_TICKS);
+    }
+
+    return result;
 }
 
 function ensureRoomMemory(roomName) {
@@ -1577,25 +2160,26 @@ function idleScoreRunner(creep) {
         return;
     }
 
+    var target = getBestScoreTarget(creep);
+
+    if(target) {
+        moveToScore(creep, target);
+        return;
+    }
+
+    maybeLeaveCurrentRoomAfterScan(creep);
+
     var scoutRoom = getScoutRoomFromMemory(creep);
 
     if(scoutRoom && scoutRoom !== creep.room.name) {
-        writeRunnerIntent(creep, 'explore', scoutRoom, null, new RoomPosition(25, 25, scoutRoom));
-        drawIntentVisual(creep, 'scan ' + scoutRoom, '#bbbbbb');
+        moveToExploreRoom(creep, scoutRoom, 'scan', '#bbbbbb');
+        return;
+    }
 
-        var result = travel.moveToRoom(creep, scoutRoom, {
-            range: 22,
-            reusePath: 30,
-            routeCallback: getAvoidanceRouteCallback(scoutRoom, creep.room.name),
-            visualizePathStyle: {
-                stroke: '#bbbbbb'
-            }
-        });
+    var fallbackRoom = getFallbackExploreRoom(creep);
 
-        if(result === ERR_NO_PATH || result === ERR_INVALID_TARGET || result === ERR_INVALID_ARGS) {
-            clearCreepExploreTarget(creep);
-        }
-
+    if(fallbackRoom && fallbackRoom !== creep.room.name) {
+        moveToExploreRoom(creep, fallbackRoom, 'roam', '#ffcc66');
         return;
     }
 
