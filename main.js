@@ -18,7 +18,15 @@ var WarRoom = require('Logic.WarRoom');
 
 var spawnManager = require('spawn.manager');
 var spawnRequestManager = require('spawn.request.manager');
+var trafficManager = require('traffic_manager');
 
+trafficManager.init(false);
+
+var TRAFFIC_BLOCK_THRESHOLD = 20;
+var TRAFFIC_BLOCK_COST = 255;
+
+var trafficCostMatrixCacheTick = -1;
+var trafficCostMatrixCache = {};
 
 /*
  * Save damaged structures into room memory.
@@ -150,6 +158,88 @@ function maybeGeneratePixel() {
     Game.cpu.generatePixel();
 }
 
+function runTrafficForVisibleRooms() {
+    /*
+     * Role logic only registers movement intents. After every creep has run, the
+     * traffic manager resolves those intents room by room and sends final moves.
+     */
+    for(var roomName in Game.rooms) {
+        var room = Game.rooms[roomName];
+        var costMatrix = getTrafficCostMatrix(room);
+
+        trafficManager.run(room, costMatrix, TRAFFIC_BLOCK_THRESHOLD);
+    }
+}
+
+function getTrafficCostMatrix(room) {
+    if(!room) {
+        return new PathFinder.CostMatrix();
+    }
+
+    if(trafficCostMatrixCacheTick !== Game.time) {
+        trafficCostMatrixCacheTick = Game.time;
+        trafficCostMatrixCache = {};
+    }
+
+    if(trafficCostMatrixCache[room.name]) {
+        return trafficCostMatrixCache[room.name];
+    }
+
+    var matrix = new PathFinder.CostMatrix();
+
+    addTrafficStructuresToMatrix(room, matrix);
+    blockTrafficPositions(room.find(FIND_SOURCES), matrix);
+
+    if(typeof FIND_MINERALS !== 'undefined') {
+        blockTrafficPositions(room.find(FIND_MINERALS), matrix);
+    }
+
+    if(typeof FIND_DEPOSITS !== 'undefined') {
+        blockTrafficPositions(room.find(FIND_DEPOSITS), matrix);
+    }
+
+    if(room.controller) {
+        matrix.set(room.controller.pos.x, room.controller.pos.y, TRAFFIC_BLOCK_COST);
+    }
+
+    trafficCostMatrixCache[room.name] = matrix;
+    return matrix;
+}
+
+function addTrafficStructuresToMatrix(room, matrix) {
+    var structures = room.find(FIND_STRUCTURES);
+
+    for(var i = 0; i < structures.length; i++) {
+        var structure = structures[i];
+
+        if(structure.structureType === STRUCTURE_ROAD) {
+            matrix.set(structure.pos.x, structure.pos.y, 1);
+            continue;
+        }
+
+        if(isTrafficBlockingStructure(structure)) {
+            matrix.set(structure.pos.x, structure.pos.y, TRAFFIC_BLOCK_COST);
+        }
+    }
+}
+
+function blockTrafficPositions(objects, matrix) {
+    if(!objects) {
+        return;
+    }
+
+    for(var i = 0; i < objects.length; i++) {
+        matrix.set(objects[i].pos.x, objects[i].pos.y, TRAFFIC_BLOCK_COST);
+    }
+}
+
+function isTrafficBlockingStructure(structure) {
+    if(structure.structureType === STRUCTURE_RAMPART) {
+        return !structure.my && !structure.isPublic;
+    }
+
+    return OBSTACLE_OBJECT_TYPES.indexOf(structure.structureType) !== -1;
+}
 
 /*
  * Screeps calls module.exports.loop once every game tick.
@@ -274,4 +364,6 @@ module.exports.loop = function () {
             roleCleric.run(creep);
         }
     }
+
+    runTrafficForVisibleRooms();
 }
