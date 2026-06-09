@@ -3,8 +3,8 @@
  *
  * Sushi movement wrapper.
  *
- * Role files call this module instead of calling native movement helpers
- * directly.
+ * Role files call this module instead of calling native movement or Traveler
+ * helpers directly.
  *
  * Movement now happens in two phases:
  * 1. Role logic asks this wrapper to move. The wrapper pathfinds one next tile
@@ -270,47 +270,8 @@ function rememberPath(creep, targetKey, path, reuseTicks) {
     }
 }
 
-function buildAllowedRooms(creep, targetPosition, moveOptions) {
-    if(
-        creep.pos.roomName === targetPosition.roomName ||
-        typeof moveOptions.routeCallback !== 'function'
-    ) {
-        return null;
-    }
-
-    var allowedRooms = {};
-    allowedRooms[creep.pos.roomName] = true;
-    allowedRooms[targetPosition.roomName] = true;
-
-    var route;
-
-    try {
-        route = Game.map.findRoute(creep.pos.roomName, targetPosition.roomName, {
-            routeCallback: moveOptions.routeCallback
-        });
-    } catch(error) {
-        return false;
-    }
-
-    if(route === ERR_NO_PATH || !route) {
-        return false;
-    }
-
-    for(var i = 0; i < route.length; i++) {
-        if(route[i] && route[i].room) {
-            allowedRooms[route[i].room] = true;
-        }
-    }
-
-    return allowedRooms;
-}
-
-function getPathRoomCallback(moveOptions, allowedRooms) {
+function getPathRoomCallback(moveOptions) {
     return function(roomName) {
-        if(allowedRooms && allowedRooms[roomName] !== true) {
-            return false;
-        }
-
         if(typeof moveOptions.roomCallback === 'function') {
             var customMatrix = moveOptions.roomCallback(roomName);
 
@@ -328,12 +289,6 @@ function getPathRoomCallback(moveOptions, allowedRooms) {
 }
 
 function findPath(creep, targetPosition, moveOptions) {
-    var allowedRooms = buildAllowedRooms(creep, targetPosition, moveOptions);
-
-    if(allowedRooms === false) {
-        return null;
-    }
-
     return PathFinder.search(
         creep.pos,
         {
@@ -345,7 +300,7 @@ function findPath(creep, targetPosition, moveOptions) {
             swampCost: moveOptions.swampCost,
             maxOps: moveOptions.maxOps,
             maxRooms: moveOptions.maxRooms,
-            roomCallback: getPathRoomCallback(moveOptions, allowedRooms)
+            roomCallback: getPathRoomCallback(moveOptions)
         }
     );
 }
@@ -386,7 +341,7 @@ function getNextPosition(creep, targetPosition, moveOptions) {
 
     var pathResult = findPath(creep, targetPosition, moveOptions);
 
-    if(!pathResult || pathResult.incomplete || !pathResult.path || pathResult.path.length === 0) {
+    if(pathResult.incomplete || !pathResult.path || pathResult.path.length === 0) {
         clearTravelMemory(creep);
         return null;
     }
