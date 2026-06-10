@@ -1828,6 +1828,7 @@ function clearTravelMemory(creep) {
 
     delete creep.memory._trav;
     delete creep.memory._move;
+    delete creep.memory._sushiRoute;
     delete creep.memory._sushiMoveTick;
 }
 

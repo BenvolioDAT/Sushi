@@ -19,6 +19,7 @@ var WarRoom = require('Logic.WarRoom');
 var spawnManager = require('spawn.manager');
 var spawnRequestManager = require('spawn.request.manager');
 var trafficManager = require('traffic_manager');
+var travelUtility = require('utility.Travel.Creep');
 
 /*
  * Harabi-style traffic movement is initialized once when this global is loaded.
@@ -282,6 +283,8 @@ function isTrafficBlockedStructure(structure) {
  */
 module.exports.loop = function () {
 
+    travelUtility.cleanupRouteCaches();
+
         maybeGeneratePixel();
     /*
      * WarRoom is the shared combat radar.
@@ -303,6 +306,7 @@ module.exports.loop = function () {
 
     if (room.controller && room.controller.my) {
         updateRepairStructureMemory(room);
+        travelUtility.buildRoadsFromRouteCache(room);
         }
     }
     /*
