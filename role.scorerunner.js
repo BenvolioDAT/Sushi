@@ -22,6 +22,14 @@ var routeDistanceCache = {};
  * Season 10 Score objects are collected by stepping onto their tile. This role
  * does not use market or terminal logic; it only finds Score positions and
  * moves creeps onto them.
+ *
+ * The role has three layers of memory:
+ * - knownScores: score objects recently seen in visible rooms
+ * - rooms: scan history and hostile-room cooldowns
+ * - runnerIntents: what each living runner is currently trying to do
+ *
+ * The intent layer is what prevents a large swarm from all selecting the same
+ * room or same Score when there are several useful choices.
  */
 function run(creep) {
     if(!creep || creep.spawning) {
@@ -91,6 +99,11 @@ function ensureScoreMemory() {
 }
 
 function maintainScoreSeasonMemory() {
+    /*
+     * Several ScoreRunners call run() during the same tick. The
+     * lastMaintenanceTick guard makes cleanup run once per tick globally, not
+     * once per creep.
+     */
     var scoreMemory = ensureScoreMemory();
 
     if(scoreMemory.lastMaintenanceTick === Game.time) {
@@ -581,6 +594,11 @@ function rememberCreepScoreTarget(creep, target) {
 }
 
 function writeRunnerIntent(creep, purpose, targetRoom, targetId, position) {
+    /*
+     * Runner intents are short-lived coordination hints. They are stored in
+     * Memory rather than local variables because every ScoreRunner runs
+     * separately and needs to see what the earlier runners already chose.
+     */
     if(!creep || !creep.name || !creep.room) {
         return;
     }
@@ -881,6 +899,11 @@ function getAvoidanceRouteCallback(destinationRoomName, originRoomName) {
 }
 
 function getRouteDistance(fromRoomName, toRoomName) {
+    /*
+     * Route distance can be requested many times during one tick while scoring
+     * every known Score and explore room. Cache it per tick so repeated
+     * fromRoom>toRoom checks do not repeatedly call Game.map.findRoute.
+     */
     if(!fromRoomName || !toRoomName) {
         return ROUTE_IMPOSSIBLE;
     }
@@ -948,6 +971,13 @@ function getPositionTieBreakRange(creep, position) {
 }
 
 function getScoreTargetValue(creep, target, summary, runnerCount, availableScoreCount) {
+    /*
+     * This is a "lower score is better" cost function, not a game score value.
+     *
+     * It mixes route distance, local range, crowding penalties, stale-intel
+     * bonuses, and actual Score object value. Each term is intentionally simple
+     * so you can tune behavior by changing one weight at a time.
+     */
     if(!creep || !target || !target.pos || !isRoomUsableForScore(target.pos.roomName)) {
         return ROUTE_IMPOSSIBLE;
     }
@@ -1318,6 +1348,12 @@ function describeRoomExits(roomName) {
 }
 
 function buildFallbackExploreRooms(homeRoom) {
+    /*
+     * Fallback exploration exists even when no Scout plan is available. It uses
+     * two sources of candidate rooms:
+     * - coordinate rings around homeRoom, which always work from room names
+     * - describeExits breadth-first rooms, which better reflect the actual map
+     */
     var plan = {
         homeRoom: homeRoom,
         built: Game.time,
@@ -1472,6 +1508,11 @@ function getExploreRoomUnreachableUntil(creep, roomName, roomRecord) {
 }
 
 function rememberExploreTarget(creep, roomName, source) {
+    /*
+     * Explore targets are sticky for a random-ish number of ticks. That
+     * stickiness prevents a runner from recalculating every tick and turning
+     * around because another room became barely cheaper.
+     */
     if(!creep || !creep.memory || !roomName) {
         return;
     }
@@ -1793,6 +1834,10 @@ function markScoutPlanRoomUnreachable(homeRoom, roomName, unreachableUntil) {
 }
 
 function markExploreRoomUnreachable(creep, roomName, ticks) {
+    /*
+     * A failed route should pause the room, not delete it forever. The cooldown
+     * gives pathing, room status, or hostile-memory conditions time to change.
+     */
     if(!roomName) {
         return;
     }
@@ -1921,6 +1966,11 @@ function maybeLeaveCurrentRoomAfterScan(creep) {
 }
 
 function moveToExploreRoom(creep, roomName, label, color) {
+    /*
+     * Exploration targets an inner room position instead of the exit tile. If a
+     * creep only moves to the exit with range 1, it may stop beside the border
+     * and never actually enter the room.
+     */
     if(!creep || !creep.room || !roomName || roomName === creep.room.name) {
         return ERR_INVALID_TARGET;
     }
@@ -2052,6 +2102,10 @@ function findIdlePosition(room) {
 }
 
 function getSafeAdjacentExit(creep) {
+    /*
+     * When a runner enters a blacklisted hostile room, it tries to leave through
+     * the nearest adjacent room that is still usable for ScoreRunner travel.
+     */
     if(
         !creep ||
         !creep.room ||
@@ -2152,6 +2206,13 @@ function moveOutOfHostileRoom(creep) {
 }
 
 function idleScoreRunner(creep) {
+    /*
+     * Idle is still productive:
+     * 1. collect a newly visible Score if one exists
+     * 2. explore a Scout-plan room
+     * 3. explore fallback rooms
+     * 4. park on a remembered safe idle tile
+     */
     if(!creep || !creep.room) {
         return;
     }

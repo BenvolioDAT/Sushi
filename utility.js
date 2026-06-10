@@ -4,6 +4,11 @@
  * Room-memory and room-planning helpers for Sushi.
  * These functions teach the colony what is in a room and where source
  * containers should be planned.
+ *
+ * Learning note:
+ * Screeps Memory should store plain data, not live game objects. This file
+ * saves ids and coordinates into Memory, then later helpers rebuild live
+ * objects with Game.getObjectById or RoomPosition when needed.
  */
 /**
  * First-scan the creep's current room and save important room data into memory.
@@ -728,6 +733,12 @@ function findBestContainerPositionForSource(room, source, sourceMemory) {
  * @returns {number}
  */
 function scoreContainerPositionForSource(room, position, sourceSeats, anchor) {
+    /*
+     * This scoring function is deliberately weighted. Big weights represent
+     * important rules, small weights are tie breakers. That makes the result
+     * easier to tune because a minor preference cannot accidentally beat the
+     * core rule of covering more source seats.
+     */
     var coveredSeatCount = 0;
     var totalSeatRange = 0;
 

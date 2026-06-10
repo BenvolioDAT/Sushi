@@ -1,3 +1,12 @@
+/*
+ * Logic.Tower.js
+ *
+ * Owned-room tower combat logic.
+ *
+ * This file is intentionally small: towers only attack hostile creeps, and they
+ * focus the same target. Repairs and healing can be added later, but keeping
+ * attack behavior simple makes defense predictable.
+ */
 var TowerLogic = {};
 
 /*
@@ -98,6 +107,11 @@ function findEnemyCreeps(room) {
  * Use the first tower and find the enemy closest to that tower.
  */
 function chooseTowerTarget(towers, enemies) {
+    /*
+     * Using the first tower as the perspective is simple and deterministic.
+     * A later upgrade could score enemies by total tower damage, healing parts,
+     * or distance to important structures.
+     */
     var firstTower = towers[0];
 
     if (!firstTower) {

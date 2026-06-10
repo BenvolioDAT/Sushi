@@ -1,3 +1,12 @@
+/*
+ * role.CombatMelee.js
+ *
+ * Simple melee defender/attacker.
+ *
+ * This role shows the minimum combat pattern for ATTACK creeps: choose a target,
+ * call creep.attack(target), and move closer only when Screeps returns
+ * ERR_NOT_IN_RANGE.
+ */
 var utilityTravelCreep = require('utility.Travel.Creep');
 
 var roleCombatMelee = {

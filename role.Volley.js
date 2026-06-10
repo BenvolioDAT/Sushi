@@ -7,6 +7,11 @@
  * - stay near range 3
  * - shoot enemy creeps or structures
  *
+ * Learning note:
+ * Volley shares target selection with Ronin through Logic.WarRoom, but uses a
+ * different action range. This is a common role pattern: shared target logic,
+ * role-specific execution.
+ *
  * Memory used:
  * creep.memory.targetRoom = 'W39S48';
  * creep.memory.targetFlag = 'AttackRoom';
@@ -71,6 +76,8 @@ function attackRangedTarget(creep, target) {
 
     /*
      * Too far away, move into range 3.
+     * Moving to range 3 keeps the ranged creep useful without forcing it onto
+     * the same tile ring as melee creeps.
      */
     WarRoom.moveToRange(creep, target, 3, '#ffaa00');
 }

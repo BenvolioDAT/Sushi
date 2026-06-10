@@ -1,5 +1,5 @@
 /**
- * map.SourceMarkers.js
+ * utility.Visual.js
  *
  * Very simple map visual helper for Sushi.
  *
@@ -14,22 +14,30 @@
  */
 
 function drawSourceFlags(roomName) {
-    // Make sure a room name was given.
+    /*
+     * Make sure a room name was given. Visual helpers should quietly exit on bad
+     * input because they are optional debugging aids, not core game behavior.
+     */
     if (!roomName) {
         return;
     }
 
-    // Optional safety check.
-    // getRoomStatus does NOT draw anything.
-    // It only tells us if the room is normal, closed, novice, or respawn.
+    /*
+     * Optional safety check.
+     * getRoomStatus does NOT draw anything.
+     * It only tells us if the room is normal, closed, novice, or respawn.
+     */
     var roomStatus = Game.map.getRoomStatus(roomName);
 
     if (!roomStatus || roomStatus.status === "closed") {
         return;
     }
 
-    // Game.rooms only contains rooms you currently have vision in.
-    // That means you need a creep, spawn, or owned structure giving vision.
+    /*
+     * Game.rooms only contains rooms you currently have vision in. That means
+     * you need a creep, spawn, or owned structure giving vision before source
+     * positions can be drawn.
+     */
     var room = Game.rooms[roomName];
 
     if (!room) {

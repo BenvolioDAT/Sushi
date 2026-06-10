@@ -1,3 +1,12 @@
+/*
+ * role.CombatMedic.js
+ *
+ * Simple healer companion for the older CombatMelee/CombatArcher roles.
+ *
+ * The important lesson is range management: heal() is stronger but range 1,
+ * while rangedHeal() reaches range 3. The medic tries direct healing first,
+ * then ranged healing, then movement.
+ */
 var utilityTravelCreep = require('utility.Travel.Creep');
 
 var roleCombatMedic = {

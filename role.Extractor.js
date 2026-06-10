@@ -1,3 +1,12 @@
+/*
+ * role.Extractor.js
+ *
+ * Source miner role.
+ *
+ * Extractor chooses a source through utility.Creep assignment helpers, moves to
+ * an assigned mining seat when one exists, harvests until full, then offloads to
+ * a nearby container/link/storage or drops energy for haulers.
+ */
 var utility = require('utility');
 var utilityCreep = require('utility.Creep');
 var utilityTravelCreep = require('utility.Travel.Creep');
@@ -43,10 +52,10 @@ var roleExtractor = {
 
         if (miningSeat && !isCreepOnPosition(creep, miningSeat)) {
             /*
-            * If the creep is already beside the source, let it harvest while it moves
-            * onto the better seat. This keeps it productive instead of waddling with
-            * empty hands like a confused Roomba.
-            */
+             * If the creep is already beside the source, let it harvest while
+             * it moves onto the better seat. This keeps the WORK parts useful
+             * during seat correction instead of spending a tick only walking.
+             */
             if (creep.pos.getRangeTo(source.pos) <= 1 && creep.store.getFreeCapacity(RESOURCE_ENERGY) > 0) {
                 creep.harvest(source);
             }

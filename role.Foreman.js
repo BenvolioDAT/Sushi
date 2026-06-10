@@ -1,3 +1,13 @@
+/*
+ * role.Foreman.js
+ *
+ * Foreman is the early-room caretaker.
+ *
+ * In this bot, a role file should read the creep's current state and choose
+ * one high-level action for the tick. Foreman keeps the room scan memory fresh,
+ * creates source flags from that memory, and then flips between collecting
+ * energy and filling important room structures.
+ */
 var utility = require('utility');
 var utilityCreep = require('utility.Creep');
 

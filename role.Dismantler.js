@@ -1,3 +1,13 @@
+/*
+ * role.Dismantler.js
+ *
+ * Structure removal role.
+ *
+ * Dismantler demonstrates a safe targeting pattern for destructive actions:
+ * keep a remembered target when it is still valid, prefer a player-placed
+ * Attack flag for precision, and require an explicit memory switch before
+ * automatically targeting walls or ramparts.
+ */
 var utilityTravelCreep = require('utility.Travel.Creep');
 
 var roleDismantler = {
@@ -126,6 +136,9 @@ function dismantleOrAttack(creep, target) {
     /*
      * Prefer dismantle because WORK parts remove structures and return energy
      * from some targets. ERR_NO_BODYPART means this creep cannot dismantle.
+     *
+     * attack() is the fallback because ATTACK parts can still damage structures,
+     * but they do not have the same economic benefit as dismantle().
      */
     var result = ERR_NO_BODYPART;
 

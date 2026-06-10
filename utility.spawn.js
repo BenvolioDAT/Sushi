@@ -1,3 +1,12 @@
+/*
+ * utility.spawn.js
+ *
+ * Small spawn-related helpers.
+ *
+ * This file does not decide what to spawn. It only provides reusable utilities
+ * used by the spawn queue manager, such as safe creep-name generation and spawn
+ * selection.
+ */
 function genCreepName(creepType) {
     /*
      * Screeps creep names must be unique. This helper builds names like

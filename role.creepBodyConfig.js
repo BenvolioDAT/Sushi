@@ -78,6 +78,17 @@ function getBodyCost(body) {
 }
 
 function buildBody(bodyPlan) {
+    /*
+     * bodyPlan is a compact description like:
+     * [
+     *     [WORK, 2],
+     *     [CARRY, 1],
+     *     [MOVE, 3]
+     * ]
+     *
+     * Screeps spawnCreep needs the expanded array:
+     * [WORK, WORK, CARRY, MOVE, MOVE, MOVE]
+     */
     var body = [];
 
     for(var i = 0; i < bodyPlan.length; i++) {
@@ -93,6 +104,14 @@ function buildBody(bodyPlan) {
 }
 
 function chooseBestAffordableBody(room, bodyPlans) {
+    /*
+     * Body plans are ordered from strongest to weakest. The first plan the
+     * room's full energy capacity can afford is selected.
+     *
+     * This means the queue may wait for energy to refill instead of instantly
+     * downgrading to the current available energy. Emergency downgrading happens
+     * in spawn.request.manager.js when the front queued body blocks startup.
+     */
     var energyCapacity = getRoomEnergyCapacity(room);
 
     for(var i = 0; i < bodyPlans.length; i++) {

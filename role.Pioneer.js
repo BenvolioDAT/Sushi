@@ -1,3 +1,12 @@
+/*
+ * role.Pioneer.js
+ *
+ * Pioneer is a controller worker for remote rooms.
+ *
+ * Depending on creep.memory.mode / creep.memory.claimerMode, it either claims
+ * a room controller or reserves it. The same movement pattern is used for both:
+ * first enter the target room, then act on the visible controller.
+ */
 var utilityTravelCreep = require('utility.Travel.Creep');
 
 var rolePioneer = {

@@ -42,6 +42,12 @@ var THREAT_FORGET_TICKS = 50;
 var WAR_ROOM_ATTACK_FLAG_NAME = 'WarRoom_Attack';
 
 /*
+ * WarRoom writes one shared threat record. Individual combat roles still make
+ * their own local action choices, but they can agree on where the fight is and
+ * what broad target should matter.
+ */
+
+/*
  * Run the shared WarRoom brain once per tick.
  *
  * Jobs:
@@ -166,6 +172,11 @@ WarRoom.getDistanceScoreBonus = function(distance) {
  * Pick the best threat inside one visible room.
  */
 WarRoom.findBestThreatInRoom = function(room) {
+    /*
+     * A room can contain both hostile creeps and hostile structures. Hostile
+     * creeps usually matter more because they move and attack, but a high-value
+     * structure such as a tower or invader core can beat a weak creep by score.
+     */
     if(!room) {
         return null;
     }
@@ -619,6 +630,11 @@ WarRoom.findBestHostileStructure = function(creep) {
  * 3. Attack enemy structures.
  */
 WarRoom.getCombatTarget = function(creep) {
+    /*
+     * Remembering a target id prevents target thrashing. Without this, two
+     * equal enemies could make the creep alternate targets every tick and spread
+     * damage instead of finishing one enemy.
+     */
     if(!creep || !creep.memory) {
         return null;
     }

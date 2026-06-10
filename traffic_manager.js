@@ -1,6 +1,17 @@
 /**
  * This version does not ensure optimal solution but more cpu efficient
  */
+/*
+ * traffic_manager.js
+ *
+ * Cooperative movement resolver.
+ *
+ * Most Screeps movement code asks each creep to move independently, which makes
+ * traffic jams common. This manager lets creeps register intended one-step
+ * moves during role logic, then resolves all intents together at the end of the
+ * tick. The result is not mathematically perfect, but it is cheap and good
+ * enough for common creep swaps and movement chains.
+ */
 
 // Room-local movement matching state. These variables are rebuilt for each room
 // run so the DFS can quickly see which creep currently owns each tile.
@@ -66,6 +77,16 @@ const trafficManager = {
   },
 
   run(room, costs, threshold) {
+    /*
+     * The algorithm is a bipartite-style matching:
+     * - creeps are one side
+     * - coordinates are the other side
+     * - movementMap records which creep currently owns each coordinate
+     *
+     * depthFirstSearch tries to find an augmenting move chain that satisfies at
+     * least one requested movement without leaving two creeps assigned to the
+     * same tile.
+     */
     // Start with every creep matched to its current tile. DFS then tries to move
     // intentful creeps into better assignments without losing tile ownership.
     movementMap = new Map()

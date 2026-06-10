@@ -1,3 +1,15 @@
+/*
+ * role.CombatArcher.js
+ *
+ * Simple ranged defender/attacker.
+ *
+ * This is the older direct-combat role that does not use Logic.WarRoom. It
+ * demonstrates the basic Screeps combat loop:
+ * - heal self if possible
+ * - travel to an assigned target room
+ * - prefer hostile creeps over hostile structures
+ * - stay within rangedAttack range 3
+ */
 var utilityTravelCreep = require('utility.Travel.Creep');
 
 var roleCombatArcher = {

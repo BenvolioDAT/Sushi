@@ -1,3 +1,13 @@
+/*
+ * role.Artificer.js
+ *
+ * Builder role with limited repair duty.
+ *
+ * Artificers normally build construction sites, then upgrade the controller.
+ * When the room has repair work, only MAX_REPAIR_ARTIFICERS are allowed to
+ * claim repair targets. That cap prevents every builder from abandoning
+ * construction because one road is damaged.
+ */
 var creepUtility = require('utility.Creep');
 var utilityTravelCreep = require('utility.Travel.Creep');
 
@@ -69,6 +79,19 @@ function repairBuildOrUpgrade(creep) {
 }
 
 function setupRepairMemory(room) {
+    /*
+     * This function creates the Memory buckets used by the repair-claim system.
+     *
+     * RepairStructure:
+     * - shared list of damaged structure ids, written by main.js.
+     *
+     * ArtificerRepairWorkers:
+     * - map of creepName -> last tick seen as an active repair worker.
+     *
+     * ArtificerRepairClaims:
+     * - map of targetId -> creepName so two Artificers do not choose the same
+     *   damaged structure unless the old claim expires.
+     */
     if(!Memory.rooms) {
         Memory.rooms = {};
     }
@@ -98,7 +121,9 @@ function cleanRepairMemory(room) {
     var creepName;
 
     /*
-     * Remove dead or stale repair workers.
+     * Remove dead or stale repair workers. Staleness matters because a creep can
+     * switch jobs or stop running this branch without dying; after enough ticks,
+     * another Artificer should be allowed to take that repair slot.
      */
     for(creepName in workers) {
         if(!workers.hasOwnProperty(creepName)) {
@@ -116,7 +141,9 @@ function cleanRepairMemory(room) {
     }
 
     /*
-     * Remove bad target claims.
+     * Remove bad target claims. A claim is bad if the creep died, the target is
+     * gone, the structure no longer needs repair, or the creep no longer owns a
+     * live repair-worker slot.
      */
     for(var targetId in claims) {
         if(!claims.hasOwnProperty(targetId)) {
@@ -368,6 +395,10 @@ function repairTarget(creep, target) {
 }
 
 function collectEnergy(creep) {
+    /*
+     * Artificer energy collection mirrors Repair: use stored or dropped energy
+     * first, then harvest only if no reusable energy is available.
+     */
     var target = findStoredEnergy(creep);
 
     if(target) {
@@ -390,6 +421,11 @@ function collectEnergy(creep) {
 }
 
 function buildOrUpgrade(creep) {
+    /*
+     * Construction wins over controller upgrading because new structures often
+     * unlock capacity, defense, or logistics. Upgrading is the default sink when
+     * there is no construction work.
+     */
     var target = creep.pos.findClosestByPath(FIND_CONSTRUCTION_SITES);
 
     if(target) {

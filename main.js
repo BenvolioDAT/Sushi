@@ -283,6 +283,10 @@ function isTrafficBlockedStructure(structure) {
  */
 module.exports.loop = function () {
 
+    /*
+     * Cleanup runs before creep logic so stale shared routes do not keep getting
+     * reused by roles later in this same tick.
+     */
     travelUtility.cleanupRouteCaches();
 
         maybeGeneratePixel();
@@ -352,7 +356,9 @@ module.exports.loop = function () {
 
     /*
      * Step 2:
-     * Actually try to spawn from the queue.
+     * Actually try to spawn from the queue. Only the room returned by the
+     * request manager is processed here, which matches the current single-main-
+     * room design.
      */
     if (requestReport && requestReport.roomName) {
         spawnManager.runRoom(requestReport.roomName);

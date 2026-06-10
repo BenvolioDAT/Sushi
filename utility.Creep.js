@@ -9,6 +9,12 @@
  * Example:
  * - role.Queen.js decides "I need energy."
  * - utility.Creep.js handles "withdraw from storage" or "pick up dropped energy."
+ *
+ * Learning note:
+ * Most helpers return true/false instead of Screeps return codes. A true value
+ * means "this helper either completed work or issued movement toward that work."
+ * That lets role files try helpers in priority order and stop after the first
+ * useful action.
  */
 var utility = require('utility');
 var travel = require('utility.Travel.Creep');
@@ -715,6 +721,11 @@ function getCreepWorkParts(creep) {
 }
 
 function getAssignedWorkTotal(sourceMemory, sourceId, roomName) {
+    /*
+     * This counts assigned WORK parts, not just assigned creeps. One strong
+     * miner with 6 WORK can fully cover a normal source, while several small
+     * miners may be needed early in the room.
+     */
     var totalWork = 0;
     var seenIds = {};
 
@@ -767,6 +778,13 @@ function getAssignedWorkTotal(sourceMemory, sourceId, roomName) {
 }
 
 function sourceHasOpenWorkCapacity(sourceRecord) {
+    /*
+     * Source capacity has two limits:
+     * - seat count: how many creeps can physically stand around the source
+     * - SOURCE_WORK_TARGET: how much total WORK is useful for mining speed
+     *
+     * A source is full when either limit is reached.
+     */
     var sourceMemory = sourceRecord.sourceMemory;
     var livingAssignedCount = 0;
     var totalAssignedWorkParts = 0;

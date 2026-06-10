@@ -31,6 +31,16 @@ var ROUTE_CACHE_LOW_BUCKET = 1000;
 var ROUTE_CACHE_MAX_CPU_BUFFER = 5;
 var ROUTE_CACHE_STUCK_THRESHOLD = 3;
 var ROUTE_CACHE_MAX_ROUTES_PER_ROOM = 75;
+
+/*
+ * Shared route cache is an opportunistic accelerator for stable same-room
+ * logistics lanes: storage/terminal/controller/container/spawn/source routes
+ * that many creeps may reuse over time.
+ *
+ * It is deliberately not the source of truth for movement. If a creep cannot
+ * use a cached lane this tick, the caller falls back to Traveler so the creep
+ * can still path normally.
+ */
 var ROUTE_FOLLOW_ROUTE_BAD = 'routeBad';
 var ROUTE_FOLLOW_CREEP_OFF_ROUTE = 'creepOffRoute';
 var ROUTE_FOLLOW_CREEP_STUCK = 'creepStuck';
@@ -139,6 +149,11 @@ function makeRoomPosition(pos) {
 }
 
 function stableTargetKey(target, targetPosition) {
+    /*
+     * A stable target key is allowed only for durable logistics targets. The
+     * route cache should not learn routes to arbitrary moving creeps or short
+     * lived objects, because those destinations make poor shared lanes.
+     */
     if (!target || !targetPosition) {
         return null;
     }
@@ -175,6 +190,11 @@ function getStableAnchors(room) {
         return [];
     }
 
+    /*
+     * nearbyStableObjectKey() can run once per moving creep. Scanning room
+     * structures and sources every time is wasteful, so this cache stores the
+     * stable anchors once per room per tick and every movement call reuses it.
+     */
     if (!global.__sushiStableAnchors) {
         global.__sushiStableAnchors = {};
     }
@@ -226,6 +246,12 @@ function nearbyStableObjectKey(room, pos) {
         return null;
     }
 
+    /*
+     * The anchor groups movement by durable logistics landmarks, while
+     * makeRouteKey() appends the exact creep tile. That keeps CPU-saving route
+     * reuse where it is safe without pretending all tiles around an anchor are
+     * interchangeable.
+     */
     var objects = getStableAnchors(room);
     var best = null;
     var bestRange = 2;
@@ -442,6 +468,11 @@ function hasBlockingStructure(pos) {
 }
 
 function planSharedRoute(creep, targetPosition, range, routeKey) {
+    /*
+     * Shared route planning uses PathFinder directly instead of Traveler because
+     * this cache wants the whole serialized lane stored at room level. Traveler
+     * still remains the fallback for any creep that cannot use the lane.
+     */
     if (!canPlanSharedRoute()) {
         return null;
     }
@@ -480,6 +511,14 @@ function planSharedRoute(creep, targetPosition, range, routeKey) {
 }
 
 function makeRouteFollowResult(code, reason, deleteRoute, clearCreepRoute) {
+    /*
+     * Raw Screeps return codes are not specific enough here. ERR_NOT_FOUND can
+     * mean "this creep is not near the lane" or "the saved route is unusable".
+     *
+     * deleteRoute affects the shared room cache. clearCreepRoute affects only
+     * this creep's local progress pointer. Keeping those side effects separate
+     * is what prevents one bad join attempt from deleting a valid shared lane.
+     */
     return {
         code: code,
         reason: reason,
@@ -491,6 +530,11 @@ function makeRouteFollowResult(code, reason, deleteRoute, clearCreepRoute) {
 function followSharedRoute(creep, routeKey, route, targetPosition, range) {
     var positions = getRoutePositions(route);
     if (positions.length < 2) {
+        /*
+         * A cached route with fewer than two decoded positions is corrupt or
+         * undecodable. That is route-level proof, so the shared cache entry can
+         * be deleted instead of just clearing this creep's local state.
+         */
         return makeRouteFollowResult(ERR_NO_PATH, ROUTE_FOLLOW_ROUTE_BAD, true, true);
     }
 
@@ -521,6 +565,11 @@ function followSharedRoute(creep, routeKey, route, targetPosition, range) {
         creep.memory._sushiRoute = routeMemory;
     }
 
+    /*
+     * Stuck detection is creep-local. Traffic, fatigue, another creep, or
+     * temporary positioning can stop one creep without making the cached lane
+     * invalid for everyone else.
+     */
     if (
         routeMemory.lastX === creep.pos.x &&
         routeMemory.lastY === creep.pos.y &&
@@ -541,6 +590,10 @@ function followSharedRoute(creep, routeKey, route, targetPosition, range) {
 
     index = findRouteIndex(creep, positions);
     if (index < 0) {
+        /*
+         * The creep drifted away from the lane after joining it. Clear this
+         * creep's pointer and let Traveler rejoin or choose a different path.
+         */
         return makeRouteFollowResult(ERR_NOT_FOUND, ROUTE_FOLLOW_CREEP_OFF_ROUTE, false, true);
     }
 
@@ -574,6 +627,11 @@ function applyRouteFollowResult(creep, cache, routeKey, followResult) {
         return null;
     }
 
+    /*
+     * Apply cache cleanup before deciding whether to fall back. A null return
+     * means "shared route did not produce a usable movement result; continue to
+     * Traveler". It does not imply that the shared route was deleted.
+     */
     if (followResult.deleteRoute) {
         delete cache.routes[routeKey];
     }
@@ -610,6 +668,11 @@ function trySharedRoute(creep, target, targetPosition, moveOptions) {
     var routeKey;
     var route;
 
+    /*
+     * Prefer the creep's active route memory when the destination and range
+     * still match. If the target changed, the old per-creep pointer is not
+     * trusted, even if the old shared route remains valid for another caller.
+     */
     if (
         activeRouteMemory &&
         activeRouteMemory.routeKey &&
@@ -626,6 +689,10 @@ function trySharedRoute(creep, target, targetPosition, moveOptions) {
                 return activeResult;
             }
         } else if (route) {
+            /*
+             * Staleness is a route-level condition: the cache entry has aged
+             * beyond its TTL, so remove it and let a future movement replan.
+             */
             delete cache.routes[routeKey];
         }
 
@@ -642,6 +709,11 @@ function trySharedRoute(creep, target, targetPosition, moveOptions) {
 
     if (!isRouteFresh(route)) {
         if (route) {
+            /*
+             * Same stale-route rule for routes found by the current key. This
+             * is different from a creep-local join failure, which only clears
+             * creep.memory._sushiRoute and falls back to Traveler.
+             */
             delete cache.routes[routeKey];
         }
 
@@ -666,6 +738,11 @@ function cleanupRouteCaches() {
         return;
     }
 
+    /*
+     * Periodic cleanup handles old shared lanes that no creep has used in a
+     * while. This is intentionally separate from follow failure handling so a
+     * temporary traffic problem does not evict useful route infrastructure.
+     */
     for (var roomName in Memory.rooms) {
         if (!Memory.rooms.hasOwnProperty(roomName)) {
             continue;
@@ -715,6 +792,12 @@ function buildRoadsFromRouteCache(room) {
     var cache = getRoomRouteCache(room.name);
     var keys = Object.keys(cache.routes);
     var built = 0;
+
+    /*
+     * Terrain is room-scoped and immutable during this run, so build it once
+     * before walking cached route positions instead of recreating it inside the
+     * inner loop for every candidate road tile.
+     */
     var terrain = Game.map.getRoomTerrain(room.name);
 
     for (var i = 0; i < keys.length && built < ROUTE_CACHE_MAX_ROAD_SITES_PER_RUN; i++) {

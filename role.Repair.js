@@ -1,3 +1,12 @@
+/*
+ * role.Repair.js
+ *
+ * Dedicated repair role.
+ *
+ * This role is intentionally independent from Artificer repair claims. It uses
+ * a simple two-state memory flag, collects energy, and repairs the lowest
+ * percentage structure under that structure's configured repair goal.
+ */
 var utilityTravelCreep = require('utility.Travel.Creep');
 
 var WALL_REPAIR_CAP = 10000;

@@ -6,6 +6,15 @@ var SCOUT_RESCAN_AFTER_TICKS = 3000;
 var SCOUT_PLAN_MEMORY_KEY = 'scoutPlan';
 var SCOUT_UNREACHABLE_TICKS = 300;
 
+/*
+ * role.Scout.js
+ *
+ * Room intel role.
+ *
+ * Scout builds and follows a reusable room plan around its home room. It scans
+ * visible rooms into Memory, pauses unreachable rooms instead of deleting them,
+ * and cycles back to stale rooms after SCOUT_RESCAN_AFTER_TICKS.
+ */
 var roleScout = {
 
     /** @param {Creep} creep **/
@@ -332,6 +341,10 @@ function chooseNextScoutRoom(creep) {
     /*
      * First visit every room in the plan once. After that, revisit the oldest
      * stale room so intel stays fresh without random wandering.
+     *
+     * The selection deliberately prefers never-scanned nearby rooms before stale
+     * old rooms because new visibility can unlock source, controller, and
+     * hostile-room information the rest of the bot has never seen.
      */
     var plan = ensureScoutPlan(creep);
 

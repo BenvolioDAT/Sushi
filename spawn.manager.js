@@ -9,6 +9,10 @@
  * - this file tries to spawn queued creeps
  *
  * This is intentionally simple.
+ *
+ * Teaching split:
+ * - spawn.request.manager.js decides what the room needs.
+ * - this file owns the queue mechanics and spawnCreep return handling.
  */
 
 var spawnUtility = require('utility.spawn');

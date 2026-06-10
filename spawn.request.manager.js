@@ -62,6 +62,15 @@ var REPLACEMENT_BUFFER_TICKS = {
     ScoreRunner: 20
 };
 
+/*
+ * This manager is the "demand planner" for spawning.
+ *
+ * It deliberately does not call spawn.spawnCreep directly. Instead, it writes
+ * requests into Memory.rooms[roomName].spawnQueue and lets spawn.manager.js be
+ * the single place that actually consumes the queue. Keeping demand planning
+ * separate from spawning makes it easier to reason about duplicate requests.
+ */
+
 /**
  * Get the first spawn we own.
  *
@@ -289,6 +298,11 @@ function requestRoleForRoom(room, role, desiredCount) {
         Memory.rooms[roomName] &&
         Memory.rooms[roomName].sources
     ) {
+        /*
+         * Extractors are special because the desired count is source-driven,
+         * not just role-driven. This block walks each remembered source and
+         * asks whether that exact source still needs mining WORK assigned.
+         */
         var queue = spawnManager.getSpawnQueue(roomName);
         var sourcesMemory = Memory.rooms[roomName].sources;
         var sourceRequestsAdded = 0;
@@ -320,6 +334,11 @@ function requestRoleForRoom(room, role, desiredCount) {
             managedSourceCount++;
 
             if (!sourceMemory.assignedMiner) {
+                /*
+                 * assignedMiner is persistent memory, so normalize its shape
+                 * before using it. Old versions may have saved a string or a
+                 * non-array value; this keeps the current loop predictable.
+                 */
                 sourceMemory.assignedMiner = [];
             }
             else if (typeof sourceMemory.assignedMiner === 'string') {
@@ -418,6 +437,8 @@ function requestRoleForRoom(room, role, desiredCount) {
             /*
              * Include living or spawning creeps that already have this targeted
              * source memory, even if assignedMiner has not caught up yet.
+             * This closes the race between "request queued/spawned" and
+             * "source memory list updated by the running creep."
              */
             for (var creepName in Game.creeps) {
                 if (!Game.creeps.hasOwnProperty(creepName)) {
@@ -710,6 +731,12 @@ function getBodyCost(body) {
 }
 
 function downgradeFrontQueuedBodyIfNeeded(room) {
+    /*
+     * This is an emergency bootstrap helper. Normally body choice uses full room
+     * capacity, but if the front request is too expensive for current energy,
+     * the whole queue can stall. Downgrading only the front request lets a weak
+     * room spawn something useful and recover.
+     */
     if (!room) {
         return {
             ok: false,
@@ -848,6 +875,11 @@ function runStartupBootstrap(room, report) {
      */
 
     if (getHealthyRoleCount(room, 'Foreman') < 1) {
+        /*
+         * Returning after one startup request keeps the queue focused. The room
+         * gets its most important missing role first instead of queuing the full
+         * mature-room target set while it is still recovering.
+         */
         report.requests.push(requestRoleForRoom(room, 'Foreman', 1));
         return true;
     }

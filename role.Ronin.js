@@ -7,6 +7,11 @@
  * - get close to enemy creeps or structures
  * - attack at range 1
  *
+ * Learning note:
+ * Ronin does not choose rooms or targets by itself. It delegates that shared
+ * combat context to Logic.WarRoom, then handles only the melee-specific action:
+ * stand adjacent and attack.
+ *
  * Memory used:
  * creep.memory.targetRoom = 'W39S48';
  * creep.memory.targetFlag = 'AttackRoom';

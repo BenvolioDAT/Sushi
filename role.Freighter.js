@@ -1,3 +1,13 @@
+/*
+ * role.Freighter.js
+ *
+ * Hauler role.
+ *
+ * Freighters move mined energy from the source side of the room to the base
+ * side. The role uses lightweight reservations in creep memory so multiple
+ * Freighters spread across piles/containers instead of all choosing the same
+ * largest target every tick.
+ */
 var travel = require('utility.Travel.Creep');
 
 var MIN_DROPPED_ENERGY = 50;
@@ -58,7 +68,8 @@ function collectEnergy(creep) {
      * First try to keep the target this creep already chose.
      *
      * This prevents the creep from changing its mind every tick.
-     * Without this, it can bounce between targets like a caffeinated squirrel.
+     * Without this, small target-score changes can make the creep repeatedly
+     * switch destinations before it reaches any of them.
      */
     var target = getRememberedPickupTarget(creep);
 
@@ -398,12 +409,30 @@ function isBetterContainerOption(creep, candidate, currentBest, reservations) {
 }
 
 function rememberPickupTarget(creep, target, sourceId, pickupType) {
+    /*
+     * These memory fields are not permanent ownership. They are an intent:
+     * "this Freighter is currently heading to this target/source." Other
+     * Freighters read those intents when spreading themselves across work.
+     */
     creep.memory.freighterPickupTargetId = target.id;
     creep.memory.freighterPickupSourceId = sourceId || target.id;
     creep.memory.freighterPickupType = pickupType;
 }
 
 function buildFreighterReservations(creep) {
+    /*
+     * Reservation maps summarize other collecting Freighters:
+     *
+     * byTargetCount:
+     * - how many Freighters are heading to a specific dropped pile/container.
+     *
+     * byTargetEnergy:
+     * - how much carry capacity is already heading there.
+     *
+     * bySourceCount:
+     * - how many Freighters are assigned near each source, which helps balance
+     *   haulers between source lanes.
+     */
     var reservations = {
         byTargetCount: {},
         byTargetEnergy: {},
@@ -500,6 +529,11 @@ function getSourceNearPosition(position, range) {
 }
 
 function getStoredEnergy(target) {
+    /*
+     * Screeps store objects can be read with getUsedCapacity in modern code,
+     * but some older objects or private server shims may still expose
+     * store[RESOURCE_ENERGY]. Supporting both makes this helper tolerant.
+     */
     if(!target || !target.store) {
         return 0;
     }

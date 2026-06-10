@@ -1,3 +1,13 @@
+/*
+ * role.Tech.js
+ *
+ * Upgrader role.
+ *
+ * Tech keeps the controller upgraded. The teaching point in this file is
+ * priority ordering: a controller-adjacent container is best for upgrader CPU
+ * and travel time, then storage, then opportunistic free energy, then mining as
+ * the slow emergency fallback.
+ */
 var creepUtility = require('utility.Creep');
 var travel = require('utility.Travel.Creep');
 
@@ -94,9 +104,8 @@ function getEnergyForTech(creep) {
     /*
      * Priority 4:
      * Pull energy from tombstones.
-     * Tombstones are fallen creeps. If they have nergy, grab it bfore checking
-     * ruins because tombstones decay away faster and are basically free snacks.
-     * Grave robbery? Maybe. Efficient? Absolutely.
+     * Tombstones are fallen creeps. If they have energy, grab it before
+     * checking ruins because tombstones decay away faster.
      */
 
     if (creepUtility.withdrawFromClosestTombstone(creep)) {

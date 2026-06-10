@@ -7,6 +7,11 @@
  * - heal wounded friendly creeps
  * - follow Ronin or Volley when nobody needs healing
  *
+ * Learning note:
+ * Cleric uses Logic.WarRoom for shared combat awareness. That keeps healer
+ * targeting consistent with Ronin and Volley instead of each combat role
+ * independently deciding where the fight is.
+ *
  * Memory used:
  * creep.memory.targetRoom = 'W39S48';
  * creep.memory.targetFlag = 'AttackRoom';
@@ -24,7 +29,8 @@ var roleCleric = {
 
         /*
          * A Cleric should heal itself first if hurt.
-         * A dead healer heals nobody. Very rude.
+         * Self-healing first protects the body parts that let the healer keep
+         * the rest of the combat group alive.
          */
         if(creep.hits < creep.hitsMax) {
             creep.heal(creep);

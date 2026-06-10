@@ -593,6 +593,11 @@ class Traveler {
      * @param cleanup
      */
     static patchMemory(cleanup = false) {
+        /*
+         * Older Traveler setups stored hostile/avoid room data under
+         * Memory.empire.hostileRooms. This migration copies those flags into the
+         * current Memory.rooms[roomName].avoid shape used by checkAvoid().
+         */
         if (!Memory.empire) {
             return;
         }
@@ -636,6 +641,11 @@ class Traveler {
         return state;
     }
     static serializeState(creep, destination, state, travelData) {
+        /*
+         * The compact array saves memory compared with storing an object with
+         * named keys for every creep. The STATE_* constants below document which
+         * index means what.
+         */
         travelData.state = [creep.pos.x, creep.pos.y, state.stuckCount, state.cpu, destination.x, destination.y,
             destination.roomName];
     }
