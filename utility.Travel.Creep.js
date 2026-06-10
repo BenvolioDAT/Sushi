@@ -31,6 +31,9 @@ var ROUTE_CACHE_LOW_BUCKET = 1000;
 var ROUTE_CACHE_MAX_CPU_BUFFER = 5;
 var ROUTE_CACHE_STUCK_THRESHOLD = 3;
 var ROUTE_CACHE_MAX_ROUTES_PER_ROOM = 75;
+var ROUTE_FOLLOW_ROUTE_BAD = 'routeBad';
+var ROUTE_FOLLOW_CREEP_OFF_ROUTE = 'creepOffRoute';
+var ROUTE_FOLLOW_CREEP_STUCK = 'creepStuck';
 var ROUTE_CACHE_ROAD_BUILD_INTERVAL = 1500;
 var ROUTE_CACHE_MAX_ROAD_SITES_PER_RUN = 3;
 
@@ -167,9 +170,18 @@ function stableTargetKey(target, targetPosition) {
     return null;
 }
 
-function nearbyStableObjectKey(room, pos) {
-    if (!room || !pos || room.name !== pos.roomName) {
-        return null;
+function getStableAnchors(room) {
+    if (!room) {
+        return [];
+    }
+
+    if (!global.__sushiStableAnchors) {
+        global.__sushiStableAnchors = {};
+    }
+
+    var cached = global.__sushiStableAnchors[room.name];
+    if (cached && cached.tick === Game.time) {
+        return cached.objects;
     }
 
     var objects = [];
@@ -201,6 +213,20 @@ function nearbyStableObjectKey(room, pos) {
         objects.push(sources[j]);
     }
 
+    global.__sushiStableAnchors[room.name] = {
+        tick: Game.time,
+        objects: objects
+    };
+
+    return objects;
+}
+
+function nearbyStableObjectKey(room, pos) {
+    if (!room || !pos || room.name !== pos.roomName) {
+        return null;
+    }
+
+    var objects = getStableAnchors(room);
     var best = null;
     var bestRange = 2;
 
@@ -242,7 +268,13 @@ function makeRouteKey(creep, target, targetPosition, range) {
         return null;
     }
 
-    return fromKey + '|' + toKey + '|' + range;
+    /*
+     * The anchor name keeps routes grouped by stable logistics lane, but the
+     * exact start tile keeps the saved path honest. Two creeps near the same
+     * container can stand on different tiles, and those are different route
+     * variants.
+     */
+    return fromKey + ':' + creep.pos.x + ':' + creep.pos.y + '|' + toKey + '|' + range;
 }
 
 function canPlanSharedRoute() {
@@ -447,10 +479,19 @@ function planSharedRoute(creep, targetPosition, range, routeKey) {
     return route;
 }
 
+function makeRouteFollowResult(code, reason, deleteRoute, clearCreepRoute) {
+    return {
+        code: code,
+        reason: reason,
+        deleteRoute: deleteRoute === true,
+        clearCreepRoute: clearCreepRoute === true
+    };
+}
+
 function followSharedRoute(creep, routeKey, route, targetPosition, range) {
     var positions = getRoutePositions(route);
     if (positions.length < 2) {
-        return ERR_NOT_FOUND;
+        return makeRouteFollowResult(ERR_NO_PATH, ROUTE_FOLLOW_ROUTE_BAD, true, true);
     }
 
     var routeMemory = creep.memory._sushiRoute;
@@ -459,7 +500,12 @@ function followSharedRoute(creep, routeKey, route, targetPosition, range) {
     if (!routeMemory || routeMemory.routeKey !== routeKey) {
         index = findRouteIndex(creep, positions);
         if (index < 0) {
-            return ERR_NOT_FOUND;
+            /*
+             * Shared route cache is for stable logistics lanes. One creep being
+             * unable to join this route from its current tile does not prove the
+             * room route is bad; fall back to Traveler for this creep only.
+             */
+            return makeRouteFollowResult(ERR_NOT_FOUND, ROUTE_FOLLOW_CREEP_OFF_ROUTE, false, true);
         }
 
         routeMemory = {
@@ -490,32 +536,63 @@ function followSharedRoute(creep, routeKey, route, targetPosition, range) {
     routeMemory.lastRoom = creep.pos.roomName;
 
     if (routeMemory.stuck >= ROUTE_CACHE_STUCK_THRESHOLD) {
-        return ERR_NOT_FOUND;
+        return makeRouteFollowResult(ERR_TIRED, ROUTE_FOLLOW_CREEP_STUCK, false, true);
     }
 
     index = findRouteIndex(creep, positions);
     if (index < 0) {
-        return ERR_NOT_FOUND;
+        return makeRouteFollowResult(ERR_NOT_FOUND, ROUTE_FOLLOW_CREEP_OFF_ROUTE, false, true);
     }
 
     if (index >= positions.length - 1 || creep.pos.inRangeTo(targetPosition, range)) {
-        return OK;
+        return makeRouteFollowResult(OK, null, false, false);
     }
 
     var nextPosition = positions[index + 1];
     if (hasBlockingStructure(nextPosition)) {
-        return ERR_NOT_FOUND;
+        /*
+         * Delete shared routes only when there is strong proof that the route
+         * itself is invalid, such as corrupt path data or a permanent blocking
+         * structure on the next route tile.
+         */
+        return makeRouteFollowResult(ERR_NO_PATH, ROUTE_FOLLOW_ROUTE_BAD, true, true);
     }
 
     routeMemory.pathIndex = index;
     route.lastUsed = Game.time;
     route.uses = (route.uses || 0) + 1;
 
-    return requestMove(creep, creep.pos.getDirectionTo(nextPosition));
+    return makeRouteFollowResult(requestMove(creep, creep.pos.getDirectionTo(nextPosition)), null, false, false);
 }
 
 function samePackedPosition(a, b) {
     return a && b && a.x === b.x && a.y === b.y && a.roomName === b.roomName;
+}
+
+function applyRouteFollowResult(creep, cache, routeKey, followResult) {
+    if (!followResult) {
+        return null;
+    }
+
+    if (followResult.deleteRoute) {
+        delete cache.routes[routeKey];
+    }
+
+    if (followResult.clearCreepRoute) {
+        delete creep.memory._sushiRoute;
+    }
+
+    if (
+        followResult.code === ERR_NOT_FOUND ||
+        followResult.code === ERR_NO_PATH ||
+        followResult.reason === ROUTE_FOLLOW_CREEP_OFF_ROUTE ||
+        followResult.reason === ROUTE_FOLLOW_CREEP_STUCK ||
+        followResult.reason === ROUTE_FOLLOW_ROUTE_BAD
+    ) {
+        return null;
+    }
+
+    return followResult.code;
 }
 
 function trySharedRoute(creep, target, targetPosition, moveOptions) {
@@ -543,11 +620,12 @@ function trySharedRoute(creep, target, targetPosition, moveOptions) {
         route = cache.routes[routeKey];
 
         if (isRouteFresh(route)) {
-            var activeResult = followSharedRoute(creep, routeKey, route, targetPosition, range);
-            if (activeResult !== ERR_NOT_FOUND && activeResult !== ERR_NO_PATH) {
+            var activeFollow = followSharedRoute(creep, routeKey, route, targetPosition, range);
+            var activeResult = applyRouteFollowResult(creep, cache, routeKey, activeFollow);
+            if (activeResult !== null) {
                 return activeResult;
             }
-
+        } else if (route) {
             delete cache.routes[routeKey];
         }
 
@@ -574,14 +652,13 @@ function trySharedRoute(creep, target, targetPosition, moveOptions) {
         return null;
     }
 
-    var result = followSharedRoute(creep, routeKey, route, targetPosition, range);
-    if (result === ERR_NOT_FOUND || result === ERR_NO_PATH) {
-        delete cache.routes[routeKey];
-        delete creep.memory._sushiRoute;
-        return null;
-    }
-
-    return result;
+    /*
+     * One creep failing to join a route, getting stuck behind traffic, or being
+     * on the wrong side of a structure should not delete a room-level logistics
+     * lane. Deletion is reserved for stale, corrupt, or permanently blocked
+     * routes; otherwise this creep simply falls back to Traveler.
+     */
+    return applyRouteFollowResult(creep, cache, routeKey, followSharedRoute(creep, routeKey, route, targetPosition, range));
 }
 
 function cleanupRouteCaches() {
@@ -638,6 +715,7 @@ function buildRoadsFromRouteCache(room) {
     var cache = getRoomRouteCache(room.name);
     var keys = Object.keys(cache.routes);
     var built = 0;
+    var terrain = Game.map.getRoomTerrain(room.name);
 
     for (var i = 0; i < keys.length && built < ROUTE_CACHE_MAX_ROAD_SITES_PER_RUN; i++) {
         var route = cache.routes[keys[i]];
@@ -651,7 +729,6 @@ function buildRoadsFromRouteCache(room) {
                 continue;
             }
 
-            var terrain = Game.map.getRoomTerrain(room.name);
             if (terrain.get(positions[j].x, positions[j].y) === TERRAIN_MASK_WALL) {
                 continue;
             }
