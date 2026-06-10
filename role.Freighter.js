@@ -9,6 +9,7 @@
  * largest target every tick.
  */
 var travel = require('utility.Travel.Creep');
+var RemotePlanner = require('Planner.Remote');
 
 var MIN_DROPPED_ENERGY = 50;
 var MIN_CONTAINER_ENERGY = 50;
@@ -33,7 +34,11 @@ var roleFreighter = {
         updateWorkingState(creep);
 
         if(creep.memory.FreighterWorking) {
-            deliverEnergy(creep);
+            if(creep.memory.remoteFreighting || creep.memory.remoteReturning) {
+                deliverRemoteEnergy(creep);
+            } else {
+                deliverEnergy(creep);
+            }
         } else {
             collectEnergy(creep);
         }
@@ -47,7 +52,11 @@ function updateWorkingState(creep) {
      */
     if(creep.memory.FreighterWorking && creep.store[RESOURCE_ENERGY] === 0) {
         creep.memory.FreighterWorking = false;
-        clearPickupMemory(creep);
+        if(creep.memory.remoteFreighting || creep.memory.remoteReturning) {
+            clearRemoteReturnMemory(creep);
+        } else {
+            clearPickupMemory(creep);
+        }
     }
 
     /*
@@ -65,40 +74,140 @@ function updateWorkingState(creep) {
 
 function collectEnergy(creep) {
     /*
-     * First try to keep the target this creep already chose.
-     *
-     * This prevents the creep from changing its mind every tick.
-     * Without this, small target-score changes can make the creep repeatedly
-     * switch destinations before it reaches any of them.
+     * If this Freighter is already committed to a remote target, keep traveling
+     * to it. A non-visible remote target is not treated as invalid until the
+     * Freighter actually has room vision and can prove it disappeared or emptied.
+     */
+    if(creep.memory.remoteFreighting) {
+        if(handleRemoteCollection(creep)) {
+            return;
+        }
+
+        var replacementRemotePickup = RemotePlanner.getBestRemotePickupForFreighter(creep);
+        if(replacementRemotePickup) {
+            RemotePlanner.claimRemotePickupTarget(creep, replacementRemotePickup);
+            handleRemoteCollection(creep);
+            return;
+        }
+
+        if(creep.store[RESOURCE_ENERGY] > 0) {
+            creep.memory.FreighterWorking = true;
+            deliverRemoteEnergy(creep);
+            return;
+        }
+
+        moveTowardHomeRoom(creep);
+        return;
+    }
+
+    if(creep.memory.remoteFreightingWanted) {
+        /*
+         * Remote-wanted Freighters count as remote hauling capacity, so they try
+         * remote work before local crumbs. If no remote target is ready, the flag
+         * stays and local pickup can be used only as temporary fallback work.
+         */
+        var wantedRemotePickup = RemotePlanner.getBestRemotePickupForFreighter(creep);
+
+        if(wantedRemotePickup) {
+            RemotePlanner.claimRemotePickupTarget(creep, wantedRemotePickup);
+            handleRemoteCollection(creep);
+            return;
+        }
+    }
+
+    /*
+     * Normal Freighters still prefer local hauling first. Remote-wanted
+     * Freighters reach this block only after no remote pickup was available.
      */
     var target = getRememberedPickupTarget(creep);
 
-    /*
-     * If the old target is gone, empty, or invalid, pick a new target.
-     */
     if(!target) {
         target = findBestDroppedEnergyTarget(creep);
 
-        /*
-         * Dropped energy is first priority because it decays over time.
-         *
-         * Containers are second priority because container energy is safe
-         * and will not disappear.
-         */
         if(!target) {
             target = findBestSourceContainerTarget(creep);
         }
     }
 
-    if(!target) {
-        idleNearUsefulSource(creep);
+    if(target) {
+        collectFromTarget(creep, target);
         return;
     }
 
-    collectFromTarget(creep, target);
+    var remotePickup = RemotePlanner.getBestRemotePickupForFreighter(creep);
+
+    if(remotePickup) {
+        RemotePlanner.claimRemotePickupTarget(creep, remotePickup);
+        handleRemoteCollection(creep);
+        return;
+    }
+
+    idleNearUsefulSource(creep);
 }
 
+function handleRemoteCollection(creep) {
+    if(!creep.memory.remoteFreighting) {
+        return false;
+    }
+
+    var remoteRoomName = creep.memory.freighterRemoteRoom;
+    var remoteRoom = remoteRoomName ? Game.rooms[remoteRoomName] : null;
+
+    if(remoteRoom && isRemoteRoomDangerous(remoteRoom)) {
+        /*
+         * If danger appears while carrying partial cargo, switch to delivery
+         * before clearing remote pickup memory. This keeps the home room saved
+         * and prevents the Freighter from forgetting to bring energy home.
+         */
+        var homeRoomName = creep.memory.freighterHomeRoom || creep.memory.homeRoom;
+
+        if(creep.store[RESOURCE_ENERGY] > 0) {
+            creep.memory.FreighterWorking = true;
+            creep.memory.remoteReturning = true;
+            creep.memory.homeRoom = homeRoomName || creep.memory.homeRoom;
+            creep.memory.freighterHomeRoom = homeRoomName || creep.memory.homeRoom;
+            clearRemotePickupOnly(creep);
+            deliverRemoteEnergy(creep);
+            return true;
+        }
+
+        clearRemoteReturnMemory(creep);
+        moveTowardHomeRoom(creep);
+        return true;
+    }
+
+    var targetId = creep.memory.freighterPickupTargetId;
+    var target = targetId ? Game.getObjectById(targetId) : null;
+
+    if(target) {
+        if(!isValidEnergyPickupTarget(target)) {
+            RemotePlanner.clearRemoteFreighterMemory(creep);
+            return false;
+        }
+
+        collectFromRemoteTarget(creep, target);
+        return true;
+    }
+
+    /*
+     * If the target room is visible and the id no longer resolves, the target is
+     * really gone. If the room is not visible, keep traveling toward the remote
+     * source/path instead of clearing useful memory too early.
+     */
+    if(remoteRoom && creep.room.name === remoteRoomName) {
+        RemotePlanner.clearRemoteFreighterMemory(creep);
+        return false;
+    }
+
+    return RemotePlanner.moveFreighterToRemotePickup(creep);
+}
+
+
 function getRememberedPickupTarget(creep) {
+    if(creep.memory.remoteFreighting) {
+        return null;
+    }
+
     if(!creep.memory.freighterPickupTargetId) {
         return null;
     }
@@ -117,6 +226,47 @@ function clearPickupMemory(creep) {
     delete creep.memory.freighterPickupTargetId;
     delete creep.memory.freighterPickupSourceId;
     delete creep.memory.freighterPickupType;
+}
+
+function clearRemotePickupOnly(creep) {
+    /*
+     * Used when a remote Freighter must return home with partial cargo. We clear
+     * only the pickup reservation, not the home-return state, so next tick still
+     * uses deliverRemoteEnergy() instead of local delivery logic.
+     */
+    var homeRoomName = creep.memory.freighterHomeRoom || creep.memory.homeRoom;
+
+    if(
+        homeRoomName &&
+        Memory.rooms &&
+        Memory.rooms[homeRoomName] &&
+        Memory.rooms[homeRoomName].remotePlanner &&
+        Memory.rooms[homeRoomName].remotePlanner.remoteFreighterAssignments
+    ) {
+        delete Memory.rooms[homeRoomName].remotePlanner.remoteFreighterAssignments[creep.name];
+    }
+
+    delete creep.memory.freighterRemoteRoom;
+    delete creep.memory.freighterPickupTargetId;
+    delete creep.memory.freighterPickupSourceId;
+    delete creep.memory.freighterPickupType;
+}
+
+function clearRemoteReturnMemory(creep) {
+    /*
+     * Fully clear remote return state after energy has been delivered or when an
+     * empty remote Freighter is no longer assigned. Keep remoteFreightingWanted:
+     * spawn-demand Freighters should keep preferring future remote work.
+     */
+    var keepRemoteWanted = creep.memory.remoteFreightingWanted === true;
+
+    clearRemotePickupOnly(creep);
+    delete creep.memory.remoteFreighting;
+    delete creep.memory.remoteReturning;
+
+    if(!keepRemoteWanted) {
+        delete creep.memory.freighterHomeRoom;
+    }
 }
 
 function isValidEnergyPickupTarget(target) {
@@ -409,6 +559,10 @@ function isBetterContainerOption(creep, candidate, currentBest, reservations) {
 }
 
 function rememberPickupTarget(creep, target, sourceId, pickupType) {
+    if(creep.memory.remoteFreighting) {
+        RemotePlanner.clearRemoteFreighterMemory(creep);
+    }
+
     /*
      * These memory fields are not permanent ownership. They are an intent:
      * "this Freighter is currently heading to this target/source." Other
@@ -455,6 +609,10 @@ function buildFreighterReservations(creep) {
         }
 
         if(otherCreep.memory.role !== 'Freighter') {
+            continue;
+        }
+
+        if(otherCreep.memory.remoteFreighting) {
             continue;
         }
 
@@ -581,6 +739,113 @@ function idleNearUsefulSource(creep) {
             }
         });
     }
+}
+
+function collectFromRemoteTarget(creep, target) {
+    var result;
+
+    if(target.resourceType) {
+        result = creep.pickup(target);
+    } else {
+        result = creep.withdraw(target, RESOURCE_ENERGY);
+    }
+
+    if(result === OK) {
+        return;
+    }
+
+    if(result === ERR_NOT_IN_RANGE) {
+        RemotePlanner.moveFreighterToRemotePickup(creep);
+        return;
+    }
+
+    RemotePlanner.clearRemoteFreighterMemory(creep);
+}
+
+function deliverRemoteEnergy(creep) {
+    var homeRoomName = creep.memory.freighterHomeRoom || creep.memory.homeRoom;
+
+    if(homeRoomName && creep.room.name !== homeRoomName) {
+        travel.moveToRoom(creep, homeRoomName, {
+            range: 22,
+            reusePath: 20,
+            visualizePathStyle: {
+                stroke: '#ffffff'
+            }
+        });
+        return;
+    }
+
+    var target = RemotePlanner.getHomeDeliveryTarget(creep);
+
+    if(!target) {
+        return;
+    }
+
+    var result = creep.transfer(target, RESOURCE_ENERGY);
+
+    if(result === OK) {
+        if(creep.store[RESOURCE_ENERGY] === 0) {
+            clearRemoteReturnMemory(creep);
+        }
+        return;
+    }
+
+    if(result === ERR_NOT_IN_RANGE) {
+        travel.move(creep, target, {
+            range: 1,
+            visualizePathStyle: {
+                stroke: '#ffffff'
+            }
+        });
+        return;
+    }
+
+    clearRemoteReturnMemory(creep);
+}
+
+function moveTowardHomeRoom(creep) {
+    var homeRoomName = creep.memory.freighterHomeRoom || creep.memory.homeRoom;
+
+    if(!homeRoomName || creep.room.name === homeRoomName) {
+        return;
+    }
+
+    travel.moveToRoom(creep, homeRoomName, {
+        range: 22,
+        reusePath: 20,
+        visualizePathStyle: {
+            stroke: '#ffffff'
+        }
+    });
+}
+
+function isRemoteRoomDangerous(room) {
+    if(!room) {
+        return false;
+    }
+
+    if(typeof STRUCTURE_INVADER_CORE !== 'undefined') {
+        var cores = room.find(FIND_HOSTILE_STRUCTURES, {
+            filter: function(structure) {
+                return structure.structureType === STRUCTURE_INVADER_CORE;
+            }
+        });
+
+        if(cores.length > 0) {
+            return true;
+        }
+    }
+
+    var dangerousCreeps = room.find(FIND_HOSTILE_CREEPS, {
+        filter: function(hostile) {
+            return hostile.getActiveBodyparts(ATTACK) > 0 ||
+                hostile.getActiveBodyparts(RANGED_ATTACK) > 0 ||
+                hostile.getActiveBodyparts(HEAL) > 0;
+        }
+    });
+
+    return dangerousCreeps.length > 0;
 }
 
 function deliverEnergy(creep) {

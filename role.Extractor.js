@@ -10,6 +10,7 @@
 var utility = require('utility');
 var utilityCreep = require('utility.Creep');
 var utilityTravelCreep = require('utility.Travel.Creep');
+var RemotePlanner = require('Planner.Remote');
 
 var roleExtractor = {
 
@@ -35,11 +36,25 @@ var roleExtractor = {
          */
         var source = utilityCreep.getAssignedSource(creep);
         //var source = getAssignedSource(creep);
+        if(source && isHomeRoomSource(creep, source)) {
+            delete creep.memory.remoteMining;
+        }
+
         if(!source) {
             /*
-             * No source means there is nothing useful for this creep to do.
-             * Returning avoids calling harvest with a null target.
+             * Local room mining always gets first chance. Only when local source
+             * assignment returns null (usually because local sources are full) do
+             * we ask the remote planner for an extra source.
              */
+            source = getRemoteAssignedSource(creep);
+        }
+
+        if(!source) {
+            /*
+             * No local or remote source means there is nothing useful for this
+             * creep to mine. Idle near home instead of crowding a full source.
+             */
+            idleNearHome(creep);
             return;
         }
 
@@ -82,6 +97,113 @@ var roleExtractor = {
         }
     }
 };
+
+
+
+function isHomeRoomSource(creep, source) {
+    if (!creep || !source || !source.pos) {
+        return false;
+    }
+
+    var homeRoomName = creep.memory.homeRoom || creep.room.name;
+    return source.pos.roomName === homeRoomName;
+}
+
+function getRemoteAssignedSource(creep) {
+    /*
+     * Planner.Remote writes the same memory fields local mining already uses:
+     * sourceId, targetSourceId, sourceRoom, targetRoom, and homeRoom. That keeps
+     * remote mining an add-on instead of a new role or spawn system.
+     */
+    var remoteInfo = RemotePlanner.getBestRemoteSourceForExtractor(creep);
+
+    if (!remoteInfo) {
+        delete creep.memory.remoteMining;
+        return null;
+    }
+
+    var source = Game.getObjectById(remoteInfo.sourceId);
+
+    if (source) {
+        return source;
+    }
+
+    moveTowardRemoteSource(creep, remoteInfo);
+    return null;
+}
+
+function moveTowardRemoteSource(creep, remoteInfo) {
+    if (!creep || !remoteInfo) {
+        return;
+    }
+
+    var homeRoomName = creep.memory.homeRoom;
+
+    /*
+     * If the saved lane is available, step along it. Planner.Remote keeps this
+     * rebuilt path in heap/global cache and keeps only packed coordinates in
+     * Memory so remote paths stay compact.
+     */
+    if (RemotePlanner.moveExtractorAlongRemotePath(creep, homeRoomName, remoteInfo.sourceId)) {
+        return;
+    }
+
+    var targetPosition = RemotePlanner.getRemoteSourcePosition(homeRoomName, remoteInfo.sourceId);
+
+    if (!targetPosition) {
+        utilityTravelCreep.moveToRoom(creep, remoteInfo.roomName, {
+            range: 22,
+            visualizePathStyle: {
+                stroke: '#ffaa00'
+            }
+        });
+        return;
+    }
+
+    utilityTravelCreep.move(creep, targetPosition, {
+        range: 1,
+        visualizePathStyle: {
+            stroke: '#ffaa00'
+        }
+    });
+}
+
+function idleNearHome(creep) {
+    var homeRoomName = creep && creep.memory ? creep.memory.homeRoom : null;
+    var homeRoom = homeRoomName ? Game.rooms[homeRoomName] : null;
+    var target = null;
+
+    if (!creep || !creep.room) {
+        return;
+    }
+
+    if (homeRoom && homeRoom.storage) {
+        target = homeRoom.storage;
+    }
+
+    if (!target && homeRoom) {
+        target = creep.pos.findClosestByPath(FIND_MY_SPAWNS);
+    }
+
+    if (target && target.pos && target.pos.roomName !== creep.pos.roomName) {
+        utilityTravelCreep.moveToRoom(creep, target.pos.roomName, {
+            range: 22,
+            visualizePathStyle: {
+                stroke: '#777777'
+            }
+        });
+        return;
+    }
+
+    if (target && creep.pos.getRangeTo(target) > 3) {
+        utilityTravelCreep.move(creep, target, {
+            range: 3,
+            visualizePathStyle: {
+                stroke: '#777777'
+            }
+        });
+    }
+}
 
 function isCreepOnPosition(creep, position) {
     if (!creep || !position) {

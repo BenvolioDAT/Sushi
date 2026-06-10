@@ -20,6 +20,7 @@ var spawnManager = require('spawn.manager');
 var spawnRequestManager = require('spawn.request.manager');
 var trafficManager = require('traffic_manager');
 var travelUtility = require('utility.Travel.Creep');
+var RemotePlanner = require('Planner.Remote');
 
 /*
  * Harabi-style traffic movement is initialized once when this global is loaded.
@@ -295,6 +296,13 @@ module.exports.loop = function () {
      * It scans visible rooms before combat creep role logic runs.
      */
     WarRoom.run();
+
+    /*
+     * RemotePlanner is intentionally light most ticks. Scouts do heavy refreshes
+     * when they see rooms, and this run call mostly cleans stale assignments and
+     * occasionally rescoring active candidates per owned room.
+     */
+    RemotePlanner.run();
 
     for (var towerRoomName in Game.rooms) {
         var towerRoom = Game.rooms[towerRoomName];
