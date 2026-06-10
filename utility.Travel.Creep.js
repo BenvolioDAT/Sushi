@@ -9,7 +9,7 @@
  *
  * Why?
  * - Today this can use Traveler.js.
- * - Later we can change this file to use your own traffic manager.
+ * - Traffic manager can now resolve the final movement step.
  * - Your role files will not need to be rewritten.
  */
 
@@ -66,6 +66,70 @@ function getTargetPosition(target) {
     }
 
     return null;
+}
+
+/**
+ * Read Sushi's movement feature switch.
+ *
+ * Default is enabled. Set Memory.settings.useTrafficManager = false in the
+ * console if traffic movement causes trouble and Sushi should use direct moves.
+ *
+ * @returns {boolean}
+ */
+function shouldUseTrafficManager() {
+    if (!Memory.settings) {
+        Memory.settings = {};
+    }
+
+    if (Memory.settings.useTrafficManager === undefined) {
+        Memory.settings.useTrafficManager = true;
+    }
+
+    return Memory.settings.useTrafficManager !== false;
+}
+
+/**
+ * Request one step of movement.
+ *
+ * Flow:
+ * - role asks this travel utility to move
+ * - Traveler calculates/reuses the path and finds the next direction
+ * - this helper registers that direction with traffic manager
+ * - main.js runs traffic manager at end of tick
+ * - traffic manager performs the real creep.move(direction)
+ *
+ * @param {Creep} creep
+ * @param {number} direction
+ * @returns {number}
+ */
+function requestMove(creep, direction) {
+    if (!creep) {
+        return ERR_INVALID_ARGS;
+    }
+
+    if (
+        typeof direction !== 'number' ||
+        direction < 1 ||
+        direction > 8 ||
+        Math.floor(direction) !== direction
+    ) {
+        return ERR_INVALID_ARGS;
+    }
+
+    if (shouldUseTrafficManager()) {
+        if (typeof creep.registerMove === 'function') {
+            return creep.registerMove(direction);
+        }
+
+        /*
+         * Safety fallback only:
+         * trafficManager.init() should install creep.registerMove during main
+         * bootstrap. If that failed, move directly so the bot does not freeze.
+         */
+        return creep.move(direction);
+    }
+
+    return creep.move(direction);
 }
 
 /**
@@ -147,6 +211,13 @@ function move(creep, target, options) {
     }
 
     /*
+     * Keep Traveler responsible for pathfinding, path reuse, stuck detection,
+     * room routing, and choosing the next direction. This callback only changes
+     * how the final one-step move is submitted.
+     */
+    moveOptions.sushiMoveHandler = requestMove;
+
+    /*
      * If the creep is already close enough, do not move.
      * Returning OK here means "movement goal is satisfied", even though no
      * actual move command was sent this tick.
@@ -171,6 +242,8 @@ function move(creep, target, options) {
         /*
          * Fallback:
          * If Traveler failed to load for some reason, use normal moveTo.
+         * This is outside the traffic-manager path because native moveTo does
+         * not expose the final direction for registration.
          */
         result = creep.moveTo(targetPosition, moveOptions);
     }
@@ -276,7 +349,7 @@ function moveDirection(creep, direction) {
         return ERR_BUSY;
     }
 
-    var result = creep.move(direction);
+    var result = requestMove(creep, direction);
 
     /*
      * These results mean the wrapper safely handled this tick's movement
@@ -327,5 +400,7 @@ module.exports = {
     move: move,
     moveToRoom: moveToRoom,
     moveDirection: moveDirection,
+    requestMove: requestMove,
+    shouldUseTrafficManager: shouldUseTrafficManager,
     clearTravelMemory: clearTravelMemory
 };

@@ -18,7 +18,21 @@ var WarRoom = require('Logic.WarRoom');
 
 var spawnManager = require('spawn.manager');
 var spawnRequestManager = require('spawn.request.manager');
+var trafficManager = require('traffic_manager');
 
+/*
+ * Harabi-style traffic movement is initialized once when this global is loaded.
+ * Role code should keep asking Sushi's travel utility to move. The travel
+ * utility registers the intended step, and the end-of-tick traffic pass below
+ * performs the actual creep.move calls for each room.
+ */
+trafficManager.init();
+
+/*
+ * Tiles at or above this cost are avoided when traffic manager needs to shuffle
+ * idle creeps out of the way. Intentional pathing still comes from Traveler.
+ */
+var TRAFFIC_MANAGER_THRESHOLD = 20;
 
 /*
  * Save damaged structures into room memory.
@@ -150,6 +164,116 @@ function maybeGeneratePixel() {
     Game.cpu.generatePixel();
 }
 
+function ensureTrafficManagerSetting() {
+    /*
+     * Default traffic movement on, but keep the setting in Memory so it can be
+     * disabled from the console without changing code:
+     * Memory.settings.useTrafficManager = false
+     */
+    if (!Memory.settings) {
+        Memory.settings = {};
+    }
+
+    if (Memory.settings.useTrafficManager === undefined) {
+        Memory.settings.useTrafficManager = true;
+    }
+}
+
+function isTrafficManagerEnabled() {
+    ensureTrafficManagerSetting();
+    return Memory.settings.useTrafficManager !== false;
+}
+
+function runTrafficManagerForVisibleRooms() {
+    if (!isTrafficManagerEnabled()) {
+        return;
+    }
+
+    /*
+     * This is intentionally at the end of the tick:
+     * - roles/tasks decide where creeps want to move
+     * - utility.Travel.Creep registers those intended steps
+     * - traffic manager resolves the room together
+     * - traffic manager performs the real creep.move(direction) calls
+     */
+    for (var roomName in Game.rooms) {
+        var room = Game.rooms[roomName];
+        var costs = buildTrafficCostMatrix(room);
+
+        trafficManager.run(room, costs, TRAFFIC_MANAGER_THRESHOLD);
+    }
+}
+
+function buildTrafficCostMatrix(room) {
+    /*
+     * Sushi does not have a separate Harabi-style pathUtils matrix. This small
+     * matrix is only for traffic-manager idle shuffling, so keep it cheap:
+     * roads are preferred, containers are passable, hard obstacles are blocked.
+     */
+    var costs = new PathFinder.CostMatrix();
+    var structures = room.find(FIND_STRUCTURES);
+
+    for (var i = 0; i < structures.length; i++) {
+        var structure = structures[i];
+
+        if (structure.structureType === STRUCTURE_ROAD) {
+            costs.set(structure.pos.x, structure.pos.y, 1);
+            continue;
+        }
+
+        if (structure.structureType === STRUCTURE_CONTAINER) {
+            costs.set(structure.pos.x, structure.pos.y, 5);
+            continue;
+        }
+
+        if (isTrafficBlockedStructure(structure)) {
+            costs.set(structure.pos.x, structure.pos.y, 255);
+        }
+    }
+
+    var sites = room.find(FIND_CONSTRUCTION_SITES);
+
+    for (var j = 0; j < sites.length; j++) {
+        var site = sites[j];
+
+        if (
+            site.structureType === STRUCTURE_ROAD ||
+            site.structureType === STRUCTURE_CONTAINER ||
+            site.structureType === STRUCTURE_RAMPART
+        ) {
+            continue;
+        }
+
+        if (
+            typeof OBSTACLE_OBJECT_TYPES !== 'undefined' &&
+            OBSTACLE_OBJECT_TYPES.indexOf(site.structureType) !== -1
+        ) {
+            costs.set(site.pos.x, site.pos.y, 255);
+        }
+    }
+
+    return costs;
+}
+
+function isTrafficBlockedStructure(structure) {
+    if (structure.structureType === STRUCTURE_ROAD) {
+        return false;
+    }
+
+    if (structure.structureType === STRUCTURE_CONTAINER) {
+        return false;
+    }
+
+    if (structure.structureType === STRUCTURE_RAMPART) {
+        return !structure.my && !structure.isPublic;
+    }
+
+    return (
+        typeof OBSTACLE_OBJECT_TYPES !== 'undefined' &&
+        OBSTACLE_OBJECT_TYPES.indexOf(structure.structureType) !== -1
+    );
+}
+
 
 /*
  * Screeps calls module.exports.loop once every game tick.
@@ -274,4 +398,6 @@ module.exports.loop = function () {
             roleCleric.run(creep);
         }
     }
+
+    runTrafficManagerForVisibleRooms();
 }

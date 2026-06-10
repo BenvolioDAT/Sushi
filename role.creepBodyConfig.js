@@ -210,6 +210,67 @@ function getFreighterBody(room) {
  * @returns {array}
  */
 function getTechBody(room) {
+    return chooseBestAffordableBody(room, [
+        [
+            [WORK, 4],
+            [CARRY, 4],
+            [MOVE, 8],
+        ],
+        [
+            [WORK, 4],
+            [CARRY, 4],
+            [MOVE, 7],
+        ],
+        [
+            [WORK, 4],
+            [CARRY, 3],
+            [MOVE, 7],
+        ],
+        [
+            [WORK, 4],
+            [CARRY, 3],
+            [MOVE, 6],
+        ],
+        [
+            [WORK, 3],
+            [CARRY, 3],
+            [MOVE, 6],
+        ],
+        [
+            [WORK, 3],
+            [CARRY, 3],
+            [MOVE, 5],
+        ],
+        [
+            [WORK, 3],
+            [CARRY, 2],
+            [MOVE, 5],
+        ],
+        [
+            [WORK, 2],
+            [CARRY, 2],
+            [MOVE, 4],
+        ],  
+        [
+            [WORK, 2],
+            [CARRY, 1],
+            [MOVE, 3],
+        ],
+        [
+            [WORK, 2],
+            [CARRY, 1],
+            [MOVE, 2],
+        ],
+        [
+            [WORK, 1],
+            [CARRY, 1],
+            [MOVE, 1],
+        ],
+
+    ]);
+
+
+
     var energyCapacity = getRoomEnergyCapacity(room);
 
     /*

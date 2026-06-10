@@ -2,9 +2,6 @@
  * This version does not ensure optimal solution but more cpu efficient
  */
 
-const config = require("./config")
-const screepsProfiler = require("./screeps-profiler")
-
 // Room-local movement matching state. These variables are rebuilt for each room
 // run so the DFS can quickly see which creep currently owns each tile.
 let movementMap
@@ -25,12 +22,24 @@ const trafficManager = {
         // Screeps move directions are accepted for compatibility with direct
         // movement code. Convert them into target coordinates for matching.
         const deltaCoords = directionDelta[target]
+        if (!deltaCoords) {
+          return ERR_INVALID_ARGS
+        }
+
         targetPosition = {
-          x: Math.max(0, Math.min(49, this.pos.x + deltaCoords.x)),
-          y: Math.max(0, Math.min(49, this.pos.y + deltaCoords.y)),
+          x: this.pos.x + deltaCoords.x,
+          y: this.pos.y + deltaCoords.y,
         }
       } else {
         targetPosition = target
+      }
+
+      if (
+        !targetPosition ||
+        !Number.isInteger(targetPosition.x) ||
+        !Number.isInteger(targetPosition.y)
+      ) {
+        return ERR_INVALID_ARGS
       }
 
       if (visual) {
@@ -39,6 +48,7 @@ const trafficManager = {
 
       const packedCoord = packCoordinates(targetPosition)
       this._intendedPackedCoord = packedCoord
+      return OK
     }
 
     /**
@@ -51,6 +61,7 @@ const trafficManager = {
       // traffic where they are allowed to shuffle without leaving useful range.
       this._workingPos = pos
       this._workingRange = range
+      return OK
     }
   },
 
@@ -137,11 +148,11 @@ function getPossibleMoves(creep, costs, threshold = 255) {
   const outOfWorkingArea = []
 
   for (const adjacentCoord of _.shuffle(adjacentCoords)) {
-    if (roomTerrain.get(adjacentCoord.x, adjacentCoord.y) === TERRAIN_MASK_WALL) {
+    if (adjacentCoord.x <= 0 || adjacentCoord.x >= 49 || adjacentCoord.y <= 0 || adjacentCoord.y >= 49) {
       continue
     }
 
-    if (adjacentCoord.x === 0 || adjacentCoord.x === 49 || adjacentCoord.y === 0 || adjacentCoord.y === 49) {
+    if (roomTerrain.get(adjacentCoord.x, adjacentCoord.y) === TERRAIN_MASK_WALL) {
       continue
     }
 
@@ -258,19 +269,17 @@ function assignCreepToCoordinate(creep, coord) {
 }
 
 function packCoordinates(coord) {
-  // Same compact 50x50 packing scheme used by coordinate utilities.
-  return 50 * coord.y + coord.x
+  // String keys support normal room coordinates plus one-step exit intents
+  // such as x = -1 or x = 50, which lets room-edge creeps leave the room.
+  return coord.x + ":" + coord.y
 }
 
 function unpackCoordinates(packedCoord) {
   // Reverse of packCoordinates.
-  const x = packedCoord % 50
-  const y = (packedCoord - x) / 50
+  const parts = packedCoord.split(":")
+  const x = parseInt(parts[0], 10)
+  const y = parseInt(parts[1], 10)
   return { x, y }
-}
-
-if (config.test.profiler) {
-  screepsProfiler.registerObject(trafficManager, "trafficManager")
 }
 
 module.exports = trafficManager

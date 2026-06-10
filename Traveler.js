@@ -57,7 +57,7 @@ class Traveler {
                     options.returnData.nextPos = destination;
                     options.returnData.path = direction.toString();
                 }
-                return creep.move(direction);
+                return Traveler.requestMove(creep, direction, options);
             }
             return OK;
         }
@@ -166,7 +166,26 @@ class Traveler {
             options.returnData.state = state;
             options.returnData.path = travelData.path;
         }
-        return creep.move(nextDirection);
+        return Traveler.requestMove(creep, nextDirection, options);
+    }
+    /**
+     * Submit the final movement direction.
+     *
+     * Sushi's travel wrapper provides options.sushiMoveHandler so Traveler can
+     * keep pathfinding while traffic manager owns the actual move resolution.
+     * Direct Traveler callers still get the old immediate creep.move behavior.
+     *
+     * @param {Creep} creep
+     * @param {number} direction
+     * @param {object} options
+     * @returns {number}
+     */
+    static requestMove(creep, direction, options = {}) {
+        if (options && typeof options.sushiMoveHandler === "function") {
+            return options.sushiMoveHandler(creep, direction);
+        }
+
+        return creep.move(direction);
     }
     /**
      * make position objects consistent so that either can be used as an argument

@@ -39,6 +39,7 @@ var roleExtractor = {
          * argument asks Screeps specifically about energy space, not other resources.
          */
         var miningSeat = utilityCreep.getAssignedMiningSeat(creep, source);
+        setExtractorWorkingArea(creep, source);
 
         if (miningSeat && !isCreepOnPosition(creep, miningSeat)) {
             /*
@@ -83,6 +84,23 @@ function isCreepOnPosition(creep, position) {
         creep.pos.y === position.y &&
         creep.pos.roomName === position.roomName
     );
+}
+
+function setExtractorWorkingArea(creep, source) {
+    /*
+     * Traffic manager may gently shuffle idle creeps to unblock a room. Source
+     * miners should stay useful, so keep any idle shuffle within harvest range.
+     */
+    if (
+        !creep ||
+        !source ||
+        !source.pos ||
+        typeof creep.setWorkingArea !== 'function'
+    ) {
+        return;
+    }
+
+    creep.setWorkingArea(source.pos, 1);
 }
 
 function getSourceFromRoomMemory(creep) {
