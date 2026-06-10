@@ -304,6 +304,13 @@ module.exports.loop = function () {
      */
     RemotePlanner.run();
 
+    /*
+     * RemotePlanner is intentionally light most ticks. Scouts do heavy refreshes
+     * when they see rooms, and this run call mostly cleans stale assignments and
+     * occasionally rescoring active candidates per owned room.
+     */
+    RemotePlanner.run();
+
     for (var towerRoomName in Game.rooms) {
         var towerRoom = Game.rooms[towerRoomName];
 
