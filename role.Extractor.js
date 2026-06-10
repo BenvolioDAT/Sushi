@@ -36,6 +36,10 @@ var roleExtractor = {
          */
         var source = utilityCreep.getAssignedSource(creep);
         //var source = getAssignedSource(creep);
+        if(source && isHomeRoomSource(creep, source)) {
+            delete creep.memory.remoteMining;
+        }
+
         if(!source) {
             /*
              * Local room mining always gets first chance. Only when local source
@@ -94,6 +98,16 @@ var roleExtractor = {
     }
 };
 
+
+
+function isHomeRoomSource(creep, source) {
+    if (!creep || !source || !source.pos) {
+        return false;
+    }
+
+    var homeRoomName = creep.memory.homeRoom || creep.room.name;
+    return source.pos.roomName === homeRoomName;
+}
 
 function getRemoteAssignedSource(creep) {
     /*

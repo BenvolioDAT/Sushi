@@ -9,6 +9,7 @@
  * largest target every tick.
  */
 var travel = require('utility.Travel.Creep');
+var RemotePlanner = require('Planner.Remote');
 
 var MIN_DROPPED_ENERGY = 50;
 var MIN_CONTAINER_ENERGY = 50;
@@ -33,7 +34,11 @@ var roleFreighter = {
         updateWorkingState(creep);
 
         if(creep.memory.FreighterWorking) {
-            deliverEnergy(creep);
+            if(creep.memory.remoteFreighting) {
+                deliverRemoteEnergy(creep);
+            } else {
+                deliverEnergy(creep);
+            }
         } else {
             collectEnergy(creep);
         }
@@ -47,7 +52,11 @@ function updateWorkingState(creep) {
      */
     if(creep.memory.FreighterWorking && creep.store[RESOURCE_ENERGY] === 0) {
         creep.memory.FreighterWorking = false;
-        clearPickupMemory(creep);
+        if(creep.memory.remoteFreighting) {
+            RemotePlanner.clearRemoteFreighterMemory(creep);
+        } else {
+            clearPickupMemory(creep);
+        }
     }
 
     /*
@@ -65,40 +74,108 @@ function updateWorkingState(creep) {
 
 function collectEnergy(creep) {
     /*
-     * First try to keep the target this creep already chose.
-     *
-     * This prevents the creep from changing its mind every tick.
-     * Without this, small target-score changes can make the creep repeatedly
-     * switch destinations before it reaches any of them.
+     * If this Freighter is already committed to a remote target, keep traveling
+     * to it. A non-visible remote target is not treated as invalid until the
+     * Freighter actually has room vision and can prove it disappeared or emptied.
+     */
+    if(creep.memory.remoteFreighting) {
+        if(handleRemoteCollection(creep)) {
+            return;
+        }
+
+        var replacementRemotePickup = RemotePlanner.getBestRemotePickupForFreighter(creep);
+        if(replacementRemotePickup) {
+            RemotePlanner.claimRemotePickupTarget(creep, replacementRemotePickup);
+            handleRemoteCollection(creep);
+            return;
+        }
+
+        if(creep.store[RESOURCE_ENERGY] > 0) {
+            creep.memory.FreighterWorking = true;
+            deliverRemoteEnergy(creep);
+            return;
+        }
+
+        moveTowardHomeRoom(creep);
+        return;
+    }
+
+    /*
+     * Local hauling remains the first new-work choice. This preserves Sushi's
+     * existing dropped-energy/container behavior before remote hauling is used.
      */
     var target = getRememberedPickupTarget(creep);
 
-    /*
-     * If the old target is gone, empty, or invalid, pick a new target.
-     */
     if(!target) {
         target = findBestDroppedEnergyTarget(creep);
 
-        /*
-         * Dropped energy is first priority because it decays over time.
-         *
-         * Containers are second priority because container energy is safe
-         * and will not disappear.
-         */
         if(!target) {
             target = findBestSourceContainerTarget(creep);
         }
     }
 
-    if(!target) {
-        idleNearUsefulSource(creep);
+    if(target) {
+        collectFromTarget(creep, target);
         return;
     }
 
-    collectFromTarget(creep, target);
+    var remotePickup = RemotePlanner.getBestRemotePickupForFreighter(creep);
+
+    if(remotePickup) {
+        RemotePlanner.claimRemotePickupTarget(creep, remotePickup);
+        handleRemoteCollection(creep);
+        return;
+    }
+
+    idleNearUsefulSource(creep);
 }
 
+function handleRemoteCollection(creep) {
+    if(!creep.memory.remoteFreighting) {
+        return false;
+    }
+
+    var remoteRoomName = creep.memory.freighterRemoteRoom;
+    var remoteRoom = remoteRoomName ? Game.rooms[remoteRoomName] : null;
+
+    if(remoteRoom && isRemoteRoomDangerous(remoteRoom)) {
+        RemotePlanner.clearRemoteFreighterMemory(creep);
+        moveTowardHomeRoom(creep);
+        return true;
+    }
+
+    var targetId = creep.memory.freighterPickupTargetId;
+    var target = targetId ? Game.getObjectById(targetId) : null;
+
+    if(target) {
+        if(!isValidEnergyPickupTarget(target)) {
+            RemotePlanner.clearRemoteFreighterMemory(creep);
+            return false;
+        }
+
+        collectFromRemoteTarget(creep, target);
+        return true;
+    }
+
+    /*
+     * If the target room is visible and the id no longer resolves, the target is
+     * really gone. If the room is not visible, keep traveling toward the remote
+     * source/path instead of clearing useful memory too early.
+     */
+    if(remoteRoom && creep.room.name === remoteRoomName) {
+        RemotePlanner.clearRemoteFreighterMemory(creep);
+        return false;
+    }
+
+    return RemotePlanner.moveFreighterToRemotePickup(creep);
+}
+
+
 function getRememberedPickupTarget(creep) {
+    if(creep.memory.remoteFreighting) {
+        return null;
+    }
+
     if(!creep.memory.freighterPickupTargetId) {
         return null;
     }
@@ -409,6 +486,10 @@ function isBetterContainerOption(creep, candidate, currentBest, reservations) {
 }
 
 function rememberPickupTarget(creep, target, sourceId, pickupType) {
+    if(creep.memory.remoteFreighting) {
+        RemotePlanner.clearRemoteFreighterMemory(creep);
+    }
+
     /*
      * These memory fields are not permanent ownership. They are an intent:
      * "this Freighter is currently heading to this target/source." Other
@@ -455,6 +536,10 @@ function buildFreighterReservations(creep) {
         }
 
         if(otherCreep.memory.role !== 'Freighter') {
+            continue;
+        }
+
+        if(otherCreep.memory.remoteFreighting) {
             continue;
         }
 
@@ -581,6 +666,110 @@ function idleNearUsefulSource(creep) {
             }
         });
     }
+}
+
+function collectFromRemoteTarget(creep, target) {
+    var result;
+
+    if(target.resourceType) {
+        result = creep.pickup(target);
+    } else {
+        result = creep.withdraw(target, RESOURCE_ENERGY);
+    }
+
+    if(result === OK) {
+        return;
+    }
+
+    if(result === ERR_NOT_IN_RANGE) {
+        RemotePlanner.moveFreighterToRemotePickup(creep);
+        return;
+    }
+
+    RemotePlanner.clearRemoteFreighterMemory(creep);
+}
+
+function deliverRemoteEnergy(creep) {
+    var homeRoomName = creep.memory.freighterHomeRoom || creep.memory.homeRoom;
+
+    if(homeRoomName && creep.room.name !== homeRoomName) {
+        travel.moveToRoom(creep, homeRoomName, {
+            range: 22,
+            reusePath: 20,
+            visualizePathStyle: {
+                stroke: '#ffffff'
+            }
+        });
+        return;
+    }
+
+    var target = RemotePlanner.getHomeDeliveryTarget(creep);
+
+    if(!target) {
+        return;
+    }
+
+    var result = creep.transfer(target, RESOURCE_ENERGY);
+
+    if(result === OK) {
+        return;
+    }
+
+    if(result === ERR_NOT_IN_RANGE) {
+        travel.move(creep, target, {
+            range: 1,
+            visualizePathStyle: {
+                stroke: '#ffffff'
+            }
+        });
+        return;
+    }
+
+    RemotePlanner.clearRemoteFreighterMemory(creep);
+}
+
+function moveTowardHomeRoom(creep) {
+    var homeRoomName = creep.memory.freighterHomeRoom || creep.memory.homeRoom;
+
+    if(!homeRoomName || creep.room.name === homeRoomName) {
+        return;
+    }
+
+    travel.moveToRoom(creep, homeRoomName, {
+        range: 22,
+        reusePath: 20,
+        visualizePathStyle: {
+            stroke: '#ffffff'
+        }
+    });
+}
+
+function isRemoteRoomDangerous(room) {
+    if(!room) {
+        return false;
+    }
+
+    if(typeof STRUCTURE_INVADER_CORE !== 'undefined') {
+        var cores = room.find(FIND_HOSTILE_STRUCTURES, {
+            filter: function(structure) {
+                return structure.structureType === STRUCTURE_INVADER_CORE;
+            }
+        });
+
+        if(cores.length > 0) {
+            return true;
+        }
+    }
+
+    var dangerousCreeps = room.find(FIND_HOSTILE_CREEPS, {
+        filter: function(hostile) {
+            return hostile.getActiveBodyparts(ATTACK) > 0 ||
+                hostile.getActiveBodyparts(RANGED_ATTACK) > 0 ||
+                hostile.getActiveBodyparts(HEAL) > 0;
+        }
+    });
+
+    return dangerousCreeps.length > 0;
 }
 
 function deliverEnergy(creep) {

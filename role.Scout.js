@@ -39,16 +39,16 @@ var roleScout = {
         utility.scanRoom(creep);
 
         /*
-         * Remote planning uses the scanRoom intel above. The Scout still moves
-         * exactly like before; this only lets the home room score remote sources
-         * after Sushi has saved room/source/controller memory.
-         */
-        RemotePlanner.onScoutRoom(creep);
-
-        /*
          * Save simple scouting data every time the Scout has vision in a room.
          */
         saveScoutVisit(creep);
+
+        /*
+         * Remote planning uses scanRoom plus the fresh visible Room object. The
+         * Scout still moves exactly like before; this only lets the home room
+         * score remote sources after Sushi has saved room/source/controller intel.
+         */
+        RemotePlanner.onScoutRoom(creep);
 
         /*
          * If the Scout just arrived, clear targetRoom so the next choice comes
