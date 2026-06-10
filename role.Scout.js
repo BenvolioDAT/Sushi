@@ -1,5 +1,6 @@
 var utility = require('utility');
 var utilityTravelCreep = require('utility.Travel.Creep');
+var RemotePlanner = require('Planner.Remote');
 
 var SCOUT_RADIUS = 3;
 var SCOUT_RESCAN_AFTER_TICKS = 3000;
@@ -36,6 +37,13 @@ var roleScout = {
          * info, minerals, and other room planning data.
          */
         utility.scanRoom(creep);
+
+        /*
+         * Remote planning uses the scanRoom intel above. The Scout still moves
+         * exactly like before; this only lets the home room score remote sources
+         * after Sushi has saved room/source/controller memory.
+         */
+        RemotePlanner.onScoutRoom(creep);
 
         /*
          * Save simple scouting data every time the Scout has vision in a room.
