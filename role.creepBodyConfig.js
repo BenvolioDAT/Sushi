@@ -268,24 +268,6 @@ function getTechBody(room) {
         ],
 
     ]);
-
-
-
-    var energyCapacity = getRoomEnergyCapacity(room);
-
-    /*
-     * Tech creeps upgrade controllers. WORK controls upgrade speed, CARRY holds
-     * energy, and MOVE lets the creep reach the controller and energy sources.
-     */
-    if (energyCapacity >= 800) {
-        return [WORK, WORK, WORK, CARRY, CARRY, MOVE, MOVE, MOVE];
-    }
-
-    if (energyCapacity >= 550) {
-        return [WORK, WORK, CARRY, CARRY, MOVE, MOVE];
-    }
-
-    return [WORK, CARRY, MOVE];
 }
 
 function getArtificerBody(room) {
@@ -306,32 +288,19 @@ function getArtificerBody(room) {
 }
 
 function getScoutBody(room) {
-    var energyCapacity = getRoomEnergyCapacity(room);
-    /*
-     * A Scout only needs MOVE to reveal rooms. The 50 energy check matches the
-     * cost of one MOVE part.
-     */
-    if (energyCapacity >= 50) {
-        return [MOVE];
-    }
+    return chooseBestAffordableBody(room, [
+        [
+            [MOVE, 1]
+        ]
+    ]);
 }
 
 function getScoreRunnerBody(room) {
-    var energyCapacity = getRoomEnergyCapacity(room);
-
-    /*
-     * ScoreRunners only need to step onto Score objects.
-     * MOVE parts keep the body cheap and fast to replace.
-     */
-    if(energyCapacity >= 300) {
-        return [TOUGH, MOVE, MOVE, MOVE, MOVE, MOVE];
-    }
-
-    if(energyCapacity >= 150) {
-        return [MOVE, MOVE, MOVE];
-    }
-
-    return [MOVE];
+    return chooseBestAffordableBody(room, [
+        [
+            [MOVE, 1]
+        ]
+    ]);
 }
 
 /**
