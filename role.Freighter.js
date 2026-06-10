@@ -139,6 +139,23 @@ function handleRemoteCollection(creep) {
     var remoteRoom = remoteRoomName ? Game.rooms[remoteRoomName] : null;
 
     if(remoteRoom && isRemoteRoomDangerous(remoteRoom)) {
+        /*
+         * If danger appears while carrying partial cargo, switch to delivery
+         * before clearing remote pickup memory. This keeps the home room saved
+         * and prevents the Freighter from forgetting to bring energy home.
+         */
+        var homeRoomName = creep.memory.freighterHomeRoom || creep.memory.homeRoom;
+
+        if(creep.store[RESOURCE_ENERGY] > 0) {
+            creep.memory.FreighterWorking = true;
+            creep.memory.homeRoom = homeRoomName || creep.memory.homeRoom;
+            creep.memory.freighterHomeRoom = homeRoomName || creep.memory.homeRoom;
+            RemotePlanner.clearRemoteFreighterMemory(creep);
+            creep.memory.freighterHomeRoom = homeRoomName || creep.memory.homeRoom;
+            deliverRemoteEnergy(creep);
+            return true;
+        }
+
         RemotePlanner.clearRemoteFreighterMemory(creep);
         moveTowardHomeRoom(creep);
         return true;

@@ -13,6 +13,7 @@
 
 var spawnManager = require('spawn.manager');
 var creepBodyConfig = require('role.creepBodyConfig');
+var RemotePlanner = require('Planner.Remote');
 
 /*
  * How many creeps we want for now.
@@ -28,6 +29,8 @@ var DESIRED_COUNTS = {
     Artificer: 4,
     Scout: 1
 };
+
+var MAX_TOTAL_FREIGHTERS_WITH_REMOTES = 10;
 
 /*
  * Higher number = more important.
@@ -182,6 +185,10 @@ function countHealthyCreeps(roomName, role, replacementLeadTicks) {
             continue;
         }
 
+        if (role === 'Freighter' && (creep.memory.remoteFreighting || creep.memory.remoteFreightingWanted)) {
+            continue;
+        }
+
         /*
          * homeRoom tells us which room owns this creep.
          *
@@ -245,11 +252,219 @@ function countQueuedRequests(roomName, role) {
         }
 
         if (request.role === role) {
+            if (role === 'Freighter') {
+                var requestMemory = request.memory || {};
+                if (requestMemory.remoteFreightingWanted || requestMemory.remoteFreighting) {
+                    continue;
+                }
+            }
+
             count++;
         }
     }
 
     return count;
+}
+
+
+function getBodyPartCount(body, bodyPartType) {
+    var count = 0;
+
+    if (!body) {
+        return count;
+    }
+
+    for (var i = 0; i < body.length; i++) {
+        if (body[i] === bodyPartType) {
+            count++;
+        }
+    }
+
+    return count;
+}
+
+function countRemoteFreighters(roomName, replacementLeadTicks) {
+    var count = 0;
+
+    for (var creepName in Game.creeps) {
+        if (!Game.creeps.hasOwnProperty(creepName)) {
+            continue;
+        }
+
+        var creep = Game.creeps[creepName];
+        if (!creep || !creep.memory || creep.memory.role !== 'Freighter') {
+            continue;
+        }
+
+        if (!creep.memory.remoteFreighting && !creep.memory.remoteFreightingWanted) {
+            continue;
+        }
+
+        if ((creep.memory.freighterHomeRoom || creep.memory.homeRoom || creep.room.name) !== roomName) {
+            continue;
+        }
+
+        if (creep.ticksToLive === undefined || creep.ticksToLive > replacementLeadTicks) {
+            count++;
+        }
+    }
+
+    return count;
+}
+
+function countQueuedRemoteFreighters(roomName) {
+    var queue = spawnManager.getSpawnQueue(roomName);
+    var count = 0;
+
+    if (!queue) {
+        return count;
+    }
+
+    for (var i = 0; i < queue.length; i++) {
+        var request = queue[i];
+        var memory = request && request.memory ? request.memory : {};
+
+        if (!request || request.role !== 'Freighter') {
+            continue;
+        }
+
+        if (!memory.remoteFreightingWanted && !memory.remoteFreighting) {
+            continue;
+        }
+
+        if ((memory.freighterHomeRoom || memory.homeRoom) !== roomName) {
+            continue;
+        }
+
+        count++;
+    }
+
+    return count;
+}
+
+function requestRemoteExtractorsForRoom(room, extractorBody, priority) {
+    var queue = spawnManager.getSpawnQueue(room.name);
+    var demands = RemotePlanner.getRemoteExtractorDemand(room.name, extractorBody, queue);
+    var added = 0;
+
+    if (!queue || !demands || demands.length === 0) {
+        return {
+            ok: true,
+            role: 'Extractor',
+            requested: 0,
+            remote: true
+        };
+    }
+
+    for (var i = 0; i < demands.length; i++) {
+        var demand = demands[i];
+
+        /*
+         * Queue one exact source-targeted Extractor at a time. If the body is
+         * small, later ticks can add more until the source reaches 6 planned WORK
+         * or runs out of remembered mining seats.
+         */
+        queue.push({
+            role: 'Extractor',
+            body: extractorBody,
+            priority: priority,
+            memory: {
+                role: 'Extractor',
+                homeRoom: room.name,
+                sourceRoom: demand.remoteRoomName,
+                targetRoom: demand.remoteRoomName,
+                sourceId: demand.sourceId,
+                targetSourceId: demand.sourceId,
+                remoteMining: true
+            },
+            requestedAt: Game.time
+        });
+
+        added++;
+    }
+
+    sortSpawnQueue(queue);
+
+    return {
+        ok: true,
+        role: 'Extractor',
+        requested: added,
+        remote: true,
+        demands: demands.length
+    };
+}
+
+function requestRemoteFreightersForRoom(room, freighterBody, priority, localFreighterDesired) {
+    var queue = spawnManager.getSpawnQueue(room.name);
+    var replacementLeadTicks = getReplacementLeadTicks('Freighter', freighterBody);
+    var remoteDemand = RemotePlanner.getRemoteFreighterDemand(room.name, freighterBody);
+    var remoteDesired = remoteDemand.wanted || 0;
+    var maxRemoteAllowed = Math.max(0, MAX_TOTAL_FREIGHTERS_WITH_REMOTES - localFreighterDesired);
+
+    if (remoteDesired > maxRemoteAllowed) {
+        remoteDesired = maxRemoteAllowed;
+    }
+
+    var healthyRemote = countRemoteFreighters(room.name, replacementLeadTicks);
+    var queuedRemote = countQueuedRemoteFreighters(room.name);
+    var missing = remoteDesired - healthyRemote - queuedRemote;
+    var added = 0;
+
+    if (!queue || missing <= 0) {
+        return {
+            ok: true,
+            role: 'Freighter',
+            requested: 0,
+            remote: true,
+            desired: remoteDesired,
+            healthy: healthyRemote,
+            queued: queuedRemote,
+            demand: remoteDemand
+        };
+    }
+
+    for (var i = 0; i < missing; i++) {
+        queue.push({
+            role: 'Freighter',
+            body: freighterBody,
+            priority: priority,
+            memory: {
+                role: 'Freighter',
+                homeRoom: room.name,
+                freighterHomeRoom: room.name,
+                remoteFreightingWanted: true
+            },
+            requestedAt: Game.time
+        });
+        added++;
+    }
+
+    sortSpawnQueue(queue);
+
+    return {
+        ok: true,
+        role: 'Freighter',
+        requested: added,
+        remote: true,
+        desired: remoteDesired,
+        healthy: healthyRemote,
+        queued: queuedRemote,
+        demand: remoteDemand
+    };
+}
+
+function sortSpawnQueue(queue) {
+    if (!queue) {
+        return;
+    }
+
+    queue.sort(function(a, b) {
+        if (b.priority !== a.priority) {
+            return b.priority - a.priority;
+        }
+
+        return a.requestedAt - b.requestedAt;
+    });
 }
 
 /**
@@ -609,15 +824,53 @@ function requestRoleForRoom(room, role, desiredCount) {
                 return a.requestedAt - b.requestedAt;
             });
 
+            var remoteExtractorReport = requestRemoteExtractorsForRoom(room, body, priority - 1);
+
             return {
                 ok: true,
                 role: role,
-                requested: sourceRequestsAdded,
+                requested: sourceRequestsAdded + (remoteExtractorReport.requested || 0),
+                localRequested: sourceRequestsAdded,
+                remoteRequested: remoteExtractorReport.requested || 0,
                 healthy: healthyCount,
                 queued: queuedCount,
                 desired: desiredCount
             };
         }
+    }
+
+    if (role === 'Freighter') {
+        var freighterQueue = spawnManager.getSpawnQueue(roomName);
+        var localPlannedCount = healthyCount + queuedCount;
+        var localMissingCount = desiredCount - localPlannedCount;
+        var localAdded = 0;
+
+        if (freighterQueue && localMissingCount > 0) {
+            for (var freighterIndex = 0; freighterIndex < localMissingCount; freighterIndex++) {
+                freighterQueue.push({
+                    role: role,
+                    body: body,
+                    priority: priority,
+                    memory: {
+                        role: role,
+                        homeRoom: roomName
+                    },
+                    requestedAt: Game.time
+                });
+                localAdded++;
+            }
+
+            sortSpawnQueue(freighterQueue);
+        }
+
+        return {
+            ok: true,
+            role: role,
+            requested: localAdded,
+            healthy: healthyCount,
+            queued: queuedCount,
+            desired: desiredCount
+        };
     }
 
     /*
@@ -1054,7 +1307,9 @@ function run() {
     report.requests.push(requestRoleForRoom(room, 'Foreman', DESIRED_COUNTS.Foreman));
 
     report.requests.push(requestRoleForRoom(room, 'Extractor', getDesiredExtractorCount(room)));
+    var freighterBody = creepBodyConfig.getBody('Freighter', room);
     report.requests.push(requestRoleForRoom(room, 'Freighter', DESIRED_COUNTS.Freighter));
+    report.requests.push(requestRemoteFreightersForRoom(room, freighterBody, PRIORITY.Freighter - 1, DESIRED_COUNTS.Freighter));
     report.requests.push(requestRoleForRoom(room, 'ScoreRunner', DESIRED_COUNTS.ScoreRunner));
     report.requests.push(requestRoleForRoom(room, 'Tech', DESIRED_COUNTS.Tech));
     report.requests.push(requestRoleForRoom(room, 'Artificer', DESIRED_COUNTS.Artificer));
@@ -1075,5 +1330,7 @@ module.exports = {
     getManagedRoom: getManagedRoom,
     requestRoleForRoom: requestRoleForRoom,
     countHealthyCreeps: countHealthyCreeps,
-    getReplacementLeadTicks: getReplacementLeadTicks
+    getReplacementLeadTicks: getReplacementLeadTicks,
+    requestRemoteExtractorsForRoom: requestRemoteExtractorsForRoom,
+    requestRemoteFreightersForRoom: requestRemoteFreightersForRoom
 };

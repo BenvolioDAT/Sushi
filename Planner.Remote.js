@@ -1292,6 +1292,251 @@ function getRemoteSourcePosition(homeRoomName, sourceId) {
 }
 
 
+
+function getActiveRemoteSourcesForHome(homeRoomName) {
+    var planner = ensurePlannerMemory(homeRoomName);
+    var activeSources = [];
+
+    for (var i = 0; i < planner.activeSourceIds.length; i++) {
+        var sourceId = planner.activeSourceIds[i];
+        var info = planner.sourceInfos[sourceId];
+
+        if (!info || !info.active || info.parentRoomName !== homeRoomName) {
+            continue;
+        }
+
+        activeSources.push(info);
+    }
+
+    return activeSources;
+}
+
+function countRemoteAssignedExtractorWork(homeRoomName, sourceInfo) {
+    var result = {
+        count: 0,
+        work: 0
+    };
+    var seen = {};
+
+    if (!sourceInfo) {
+        return result;
+    }
+
+    for (var creepName in Game.creeps) {
+        if (!Game.creeps.hasOwnProperty(creepName)) {
+            continue;
+        }
+
+        var creep = Game.creeps[creepName];
+        if (!isRemoteExtractorForSource(creep, homeRoomName, sourceInfo)) {
+            continue;
+        }
+
+        if (seen[creep.id]) {
+            continue;
+        }
+
+        seen[creep.id] = true;
+        result.count++;
+        result.work += countCreepBodyParts(creep, WORK);
+    }
+
+    return result;
+}
+
+function hasPendingRemoteExtractorRequest(homeRoomName, sourceInfo, queue) {
+    return countPendingRemoteExtractorRequest(homeRoomName, sourceInfo, queue).count > 0;
+}
+
+function countPendingRemoteExtractorRequest(homeRoomName, sourceInfo, queue) {
+    var result = {
+        count: 0,
+        work: 0
+    };
+
+    if (!sourceInfo || !queue) {
+        return result;
+    }
+
+    for (var i = 0; i < queue.length; i++) {
+        var request = queue[i];
+        var memory = request && request.memory ? request.memory : {};
+        var role = request ? (request.role || memory.role) : null;
+
+        if (role !== 'Extractor') {
+            continue;
+        }
+
+        if (memory.remoteMining !== true) {
+            continue;
+        }
+
+        if (memory.homeRoom !== homeRoomName) {
+            continue;
+        }
+
+        if ((memory.sourceRoom || memory.targetRoom) !== sourceInfo.roomName) {
+            continue;
+        }
+
+        if ((memory.sourceId || memory.targetSourceId) !== sourceInfo.sourceId) {
+            continue;
+        }
+
+        result.count++;
+        result.work += countBodyParts(request.body, WORK);
+    }
+
+    return result;
+}
+
+function getRemoteExtractorDemand(homeRoomName, extractorBody, queue) {
+    var demands = [];
+    var activeSources = getActiveRemoteSourcesForHome(homeRoomName);
+
+    for (var i = 0; i < activeSources.length; i++) {
+        var sourceInfo = activeSources[i];
+        var sourceMemory = Memory.rooms && Memory.rooms[sourceInfo.roomName] && Memory.rooms[sourceInfo.roomName].sources ?
+            Memory.rooms[sourceInfo.roomName].sources[sourceInfo.sourceId] : null;
+        var seats = getSourceSeatCount(sourceMemory) || sourceInfo.numOpen || 1;
+        var assigned = countRemoteAssignedExtractorWork(homeRoomName, sourceInfo);
+        var queued = countPendingRemoteExtractorRequest(homeRoomName, sourceInfo, queue);
+        var plannedCount = assigned.count + queued.count;
+        var plannedWork = assigned.work + queued.work;
+
+        if (plannedCount >= seats || plannedWork >= SOURCE_WORK_TARGET) {
+            continue;
+        }
+
+        demands.push({
+            sourceInfo: sourceInfo,
+            sourceId: sourceInfo.sourceId,
+            remoteRoomName: sourceInfo.roomName,
+            homeRoomName: homeRoomName,
+            seats: seats,
+            assignedCount: assigned.count,
+            assignedWork: assigned.work,
+            queuedCount: queued.count,
+            queuedWork: queued.work,
+            wantedWork: SOURCE_WORK_TARGET,
+            bodyWork: countBodyParts(extractorBody, WORK)
+        });
+    }
+
+    return demands;
+}
+
+function getRemoteFreighterDemand(homeRoomName, freighterBody) {
+    var activeSources = getActiveRemoteSourcesForHome(homeRoomName);
+    var freighterCarryParts = countBodyParts(freighterBody, CARRY);
+    var totalWanted = 0;
+    var details = [];
+
+    if (freighterCarryParts <= 0) {
+        freighterCarryParts = 1;
+    }
+
+    for (var i = 0; i < activeSources.length; i++) {
+        var sourceInfo = activeSources[i];
+
+        if (!shouldUseRemoteSource(homeRoomName, sourceInfo.sourceId) || sourceInfo.netIncome <= 0) {
+            continue;
+        }
+
+        var energyPerTick = sourceInfo.effectiveEnergyPerTick || sourceInfo.grossEnergyPerTick || 10;
+        var roundTripTicks = Math.max(1, (sourceInfo.distance || 1) * 2);
+        var energyInRoundTrip = energyPerTick * roundTripTicks;
+        var carryPartsNeeded = Math.ceil(energyInRoundTrip / CARRY_CAPACITY);
+        var freightersNeededForSource = Math.ceil(carryPartsNeeded / freighterCarryParts);
+
+        if (freightersNeededForSource < 1) {
+            freightersNeededForSource = 1;
+        }
+
+        if (freightersNeededForSource > 3) {
+            freightersNeededForSource = 3;
+        }
+
+        totalWanted += freightersNeededForSource;
+        details.push({
+            sourceId: sourceInfo.sourceId,
+            roomName: sourceInfo.roomName,
+            distance: sourceInfo.distance,
+            energyPerTick: energyPerTick,
+            carryPartsNeeded: carryPartsNeeded,
+            freightersNeeded: freightersNeededForSource
+        });
+    }
+
+    return {
+        wanted: totalWanted,
+        details: details,
+        freighterCarryParts: freighterCarryParts
+    };
+}
+
+function isRemoteExtractorForSource(creep, homeRoomName, sourceInfo) {
+    if (!creep || !creep.my || !creep.memory || !sourceInfo) {
+        return false;
+    }
+
+    if (creep.memory.role !== 'Extractor' && creep.memory.task !== 'Extractor') {
+        return false;
+    }
+
+    return creep.memory.remoteMining === true &&
+        creep.memory.homeRoom === homeRoomName &&
+        (creep.memory.sourceRoom === sourceInfo.roomName || creep.memory.targetRoom === sourceInfo.roomName) &&
+        (creep.memory.sourceId === sourceInfo.sourceId || creep.memory.targetSourceId === sourceInfo.sourceId);
+}
+
+function countCreepBodyParts(creep, bodyPartType) {
+    if (!creep) {
+        return 0;
+    }
+
+    if (typeof creep.getActiveBodyparts === 'function') {
+        var activeParts = creep.getActiveBodyparts(bodyPartType);
+        if (activeParts > 0 || !creep.spawning) {
+            return activeParts;
+        }
+    }
+
+    return countBodyPartsFromCreepBody(creep.body, bodyPartType);
+}
+
+function countBodyParts(body, bodyPartType) {
+    var count = 0;
+
+    if (!body) {
+        return count;
+    }
+
+    for (var i = 0; i < body.length; i++) {
+        if (body[i] === bodyPartType || (body[i] && body[i].type === bodyPartType)) {
+            count++;
+        }
+    }
+
+    return count;
+}
+
+function countBodyPartsFromCreepBody(body, bodyPartType) {
+    var count = 0;
+
+    if (!body) {
+        return count;
+    }
+
+    for (var i = 0; i < body.length; i++) {
+        if (body[i] && body[i].type === bodyPartType) {
+            count++;
+        }
+    }
+
+    return count;
+}
+
 function getBestRemotePickupForFreighter(creep) {
     if (!creep || !creep.memory || !creep.store || creep.store.getFreeCapacity(RESOURCE_ENERGY) <= 0) {
         return null;
@@ -1310,6 +1555,24 @@ function getBestRemotePickupForFreighter(creep) {
 
         if (!target || target.homeRoomName !== homeRoomName) {
             continue;
+        }
+
+        var visibleRoom = Game.rooms[target.remoteRoomName];
+        if (visibleRoom) {
+            var liveTarget = Game.getObjectById(target.targetId);
+            var liveAmount = getObjectEnergyAmount(liveTarget);
+
+            if (!liveTarget || liveAmount <= 0) {
+                continue;
+            }
+
+            /*
+             * The pickup cache refreshes only every few ticks. When the room is
+             * visible, trust the live object so Freighters do not keep reselecting
+             * a dead or already-empty target from stale cache data.
+             */
+            target.amount = liveAmount;
+            target.packedPos = packCoord(liveTarget.pos);
         }
 
         var sourceInfo = planner.sourceInfos[target.sourceId];
@@ -1802,6 +2065,11 @@ module.exports = {
     scoreRemoteRoom: scoreRemoteRoom,
     scoreRemoteSource: scoreRemoteSource,
     getBestRemoteSourceForExtractor: getBestRemoteSourceForExtractor,
+    getActiveRemoteSourcesForHome: getActiveRemoteSourcesForHome,
+    getRemoteExtractorDemand: getRemoteExtractorDemand,
+    countRemoteAssignedExtractorWork: countRemoteAssignedExtractorWork,
+    hasPendingRemoteExtractorRequest: hasPendingRemoteExtractorRequest,
+    getRemoteFreighterDemand: getRemoteFreighterDemand,
     getBestRemotePickupForFreighter: getBestRemotePickupForFreighter,
     claimRemotePickupTarget: claimRemotePickupTarget,
     clearRemoteFreighterMemory: clearRemoteFreighterMemory,
