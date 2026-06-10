@@ -295,7 +295,7 @@ module.exports.loop = function () {
      * WarRoom is the shared combat radar.
      * It scans visible rooms before combat creep role logic runs.
      */
-    WarRoom.run();
+    //WarRoom.run();
 
     /*
      * RemotePlanner is intentionally light most ticks. Scouts do heavy refreshes
