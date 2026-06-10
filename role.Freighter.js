@@ -34,7 +34,7 @@ var roleFreighter = {
         updateWorkingState(creep);
 
         if(creep.memory.FreighterWorking) {
-            if(creep.memory.remoteFreighting) {
+            if(creep.memory.remoteFreighting || creep.memory.remoteReturning) {
                 deliverRemoteEnergy(creep);
             } else {
                 deliverEnergy(creep);
@@ -52,8 +52,8 @@ function updateWorkingState(creep) {
      */
     if(creep.memory.FreighterWorking && creep.store[RESOURCE_ENERGY] === 0) {
         creep.memory.FreighterWorking = false;
-        if(creep.memory.remoteFreighting) {
-            RemotePlanner.clearRemoteFreighterMemory(creep);
+        if(creep.memory.remoteFreighting || creep.memory.remoteReturning) {
+            clearRemoteReturnMemory(creep);
         } else {
             clearPickupMemory(creep);
         }
@@ -100,9 +100,24 @@ function collectEnergy(creep) {
         return;
     }
 
+    if(creep.memory.remoteFreightingWanted) {
+        /*
+         * Remote-wanted Freighters count as remote hauling capacity, so they try
+         * remote work before local crumbs. If no remote target is ready, the flag
+         * stays and local pickup can be used only as temporary fallback work.
+         */
+        var wantedRemotePickup = RemotePlanner.getBestRemotePickupForFreighter(creep);
+
+        if(wantedRemotePickup) {
+            RemotePlanner.claimRemotePickupTarget(creep, wantedRemotePickup);
+            handleRemoteCollection(creep);
+            return;
+        }
+    }
+
     /*
-     * Local hauling remains the first new-work choice. This preserves Sushi's
-     * existing dropped-energy/container behavior before remote hauling is used.
+     * Normal Freighters still prefer local hauling first. Remote-wanted
+     * Freighters reach this block only after no remote pickup was available.
      */
     var target = getRememberedPickupTarget(creep);
 
@@ -148,15 +163,15 @@ function handleRemoteCollection(creep) {
 
         if(creep.store[RESOURCE_ENERGY] > 0) {
             creep.memory.FreighterWorking = true;
+            creep.memory.remoteReturning = true;
             creep.memory.homeRoom = homeRoomName || creep.memory.homeRoom;
             creep.memory.freighterHomeRoom = homeRoomName || creep.memory.homeRoom;
-            RemotePlanner.clearRemoteFreighterMemory(creep);
-            creep.memory.freighterHomeRoom = homeRoomName || creep.memory.homeRoom;
+            clearRemotePickupOnly(creep);
             deliverRemoteEnergy(creep);
             return true;
         }
 
-        RemotePlanner.clearRemoteFreighterMemory(creep);
+        clearRemoteReturnMemory(creep);
         moveTowardHomeRoom(creep);
         return true;
     }
@@ -211,6 +226,47 @@ function clearPickupMemory(creep) {
     delete creep.memory.freighterPickupTargetId;
     delete creep.memory.freighterPickupSourceId;
     delete creep.memory.freighterPickupType;
+}
+
+function clearRemotePickupOnly(creep) {
+    /*
+     * Used when a remote Freighter must return home with partial cargo. We clear
+     * only the pickup reservation, not the home-return state, so next tick still
+     * uses deliverRemoteEnergy() instead of local delivery logic.
+     */
+    var homeRoomName = creep.memory.freighterHomeRoom || creep.memory.homeRoom;
+
+    if(
+        homeRoomName &&
+        Memory.rooms &&
+        Memory.rooms[homeRoomName] &&
+        Memory.rooms[homeRoomName].remotePlanner &&
+        Memory.rooms[homeRoomName].remotePlanner.remoteFreighterAssignments
+    ) {
+        delete Memory.rooms[homeRoomName].remotePlanner.remoteFreighterAssignments[creep.name];
+    }
+
+    delete creep.memory.freighterRemoteRoom;
+    delete creep.memory.freighterPickupTargetId;
+    delete creep.memory.freighterPickupSourceId;
+    delete creep.memory.freighterPickupType;
+}
+
+function clearRemoteReturnMemory(creep) {
+    /*
+     * Fully clear remote return state after energy has been delivered or when an
+     * empty remote Freighter is no longer assigned. Keep remoteFreightingWanted:
+     * spawn-demand Freighters should keep preferring future remote work.
+     */
+    var keepRemoteWanted = creep.memory.remoteFreightingWanted === true;
+
+    clearRemotePickupOnly(creep);
+    delete creep.memory.remoteFreighting;
+    delete creep.memory.remoteReturning;
+
+    if(!keepRemoteWanted) {
+        delete creep.memory.freighterHomeRoom;
+    }
 }
 
 function isValidEnergyPickupTarget(target) {
@@ -729,6 +785,9 @@ function deliverRemoteEnergy(creep) {
     var result = creep.transfer(target, RESOURCE_ENERGY);
 
     if(result === OK) {
+        if(creep.store[RESOURCE_ENERGY] === 0) {
+            clearRemoteReturnMemory(creep);
+        }
         return;
     }
 
@@ -742,7 +801,7 @@ function deliverRemoteEnergy(creep) {
         return;
     }
 
-    RemotePlanner.clearRemoteFreighterMemory(creep);
+    clearRemoteReturnMemory(creep);
 }
 
 function moveTowardHomeRoom(creep) {
