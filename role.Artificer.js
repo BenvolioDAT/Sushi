@@ -19,6 +19,10 @@ var REPAIR_CLAIMS_MEMORY_KEY = 'ArtificerRepairClaims';
 
 var REPAIR_WORKER_STALE_TICKS = 25;
 
+var REMOTE_ROAD_REPAIR_START_PERCENT = 0.60;
+var REMOTE_CONTAINER_REPAIR_START_PERCENT = 0.80;
+var REMOTE_WORK_EMPTY_SCAN_COOLDOWN = 15;
+
 var roleArtificer = {
 
     /** @param {Creep} creep **/
@@ -43,9 +47,9 @@ var roleArtificer = {
         }
 
         if(creep.memory.builderWorking) {
-            repairBuildOrUpgrade(creep);
+            repairBuildRemoteBuildOrUpgrade(creep);
         } else {
-            collectEnergy(creep);
+            collectEnergyForArtificer(creep);
         }
     }
 };
@@ -60,7 +64,7 @@ function updateWorkingState(creep) {
     }
 }
 
-function repairBuildOrUpgrade(creep) {
+function repairBuildRemoteBuildOrUpgrade(creep) {
     /*
      * Repair comes before building, but only if this Artificer has one of the
      * 2 repair-worker slots.
@@ -75,7 +79,15 @@ function repairBuildOrUpgrade(creep) {
      * If this Artificer is not a repair worker, or there is no repair target
      * available, do normal Artificer work.
      */
-    buildOrUpgrade(creep);
+    if(buildLocalConstruction(creep)) {
+        return;
+    }
+
+    if(doRemoteInfrastructureWork(creep)) {
+        return;
+    }
+
+    upgradeController(creep);
 }
 
 function setupRepairMemory(room) {
@@ -394,11 +406,19 @@ function repairTarget(creep, target) {
     return true;
 }
 
-function collectEnergy(creep) {
+function collectEnergyForArtificer(creep) {
     /*
      * Artificer energy collection mirrors Repair: use stored or dropped energy
-     * first, then harvest only if no reusable energy is available.
+     * first, then harvest only if no reusable energy is available. If the creep
+     * is already in its remote work room, it refills there instead of walking
+     * home empty.
      */
+    if(creep.memory.remoteWorkTargetId && creep.memory.remoteWorkRoomName === creep.room.name) {
+        if(collectRemoteEnergy(creep)) {
+            return;
+        }
+    }
+
     var target = findStoredEnergy(creep);
 
     if(target) {
@@ -420,25 +440,443 @@ function collectEnergy(creep) {
     }
 }
 
-function buildOrUpgrade(creep) {
+function buildLocalConstruction(creep) {
+    var homeRoomName = getHomeRoomName(creep);
+
+    if(homeRoomName && creep.room.name !== homeRoomName) {
+        return false;
+    }
+
     /*
      * Construction wins over controller upgrading because new structures often
-     * unlock capacity, defense, or logistics. Upgrading is the default sink when
-     * there is no construction work.
+     * unlock capacity, defense, or logistics. Remote infrastructure is checked
+     * only after the local room has no construction work.
      */
     var target = creep.pos.findClosestByPath(FIND_CONSTRUCTION_SITES);
 
-    if(target) {
-        if(creep.build(target) === ERR_NOT_IN_RANGE) {
-            utilityTravelCreep.move(creep, target, {visualizePathStyle: {stroke: '#ffffff'}});
-        }
+    if(!target) {
+        return false;
+    }
 
+    if(creep.build(target) === ERR_NOT_IN_RANGE) {
+        utilityTravelCreep.move(creep, target, {visualizePathStyle: {stroke: '#ffffff'}});
+    }
+
+    return true;
+}
+
+function upgradeController(creep) {
+    var homeRoomName = getHomeRoomName(creep);
+
+    /*
+     * Artificers should not spend spare energy on remote controllers. If remote
+     * work is done while they are away from home, send them home before using
+     * controller upgrading as the fallback job.
+     */
+    if(homeRoomName && creep.room.name !== homeRoomName) {
+        utilityTravelCreep.moveToRoom(creep, homeRoomName, {range: 22, visualizePathStyle: {stroke: '#ffffff'}});
         return;
     }
 
     if(creep.room.controller && creep.upgradeController(creep.room.controller) === ERR_NOT_IN_RANGE) {
         utilityTravelCreep.move(creep, creep.room.controller, {visualizePathStyle: {stroke: '#ffffff'}});
     }
+}
+
+
+function doRemoteInfrastructureWork(creep) {
+    var target = getRememberedRemoteWorkTarget(creep);
+
+    if(!target) {
+        if(travelToRememberedRemoteWorkPosition(creep)) {
+            return true;
+        }
+
+        target = findRemoteInfrastructureTarget(creep);
+    }
+
+    if(!target) {
+        return false;
+    }
+
+    doBuildOrRepairTarget(creep, target, creep.memory.remoteWorkType);
+    return true;
+}
+
+function getRememberedRemoteWorkTarget(creep) {
+    if(!creep.memory.remoteWorkTargetId) {
+        return null;
+    }
+
+    var roomName = creep.memory.remoteWorkRoomName;
+
+    var target = Game.getObjectById(creep.memory.remoteWorkTargetId);
+
+    if(!target) {
+        /*
+         * Game.getObjectById returns null for objects in rooms we cannot see.
+         * Keep the target while traveling there, and only forget it after the
+         * creep reaches that room and still cannot find the object.
+         */
+        if(roomName && creep.room.name === roomName) {
+            clearRemoteWorkTarget(creep);
+        }
+
+        return null;
+    }
+
+    if(creep.memory.remoteWorkType === 'repairRemoteContainer' || creep.memory.remoteWorkType === 'repairRemoteRoad') {
+        if(target.hits >= target.hitsMax) {
+            clearRemoteWorkTarget(creep);
+            return null;
+        }
+    } else if(target.progressTotal !== undefined && target.progress >= target.progressTotal) {
+        clearRemoteWorkTarget(creep);
+        return null;
+    }
+
+    return target;
+}
+
+
+function travelToRememberedRemoteWorkPosition(creep) {
+    var roomName = creep.memory.remoteWorkRoomName;
+
+    if(!creep.memory.remoteWorkTargetId || !roomName || creep.room.name === roomName) {
+        return false;
+    }
+
+    if(creep.memory.remoteWorkX === undefined || creep.memory.remoteWorkY === undefined) {
+        utilityTravelCreep.moveToRoom(creep, roomName, {range: 22, visualizePathStyle: {stroke: '#ffffff'}});
+        return true;
+    }
+
+    utilityTravelCreep.move(creep, new RoomPosition(creep.memory.remoteWorkX, creep.memory.remoteWorkY, roomName), {
+        range: 3,
+        visualizePathStyle: {
+            stroke: '#ffffff'
+        }
+    });
+    return true;
+}
+
+function findRemoteInfrastructureTarget(creep) {
+    if(creep.memory.remoteWorkNextScan && Game.time < creep.memory.remoteWorkNextScan) {
+        return null;
+    }
+
+    var homeRoomName = getHomeRoomName(creep);
+    var remoteRooms = getActiveRemoteRoomNames(homeRoomName);
+    var target;
+
+    if(remoteRooms.length === 0) {
+        creep.memory.remoteWorkNextScan = Game.time + REMOTE_WORK_EMPTY_SCAN_COOLDOWN;
+        return null;
+    }
+
+    target = findBestRemoteConstructionSite(creep, remoteRooms, STRUCTURE_CONTAINER);
+    if(target) {
+        rememberRemoteWorkTarget(creep, target, 'buildRemoteContainer');
+        return target;
+    }
+
+    target = findBestRemoteConstructionSite(creep, remoteRooms, STRUCTURE_ROAD);
+    if(target) {
+        rememberRemoteWorkTarget(creep, target, 'buildRemoteRoad');
+        return target;
+    }
+
+    target = findBestRemoteRepairTarget(creep, remoteRooms, STRUCTURE_CONTAINER);
+    if(target) {
+        rememberRemoteWorkTarget(creep, target, 'repairRemoteContainer');
+        return target;
+    }
+
+    target = findBestRemoteRepairTarget(creep, remoteRooms, STRUCTURE_ROAD);
+    if(target) {
+        rememberRemoteWorkTarget(creep, target, 'repairRemoteRoad');
+        return target;
+    }
+
+    creep.memory.remoteWorkNextScan = Game.time + REMOTE_WORK_EMPTY_SCAN_COOLDOWN;
+    return null;
+}
+
+function rememberRemoteWorkTarget(creep, target, workType) {
+    creep.memory.remoteWorkTargetId = target.id;
+    creep.memory.remoteWorkRoomName = target.pos.roomName;
+    creep.memory.remoteWorkX = target.pos.x;
+    creep.memory.remoteWorkY = target.pos.y;
+    creep.memory.remoteWorkType = workType;
+    creep.memory.remoteWorkHomeRoom = getHomeRoomName(creep);
+}
+
+function clearRemoteWorkTarget(creep) {
+    delete creep.memory.remoteWorkTargetId;
+    delete creep.memory.remoteWorkRoomName;
+    delete creep.memory.remoteWorkX;
+    delete creep.memory.remoteWorkY;
+    delete creep.memory.remoteWorkType;
+    delete creep.memory.remoteWorkHomeRoom;
+}
+
+function getHomeRoomName(creep) {
+    if(creep.memory.homeRoom) {
+        return creep.memory.homeRoom;
+    }
+
+    if(creep.memory.home) {
+        return creep.memory.home;
+    }
+
+    if(Memory.firstSpawnRoom) {
+        return Memory.firstSpawnRoom;
+    }
+
+    return creep.room.name;
+}
+
+function getActiveRemoteRoomNames(homeRoomName) {
+    var roomMemory = Memory.rooms && Memory.rooms[homeRoomName];
+    var planner = roomMemory && roomMemory.remotePlanner;
+    var roomNames = [];
+    var seen = {};
+
+    if(!planner || !planner.sourceInfos || !planner.activeSourceIds) {
+        return roomNames;
+    }
+
+    for(var i = 0; i < planner.activeSourceIds.length; i++) {
+        var sourceId = planner.activeSourceIds[i];
+        var sourceInfo = planner.sourceInfos[sourceId];
+        var remoteRoomName = getRemoteRoomNameFromSourceInfo(sourceInfo, homeRoomName);
+
+        if(!remoteRoomName || remoteRoomName === homeRoomName || seen[remoteRoomName] || !Game.rooms[remoteRoomName]) {
+            continue;
+        }
+
+        seen[remoteRoomName] = true;
+        roomNames.push(remoteRoomName);
+    }
+
+    return roomNames;
+}
+
+function getRemoteRoomNameFromSourceInfo(sourceInfo, homeRoomName) {
+    if(!sourceInfo) {
+        return null;
+    }
+
+    if(sourceInfo.roomName) {
+        return sourceInfo.roomName;
+    }
+
+    if(sourceInfo.sourceRoomName) {
+        return sourceInfo.sourceRoomName;
+    }
+
+    if(typeof sourceInfo.room === 'string') {
+        return sourceInfo.room;
+    }
+
+    if(sourceInfo.pos && sourceInfo.pos.roomName) {
+        return sourceInfo.pos.roomName;
+    }
+
+    if(sourceInfo.roadCoords) {
+        for(var roomName in sourceInfo.roadCoords) {
+            if(sourceInfo.roadCoords.hasOwnProperty(roomName) && roomName !== homeRoomName && Game.rooms[roomName]) {
+                return roomName;
+            }
+        }
+    }
+
+    return null;
+}
+
+function findBestRemoteConstructionSite(creep, remoteRooms, structureType) {
+    return findBestRemoteTarget(creep, remoteRooms, function(room) {
+        return room.find(FIND_MY_CONSTRUCTION_SITES, {
+            filter: function(site) {
+                return site.structureType === structureType;
+            }
+        });
+    });
+}
+
+function findBestRemoteRepairTarget(creep, remoteRooms, structureType) {
+    return findBestRemoteTarget(creep, remoteRooms, function(room) {
+        return room.find(FIND_STRUCTURES, {
+            filter: function(structure) {
+                return structure.structureType === structureType && remoteStructureNeedsRepair(structure);
+            }
+        });
+    });
+}
+
+function findBestRemoteTarget(creep, remoteRooms, roomTargetFinder) {
+    var firstTarget = null;
+    var closestTarget = null;
+    var closestRange = 999;
+
+    for(var i = 0; i < remoteRooms.length; i++) {
+        var roomName = remoteRooms[i];
+        var room = Game.rooms[roomName];
+
+        if(!room) {
+            continue;
+        }
+
+        var targets = roomTargetFinder(room);
+
+        if(!targets || targets.length === 0) {
+            continue;
+        }
+
+        if(!firstTarget) {
+            firstTarget = targets[0];
+        }
+
+        if(creep.room.name === roomName) {
+            for(var j = 0; j < targets.length; j++) {
+                var range = creep.pos.getRangeTo(targets[j]);
+
+                if(range < closestRange) {
+                    closestRange = range;
+                    closestTarget = targets[j];
+                }
+            }
+        }
+    }
+
+    return closestTarget || firstTarget;
+}
+
+function remoteStructureNeedsRepair(structure) {
+    if(!structure || structure.hits >= structure.hitsMax) {
+        return false;
+    }
+
+    if(structure.structureType === STRUCTURE_CONTAINER) {
+        return structure.hits < structure.hitsMax * REMOTE_CONTAINER_REPAIR_START_PERCENT;
+    }
+
+    if(structure.structureType === STRUCTURE_ROAD) {
+        return structure.hits < structure.hitsMax * REMOTE_ROAD_REPAIR_START_PERCENT;
+    }
+
+    return false;
+}
+
+function doBuildOrRepairTarget(creep, target, workType) {
+    var result;
+
+    if(workType === 'buildRemoteContainer' || workType === 'buildRemoteRoad') {
+        result = creep.build(target);
+    } else {
+        result = creep.repair(target);
+    }
+
+    if(result === ERR_NOT_IN_RANGE) {
+        utilityTravelCreep.move(creep, target, {range: 3, visualizePathStyle: {stroke: '#ffffff'}});
+    }
+}
+
+function collectRemoteEnergy(creep) {
+    var target = creep.pos.findClosestByRange(FIND_DROPPED_RESOURCES, {
+        filter: function(resource) {
+            return resource.resourceType === RESOURCE_ENERGY && resource.amount > 0;
+        }
+    });
+
+    if(target) {
+        if(creep.pickup(target) === ERR_NOT_IN_RANGE) {
+            utilityTravelCreep.move(creep, target, {range: 1, visualizePathStyle: {stroke: '#ffaa00'}});
+        }
+        return true;
+    }
+
+    target = creep.pos.findClosestByRange(FIND_TOMBSTONES, {
+        filter: function(tombstone) {
+            return tombstone.store && tombstone.store[RESOURCE_ENERGY] > 0;
+        }
+    });
+
+    if(!target) {
+        target = creep.pos.findClosestByRange(FIND_RUINS, {
+            filter: function(ruin) {
+                return ruin.store && ruin.store[RESOURCE_ENERGY] > 0;
+            }
+        });
+    }
+
+    if(target) {
+        if(creep.withdraw(target, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
+            utilityTravelCreep.move(creep, target, {range: 1, visualizePathStyle: {stroke: '#ffaa00'}});
+        }
+        return true;
+    }
+
+    target = creep.pos.findClosestByRange(FIND_STRUCTURES, {
+        filter: function(structure) {
+            return structure.structureType === STRUCTURE_CONTAINER && structure.store && structure.store[RESOURCE_ENERGY] > 0;
+        }
+    });
+
+    if(target) {
+        if(creep.withdraw(target, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
+            utilityTravelCreep.move(creep, target, {range: 1, visualizePathStyle: {stroke: '#ffaa00'}});
+        }
+        return true;
+    }
+
+    target = findClosestActiveRemoteSource(creep);
+
+    if(target) {
+        if(creep.harvest(target) === ERR_NOT_IN_RANGE) {
+            utilityTravelCreep.move(creep, target, {range: 1, visualizePathStyle: {stroke: '#ffaa00'}});
+        }
+        return true;
+    }
+
+    return false;
+}
+
+function findClosestActiveRemoteSource(creep) {
+    var homeRoomName = creep.memory.remoteWorkHomeRoom || getHomeRoomName(creep);
+    var roomMemory = Memory.rooms && Memory.rooms[homeRoomName];
+    var planner = roomMemory && roomMemory.remotePlanner;
+    var closestSource = null;
+    var closestRange = 999;
+
+    if(!planner || !planner.activeSourceIds || !planner.sourceInfos) {
+        return creep.pos.findClosestByRange(FIND_SOURCES);
+    }
+
+    for(var i = 0; i < planner.activeSourceIds.length; i++) {
+        var sourceId = planner.activeSourceIds[i];
+        var sourceInfo = planner.sourceInfos[sourceId];
+        var sourceRoomName = getRemoteRoomNameFromSourceInfo(sourceInfo, homeRoomName);
+
+        if(sourceRoomName !== creep.room.name) {
+            continue;
+        }
+
+        var source = Game.getObjectById(sourceId);
+
+        if(!source) {
+            continue;
+        }
+
+        var range = creep.pos.getRangeTo(source);
+
+        if(range < closestRange) {
+            closestRange = range;
+            closestSource = source;
+        }
+    }
+
+    return closestSource || creep.pos.findClosestByRange(FIND_SOURCES);
 }
 
 function findStoredEnergy(creep) {
