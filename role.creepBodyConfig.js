@@ -290,20 +290,64 @@ function getTechBody(room) {
 }
 
 function getArtificerBody(room) {
-    var energyCapacity = getRoomEnergyCapacity(room);
-    /*
-     * Artificers build construction sites and then upgrade. This uses the same
-     * balanced WORK/CARRY/MOVE pattern as Tech for now.
-     */
-    if (energyCapacity >= 800) {
-        return [WORK, WORK, WORK, CARRY, CARRY, MOVE, MOVE, MOVE];
-    }
+    return chooseBestAffordableBody(room, [
+        [
+            [WORK, 4],
+            [CARRY, 4],
+            [MOVE, 8],
+        ],
+        [
+            [WORK, 4],
+            [CARRY, 4],
+            [MOVE, 7],
+        ],
+        [
+            [WORK, 4],
+            [CARRY, 3],
+            [MOVE, 7],
+        ],
+        [
+            [WORK, 4],
+            [CARRY, 3],
+            [MOVE, 6],
+        ],
+        [
+            [WORK, 3],
+            [CARRY, 3],
+            [MOVE, 6],
+        ],
+        [
+            [WORK, 3],
+            [CARRY, 3],
+            [MOVE, 5],
+        ],
+        [
+            [WORK, 3],
+            [CARRY, 2],
+            [MOVE, 5],
+        ],
+        [
+            [WORK, 2],
+            [CARRY, 2],
+            [MOVE, 4],
+        ],  
+        [
+            [WORK, 2],
+            [CARRY, 1],
+            [MOVE, 3],
+        ],
+        [
+            [WORK, 2],
+            [CARRY, 1],
+            [MOVE, 2],
+        ],
+        [
+            [WORK, 1],
+            [CARRY, 1],
+            [MOVE, 1],
+        ],
 
-    if (energyCapacity >= 550) {
-        return [WORK, WORK, CARRY, CARRY, MOVE, MOVE];
-    }
-
-    return [WORK, CARRY, MOVE];
+    ]);
 }
 
 function getScoutBody(room) {

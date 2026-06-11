@@ -880,10 +880,32 @@ function findClosestActiveRemoteSource(creep) {
 }
 
 function findStoredEnergy(creep) {
+    /*
+     * Pick up dropped energy in the room first.
+     *
+     * creep.pos.findClosestByPath searches from this creep's current position,
+     * so this only looks in the room the creep is currently standing in.
+     */
+    var droppedEnergy = creep.pos.findClosestByPath(FIND_DROPPED_RESOURCES, {
+        filter: function(resource) {
+            return resource.resourceType === RESOURCE_ENERGY && resource.amount > 0;
+        }
+    });
+
+    if(droppedEnergy) {
+        return droppedEnergy;
+    }
+
+    /*
+     * If no dropped energy exists, use storage.
+     */
     if(creep.room.storage && creep.room.storage.store[RESOURCE_ENERGY] > 0) {
         return creep.room.storage;
     }
 
+    /*
+     * If no storage energy is available, use the closest container.
+     */
     var container = creep.pos.findClosestByPath(FIND_STRUCTURES, {
         filter: function(structure) {
             return (
@@ -898,11 +920,7 @@ function findStoredEnergy(creep) {
         return container;
     }
 
-    return creep.pos.findClosestByPath(FIND_DROPPED_RESOURCES, {
-        filter: function(resource) {
-            return resource.resourceType === RESOURCE_ENERGY && resource.amount > 0;
-        }
-    });
+    return null;
 }
 
 module.exports = roleArtificer;
