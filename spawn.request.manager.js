@@ -24,7 +24,7 @@ var DESIRED_COUNTS = {
     Foreman: 1,
     Extractor: 6,
     Freighter: 4,
-    ScoreRunner: 20,
+    ScoreRunner: 0,
     Tech: 3,
     Artificer: 4,
     Scout: 1
