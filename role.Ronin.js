@@ -18,6 +18,7 @@
  */
 
 var WarRoom = require('Logic.WarRoom');
+var travel = require('utility.Travel.Creep');
 
 var roleRonin = {
 
@@ -31,7 +32,7 @@ var roleRonin = {
          * If Ronin has a remote target room and is not there yet,
          * travel to that room first.
          */
-        if(WarRoom.moveToTargetRoom(creep)) {
+        if(moveToCombatRoom(creep)) {
             creep.say('march');
             return;
         }
@@ -63,7 +64,7 @@ function attackMeleeTarget(creep, target) {
     var result = creep.attack(target);
 
     if(result === ERR_NOT_IN_RANGE) {
-        WarRoom.moveToRange(creep, target, 1, '#ff0000');
+        moveNearTarget(creep, target);
         return;
     }
 
@@ -76,6 +77,44 @@ function attackMeleeTarget(creep, target) {
     }
 
     creep.say('slice');
+}
+
+function moveToCombatRoom(creep) {
+    var targetRoomName = WarRoom.getTargetRoomName(creep);
+
+    if(!targetRoomName || creep.room.name === targetRoomName) {
+        return false;
+    }
+
+    /*
+     * Use Sushi's travel wrapper for cross-room movement and do not submit a
+     * second movement request if another system already moved this creep.
+     */
+    if(creep.memory._sushiMoveTick !== Game.time) {
+        travel.moveToRoom(creep, targetRoomName, {
+            range: 22,
+            reusePath: 20,
+            visualizePathStyle: { stroke: '#ff4444' }
+        });
+    }
+
+    return true;
+}
+
+function moveNearTarget(creep, target) {
+    if(creep.memory._sushiMoveTick === Game.time) {
+        return ERR_BUSY;
+    }
+
+    /*
+     * Ronin approaches through Sushi's wrapper so melee movement shares the
+     * same path reuse and one-move-per-tick guard as the rest of the colony.
+     */
+    return travel.move(creep, target, {
+        range: 1,
+        reusePath: 10,
+        visualizePathStyle: { stroke: '#ff0000' }
+    });
 }
 
 module.exports = roleRonin;

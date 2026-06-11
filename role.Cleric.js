@@ -18,6 +18,7 @@
  */
 
 var WarRoom = require('Logic.WarRoom');
+var travel = require('utility.Travel.Creep');
 
 var roleCleric = {
 
@@ -39,7 +40,7 @@ var roleCleric = {
         /*
          * Move to remote combat room if assigned.
          */
-        if(WarRoom.moveToTargetRoom(creep)) {
+        if(moveToCombatRoom(creep)) {
             creep.say('march');
             return;
         }
@@ -83,14 +84,14 @@ function healFriendly(creep, target) {
         /*
          * Move closer so next tick we may direct heal.
          */
-        WarRoom.moveToRange(creep, target, 1, '#00ff88');
+        moveNearTarget(creep, target);
         return;
     }
 
     /*
      * Too far away, move closer.
      */
-    WarRoom.moveToRange(creep, target, 1, '#00ff88');
+    moveNearTarget(creep, target);
 }
 
 function followCombatBuddy(creep) {
@@ -100,7 +101,7 @@ function followCombatBuddy(creep) {
         /*
          * Stay within range 1 of a fighter.
          */
-        WarRoom.moveToRange(creep, buddy, 1, '#00ff88');
+        moveNearTarget(creep, buddy);
         creep.say('guard');
         return;
     }
@@ -109,6 +110,44 @@ function followCombatBuddy(creep) {
      * If no buddy exists, move to the target flag if one exists.
      */
     WarRoom.idleCombat(creep);
+}
+
+function moveToCombatRoom(creep) {
+    var targetRoomName = WarRoom.getTargetRoomName(creep);
+
+    if(!targetRoomName || creep.room.name === targetRoomName) {
+        return false;
+    }
+
+    /*
+     * All role movement goes through Sushi's travel wrapper. The memory check
+     * prevents this role from making a second movement request in one tick.
+     */
+    if(creep.memory._sushiMoveTick !== Game.time) {
+        travel.moveToRoom(creep, targetRoomName, {
+            range: 22,
+            reusePath: 20,
+            visualizePathStyle: { stroke: '#ff4444' }
+        });
+    }
+
+    return true;
+}
+
+function moveNearTarget(creep, target) {
+    if(creep.memory._sushiMoveTick === Game.time) {
+        return ERR_BUSY;
+    }
+
+    /*
+     * Cleric movement uses the shared wrapper so healing and buddy-following
+     * cannot bypass Sushi's path reuse and same-tick movement protection.
+     */
+    return travel.move(creep, target, {
+        range: 1,
+        reusePath: 10,
+        visualizePathStyle: { stroke: '#00ff88' }
+    });
 }
 
 module.exports = roleCleric;
