@@ -228,13 +228,24 @@ function getRepairTarget(room) {
         return rememberedTarget;
     }
 
+    /*
+     * Scanning every structure in the room costs CPU. If the last scan found
+     * nothing to repair, wait a few ticks before scanning again. Remembered
+     * targets are still checked every tick above.
+     */
+    if (!shouldScanForRepairTarget(room)) {
+        return null;
+    }
+
     var newTarget = findBestRepairTarget(room);
 
     if (newTarget) {
         rememberRepairTarget(room, newTarget);
+        return newTarget;
     }
 
-    return newTarget;
+    setNextRepairScan(room);
+    return null;
 }
 
 /*
@@ -286,7 +297,14 @@ function rememberRepairTarget(room, target) {
         return;
     }
 
-    getTowerRoomMemory(room).towerRepairTargetId = target.id;
+    var roomMemory = getTowerRoomMemory(room);
+
+    roomMemory.towerRepairTargetId = target.id;
+
+    /*
+     * A real target was found, so no scan cooldown is needed right now.
+     */
+    delete roomMemory.towerRepairNextScan;
 }
 
 /*
@@ -295,6 +313,27 @@ function rememberRepairTarget(room, target) {
 function clearRepairTarget(room) {
     var roomMemory = getTowerRoomMemory(room);
     delete roomMemory.towerRepairTargetId;
+}
+
+/*
+ * Decide if it is time to scan all structures for a new repair target.
+ */
+function shouldScanForRepairTarget(room) {
+    var roomMemory = getTowerRoomMemory(room);
+
+    if (typeof roomMemory.towerRepairNextScan !== 'number') {
+        return true;
+    }
+
+    return Game.time >= roomMemory.towerRepairNextScan;
+}
+
+/*
+ * After a scan finds no work, wait 10 ticks before scanning every structure
+ * again. This saves CPU in rooms where nothing needs tower repair.
+ */
+function setNextRepairScan(room) {
+    getTowerRoomMemory(room).towerRepairNextScan = Game.time + 10;
 }
 
 /*
