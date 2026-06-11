@@ -21,6 +21,7 @@ var spawnRequestManager = require('spawn.request.manager');
 var trafficManager = require('traffic_manager');
 var travelUtility = require('utility.Travel.Creep');
 var RemotePlanner = require('Planner.Remote');
+var RoadPlanner = require('Planner.Roads');
 
 /*
  * Harabi-style traffic movement is initialized once when this global is loaded.
@@ -303,6 +304,7 @@ module.exports.loop = function () {
      * occasionally rescoring active candidates per owned room.
      */
     RemotePlanner.run();
+    RoadPlanner.run();
 
     for (var towerRoomName in Game.rooms) {
         var towerRoom = Game.rooms[towerRoomName];
@@ -318,7 +320,12 @@ module.exports.loop = function () {
 
     if (room.controller && room.controller.my) {
         updateRepairStructureMemory(room);
-        travelUtility.buildRoadsFromRouteCache(room);
+        /*
+         * Road construction now belongs to Planner.Roads.js.
+         * The travel route cache remains enabled for movement/fallback only,
+         * so creep-walked paths no longer become the main source of roads.
+         */
+        // travelUtility.buildRoadsFromRouteCache(room);
         }
     }
     /*
