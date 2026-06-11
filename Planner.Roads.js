@@ -196,6 +196,19 @@ function unpackCoord(packed, roomName) {
     return new RoomPosition(x, y, roomName);
 }
 
+function makeRoomPositionSafe(x, y, roomName) {
+    /*
+     * RoomPosition throws in Screeps when x/y are outside 0..49. Any helper that
+     * makes neighboring positions should call this first, then let the normal
+     * road-tile validation decide if the in-room tile is useful.
+     */
+    if (x < 0 || x > 49 || y < 0 || y > 49) {
+        return null;
+    }
+
+    return new RoomPosition(x, y, roomName);
+}
+
 function getOwnedVisibleRooms() {
     var rooms = [];
 
@@ -313,8 +326,8 @@ function getHubAnchor(room) {
 
     var spawns = room.find(FIND_MY_SPAWNS);
     if (spawns.length > 0) {
-        var plannedStorage = new RoomPosition(spawns[0].pos.x + 1, spawns[0].pos.y, room.name);
-        if (isWalkableRoadTile(room, plannedStorage, false)) {
+        var plannedStorage = makeRoomPositionSafe(spawns[0].pos.x + 1, spawns[0].pos.y, room.name);
+        if (plannedStorage && isWalkableRoadTile(room, plannedStorage, false)) {
             return plannedStorage;
         }
 
@@ -337,8 +350,8 @@ function addHubAreaRoads(room, hub, planSets, prioritySets) {
                 continue;
             }
 
-            var pos = new RoomPosition(hub.x + dx, hub.y + dy, hub.roomName);
-            if (isWalkableRoadTile(room, pos, false)) {
+            var pos = makeRoomPositionSafe(hub.x + dx, hub.y + dy, hub.roomName);
+            if (pos && isWalkableRoadTile(room, pos, false)) {
                 addRoadCoord(pos, ROAD_PRIORITY_HUB, planSets, prioritySets);
             }
         }
@@ -369,12 +382,12 @@ function addOwnedRoomSourceRoads(room, hub, planSets, prioritySets) {
             return;
         }
 
-        var target = getSourceRoadTarget(room, sources[i]);
-        if (!target) {
+        var targetInfo = getSourceRoadTarget(room, sources[i]);
+        if (!targetInfo || !targetInfo.pos) {
             continue;
         }
 
-        addPathRoads(hub, target, 0, ROAD_PRIORITY_SOURCE, 1, MAX_PATH_OPS_LOCAL, planSets, prioritySets);
+        addPathRoads(hub, targetInfo.pos, targetInfo.range, ROAD_PRIORITY_SOURCE, 1, MAX_PATH_OPS_LOCAL, planSets, prioritySets);
     }
 }
 
@@ -383,13 +396,13 @@ function addOwnedRoomControllerRoads(room, hub, planSets, prioritySets) {
         return;
     }
 
-    var target = getControllerRoadTarget(room);
-    if (!target) {
-        target = getControllerWorkPosition(room);
+    var targetInfo = getControllerRoadTarget(room);
+    if (!targetInfo) {
+        targetInfo = getControllerWorkPosition(room);
     }
 
-    if (target) {
-        addPathRoads(hub, target, 0, ROAD_PRIORITY_CONTROLLER, 1, MAX_PATH_OPS_LOCAL, planSets, prioritySets);
+    if (targetInfo && targetInfo.pos) {
+        addPathRoads(hub, targetInfo.pos, targetInfo.range, ROAD_PRIORITY_CONTROLLER, 1, MAX_PATH_OPS_LOCAL, planSets, prioritySets);
     }
 }
 
@@ -424,28 +437,41 @@ function addRemoteRoadsFromRemotePlanner(homeRoomName, planSets, prioritySets) {
 }
 
 function getSourceRoadTarget(room, source) {
-    var containers = source.pos.findInRange(FIND_STRUCTURES, 1, {
+    var sourceStructures = source.pos.findInRange(FIND_STRUCTURES, 1, {
         filter: function(structure) {
-            return structure.structureType === STRUCTURE_CONTAINER;
+            return structure.structureType === STRUCTURE_CONTAINER || structure.structureType === STRUCTURE_LINK;
         }
     });
 
-    if (containers.length > 0) {
-        return containers[0].pos;
+    if (sourceStructures.length > 0) {
+        return {
+            pos: sourceStructures[0].pos,
+            range: 1
+        };
     }
 
     var sourceMemory = getSourceMemory(room.name, source.id);
     if (sourceMemory && sourceMemory.containerPlannedPos) {
-        return new RoomPosition(
+        var plannedContainerPos = makeRoomPositionSafe(
             sourceMemory.containerPlannedPos.x,
             sourceMemory.containerPlannedPos.y,
             sourceMemory.containerPlannedPos.roomName || room.name
         );
+
+        if (plannedContainerPos) {
+            return {
+                pos: plannedContainerPos,
+                range: 1
+            };
+        }
     }
 
     var seats = getSourceSeatPositions(room, source, sourceMemory);
     if (seats.length > 0) {
-        return seats[0];
+        return {
+            pos: seats[0],
+            range: 0
+        };
     }
 
     return null;
@@ -463,7 +489,10 @@ function getControllerRoadTarget(room) {
             return room.controller.pos.getRangeTo(a.pos) - room.controller.pos.getRangeTo(b.pos);
         });
 
-        return nearController[0].pos;
+        return {
+            pos: nearController[0].pos,
+            range: 1
+        };
     }
 
     return null;
@@ -479,13 +508,16 @@ function getControllerWorkPosition(room) {
                     continue;
                 }
 
-                var pos = new RoomPosition(x, y, room.name);
-                if (pos.getRangeTo(controller.pos) > 3) {
+                var pos = makeRoomPositionSafe(x, y, room.name);
+                if (!pos || pos.getRangeTo(controller.pos) > 3) {
                     continue;
                 }
 
                 if (isWalkableRoadTile(room, pos, false)) {
-                    return pos;
+                    return {
+                        pos: pos,
+                        range: 0
+                    };
                 }
             }
         }
@@ -507,11 +539,15 @@ function getSourceSeatPositions(room, source, sourceMemory) {
 
     if (sourceMemory && sourceMemory.seats) {
         for (var i = 0; i < sourceMemory.seats.length; i++) {
-            seats.push(new RoomPosition(
+            var memorySeat = makeRoomPositionSafe(
                 sourceMemory.seats[i].x,
                 sourceMemory.seats[i].y,
                 sourceMemory.seats[i].roomName || room.name
-            ));
+            );
+
+            if (memorySeat) {
+                seats.push(memorySeat);
+            }
         }
     }
 
@@ -525,8 +561,8 @@ function getSourceSeatPositions(room, source, sourceMemory) {
                 continue;
             }
 
-            var pos = new RoomPosition(source.pos.x + dx, source.pos.y + dy, room.name);
-            if (isWalkableRoadTile(room, pos, false)) {
+            var pos = makeRoomPositionSafe(source.pos.x + dx, source.pos.y + dy, room.name);
+            if (pos && isWalkableRoadTile(room, pos, false)) {
                 seats.push(pos);
             }
         }
@@ -542,8 +578,8 @@ function addAdjacentRoads(room, center, priority, planSets, prioritySets) {
                 continue;
             }
 
-            var pos = new RoomPosition(center.x + dx, center.y + dy, center.roomName);
-            if (isWalkableRoadTile(room, pos, false)) {
+            var pos = makeRoomPositionSafe(center.x + dx, center.y + dy, center.roomName);
+            if (pos && isWalkableRoadTile(room, pos, false)) {
                 addRoadCoord(pos, priority, planSets, prioritySets);
             }
         }
