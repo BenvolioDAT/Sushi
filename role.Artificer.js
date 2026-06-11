@@ -21,6 +21,7 @@ var REPAIR_WORKER_STALE_TICKS = 25;
 
 var REMOTE_ROAD_REPAIR_START_PERCENT = 0.60;
 var REMOTE_CONTAINER_REPAIR_START_PERCENT = 0.80;
+var REMOTE_WORK_EMPTY_SCAN_COOLDOWN = 15;
 
 var roleArtificer = {
 
@@ -465,6 +466,18 @@ function buildLocalConstruction(creep) {
 }
 
 function upgradeController(creep) {
+    var homeRoomName = getHomeRoomName(creep);
+
+    /*
+     * Artificers should not spend spare energy on remote controllers. If remote
+     * work is done while they are away from home, send them home before using
+     * controller upgrading as the fallback job.
+     */
+    if(homeRoomName && creep.room.name !== homeRoomName) {
+        utilityTravelCreep.moveToRoom(creep, homeRoomName, {range: 22, visualizePathStyle: {stroke: '#ffffff'}});
+        return;
+    }
+
     if(creep.room.controller && creep.upgradeController(creep.room.controller) === ERR_NOT_IN_RANGE) {
         utilityTravelCreep.move(creep, creep.room.controller, {visualizePathStyle: {stroke: '#ffffff'}});
     }
@@ -475,6 +488,10 @@ function doRemoteInfrastructureWork(creep) {
     var target = getRememberedRemoteWorkTarget(creep);
 
     if(!target) {
+        if(travelToRememberedRemoteWorkPosition(creep)) {
+            return true;
+        }
+
         target = findRemoteInfrastructureTarget(creep);
     }
 
@@ -493,19 +510,18 @@ function getRememberedRemoteWorkTarget(creep) {
 
     var roomName = creep.memory.remoteWorkRoomName;
 
-    /*
-     * Remote work should only happen in rooms we can see. If the remembered
-     * room is not visible, forget the target and look for visible work instead.
-     */
-    if(roomName && !Game.rooms[roomName]) {
-        clearRemoteWorkTarget(creep);
-        return null;
-    }
-
     var target = Game.getObjectById(creep.memory.remoteWorkTargetId);
 
     if(!target) {
-        clearRemoteWorkTarget(creep);
+        /*
+         * Game.getObjectById returns null for objects in rooms we cannot see.
+         * Keep the target while traveling there, and only forget it after the
+         * creep reaches that room and still cannot find the object.
+         */
+        if(roomName && creep.room.name === roomName) {
+            clearRemoteWorkTarget(creep);
+        }
+
         return null;
     }
 
@@ -522,12 +538,39 @@ function getRememberedRemoteWorkTarget(creep) {
     return target;
 }
 
+
+function travelToRememberedRemoteWorkPosition(creep) {
+    var roomName = creep.memory.remoteWorkRoomName;
+
+    if(!creep.memory.remoteWorkTargetId || !roomName || creep.room.name === roomName) {
+        return false;
+    }
+
+    if(creep.memory.remoteWorkX === undefined || creep.memory.remoteWorkY === undefined) {
+        utilityTravelCreep.moveToRoom(creep, roomName, {range: 22, visualizePathStyle: {stroke: '#ffffff'}});
+        return true;
+    }
+
+    utilityTravelCreep.move(creep, new RoomPosition(creep.memory.remoteWorkX, creep.memory.remoteWorkY, roomName), {
+        range: 3,
+        visualizePathStyle: {
+            stroke: '#ffffff'
+        }
+    });
+    return true;
+}
+
 function findRemoteInfrastructureTarget(creep) {
+    if(creep.memory.remoteWorkNextScan && Game.time < creep.memory.remoteWorkNextScan) {
+        return null;
+    }
+
     var homeRoomName = getHomeRoomName(creep);
     var remoteRooms = getActiveRemoteRoomNames(homeRoomName);
     var target;
 
     if(remoteRooms.length === 0) {
+        creep.memory.remoteWorkNextScan = Game.time + REMOTE_WORK_EMPTY_SCAN_COOLDOWN;
         return null;
     }
 
@@ -555,12 +598,15 @@ function findRemoteInfrastructureTarget(creep) {
         return target;
     }
 
+    creep.memory.remoteWorkNextScan = Game.time + REMOTE_WORK_EMPTY_SCAN_COOLDOWN;
     return null;
 }
 
 function rememberRemoteWorkTarget(creep, target, workType) {
     creep.memory.remoteWorkTargetId = target.id;
     creep.memory.remoteWorkRoomName = target.pos.roomName;
+    creep.memory.remoteWorkX = target.pos.x;
+    creep.memory.remoteWorkY = target.pos.y;
     creep.memory.remoteWorkType = workType;
     creep.memory.remoteWorkHomeRoom = getHomeRoomName(creep);
 }
@@ -568,6 +614,8 @@ function rememberRemoteWorkTarget(creep, target, workType) {
 function clearRemoteWorkTarget(creep) {
     delete creep.memory.remoteWorkTargetId;
     delete creep.memory.remoteWorkRoomName;
+    delete creep.memory.remoteWorkX;
+    delete creep.memory.remoteWorkY;
     delete creep.memory.remoteWorkType;
     delete creep.memory.remoteWorkHomeRoom;
 }
