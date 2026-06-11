@@ -43,10 +43,10 @@ var PRIORITY = {
     Foreman: 100,
     Extractor: 80,
     Freighter: 60,
-    ScoreRunner: 30,
-    Tech: 20,
-    Artificer: 10,
-    Scout: 5,
+    ScoreRunner: 5,
+    Tech: 30,
+    Artificer: 20,
+    Scout: 10,
 };
 
 /*
