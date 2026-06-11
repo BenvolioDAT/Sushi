@@ -187,6 +187,26 @@ function isTrafficManagerEnabled() {
     return Memory.settings.useTrafficManager !== false;
 }
 
+function ensureWarRoomSetting() {
+    /*
+     * Automatic WarRoom scanning defaults off and can be enabled from the
+     * console without changing code:
+     * Memory.settings.useWarRoom = true
+     */
+    if (!Memory.settings) {
+        Memory.settings = {};
+    }
+
+    if (Memory.settings.useWarRoom === undefined) {
+        Memory.settings.useWarRoom = false;
+    }
+}
+
+function isWarRoomEnabled() {
+    ensureWarRoomSetting();
+    return Memory.settings.useWarRoom === true;
+}
+
 function runTrafficManagerForVisibleRooms() {
     if (!isTrafficManagerEnabled()) {
         return;
@@ -293,10 +313,16 @@ module.exports.loop = function () {
 
         maybeGeneratePixel();
     /*
-     * WarRoom is the shared combat radar.
-     * It scans visible rooms before combat creep role logic runs.
+     * Automatic WarRoom radar only scans visible spawn rooms and their directly
+     * adjacent rooms. This prevents far-away scouts or remote rooms from
+     * pulling combat creeps across the map.
+     *
+     * Manual targetRoom and targetFlag orders still work when this scan is
+     * disabled because combat roles read those assignments independently.
      */
-    //WarRoom.run();
+    if (isWarRoomEnabled()) {
+        WarRoom.run();
+    }
 
     /*
      * RemotePlanner is intentionally light most ticks. Scouts do heavy refreshes

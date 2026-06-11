@@ -34,10 +34,11 @@ var COMBAT_TARGET_MEMORY_KEY = 'combatTargetId';
 /*
  * WarRoom radar settings.
  *
- * The WarRoom only reacts to threats near owned rooms. This keeps one scout in
- * a far-away room from pulling all combat creeps across the map.
+ * The WarRoom only reacts to threats in spawn rooms and their directly
+ * adjacent visible rooms. This keeps far-away scouts and remote rooms from
+ * pulling all combat creeps across the map.
  */
-var MAX_THREAT_ROOM_DISTANCE = 2;
+var MAX_SPAWN_DEFENSE_ROOM_DISTANCE = 1;
 var THREAT_FORGET_TICKS = 50;
 var WAR_ROOM_ATTACK_FLAG_NAME = 'WarRoom_Attack';
 
@@ -51,8 +52,8 @@ var WAR_ROOM_ATTACK_FLAG_NAME = 'WarRoom_Attack';
  * Run the shared WarRoom brain once per tick.
  *
  * Jobs:
- * - scan every visible room in Game.rooms
- * - ignore rooms too far from owned rooms
+ * - scan spawn rooms and directly adjacent rooms that are visible in Game.rooms
+ * - ignore all other visible rooms
  * - find the best hostile creep or hostile structure
  * - create or move one shared attack flag
  * - remember the active threat in Memory.WarRoom.activeThreat
@@ -61,7 +62,7 @@ var WAR_ROOM_ATTACK_FLAG_NAME = 'WarRoom_Attack';
 WarRoom.run = function() {
     WarRoom.ensureMemory();
 
-    var ownedRoomNames = WarRoom.getOwnedRoomNames();
+    var spawnRoomNames = WarRoom.getSpawnRoomNames();
     var bestThreatInfo = null;
 
     for(var roomName in Game.rooms) {
@@ -71,13 +72,12 @@ WarRoom.run = function() {
             continue;
         }
 
-        var closestOwnedDistance = WarRoom.getClosestOwnedRoomDistance(roomName, ownedRoomNames);
-
         /*
-         * If there are no owned rooms, or this visible room is too far away,
-         * do not count threats in this room.
+         * Only spawn rooms and directly adjacent visible rooms are automatic
+         * defense targets. Far-away scouts and remote rooms must not pull
+         * combat creeps across the map.
          */
-        if(closestOwnedDistance === null || closestOwnedDistance > MAX_THREAT_ROOM_DISTANCE) {
+        if(!WarRoom.isRoomNearSpawnRoom(roomName, spawnRoomNames)) {
             continue;
         }
 
@@ -91,7 +91,9 @@ WarRoom.run = function() {
          * The room picked its best local threat. Now add a simple distance
          * bonus before comparing it against threats from other rooms.
          */
-        roomThreatInfo.score += WarRoom.getDistanceScoreBonus(closestOwnedDistance);
+        var closestSpawnDistance = WarRoom.getClosestSpawnRoomDistance(roomName, spawnRoomNames);
+
+        roomThreatInfo.score += WarRoom.getDistanceScoreBonus(closestSpawnDistance);
 
         if(!bestThreatInfo || roomThreatInfo.score > bestThreatInfo.score) {
             bestThreatInfo = roomThreatInfo;
@@ -117,35 +119,62 @@ WarRoom.ensureMemory = function() {
 };
 
 /*
- * Find visible rooms that are owned by us.
+ * Find each unique room that contains one of our spawns.
  */
-WarRoom.getOwnedRoomNames = function() {
-    var ownedRoomNames = [];
+WarRoom.getSpawnRoomNames = function() {
+    var spawnRoomNames = [];
+    var seenRooms = {};
 
-    for(var roomName in Game.rooms) {
-        var room = Game.rooms[roomName];
+    for(var spawnName in Game.spawns) {
+        var spawn = Game.spawns[spawnName];
 
-        if(room && room.controller && room.controller.my) {
-            ownedRoomNames.push(roomName);
+        if(!spawn || !spawn.room || !spawn.room.name) {
+            continue;
         }
+
+        if(seenRooms[spawn.room.name]) {
+            continue;
+        }
+
+        seenRooms[spawn.room.name] = true;
+        spawnRoomNames.push(spawn.room.name);
     }
 
-    return ownedRoomNames;
+    return spawnRoomNames;
 };
 
 /*
- * Find the closest owned room by linear room distance.
+ * Return true when a room is a spawn room or directly adjacent to one.
  */
-WarRoom.getClosestOwnedRoomDistance = function(roomName, ownedRoomNames) {
-    if(!roomName || !ownedRoomNames || ownedRoomNames.length === 0) {
+WarRoom.isRoomNearSpawnRoom = function(roomName, spawnRoomNames) {
+    if(!roomName || !spawnRoomNames || spawnRoomNames.length === 0) {
+        return false;
+    }
+
+    for(var i = 0; i < spawnRoomNames.length; i++) {
+        var spawnRoomName = spawnRoomNames[i];
+        var distance = Game.map.getRoomLinearDistance(roomName, spawnRoomName);
+
+        if(distance <= MAX_SPAWN_DEFENSE_ROOM_DISTANCE) {
+            return true;
+        }
+    }
+
+    return false;
+};
+
+/*
+ * Find the closest spawn room by linear room distance.
+ */
+WarRoom.getClosestSpawnRoomDistance = function(roomName, spawnRoomNames) {
+    if(!roomName || !spawnRoomNames || spawnRoomNames.length === 0) {
         return null;
     }
 
     var closestDistance = null;
 
-    for(var i = 0; i < ownedRoomNames.length; i++) {
-        var ownedRoomName = ownedRoomNames[i];
-        var distance = Game.map.getRoomLinearDistance(roomName, ownedRoomName);
+    for(var i = 0; i < spawnRoomNames.length; i++) {
+        var distance = Game.map.getRoomLinearDistance(roomName, spawnRoomNames[i]);
 
         if(closestDistance === null || distance < closestDistance) {
             closestDistance = distance;
@@ -159,7 +188,7 @@ WarRoom.getClosestOwnedRoomDistance = function(roomName, ownedRoomNames) {
  * Nearby threats should beat similar far-away threats.
  */
 WarRoom.getDistanceScoreBonus = function(distance) {
-    var remainingDistance = MAX_THREAT_ROOM_DISTANCE - distance;
+    var remainingDistance = MAX_SPAWN_DEFENSE_ROOM_DISTANCE - distance;
 
     if(remainingDistance < 0) {
         return 0;
