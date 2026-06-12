@@ -105,12 +105,20 @@ function collectEnergy(creep) {
         return;
     }
 
-    if(homeRoomNeedsUrgentEnergy(creep)) {
-        if(creep.room.name !== creep.memory.homeRoom) {
-            moveTowardHomeRoom(creep);
-            return;
-        }
+    if(
+        homeRoomNeedsUrgentEnergy(creep) &&
+        creep.room.name !== creep.memory.homeRoom
+    ) {
+        moveTowardHomeRoom(creep);
+        return;
+    }
 
+    /*
+     * Freighters in their home room always check local dropped energy and
+     * source containers before accepting a remote job. This prevents local
+     * source containers from filling while every Freighter travels remotely.
+     */
+    if(creep.room.name === creep.memory.homeRoom) {
         target = findBestLocalPickupTarget(creep);
 
         if(target) {
@@ -128,13 +136,6 @@ function collectEnergy(creep) {
 
     if(creep.room.name !== creep.memory.homeRoom) {
         moveTowardHomeRoom(creep);
-        return;
-    }
-
-    target = findBestLocalPickupTarget(creep);
-
-    if(target) {
-        collectFromTarget(creep, target);
         return;
     }
 

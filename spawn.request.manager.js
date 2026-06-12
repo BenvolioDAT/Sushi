@@ -33,8 +33,6 @@ var DESIRED_COUNTS = {
     Cleric: 1
 };
 
-var MAX_TOTAL_FREIGHTERS_WITH_REMOTES = 10;
-
 /*
  * Higher number = more important.
  *
@@ -318,17 +316,17 @@ function requestRemoteExtractorsForRoom(room, extractorBody, priority) {
 }
 
 function getDesiredFreighterCount(room, freighterBody) {
-    var localDesired = DESIRED_COUNTS.Freighter;
+    /*
+     * DESIRED_COUNTS.Freighter is the hard total Freighter count. Remote
+     * hauling demand is used to decide whether existing Freighters may take
+     * remote jobs, but it does not spawn extra Freighters by itself.
+     */
+    var totalDesired = DESIRED_COUNTS.Freighter;
     var remoteDemand = RemotePlanner.getRemoteFreighterDemand(room.name, freighterBody);
     var remoteDesired = remoteDemand.wanted || 0;
-    var totalDesired = localDesired + remoteDesired;
-
-    if (totalDesired > MAX_TOTAL_FREIGHTERS_WITH_REMOTES) {
-        totalDesired = MAX_TOTAL_FREIGHTERS_WITH_REMOTES;
-    }
 
     return {
-        localDesired: localDesired,
+        localDesired: totalDesired,
         remoteDesired: remoteDesired,
         totalDesired: totalDesired,
         remoteDemand: remoteDemand
