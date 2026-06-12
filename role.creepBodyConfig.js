@@ -350,6 +350,108 @@ function getArtificerBody(room) {
     ]);
 }
 
+/**
+ * Ronin body.
+ *
+ * Ronin is the close-range rhythm section: one MOVE for each ATTACK keeps it
+ * mobile enough to reach the fight.
+ *
+ * @param {Room} room
+ * @returns {array}
+ */
+function getRoninBody(room) {
+    return chooseBestAffordableBody(room, [
+        [
+            [ATTACK, 10],
+            [MOVE, 10]
+        ],
+        [
+            [ATTACK, 6],
+            [MOVE, 6]
+        ],
+        [
+            [ATTACK, 4],
+            [MOVE, 4]
+        ],
+        [
+            [ATTACK, 2],
+            [MOVE, 2]
+        ],
+        [
+            [ATTACK, 1],
+            [MOVE, 1]
+        ]
+    ]);
+}
+
+/**
+ * Volley body.
+ *
+ * Volley plays at range with one MOVE for each RANGED_ATTACK so it can keep
+ * position while dealing damage.
+ *
+ * @param {Room} room
+ * @returns {array}
+ */
+function getVolleyBody(room) {
+    return chooseBestAffordableBody(room, [
+        [
+            [RANGED_ATTACK, 6],
+            [MOVE, 6]
+        ],
+        [
+            [RANGED_ATTACK, 4],
+            [MOVE, 4]
+        ],
+        [
+            [RANGED_ATTACK, 3],
+            [MOVE, 3]
+        ],
+        [
+            [RANGED_ATTACK, 2],
+            [MOVE, 2]
+        ],
+        [
+            [RANGED_ATTACK, 1],
+            [MOVE, 1]
+        ]
+    ]);
+}
+
+/**
+ * Cleric body.
+ *
+ * Cleric keeps the group in tune with one MOVE for each HEAL so it can stay
+ * beside the creeps it supports.
+ *
+ * @param {Room} room
+ * @returns {array}
+ */
+function getClericBody(room) {
+    return chooseBestAffordableBody(room, [
+        [
+            [HEAL, 6],
+            [MOVE, 6]
+        ],
+        [
+            [HEAL, 4],
+            [MOVE, 4]
+        ],
+        [
+            [HEAL, 3],
+            [MOVE, 3]
+        ],
+        [
+            [HEAL, 2],
+            [MOVE, 2]
+        ],
+        [
+            [HEAL, 1],
+            [MOVE, 1]
+        ]
+    ]);
+}
+
 function getScoutBody(room) {
     return chooseBestAffordableBody(room, [
         [
@@ -398,6 +500,18 @@ function getBody(role, room) {
         return getArtificerBody(room);
     }
 
+    if (role === 'Ronin') {
+        return getRoninBody(room);
+    }
+
+    if (role === 'Volley') {
+        return getVolleyBody(room);
+    }
+
+    if (role === 'Cleric') {
+        return getClericBody(room);
+    }
+
     if (role === 'Scout') {
         return getScoutBody(room);
     }
@@ -413,14 +527,17 @@ function getBody(role, room) {
 }
 
 module.exports = {
-    getBody,
-    getBodyCost,
+    getBody: getBody,
+    getBodyCost: getBodyCost,
 
-    getScoutBody,
-    getForemanBody,
-    getExtractorBody,
-    getFreighterBody,
-    getTechBody,
-    getArtificerBody,
+    getScoutBody: getScoutBody,
+    getForemanBody: getForemanBody,
+    getExtractorBody: getExtractorBody,
+    getFreighterBody: getFreighterBody,
+    getTechBody: getTechBody,
+    getArtificerBody: getArtificerBody,
+    getRoninBody: getRoninBody,
+    getVolleyBody: getVolleyBody,
+    getClericBody: getClericBody,
     getScoreRunnerBody: getScoreRunnerBody
 };

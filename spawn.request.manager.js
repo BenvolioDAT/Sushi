@@ -27,7 +27,10 @@ var DESIRED_COUNTS = {
     ScoreRunner: 0,
     Tech: 3,
     Artificer: 4,
-    Scout: 1
+    Scout: 1,
+    Ronin: 1,
+    Volley: 1,
+    Cleric: 1
 };
 
 var MAX_TOTAL_FREIGHTERS_WITH_REMOTES = 10;
@@ -47,6 +50,9 @@ var PRIORITY = {
     Tech: 30,
     Artificer: 20,
     Scout: 10,
+    Ronin: 15,
+    Volley: 15,
+    Cleric: 16,
 };
 
 /*
@@ -62,6 +68,9 @@ var REPLACEMENT_BUFFER_TICKS = {
     Tech: 40,
     Artificer: 40,
     Scout: 10,
+    Ronin: 40,
+    Volley: 40,
+    Cleric: 40,
     ScoreRunner: 20
 };
 
@@ -962,6 +971,18 @@ function getCheaperBodyForRole(role) {
         return [MOVE];
     }
 
+    if (role === 'Ronin') {
+        return [ATTACK, MOVE];
+    }
+
+    if (role === 'Volley') {
+        return [RANGED_ATTACK, MOVE];
+    }
+
+    if (role === 'Cleric') {
+        return [HEAL, MOVE];
+    }
+
     if (role === 'ScoreRunner') {
         return [MOVE, MOVE, MOVE];
     }
@@ -1314,6 +1335,9 @@ function run() {
     report.requests.push(requestRoleForRoom(room, 'Tech', DESIRED_COUNTS.Tech));
     report.requests.push(requestRoleForRoom(room, 'Artificer', DESIRED_COUNTS.Artificer));
     report.requests.push(requestRoleForRoom(room, 'Scout', DESIRED_COUNTS.Scout));
+    report.requests.push(requestRoleForRoom(room, 'Ronin', DESIRED_COUNTS.Ronin));
+    report.requests.push(requestRoleForRoom(room, 'Volley', DESIRED_COUNTS.Volley));
+    report.requests.push(requestRoleForRoom(room, 'Cleric', DESIRED_COUNTS.Cleric));
 
     return report;
 }
