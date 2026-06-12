@@ -9,10 +9,12 @@
  * largest target every tick.
  */
 var travel = require('utility.Travel.Creep');
+var utility = require('utility');
 var RemotePlanner = require('Planner.Remote');
 
 var MIN_DROPPED_ENERGY = 50;
 var MIN_CONTAINER_ENERGY = 50;
+var REMOTE_HAUL_MEMORY_STALE_TICKS = 25;
 
 var roleFreighter = {
 
@@ -127,7 +129,7 @@ function collectEnergy(creep) {
         }
     }
 
-    var remotePickup = RemotePlanner.getBestRemotePickupForFreighter(creep);
+    var remotePickup = findBestRemotePickupTarget(creep);
 
     if(remotePickup && RemotePlanner.claimRemotePickupTarget(creep, remotePickup)) {
         handleRemoteCollection(creep);
@@ -244,6 +246,254 @@ function finishRemotePickup(creep) {
     delete creep.memory.freighterReservedCarry;
     delete creep.memory.freighterReservedUntil;
     creep.memory.freighterJob = 'remoteDelivery';
+}
+
+
+function findBestRemotePickupTarget(creep) {
+    if(!creep || !creep.memory || !creep.store || creep.store.getFreeCapacity(RESOURCE_ENERGY) <= 0) {
+        return null;
+    }
+
+    var homeRoomName = creep.memory.homeRoom || creep.room.name;
+    var activeSources = RemotePlanner.getActiveRemoteSourcesForHome(homeRoomName);
+
+    if(!activeSources || activeSources.length === 0) {
+        return null;
+    }
+
+    var reservations = buildRemoteFreighterReservations(creep);
+    var candidates = [];
+
+    for(var i = 0; i < activeSources.length; i++) {
+        var sourceInfo = activeSources[i];
+
+        if(!sourceInfo || !sourceInfo.sourceId || !sourceInfo.roomName) {
+            continue;
+        }
+
+        if(!RemotePlanner.shouldUseRemoteSource(homeRoomName, sourceInfo.sourceId)) {
+            continue;
+        }
+
+        var haul = utility.ensureSourceHaulMemory(sourceInfo.roomName, sourceInfo.sourceId, homeRoomName);
+
+        if(!haul || !haul.targetId || haul.amount <= 0) {
+            continue;
+        }
+
+        if(haul.homeRoom && haul.homeRoom !== homeRoomName) {
+            continue;
+        }
+
+        if(!haul.lastSeen || Game.time - haul.lastSeen > REMOTE_HAUL_MEMORY_STALE_TICKS) {
+            continue;
+        }
+
+        var visibleRoom = Game.rooms[sourceInfo.roomName];
+
+        if(visibleRoom) {
+            if(isRemoteRoomDangerous(visibleRoom)) {
+                continue;
+            }
+
+            var liveTarget = Game.getObjectById(haul.targetId);
+            var liveAmount = getEnergyPickupAmount(liveTarget);
+
+            if(!liveTarget || liveAmount <= 0) {
+                clearRemoteHaulTarget(haul);
+                haul.lastSeen = Game.time;
+                continue;
+            }
+
+            /* Keep the remembered amount fresh whenever we have room vision. */
+            haul.amount = liveAmount;
+            haul.lastSeen = Game.time;
+        }
+
+        var reservationKey = getRemoteReservationKey(sourceInfo.roomName, sourceInfo.sourceId, haul.targetId);
+        var assignedCount = reservations.byTargetCount[reservationKey] || 0;
+        var reservedCarry = reservations.byTargetEnergy[reservationKey] || 0;
+        var remainingEnergy = haul.amount - reservedCarry;
+        var estimatedDistance = sourceInfo.distance || getFallbackRemoteDistance(creep, sourceInfo.roomName);
+
+        candidates.push({
+            targetId: haul.targetId,
+            type: haul.targetType,
+            amount: haul.amount,
+            remainingEnergy: remainingEnergy,
+            sourceId: sourceInfo.sourceId,
+            remoteRoomName: sourceInfo.roomName,
+            pickupRoom: sourceInfo.roomName,
+            homeRoomName: homeRoomName,
+            estimatedDistance: estimatedDistance,
+            assignedCount: assignedCount
+        });
+    }
+
+    /*
+     * Pass 1:
+     * Spread Freighters first by choosing the biggest target with nobody
+     * already assigned. Distance only breaks ties between equally full targets.
+     */
+    var bestOpenTarget = null;
+
+    for(var j = 0; j < candidates.length; j++) {
+        var openCandidate = candidates[j];
+
+        if(openCandidate.assignedCount > 0) {
+            continue;
+        }
+
+        if(!bestOpenTarget || isBetterOpenRemoteTarget(openCandidate, bestOpenTarget)) {
+            bestOpenTarget = openCandidate;
+        }
+    }
+
+    if(bestOpenTarget) {
+        return bestOpenTarget;
+    }
+
+    /*
+     * Pass 2:
+     * Once every valid target has a Freighter, send extra Freighters to the
+     * target with the most unreserved energy. Fewer assigned Freighters and
+     * shorter distance are only tie breakers.
+     */
+    var bestSharedTarget = null;
+
+    for(var k = 0; k < candidates.length; k++) {
+        var sharedCandidate = candidates[k];
+
+        if(sharedCandidate.remainingEnergy <= 0) {
+            continue;
+        }
+
+        if(!bestSharedTarget || isBetterSharedRemoteTarget(sharedCandidate, bestSharedTarget)) {
+            bestSharedTarget = sharedCandidate;
+        }
+    }
+
+    return bestSharedTarget;
+}
+
+function buildRemoteFreighterReservations(creep) {
+    var reservations = {
+        byTargetCount: {},
+        byTargetEnergy: {}
+    };
+
+    /*
+     * Scan living Freighters once. Their memory is treated as intention data:
+     * collecting remote Freighters reserve the target they are traveling to.
+     */
+    for(var creepName in Game.creeps) {
+        if(!Game.creeps.hasOwnProperty(creepName)) {
+            continue;
+        }
+
+        var other = Game.creeps[creepName];
+
+        if(!other || !other.memory) {
+            continue;
+        }
+
+        if(other.name === creep.name) {
+            continue;
+        }
+
+        if(other.memory.role !== 'Freighter') {
+            continue;
+        }
+
+        if(other.memory.freighterJob !== 'remote' || other.memory.FreighterWorking) {
+            continue;
+        }
+
+        if((other.memory.freighterReservedUntil || 0) < Game.time) {
+            continue;
+        }
+
+        if(!other.memory.pickupRoom || !other.memory.pickupSourceId || !other.memory.pickupTargetId) {
+            continue;
+        }
+
+        var key = getRemoteReservationKey(
+            other.memory.pickupRoom,
+            other.memory.pickupSourceId,
+            other.memory.pickupTargetId
+        );
+        var reservedCarry = other.memory.freighterReservedCarry || other.store.getFreeCapacity(RESOURCE_ENERGY) || 0;
+
+        reservations.byTargetCount[key] = (reservations.byTargetCount[key] || 0) + 1;
+        reservations.byTargetEnergy[key] = (reservations.byTargetEnergy[key] || 0) + reservedCarry;
+    }
+
+    return reservations;
+}
+
+function getRemoteReservationKey(roomName, sourceId, targetId) {
+    return roomName + '|' + sourceId + '|' + targetId;
+}
+
+function isBetterOpenRemoteTarget(candidate, currentBest) {
+    if(candidate.amount > currentBest.amount) {
+        return true;
+    }
+
+    if(candidate.amount < currentBest.amount) {
+        return false;
+    }
+
+    return candidate.estimatedDistance < currentBest.estimatedDistance;
+}
+
+function isBetterSharedRemoteTarget(candidate, currentBest) {
+    if(candidate.remainingEnergy > currentBest.remainingEnergy) {
+        return true;
+    }
+
+    if(candidate.remainingEnergy < currentBest.remainingEnergy) {
+        return false;
+    }
+
+    if(candidate.assignedCount < currentBest.assignedCount) {
+        return true;
+    }
+
+    if(candidate.assignedCount > currentBest.assignedCount) {
+        return false;
+    }
+
+    return candidate.estimatedDistance < currentBest.estimatedDistance;
+}
+
+function clearRemoteHaulTarget(haul) {
+    haul.targetId = null;
+    haul.targetType = null;
+    haul.amount = 0;
+    haul.reservedBy = null;
+    haul.reservedUntil = 0;
+    haul.reservedCarry = 0;
+}
+
+function getEnergyPickupAmount(target) {
+    if(!target) {
+        return 0;
+    }
+
+    if(target.resourceType) {
+        return target.resourceType === RESOURCE_ENERGY ? target.amount : 0;
+    }
+
+    return getStoredEnergy(target);
+}
+
+function getFallbackRemoteDistance(creep, remoteRoomName) {
+    if(!remoteRoomName) {
+        return 999999;
+    }
+
+    return Game.map.getRoomLinearDistance(creep.room.name, remoteRoomName) * 50;
 }
 
 function handleRemoteTargetGone(creep) {
