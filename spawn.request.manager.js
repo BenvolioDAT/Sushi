@@ -835,8 +835,6 @@ function runStartupBootstrap(room, report) {
         return true;
     }
 
-    var startupExtractorCount = getStartupExtractorCount(room);
-
     if (getHealthyRoleCount(room, 'Extractor') < 2) {
         report.requests.push(requestRoleForRoom(room, 'Extractor', 2));
         return true;
