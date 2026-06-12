@@ -16,6 +16,94 @@
  */
 
 var spawnUtility = require('utility.spawn');
+var creepBodyConfig = require('role.creepBodyConfig');
+
+/**
+ * Calculate the energy cost of a creep body.
+ *
+ * @param {array} body
+ * @returns {number}
+ */
+function getBodyCost(body) {
+    var cost = 0;
+
+    if (!body) {
+        return cost;
+    }
+
+    for (var index = 0; index < body.length; index++) {
+        cost += BODYPART_COST[body[index]] || 0;
+    }
+
+    return cost;
+}
+
+/**
+ * Refresh a queued body at the last possible moment before spawning.
+ *
+ * spawn.request.manager.js decides what roles are needed, but queued Memory can
+ * become stale because spawning takes many ticks. spawn.manager.js is the last
+ * chance to choose the best body before room energy is spent.
+ *
+ * This helper changes only request.body. It never rebuilds request.memory, so
+ * source assignments, remote mining targets, and other job details survive.
+ *
+ * @param {StructureSpawn} spawn
+ * @param {object} request
+ * @returns {object}
+ */
+function maybeRefreshQueuedBodyForSpawn(spawn, request) {
+    if (!spawn || !spawn.room || !request || !request.role) {
+        return {
+            changed: false,
+            reason: 'missing spawn or request'
+        };
+    }
+
+    var bestBody = creepBodyConfig.getBody(request.role, spawn.room);
+
+    if (!bestBody || bestBody.length === 0) {
+        return {
+            changed: false,
+            reason: 'no best body found'
+        };
+    }
+
+    var currentCost = getBodyCost(request.body);
+    var bestCost = getBodyCost(bestBody);
+
+    /*
+     * Upgrade only when the configured body is stronger by cost and the room
+     * can pay for it now. Otherwise the queued request stays exactly as it was.
+     */
+    if (bestCost <= currentCost) {
+        return {
+            changed: false,
+            currentCost: currentCost,
+            bestCost: bestCost,
+            reason: 'queued body is already equal or better'
+        };
+    }
+
+    if (bestCost > spawn.room.energyAvailable) {
+        return {
+            changed: false,
+            currentCost: currentCost,
+            bestCost: bestCost,
+            energyAvailable: spawn.room.energyAvailable,
+            reason: 'best body is not affordable right now'
+        };
+    }
+
+    request.body = bestBody;
+
+    return {
+        changed: true,
+        oldCost: currentCost,
+        newCost: bestCost,
+        reason: 'queued body upgraded before spawn'
+    };
+}
 
 /**
  * Make sure the room memory and spawn queue exist.
@@ -356,6 +444,8 @@ function runRoom(roomName) {
         };
     }
 
+    var refreshResult = maybeRefreshQueuedBodyForSpawn(spawn, request);
+
     var creepName = spawnUtility.genCreepName(request.role);
 
     /*
@@ -393,14 +483,18 @@ function runRoom(roomName) {
         console.log(
             'Spawning ' + creepName +
             ' as ' + request.role +
-            ' in room ' + roomName
+            ' in room ' + roomName +
+            (refreshResult.changed ?
+                ' after refreshing body from ' + refreshResult.oldCost +
+                ' to ' + refreshResult.newCost + ' energy' : '')
         );
 
         return {
             ok: true,
             result: result,
             name: creepName,
-            role: request.role
+            role: request.role,
+            bodyRefresh: refreshResult
         };
     }
 
@@ -458,6 +552,8 @@ function runRoom(roomName) {
 }
 
 module.exports = {
+    getBodyCost: getBodyCost,
+    maybeRefreshQueuedBodyForSpawn: maybeRefreshQueuedBodyForSpawn,
     getSpawnQueue: getSpawnQueue,
     countAliveRole: countAliveRole,
     countQueuedRole: countQueuedRole,

@@ -109,8 +109,8 @@ function chooseBestAffordableBody(room, bodyPlans) {
      * room's full energy capacity can afford is selected.
      *
      * This means the queue may wait for energy to refill instead of instantly
-     * downgrading to the current available energy. Emergency downgrading happens
-     * in spawn.request.manager.js when the front queued body blocks startup.
+     * downgrading to the current available energy. spawn.manager.js checks the
+     * configured body again immediately before an idle spawn spends energy.
      */
     var energyCapacity = getRoomEnergyCapacity(room);
 
