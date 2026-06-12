@@ -136,27 +136,29 @@ function chooseBestAffordableBody(room, bodyPlans) {
  * @returns {array}
  */
 function getForemanBody(room) {
-    var energyCapacity = getRoomEnergyCapacity(room);
-
-    /*
-     * Bigger rooms can build bigger hauler bodies. Foreman focuses on CARRY
-     * capacity with enough MOVE parts to travel while carrying energy.
-     */
-    if (energyCapacity >= 800) {
-        return [CARRY, CARRY, CARRY, CARRY, CARRY, CARRY, MOVE, MOVE, MOVE];
-    }
-
-    if (energyCapacity >= 550) {
-        return [CARRY, CARRY, CARRY, CARRY, MOVE, MOVE];
-    }
-
-    if (energyCapacity >= 300) {
-        return [CARRY, CARRY, MOVE, MOVE];
-    }
-
-    return [CARRY, MOVE];
+    return chooseBestAffordableBody(room, [
+        [
+            [CARRY, 12],
+            [MOVE, 12]
+        ],
+        [
+            [CARRY, 6],
+            [MOVE, 6]
+        ],
+        [
+            [CARRY, 6],
+            [MOVE, 3]
+        ],
+        [
+            [CARRY, 4],
+            [MOVE, 2]
+        ],
+        [
+            [CARRY, 2],
+            [MOVE, 1]
+        ]
+    ]);
 }
-
 /**
  * Extractor body.
  *
