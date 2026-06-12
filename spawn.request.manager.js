@@ -314,24 +314,6 @@ function requestRemoteExtractorsForRoom(room, extractorBody, priority) {
     };
 }
 
-function getDesiredFreighterCount(room, freighterBody) {
-    /*
-     * DESIRED_COUNTS.Freighter is the hard total Freighter count. Remote
-     * hauling demand is used to decide whether existing Freighters may take
-     * remote jobs, but it does not spawn extra Freighters by itself.
-     */
-    var totalDesired = DESIRED_COUNTS.Freighter;
-    var remoteDemand = RemotePlanner.getRemoteFreighterDemand(room.name, freighterBody);
-    var remoteDesired = remoteDemand.wanted || 0;
-
-    return {
-        localDesired: totalDesired,
-        remoteDesired: remoteDesired,
-        totalDesired: totalDesired,
-        remoteDemand: remoteDemand
-    };
-}
-
 function sortSpawnQueue(queue) {
     if (!queue) {
         return;
@@ -1016,13 +998,7 @@ function run() {
     report.requests.push(requestRoleForRoom(room, 'Foreman', DESIRED_COUNTS.Foreman));
 
     report.requests.push(requestRoleForRoom(room, 'Extractor', getDesiredExtractorCount(room)));
-    var freighterBody = creepBodyConfig.getBody('Freighter', room);
-    var freighterDemand = getDesiredFreighterCount(room, freighterBody);
-    var freighterRequest = requestRoleForRoom(room, 'Freighter', freighterDemand.totalDesired);
-    freighterRequest.localDesired = freighterDemand.localDesired;
-    freighterRequest.remoteDesired = freighterDemand.remoteDesired;
-    freighterRequest.remoteDemand = freighterDemand.remoteDemand;
-    report.requests.push(freighterRequest);
+    report.requests.push(requestRoleForRoom(room, 'Freighter', DESIRED_COUNTS.Freighter));
     report.requests.push(requestRoleForRoom(room, 'ScoreRunner', DESIRED_COUNTS.ScoreRunner));
     report.requests.push(requestRoleForRoom(room, 'Tech', DESIRED_COUNTS.Tech));
     report.requests.push(requestRoleForRoom(room, 'Artificer', DESIRED_COUNTS.Artificer));
@@ -1045,6 +1021,5 @@ module.exports = {
     requestRoleForRoom: requestRoleForRoom,
     countHealthyCreeps: countHealthyCreeps,
     getReplacementLeadTicks: getReplacementLeadTicks,
-    requestRemoteExtractorsForRoom: requestRemoteExtractorsForRoom,
-    getDesiredFreighterCount: getDesiredFreighterCount
+    requestRemoteExtractorsForRoom: requestRemoteExtractorsForRoom
 };

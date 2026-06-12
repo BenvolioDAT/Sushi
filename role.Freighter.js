@@ -9,10 +9,12 @@
  * largest target every tick.
  */
 var travel = require('utility.Travel.Creep');
+var utility = require('utility');
 var RemotePlanner = require('Planner.Remote');
 
 var MIN_DROPPED_ENERGY = 50;
 var MIN_CONTAINER_ENERGY = 50;
+var REMOTE_HAUL_MEMORY_STALE_TICKS = 25;
 
 var roleFreighter = {
 
@@ -21,11 +23,9 @@ var roleFreighter = {
         /*
          * Freighters are haulers.
          *
-         * They collect energy from:
-         * 1. dropped energy piles first
-         * 2. source containers second
-         *
-         * Then they deliver that energy to the base.
+         * They collect the best available energy job, whether that job is a
+         * home-room pile/container or a remembered remote haul target. Then
+         * they deliver that energy to the base.
          */
         if(!creep || creep.spawning) {
             return;
@@ -98,11 +98,23 @@ function collectEnergy(creep) {
         return;
     }
 
-    var target = getRememberedPickupTarget(creep);
+    var rememberedTarget = getRememberedPickupTarget(creep);
+    var selectedCandidate = null;
 
-    if(target) {
-        collectFromTarget(creep, target);
-        return;
+    if(rememberedTarget) {
+        selectedCandidate = chooseBestPickupCandidate(getAllPickupCandidates(creep));
+
+        if(
+            !selectedCandidate ||
+            selectedCandidate.targetId === rememberedTarget.id ||
+            !isCandidateBetterThanRememberedTarget(selectedCandidate, rememberedTarget)
+        ) {
+            collectFromTarget(creep, rememberedTarget);
+            return;
+        }
+
+        /* A much better job exists, so let this Freighter retarget cleanly. */
+        clearPickupMemory(creep);
     }
 
     if(
@@ -113,24 +125,11 @@ function collectEnergy(creep) {
         return;
     }
 
-    /*
-     * Freighters in their home room always check local dropped energy and
-     * source containers before accepting a remote job. This prevents local
-     * source containers from filling while every Freighter travels remotely.
-     */
-    if(creep.room.name === creep.memory.homeRoom) {
-        target = findBestLocalPickupTarget(creep);
-
-        if(target) {
-            collectFromTarget(creep, target);
-            return;
-        }
+    if(!selectedCandidate) {
+        selectedCandidate = chooseBestPickupCandidate(getAllPickupCandidates(creep));
     }
 
-    var remotePickup = RemotePlanner.getBestRemotePickupForFreighter(creep);
-
-    if(remotePickup && RemotePlanner.claimRemotePickupTarget(creep, remotePickup)) {
-        handleRemoteCollection(creep);
+    if(selectedCandidate && applySelectedPickupCandidate(creep, selectedCandidate)) {
         return;
     }
 
@@ -246,26 +245,412 @@ function finishRemotePickup(creep) {
     creep.memory.freighterJob = 'remoteDelivery';
 }
 
-function handleRemoteTargetGone(creep) {
-    if(creep.store[RESOURCE_ENERGY] > 0) {
-        creep.memory.FreighterWorking = true;
-        finishRemotePickup(creep);
-        deliverRemoteEnergy(creep);
+
+function getAllPickupCandidates(creep) {
+    var localReservations = buildFreighterReservations(creep);
+    var remoteReservations = buildRemoteFreighterReservations(creep);
+    var candidates = [];
+
+    candidates = candidates.concat(getLocalPickupCandidates(creep, localReservations));
+    candidates = candidates.concat(getRemotePickupCandidates(creep, remoteReservations));
+
+    return candidates;
+}
+
+function getLocalPickupCandidates(creep, reservations) {
+    var homeRoomName = creep.memory.homeRoom || creep.room.name;
+
+    /* Local pickup jobs are only the home room's source-side energy jobs. */
+    if(creep.room.name !== homeRoomName) {
+        return [];
+    }
+
+    return getLocalDroppedEnergyCandidates(creep, reservations).concat(
+        getLocalSourceContainerCandidates(creep, reservations)
+    );
+}
+
+function getLocalDroppedEnergyCandidates(creep, reservations) {
+    var droppedEnergyList = creep.room.find(FIND_DROPPED_RESOURCES, {
+        filter: function(resource) {
+            return (
+                resource.resourceType === RESOURCE_ENERGY &&
+                resource.amount >= MIN_DROPPED_ENERGY
+            );
+        }
+    });
+    var candidates = [];
+
+    for(var i = 0; i < droppedEnergyList.length; i++) {
+        var drop = droppedEnergyList[i];
+        var reservedEnergy = reservations.byTargetEnergy[drop.id] || 0;
+        var remainingEnergy = drop.amount - reservedEnergy;
+
+        if(remainingEnergy <= 0) {
+            continue;
+        }
+
+        candidates.push({
+            jobType: 'local',
+            targetId: drop.id,
+            target: drop,
+            pickupRoom: creep.room.name,
+            sourceId: getSourceIdNearTarget(drop, 3),
+            type: 'dropped',
+            amount: drop.amount,
+            remainingEnergy: remainingEnergy,
+            assignedCount: reservations.byTargetCount[drop.id] || 0,
+            estimatedDistance: creep.pos.getRangeTo(drop),
+            homeRoomName: creep.memory.homeRoom || creep.room.name,
+            remoteRoomName: null
+        });
+    }
+
+    return candidates;
+}
+
+function getLocalSourceContainerCandidates(creep, reservations) {
+    var sourceContainers = getSourceContainerOptions(creep);
+    var candidates = [];
+
+    for(var i = 0; i < sourceContainers.length; i++) {
+        var option = sourceContainers[i];
+        var reservedEnergy = reservations.byTargetEnergy[option.target.id] || 0;
+        var remainingEnergy = option.amount - reservedEnergy;
+
+        if(remainingEnergy <= 0) {
+            continue;
+        }
+
+        candidates.push({
+            jobType: 'local',
+            targetId: option.target.id,
+            target: option.target,
+            pickupRoom: creep.room.name,
+            sourceId: option.sourceId,
+            type: 'container',
+            amount: option.amount,
+            remainingEnergy: remainingEnergy,
+            assignedCount: Math.max(
+                reservations.byTargetCount[option.target.id] || 0,
+                reservations.bySourceCount[option.sourceId] || 0
+            ),
+            estimatedDistance: creep.pos.getRangeTo(option.target),
+            homeRoomName: creep.memory.homeRoom || creep.room.name,
+            remoteRoomName: null
+        });
+    }
+
+    return candidates;
+}
+
+function getRemotePickupCandidates(creep, reservations) {
+    if(!creep || !creep.memory || !creep.store || creep.store.getFreeCapacity(RESOURCE_ENERGY) <= 0) {
+        return [];
+    }
+
+    var homeRoomName = creep.memory.homeRoom || creep.room.name;
+    var activeSources = RemotePlanner.getActiveRemoteSourcesForHome(homeRoomName);
+    var candidates = [];
+
+    if(!activeSources || activeSources.length === 0) {
+        return candidates;
+    }
+
+    for(var i = 0; i < activeSources.length; i++) {
+        var sourceInfo = activeSources[i];
+
+        if(!sourceInfo || !sourceInfo.sourceId || !sourceInfo.roomName) {
+            continue;
+        }
+
+        if(!RemotePlanner.shouldUseRemoteSource(homeRoomName, sourceInfo.sourceId)) {
+            continue;
+        }
+
+        var haul = utility.ensureSourceHaulMemory(sourceInfo.roomName, sourceInfo.sourceId, homeRoomName);
+
+        if(!haul || !haul.targetId || haul.amount <= 0) {
+            continue;
+        }
+
+        if(haul.homeRoom && haul.homeRoom !== homeRoomName) {
+            continue;
+        }
+
+        if(!haul.lastSeen || Game.time - haul.lastSeen > REMOTE_HAUL_MEMORY_STALE_TICKS) {
+            continue;
+        }
+
+        var visibleRoom = Game.rooms[sourceInfo.roomName];
+
+        if(visibleRoom) {
+            if(isRemoteRoomDangerous(visibleRoom)) {
+                continue;
+            }
+
+            var liveTarget = Game.getObjectById(haul.targetId);
+            var liveAmount = getEnergyPickupAmount(liveTarget);
+
+            if(!liveTarget || liveAmount <= 0) {
+                clearRemoteHaulTarget(haul);
+                haul.lastSeen = Game.time;
+                continue;
+            }
+
+            /* Keep the remembered amount fresh whenever we have room vision. */
+            haul.amount = liveAmount;
+            haul.lastSeen = Game.time;
+        }
+
+        var reservationKey = getRemoteReservationKey(sourceInfo.roomName, sourceInfo.sourceId, haul.targetId);
+        var assignedCount = reservations.byTargetCount[reservationKey] || 0;
+        var reservedCarry = reservations.byTargetEnergy[reservationKey] || 0;
+        var remainingEnergy = haul.amount - reservedCarry;
+
+        if(remainingEnergy <= 0) {
+            continue;
+        }
+
+        candidates.push({
+            jobType: 'remote',
+            targetId: haul.targetId,
+            target: null,
+            pickupRoom: sourceInfo.roomName,
+            sourceId: sourceInfo.sourceId,
+            type: haul.targetType,
+            amount: haul.amount,
+            remainingEnergy: remainingEnergy,
+            assignedCount: assignedCount,
+            estimatedDistance: sourceInfo.distance || getFallbackRemoteDistance(creep, sourceInfo.roomName),
+            homeRoomName: homeRoomName,
+            remoteRoomName: sourceInfo.roomName
+        });
+    }
+
+    return candidates;
+}
+
+function chooseBestPickupCandidate(candidates) {
+    if(!candidates || candidates.length === 0) {
+        return null;
+    }
+
+    /*
+     * Pass 1 spreads Freighters across all local and remote targets together.
+     * The largest unassigned energy job wins, so tiny local crumbs cannot block
+     * a large remote container or pile.
+     */
+    var bestOpenTarget = null;
+
+    for(var i = 0; i < candidates.length; i++) {
+        var openCandidate = candidates[i];
+
+        if(openCandidate.assignedCount > 0) {
+            continue;
+        }
+
+        if(!bestOpenTarget || isBetterOpenPickupCandidate(openCandidate, bestOpenTarget)) {
+            bestOpenTarget = openCandidate;
+        }
+    }
+
+    if(bestOpenTarget) {
+        return bestOpenTarget;
+    }
+
+    /*
+     * Pass 2 doubles up only when all good targets already have a Freighter.
+     * The biggest unreserved amount wins, then fewer assigned Freighters, then
+     * shorter travel distance.
+     */
+    var bestSharedTarget = null;
+
+    for(var j = 0; j < candidates.length; j++) {
+        var sharedCandidate = candidates[j];
+
+        if(sharedCandidate.remainingEnergy <= 0) {
+            continue;
+        }
+
+        if(!bestSharedTarget || isBetterSharedPickupCandidate(sharedCandidate, bestSharedTarget)) {
+            bestSharedTarget = sharedCandidate;
+        }
+    }
+
+    return bestSharedTarget;
+}
+
+function isBetterOpenPickupCandidate(candidate, currentBest) {
+    if(candidate.remainingEnergy > currentBest.remainingEnergy) {
         return true;
     }
 
-    RemotePlanner.clearRemoteFreighterMemory(creep);
+    if(candidate.remainingEnergy < currentBest.remainingEnergy) {
+        return false;
+    }
+
+    if(candidate.estimatedDistance < currentBest.estimatedDistance) {
+        return true;
+    }
+
+    if(candidate.estimatedDistance > currentBest.estimatedDistance) {
+        return false;
+    }
+
+    return candidate.jobType === 'local' && currentBest.jobType !== 'local';
+}
+
+function isBetterSharedPickupCandidate(candidate, currentBest) {
+    if(candidate.remainingEnergy > currentBest.remainingEnergy) {
+        return true;
+    }
+
+    if(candidate.remainingEnergy < currentBest.remainingEnergy) {
+        return false;
+    }
+
+    if(candidate.assignedCount < currentBest.assignedCount) {
+        return true;
+    }
+
+    if(candidate.assignedCount > currentBest.assignedCount) {
+        return false;
+    }
+
+    if(candidate.estimatedDistance < currentBest.estimatedDistance) {
+        return true;
+    }
+
+    if(candidate.estimatedDistance > currentBest.estimatedDistance) {
+        return false;
+    }
+
+    return candidate.jobType === 'local' && currentBest.jobType !== 'local';
+}
+
+function applySelectedPickupCandidate(creep, candidate) {
+    if(!candidate) {
+        return false;
+    }
+
+    if(candidate.jobType === 'local') {
+        if(!candidate.target || !isValidEnergyPickupTarget(candidate.target)) {
+            return false;
+        }
+
+        rememberPickupTarget(creep, candidate.target, candidate.sourceId, candidate.type);
+        collectFromTarget(creep, candidate.target);
+        return true;
+    }
+
+    if(candidate.jobType === 'remote') {
+        if(RemotePlanner.claimRemotePickupTarget(creep, candidate)) {
+            handleRemoteCollection(creep);
+            return true;
+        }
+    }
+
     return false;
 }
 
-function findBestLocalPickupTarget(creep) {
-    var target = findBestDroppedEnergyTarget(creep);
+function isCandidateBetterThanRememberedTarget(candidate, rememberedTarget) {
+    var rememberedAmount = getEnergyPickupAmount(rememberedTarget);
 
-    if(!target) {
-        target = findBestSourceContainerTarget(creep);
+    if(rememberedAmount <= 0) {
+        return true;
     }
 
-    return target;
+    return candidate.remainingEnergy > rememberedAmount;
+}
+
+
+function buildRemoteFreighterReservations(creep) {
+    var reservations = {
+        byTargetCount: {},
+        byTargetEnergy: {}
+    };
+
+    /*
+     * Scan living Freighters once. Their memory is treated as intention data:
+     * collecting remote Freighters reserve the target they are traveling to.
+     */
+    for(var creepName in Game.creeps) {
+        if(!Game.creeps.hasOwnProperty(creepName)) {
+            continue;
+        }
+
+        var other = Game.creeps[creepName];
+
+        if(!other || !other.memory) {
+            continue;
+        }
+
+        if(other.name === creep.name) {
+            continue;
+        }
+
+        if(other.memory.role !== 'Freighter') {
+            continue;
+        }
+
+        if(other.memory.freighterJob !== 'remote' || other.memory.FreighterWorking) {
+            continue;
+        }
+
+        if((other.memory.freighterReservedUntil || 0) < Game.time) {
+            continue;
+        }
+
+        if(!other.memory.pickupRoom || !other.memory.pickupSourceId || !other.memory.pickupTargetId) {
+            continue;
+        }
+
+        var key = getRemoteReservationKey(
+            other.memory.pickupRoom,
+            other.memory.pickupSourceId,
+            other.memory.pickupTargetId
+        );
+        var reservedCarry = other.memory.freighterReservedCarry || other.store.getFreeCapacity(RESOURCE_ENERGY) || 0;
+
+        reservations.byTargetCount[key] = (reservations.byTargetCount[key] || 0) + 1;
+        reservations.byTargetEnergy[key] = (reservations.byTargetEnergy[key] || 0) + reservedCarry;
+    }
+
+    return reservations;
+}
+
+function getRemoteReservationKey(roomName, sourceId, targetId) {
+    return roomName + '|' + sourceId + '|' + targetId;
+}
+
+function clearRemoteHaulTarget(haul) {
+    haul.targetId = null;
+    haul.targetType = null;
+    haul.amount = 0;
+    haul.reservedBy = null;
+    haul.reservedUntil = 0;
+    haul.reservedCarry = 0;
+}
+
+function getEnergyPickupAmount(target) {
+    if(!target) {
+        return 0;
+    }
+
+    if(target.resourceType) {
+        return target.resourceType === RESOURCE_ENERGY ? target.amount : 0;
+    }
+
+    return getStoredEnergy(target);
+}
+
+function getFallbackRemoteDistance(creep, remoteRoomName) {
+    if(!remoteRoomName) {
+        return 999999;
+    }
+
+    return Game.map.getRoomLinearDistance(creep.room.name, remoteRoomName) * 50;
 }
 
 function homeRoomNeedsUrgentEnergy(creep) {
@@ -388,158 +773,16 @@ function collectFromTarget(creep, target) {
     clearPickupMemory(creep);
 }
 
-function findBestDroppedEnergyTarget(creep) {
-    var droppedEnergyList = creep.room.find(FIND_DROPPED_RESOURCES, {
-        filter: function(resource) {
-            return (
-                resource.resourceType === RESOURCE_ENERGY &&
-                resource.amount >= MIN_DROPPED_ENERGY
-            );
-        }
-    });
-
-    if(!droppedEnergyList || droppedEnergyList.length === 0) {
-        return null;
-    }
-
-    var reservations = buildFreighterReservations(creep);
-    var bestOption = null;
-
-    /*
-     * Pass 1:
-     * Pick the biggest dropped pile that has no Freighter assigned yet.
-     *
-     * This creates the split behavior.
-     *
-     * Example:
-     * - pile A has 500 energy
-     * - pile B has 300 energy
-     * - pile C has 100 energy
-     *
-     * Freighter 1 picks A.
-     * Freighter 2 sees A is already reserved, so it picks B.
-     * Freighter 3 sees A and B reserved, so it picks C.
-     */
-    for(var i = 0; i < droppedEnergyList.length; i++) {
-        var drop = droppedEnergyList[i];
-        var reservedCount = reservations.byTargetCount[drop.id] || 0;
-
-        if(reservedCount > 0) {
-            continue;
-        }
-
-        if(!bestOption || isBetterDroppedEnergyOption(creep, drop, bestOption)) {
-            bestOption = drop;
-        }
-    }
-
-    if(bestOption) {
-        rememberPickupTarget(creep, bestOption, getSourceIdNearTarget(bestOption, 3), 'dropped');
-        return bestOption;
-    }
-
-    /*
-     * Pass 2:
-     * If every dropped pile already has at least one Freighter,
-     * send extra Freighters to the pile with the most unreserved energy.
-     *
-     * This means big piles can get more than one Freighter,
-     * but only after the smaller piles also got attention.
-     */
-    var bestRemainingDrop = null;
-    var bestRemainingAmount = 0;
-    var bestReservedCount = 999999;
-
-    for(var j = 0; j < droppedEnergyList.length; j++) {
-        var candidate = droppedEnergyList[j];
-
-        var reservedEnergy = reservations.byTargetEnergy[candidate.id] || 0;
-        var candidateReservedCount = reservations.byTargetCount[candidate.id] || 0;
-        var remainingAmount = candidate.amount - reservedEnergy;
-
-        if(remainingAmount <= 0) {
-            continue;
-        }
-
-        /*
-         * Prefer fewer assigned Freighters first.
-         * If tied, prefer the most remaining energy.
-         */
-        if(
-            candidateReservedCount < bestReservedCount ||
-            (
-                candidateReservedCount === bestReservedCount &&
-                remainingAmount > bestRemainingAmount
-            )
-        ) {
-            bestRemainingDrop = candidate;
-            bestRemainingAmount = remainingAmount;
-            bestReservedCount = candidateReservedCount;
-        }
-    }
-
-    if(bestRemainingDrop) {
-        rememberPickupTarget(creep, bestRemainingDrop, getSourceIdNearTarget(bestRemainingDrop, 3), 'dropped');
-        return bestRemainingDrop;
-    }
-
-    return null;
-}
-
-function isBetterDroppedEnergyOption(creep, candidate, currentBest) {
-    /*
-     * Biggest pile wins.
-     */
-    if(candidate.amount > currentBest.amount) {
+function handleRemoteTargetGone(creep) {
+    if(creep.store[RESOURCE_ENERGY] > 0) {
+        creep.memory.FreighterWorking = true;
+        finishRemotePickup(creep);
+        deliverRemoteEnergy(creep);
         return true;
     }
 
-    if(candidate.amount < currentBest.amount) {
-        return false;
-    }
-
-    /*
-     * If same amount, closer wins.
-     */
-    return creep.pos.getRangeTo(candidate) < creep.pos.getRangeTo(currentBest);
-}
-
-function findBestSourceContainerTarget(creep) {
-    var sourceContainers = getSourceContainerOptions(creep);
-
-    if(!sourceContainers || sourceContainers.length === 0) {
-        return null;
-    }
-
-    var reservations = buildFreighterReservations(creep);
-    var bestOption = null;
-
-    for(var i = 0; i < sourceContainers.length; i++) {
-        var option = sourceContainers[i];
-
-        var reservedEnergy = reservations.byTargetEnergy[option.target.id] || 0;
-        var remainingEnergy = option.amount - reservedEnergy;
-
-        /*
-         * If other Freighters already have enough carry capacity reserved
-         * to empty this container, skip it.
-         */
-        if(remainingEnergy <= 0) {
-            continue;
-        }
-
-        if(!bestOption || isBetterContainerOption(creep, option, bestOption, reservations)) {
-            bestOption = option;
-        }
-    }
-
-    if(!bestOption) {
-        return null;
-    }
-
-    rememberPickupTarget(creep, bestOption.target, bestOption.sourceId, 'container');
-
-    return bestOption.target;
+    RemotePlanner.clearRemoteFreighterMemory(creep);
+    return false;
 }
 
 function getSourceContainerOptions(creep) {
@@ -572,44 +815,6 @@ function getSourceContainerOptions(creep) {
     }
 
     return options;
-}
-
-function isBetterContainerOption(creep, candidate, currentBest, reservations) {
-    var candidateAssignedCount = reservations.bySourceCount[candidate.sourceId] || 0;
-    var bestAssignedCount = reservations.bySourceCount[currentBest.sourceId] || 0;
-
-    /*
-     * Main rule:
-     * Pick the source container with fewer assigned Freighters.
-     *
-     * This is what gives you:
-     * - 2 Freighters, 2 source containers = 1 and 1
-     * - 4 Freighters, 2 source containers = 2 and 2
-     */
-    if(candidateAssignedCount < bestAssignedCount) {
-        return true;
-    }
-
-    if(candidateAssignedCount > bestAssignedCount) {
-        return false;
-    }
-
-    /*
-     * If both source containers have the same number of Freighters assigned,
-     * choose the one with more energy.
-     */
-    if(candidate.amount > currentBest.amount) {
-        return true;
-    }
-
-    if(candidate.amount < currentBest.amount) {
-        return false;
-    }
-
-    /*
-     * If energy is tied too, pick the closer one.
-     */
-    return creep.pos.getRangeTo(candidate.target) < creep.pos.getRangeTo(currentBest.target);
 }
 
 function rememberPickupTarget(creep, target, sourceId, pickupType) {
