@@ -837,8 +837,8 @@ function runStartupBootstrap(room, report) {
 
     var startupExtractorCount = getStartupExtractorCount(room);
 
-    if (getHealthyRoleCount(room, 'Extractor') < startupExtractorCount) {
-        report.requests.push(requestRoleForRoom(room, 'Extractor', startupExtractorCount));
+    if (getHealthyRoleCount(room, 'Extractor') < 2) {
+        report.requests.push(requestRoleForRoom(room, 'Extractor', 2));
         return true;
     }
 
@@ -943,19 +943,6 @@ function getDesiredExtractorCount(room) {
     return desiredCount;
 }
 
-function getStartupExtractorCount(room) {
-    var sourceCount = getSourceCount(room);
-
-    if (sourceCount <= 0) {
-        return 1;
-    }
-
-    /*
-     * Startup only needs basic coverage before moving on to Freighter, Tech,
-     * and Artificer.
-     */
-    return sourceCount;
-}
 /**
  * Run spawn requests for the current simple managed room.
  *
