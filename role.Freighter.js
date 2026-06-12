@@ -31,10 +31,11 @@ var roleFreighter = {
             return;
         }
 
+        normalizeFreighterMemory(creep);
         updateWorkingState(creep);
 
         if(creep.memory.FreighterWorking) {
-            if(creep.memory.remoteFreighting || creep.memory.remoteReturning) {
+            if(creep.memory.freighterJob === 'remote' || creep.memory.freighterJob === 'remoteDelivery') {
                 deliverRemoteEnergy(creep);
             } else {
                 deliverEnergy(creep);
@@ -52,8 +53,8 @@ function updateWorkingState(creep) {
      */
     if(creep.memory.FreighterWorking && creep.store[RESOURCE_ENERGY] === 0) {
         creep.memory.FreighterWorking = false;
-        if(creep.memory.remoteFreighting || creep.memory.remoteReturning) {
-            clearRemoteReturnMemory(creep);
+        if(creep.memory.freighterJob === 'remote' || creep.memory.freighterJob === 'remoteDelivery') {
+            RemotePlanner.clearRemoteFreighterMemory(creep);
         } else {
             clearPickupMemory(creep);
         }
@@ -68,7 +69,11 @@ function updateWorkingState(creep) {
      */
     if(!creep.memory.FreighterWorking && creep.store.getFreeCapacity(RESOURCE_ENERGY) === 0) {
         creep.memory.FreighterWorking = true;
-        clearPickupMemory(creep);
+        if(creep.memory.freighterJob === 'remote') {
+            finishRemotePickup(creep);
+        } else {
+            clearPickupMemory(creep);
+        }
     }
 }
 
@@ -78,67 +83,58 @@ function collectEnergy(creep) {
      * to it. A non-visible remote target is not treated as invalid until the
      * Freighter actually has room vision and can prove it disappeared or emptied.
      */
-    if(creep.memory.remoteFreighting) {
+    var hadRemoteJob = creep.memory.freighterJob === 'remote';
+
+    if(hadRemoteJob) {
         if(handleRemoteCollection(creep)) {
             return;
         }
+    }
 
-        var replacementRemotePickup = RemotePlanner.getBestRemotePickupForFreighter(creep);
-        if(replacementRemotePickup) {
-            RemotePlanner.claimRemotePickupTarget(creep, replacementRemotePickup);
-            handleRemoteCollection(creep);
-            return;
-        }
-
-        if(creep.store[RESOURCE_ENERGY] > 0) {
-            creep.memory.FreighterWorking = true;
-            deliverRemoteEnergy(creep);
-            return;
-        }
-
-        moveTowardHomeRoom(creep);
+    if(hadRemoteJob && creep.store[RESOURCE_ENERGY] > 0) {
+        creep.memory.FreighterWorking = true;
+        creep.memory.freighterJob = 'remoteDelivery';
+        deliverRemoteEnergy(creep);
         return;
     }
 
-    if(creep.memory.remoteFreightingWanted) {
-        /*
-         * Remote-wanted Freighters count as remote hauling capacity, so they try
-         * remote work before local crumbs. If no remote target is ready, the flag
-         * stays and local pickup can be used only as temporary fallback work.
-         */
-        var wantedRemotePickup = RemotePlanner.getBestRemotePickupForFreighter(creep);
-
-        if(wantedRemotePickup) {
-            RemotePlanner.claimRemotePickupTarget(creep, wantedRemotePickup);
-            handleRemoteCollection(creep);
-            return;
-        }
-    }
-
-    /*
-     * Normal Freighters still prefer local hauling first. Remote-wanted
-     * Freighters reach this block only after no remote pickup was available.
-     */
     var target = getRememberedPickupTarget(creep);
-
-    if(!target) {
-        target = findBestDroppedEnergyTarget(creep);
-
-        if(!target) {
-            target = findBestSourceContainerTarget(creep);
-        }
-    }
 
     if(target) {
         collectFromTarget(creep, target);
         return;
     }
 
+    if(homeRoomNeedsUrgentEnergy(creep)) {
+        if(creep.room.name !== creep.memory.homeRoom) {
+            moveTowardHomeRoom(creep);
+            return;
+        }
+
+        target = findBestLocalPickupTarget(creep);
+
+        if(target) {
+            collectFromTarget(creep, target);
+            return;
+        }
+    }
+
     var remotePickup = RemotePlanner.getBestRemotePickupForFreighter(creep);
 
-    if(remotePickup) {
-        RemotePlanner.claimRemotePickupTarget(creep, remotePickup);
+    if(remotePickup && RemotePlanner.claimRemotePickupTarget(creep, remotePickup)) {
         handleRemoteCollection(creep);
+        return;
+    }
+
+    if(creep.room.name !== creep.memory.homeRoom) {
+        moveTowardHomeRoom(creep);
+        return;
+    }
+
+    target = findBestLocalPickupTarget(creep);
+
+    if(target) {
+        collectFromTarget(creep, target);
         return;
     }
 
@@ -146,11 +142,11 @@ function collectEnergy(creep) {
 }
 
 function handleRemoteCollection(creep) {
-    if(!creep.memory.remoteFreighting) {
+    if(creep.memory.freighterJob !== 'remote') {
         return false;
     }
 
-    var remoteRoomName = creep.memory.freighterRemoteRoom;
+    var remoteRoomName = creep.memory.pickupRoom;
     var remoteRoom = remoteRoomName ? Game.rooms[remoteRoomName] : null;
 
     if(remoteRoom && isRemoteRoomDangerous(remoteRoom)) {
@@ -159,30 +155,29 @@ function handleRemoteCollection(creep) {
          * before clearing remote pickup memory. This keeps the home room saved
          * and prevents the Freighter from forgetting to bring energy home.
          */
-        var homeRoomName = creep.memory.freighterHomeRoom || creep.memory.homeRoom;
-
         if(creep.store[RESOURCE_ENERGY] > 0) {
             creep.memory.FreighterWorking = true;
-            creep.memory.remoteReturning = true;
-            creep.memory.homeRoom = homeRoomName || creep.memory.homeRoom;
-            creep.memory.freighterHomeRoom = homeRoomName || creep.memory.homeRoom;
-            clearRemotePickupOnly(creep);
+            finishRemotePickup(creep);
             deliverRemoteEnergy(creep);
             return true;
         }
 
-        clearRemoteReturnMemory(creep);
+        RemotePlanner.clearRemoteFreighterMemory(creep);
         moveTowardHomeRoom(creep);
         return true;
     }
 
-    var targetId = creep.memory.freighterPickupTargetId;
+    if(!RemotePlanner.refreshRemoteFreighterReservation(creep)) {
+        RemotePlanner.clearRemoteFreighterMemory(creep);
+        return false;
+    }
+
+    var targetId = creep.memory.pickupTargetId;
     var target = targetId ? Game.getObjectById(targetId) : null;
 
     if(target) {
         if(!isValidEnergyPickupTarget(target)) {
-            RemotePlanner.clearRemoteFreighterMemory(creep);
-            return false;
+            return handleRemoteTargetGone(creep);
         }
 
         collectFromRemoteTarget(creep, target);
@@ -194,9 +189,8 @@ function handleRemoteCollection(creep) {
      * really gone. If the room is not visible, keep traveling toward the remote
      * source/path instead of clearing useful memory too early.
      */
-    if(remoteRoom && creep.room.name === remoteRoomName) {
-        RemotePlanner.clearRemoteFreighterMemory(creep);
-        return false;
+    if(remoteRoom) {
+        return handleRemoteTargetGone(creep);
     }
 
     return RemotePlanner.moveFreighterToRemotePickup(creep);
@@ -204,15 +198,15 @@ function handleRemoteCollection(creep) {
 
 
 function getRememberedPickupTarget(creep) {
-    if(creep.memory.remoteFreighting) {
+    if(creep.memory.freighterJob !== 'local') {
         return null;
     }
 
-    if(!creep.memory.freighterPickupTargetId) {
+    if(!creep.memory.pickupTargetId) {
         return null;
     }
 
-    var target = Game.getObjectById(creep.memory.freighterPickupTargetId);
+    var target = Game.getObjectById(creep.memory.pickupTargetId);
 
     if(!isValidEnergyPickupTarget(target)) {
         clearPickupMemory(creep);
@@ -223,50 +217,109 @@ function getRememberedPickupTarget(creep) {
 }
 
 function clearPickupMemory(creep) {
+    if(creep.memory.freighterJob === 'remote' || creep.memory.freighterJob === 'remoteDelivery') {
+        RemotePlanner.clearRemoteFreighterMemory(creep);
+        return;
+    }
+
+    delete creep.memory.freighterJob;
+    delete creep.memory.pickupRoom;
+    delete creep.memory.pickupSourceId;
+    delete creep.memory.pickupTargetId;
+    delete creep.memory.pickupTargetType;
+
+    /* Remove local pickup fields written by the previous implementation. */
     delete creep.memory.freighterPickupTargetId;
     delete creep.memory.freighterPickupSourceId;
     delete creep.memory.freighterPickupType;
 }
 
-function clearRemotePickupOnly(creep) {
-    /*
-     * Used when a remote Freighter must return home with partial cargo. We clear
-     * only the pickup reservation, not the home-return state, so next tick still
-     * uses deliverRemoteEnergy() instead of local delivery logic.
-     */
-    var homeRoomName = creep.memory.freighterHomeRoom || creep.memory.homeRoom;
+function finishRemotePickup(creep) {
+    RemotePlanner.releaseRemoteFreighterReservation(creep);
+    delete creep.memory.pickupRoom;
+    delete creep.memory.pickupSourceId;
+    delete creep.memory.pickupTargetId;
+    delete creep.memory.pickupTargetType;
+    delete creep.memory.freighterReservedCarry;
+    delete creep.memory.freighterReservedUntil;
+    creep.memory.freighterJob = 'remoteDelivery';
+}
 
-    if(
-        homeRoomName &&
-        Memory.rooms &&
-        Memory.rooms[homeRoomName] &&
-        Memory.rooms[homeRoomName].remotePlanner &&
-        Memory.rooms[homeRoomName].remotePlanner.remoteFreighterAssignments
-    ) {
-        delete Memory.rooms[homeRoomName].remotePlanner.remoteFreighterAssignments[creep.name];
+function handleRemoteTargetGone(creep) {
+    if(creep.store[RESOURCE_ENERGY] > 0) {
+        creep.memory.FreighterWorking = true;
+        finishRemotePickup(creep);
+        deliverRemoteEnergy(creep);
+        return true;
     }
 
+    RemotePlanner.clearRemoteFreighterMemory(creep);
+    return false;
+}
+
+function findBestLocalPickupTarget(creep) {
+    var target = findBestDroppedEnergyTarget(creep);
+
+    if(!target) {
+        target = findBestSourceContainerTarget(creep);
+    }
+
+    return target;
+}
+
+function homeRoomNeedsUrgentEnergy(creep) {
+    var homeRoom = Game.rooms[creep.memory.homeRoom];
+
+    if(!homeRoom) {
+        return false;
+    }
+
+    if(homeRoom.energyAvailable < homeRoom.energyCapacityAvailable) {
+        return true;
+    }
+
+    var lowTower = homeRoom.find(FIND_MY_STRUCTURES, {
+        filter: function(structure) {
+            if(structure.structureType !== STRUCTURE_TOWER || !structure.store) {
+                return false;
+            }
+
+            var capacity = structure.store.getCapacity(RESOURCE_ENERGY) || 0;
+            return capacity > 0 && structure.store.getUsedCapacity(RESOURCE_ENERGY) < capacity / 2;
+        }
+    });
+
+    return lowTower.length > 0;
+}
+
+function normalizeFreighterMemory(creep) {
+    if(!creep.memory.homeRoom) {
+        creep.memory.homeRoom = creep.memory.freighterHomeRoom || creep.room.name;
+    }
+
+    if(!creep.memory.freighterJob && creep.memory.remoteFreighting) {
+        creep.memory.freighterJob = creep.memory.FreighterWorking ? 'remoteDelivery' : 'remote';
+        creep.memory.pickupRoom = creep.memory.freighterRemoteRoom;
+        creep.memory.pickupSourceId = creep.memory.freighterPickupSourceId;
+        creep.memory.pickupTargetId = creep.memory.freighterPickupTargetId;
+        creep.memory.pickupTargetType = creep.memory.freighterPickupType;
+    }
+    else if(!creep.memory.freighterJob && creep.memory.freighterPickupTargetId) {
+        creep.memory.freighterJob = 'local';
+        creep.memory.pickupRoom = creep.room.name;
+        creep.memory.pickupSourceId = creep.memory.freighterPickupSourceId;
+        creep.memory.pickupTargetId = creep.memory.freighterPickupTargetId;
+        creep.memory.pickupTargetType = creep.memory.freighterPickupType;
+    }
+
+    delete creep.memory.remoteFreighting;
+    delete creep.memory.remoteFreightingWanted;
+    delete creep.memory.remoteReturning;
+    delete creep.memory.freighterHomeRoom;
     delete creep.memory.freighterRemoteRoom;
     delete creep.memory.freighterPickupTargetId;
     delete creep.memory.freighterPickupSourceId;
     delete creep.memory.freighterPickupType;
-}
-
-function clearRemoteReturnMemory(creep) {
-    /*
-     * Fully clear remote return state after energy has been delivered or when an
-     * empty remote Freighter is no longer assigned. Keep remoteFreightingWanted:
-     * spawn-demand Freighters should keep preferring future remote work.
-     */
-    var keepRemoteWanted = creep.memory.remoteFreightingWanted === true;
-
-    clearRemotePickupOnly(creep);
-    delete creep.memory.remoteFreighting;
-    delete creep.memory.remoteReturning;
-
-    if(!keepRemoteWanted) {
-        delete creep.memory.freighterHomeRoom;
-    }
 }
 
 function isValidEnergyPickupTarget(target) {
@@ -559,7 +612,7 @@ function isBetterContainerOption(creep, candidate, currentBest, reservations) {
 }
 
 function rememberPickupTarget(creep, target, sourceId, pickupType) {
-    if(creep.memory.remoteFreighting) {
+    if(creep.memory.freighterJob === 'remote' || creep.memory.freighterJob === 'remoteDelivery') {
         RemotePlanner.clearRemoteFreighterMemory(creep);
     }
 
@@ -568,9 +621,12 @@ function rememberPickupTarget(creep, target, sourceId, pickupType) {
      * "this Freighter is currently heading to this target/source." Other
      * Freighters read those intents when spreading themselves across work.
      */
-    creep.memory.freighterPickupTargetId = target.id;
-    creep.memory.freighterPickupSourceId = sourceId || target.id;
-    creep.memory.freighterPickupType = pickupType;
+    creep.memory.freighterJob = 'local';
+    creep.memory.pickupRoom = creep.room.name;
+    creep.memory.pickupTargetId = target.id;
+    creep.memory.pickupSourceId = sourceId || target.id;
+    creep.memory.pickupTargetType = pickupType;
+    creep.memory.homeRoom = creep.memory.homeRoom || creep.room.name;
 }
 
 function buildFreighterReservations(creep) {
@@ -612,7 +668,7 @@ function buildFreighterReservations(creep) {
             continue;
         }
 
-        if(otherCreep.memory.remoteFreighting) {
+        if(otherCreep.memory.freighterJob !== 'local') {
             continue;
         }
 
@@ -624,12 +680,12 @@ function buildFreighterReservations(creep) {
             continue;
         }
 
-        if(otherCreep.room.name !== creep.room.name) {
+        if(otherCreep.memory.pickupRoom !== creep.room.name) {
             continue;
         }
 
-        var targetId = otherCreep.memory.freighterPickupTargetId;
-        var sourceId = otherCreep.memory.freighterPickupSourceId;
+        var targetId = otherCreep.memory.pickupTargetId;
+        var sourceId = otherCreep.memory.pickupSourceId;
 
         if(!targetId) {
             continue;
@@ -759,11 +815,11 @@ function collectFromRemoteTarget(creep, target) {
         return;
     }
 
-    RemotePlanner.clearRemoteFreighterMemory(creep);
+    handleRemoteTargetGone(creep);
 }
 
 function deliverRemoteEnergy(creep) {
-    var homeRoomName = creep.memory.freighterHomeRoom || creep.memory.homeRoom;
+    var homeRoomName = creep.memory.homeRoom;
 
     if(homeRoomName && creep.room.name !== homeRoomName) {
         travel.moveToRoom(creep, homeRoomName, {
@@ -786,7 +842,7 @@ function deliverRemoteEnergy(creep) {
 
     if(result === OK) {
         if(creep.store[RESOURCE_ENERGY] === 0) {
-            clearRemoteReturnMemory(creep);
+            RemotePlanner.clearRemoteFreighterMemory(creep);
         }
         return;
     }
@@ -801,11 +857,13 @@ function deliverRemoteEnergy(creep) {
         return;
     }
 
-    clearRemoteReturnMemory(creep);
+    if(result !== ERR_FULL) {
+        RemotePlanner.clearRemoteFreighterMemory(creep);
+    }
 }
 
 function moveTowardHomeRoom(creep) {
-    var homeRoomName = creep.memory.freighterHomeRoom || creep.memory.homeRoom;
+    var homeRoomName = creep.memory.homeRoom;
 
     if(!homeRoomName || creep.room.name === homeRoomName) {
         return;

@@ -12,6 +12,8 @@ var utilityCreep = require('utility.Creep');
 var utilityTravelCreep = require('utility.Travel.Creep');
 var RemotePlanner = require('Planner.Remote');
 
+var SOURCE_HAUL_SCAN_INTERVAL = 5;
+
 var roleExtractor = {
 
     /** @param {Creep} creep **/
@@ -64,6 +66,7 @@ var roleExtractor = {
          */
         var miningSeat = utilityCreep.getAssignedMiningSeat(creep, source);
         setExtractorWorkingArea(creep, source);
+        updateSourceHaulMemory(creep, source, false);
 
         if (miningSeat && !isCreepOnPosition(creep, miningSeat)) {
             /*
@@ -93,7 +96,9 @@ var roleExtractor = {
         // When full, prefer a nearby container/link. If none exists, drop energy
         // so a Trucker can collect it instead of letting the miner stand idle.
         if(!offloadEnergy(creep, source)) {
-            creep.drop(RESOURCE_ENERGY);
+            if(creep.drop(RESOURCE_ENERGY) === OK) {
+                markSourceHaulForRescan(creep, source);
+            }
         }
     }
 };
@@ -303,13 +308,177 @@ function offloadEnergy(creep, source) {
          * transfer moves energy from the creep into the structure store.
          * Returning true tells run() that offloading was handled this tick.
          */
-        if(creep.transfer(nearbyStores[0], RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
+        var transferTarget = nearbyStores[0];
+        var transferResult = creep.transfer(transferTarget, RESOURCE_ENERGY);
+
+        if(transferResult === ERR_NOT_IN_RANGE) {
             utilityTravelCreep.move(creep, nearbyStores[0], {visualizePathStyle: {stroke: '#ffffff'}});
+        }
+        else if(transferResult === OK) {
+            recordSourceContainerHaul(creep, source, transferTarget);
         }
         return true;
     }
 
     return false;
+}
+
+function updateSourceHaulMemory(creep, source, force) {
+    if (!creep || !source || !source.pos) {
+        return;
+    }
+
+    var homeRoomName = creep.memory.homeRoom || creep.room.name;
+    var haul = utility.ensureSourceHaulMemory(source.pos.roomName, source.id, homeRoomName);
+
+    if (!haul) {
+        return;
+    }
+
+    if (!force && haul.lastSeen && Game.time - haul.lastSeen < SOURCE_HAUL_SCAN_INTERVAL) {
+        return;
+    }
+
+    var options = [];
+    var droppedEnergy = source.pos.findInRange(FIND_DROPPED_RESOURCES, 3, {
+        filter: function(resource) {
+            return resource.resourceType === RESOURCE_ENERGY && resource.amount > 0;
+        }
+    });
+    var sourceContainers = source.pos.findInRange(FIND_STRUCTURES, 2, {
+        filter: function(structure) {
+            return structure.structureType === STRUCTURE_CONTAINER &&
+                structure.store &&
+                getStoredEnergy(structure) > 0;
+        }
+    });
+
+    for (var dropIndex = 0; dropIndex < droppedEnergy.length; dropIndex++) {
+        options.push({
+            targetId: droppedEnergy[dropIndex].id,
+            targetType: 'dropped',
+            amount: droppedEnergy[dropIndex].amount
+        });
+    }
+
+    for (var containerIndex = 0; containerIndex < sourceContainers.length; containerIndex++) {
+        options.push({
+            targetId: sourceContainers[containerIndex].id,
+            targetType: 'container',
+            amount: getStoredEnergy(sourceContainers[containerIndex])
+        });
+    }
+
+    var best = null;
+    var current = null;
+
+    for (var optionIndex = 0; optionIndex < options.length; optionIndex++) {
+        var option = options[optionIndex];
+
+        if (option.targetId === haul.targetId) {
+            current = option;
+        }
+
+        if (!best || option.amount > best.amount) {
+            best = option;
+        }
+    }
+
+    /*
+     * Do not switch a live reservation to a different pile while a Freighter is
+     * already traveling. Once that reservation ends, the largest nearby target
+     * becomes the advertised job on the next scan.
+     */
+    if (current && isLivingHaulReservation(haul)) {
+        best = current;
+    }
+
+    if (!best) {
+        clearObservedHaulTarget(haul);
+        haul.lastSeen = Game.time;
+        haul.homeRoom = homeRoomName;
+        return;
+    }
+
+    if (haul.targetId !== best.targetId) {
+        clearHaulReservation(haul);
+    }
+
+    haul.targetId = best.targetId;
+    haul.targetType = best.targetType;
+    haul.amount = best.amount;
+    haul.lastSeen = Game.time;
+    haul.homeRoom = homeRoomName;
+}
+
+function recordSourceContainerHaul(creep, source, target) {
+    var homeRoomName = creep.memory.homeRoom || creep.room.name;
+    var haul = utility.ensureSourceHaulMemory(source.pos.roomName, source.id, homeRoomName);
+
+    if (!haul) {
+        return;
+    }
+
+    if (target.structureType !== STRUCTURE_CONTAINER) {
+        haul.lastSeen = 0;
+        return;
+    }
+
+    if (haul.targetId !== target.id && isLivingHaulReservation(haul)) {
+        haul.lastSeen = 0;
+        return;
+    }
+
+    if (haul.targetId !== target.id) {
+        clearHaulReservation(haul);
+    }
+
+    haul.targetId = target.id;
+    haul.targetType = 'container';
+    haul.amount = getStoredEnergy(target) + (creep.store[RESOURCE_ENERGY] || 0);
+    haul.lastSeen = Game.time;
+    haul.homeRoom = homeRoomName;
+}
+
+function markSourceHaulForRescan(creep, source) {
+    var homeRoomName = creep.memory.homeRoom || creep.room.name;
+    var haul = utility.ensureSourceHaulMemory(source.pos.roomName, source.id, homeRoomName);
+
+    if (haul) {
+        haul.lastSeen = 0;
+    }
+}
+
+function isLivingHaulReservation(haul) {
+    return haul &&
+        haul.reservedBy &&
+        haul.reservedUntil >= Game.time &&
+        Game.creeps[haul.reservedBy];
+}
+
+function clearObservedHaulTarget(haul) {
+    haul.targetId = null;
+    haul.targetType = null;
+    haul.amount = 0;
+    clearHaulReservation(haul);
+}
+
+function clearHaulReservation(haul) {
+    haul.reservedBy = null;
+    haul.reservedUntil = 0;
+    haul.reservedCarry = 0;
+}
+
+function getStoredEnergy(target) {
+    if (!target || !target.store) {
+        return 0;
+    }
+
+    if (typeof target.store.getUsedCapacity === 'function') {
+        return target.store.getUsedCapacity(RESOURCE_ENERGY) || 0;
+    }
+
+    return target.store[RESOURCE_ENERGY] || 0;
 }
 
 module.exports = roleExtractor;

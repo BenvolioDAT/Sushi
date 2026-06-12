@@ -13,12 +13,12 @@
  */
 
 var travel = require('utility.Travel.Creep');
+var utility = require('utility');
 
 var PATH_VERSION = 1;
 var HEAVY_PLAN_INTERVAL = 75;
 var RESCORE_INTERVAL = 1000;
 var DEBUG_INTERVAL = 500;
-var FREIGHTER_TARGET_SCAN_INTERVAL = 7;
 var LOW_BUCKET_SKIP = 1000;
 var CPU_BUFFER = 3;
 var MAX_ACTIVE_REMOTE_SOURCES = 4;
@@ -30,6 +30,8 @@ var CONTAINER_OR_DROP_LOSS = 0.05;
 var ROAD_REPAIR_COST_PER_TILE = 0.003;
 var MAX_PATH_ROOMS = 8;
 var MAX_PATH_OPS = 12000;
+var HAUL_MEMORY_STALE_TICKS = 25;
+var HAUL_RESERVATION_TICKS = 25;
 
 function run() {
     if (!Memory.rooms) {
@@ -152,19 +154,11 @@ function ensurePlannerMemory(homeRoomName) {
     if (!planner.remotes) {
         planner.remotes = {};
     }
-    if (!planner.freighterTargets) {
-        planner.freighterTargets = [];
-    }
-    if (!planner.remoteFreighterAssignments) {
-        planner.remoteFreighterAssignments = {};
-    }
     if (planner.pathVersion !== PATH_VERSION) {
         planner.pathVersion = PATH_VERSION;
         planner.activeSourceIds = [];
         planner.sourceInfos = {};
         planner.remotes = {};
-        planner.freighterTargets = [];
-        planner.remoteFreighterAssignments = {};
         clearHeapPathCache(homeRoomName);
     }
 
@@ -1542,60 +1536,85 @@ function getBestRemotePickupForFreighter(creep) {
         return null;
     }
 
-    var homeRoomName = creep.memory.freighterHomeRoom || creep.memory.homeRoom || creep.room.name;
-    var planner = ensurePlannerMemory(homeRoomName);
-
-    refreshRemoteFreighterTargets(homeRoomName);
-
-    var reservations = buildRemoteFreighterReservations(homeRoomName, creep.name);
+    var homeRoomName = creep.memory.homeRoom || creep.room.name;
+    var activeSources = getActiveRemoteSourcesForHome(homeRoomName);
     var best = null;
 
-    for (var i = 0; i < planner.freighterTargets.length; i++) {
-        var target = planner.freighterTargets[i];
+    for (var i = 0; i < activeSources.length; i++) {
+        var sourceInfo = activeSources[i];
+        var haul = utility.ensureSourceHaulMemory(sourceInfo.roomName, sourceInfo.sourceId, homeRoomName);
 
-        if (!target || target.homeRoomName !== homeRoomName) {
+        if (!haul || !haul.targetId || haul.amount <= 0) {
             continue;
         }
 
-        var visibleRoom = Game.rooms[target.remoteRoomName];
-        if (visibleRoom) {
-            var liveTarget = Game.getObjectById(target.targetId);
-            var liveAmount = getObjectEnergyAmount(liveTarget);
+        if (haul.homeRoom && haul.homeRoom !== homeRoomName) {
+            continue;
+        }
 
-            if (!liveTarget || liveAmount <= 0) {
+        if (!haul.lastSeen || Game.time - haul.lastSeen > HAUL_MEMORY_STALE_TICKS) {
+            continue;
+        }
+
+        syncSourceHaulReservation(sourceInfo.roomName, sourceInfo.sourceId, haul, creep.name);
+
+        var visibleRoom = Game.rooms[sourceInfo.roomName];
+        if (visibleRoom) {
+            if (hasInvaderCore(visibleRoom) || hasSeriousDanger(visibleRoom)) {
                 continue;
             }
 
-            /*
-             * The pickup cache refreshes only every few ticks. When the room is
-             * visible, trust the live object so Freighters do not keep reselecting
-             * a dead or already-empty target from stale cache data.
-             */
-            target.amount = liveAmount;
-            target.packedPos = packCoord(liveTarget.pos);
+            var liveTarget = Game.getObjectById(haul.targetId);
+            var liveAmount = getObjectEnergyAmount(liveTarget);
+
+            if (!liveTarget || liveAmount <= 0) {
+                clearSourceHaulTarget(haul);
+                haul.lastSeen = Game.time;
+                continue;
+            }
+
+            haul.amount = liveAmount;
+            haul.lastSeen = Game.time;
         }
 
-        var sourceInfo = planner.sourceInfos[target.sourceId];
-        if (!sourceInfo || !sourceInfo.active || !shouldUseRemoteSource(homeRoomName, target.sourceId)) {
+        if (!shouldUseRemoteSource(homeRoomName, sourceInfo.sourceId)) {
             continue;
         }
 
-        var reservedEnergy = reservations.byTargetEnergy[target.targetId] || 0;
-        var remainingEnergy = target.amount - reservedEnergy;
+        /*
+         * A reservation says how much empty carry is already traveling to this
+         * source. Another Freighter may join only when the known energy is larger
+         * than that reserved carry, which lets large piles use multiple haulers.
+         */
+        var activeReservation = haul.reservedBy &&
+            haul.reservedBy !== creep.name &&
+            haul.reservedUntil >= Game.time &&
+            Game.creeps[haul.reservedBy];
+        var reservedCarry = activeReservation ? haul.reservedCarry : 0;
+        var remainingEnergy = haul.amount - reservedCarry;
 
         if (remainingEnergy <= 0) {
             continue;
         }
 
-        target.remainingEnergy = remainingEnergy;
-        target.targetAssignedCount = reservations.byTargetCount[target.targetId] || 0;
-        target.sourceAssignedCount = reservations.bySourceCount[target.sourceId] || 0;
-        target.estimatedDistance = estimateFreighterDistance(creep, homeRoomName, target);
-        target.activeSourceScore = sourceInfo.score || 0;
-        target.pickupScore = scoreRemotePickupTarget(target);
+        var estimatedDistance = sourceInfo.distance ||
+            (Game.map.getRoomLinearDistance(creep.room.name, sourceInfo.roomName) * 50);
+        var pickupScore = remainingEnergy + ((sourceInfo.score || 0) * 100) - estimatedDistance;
+        var candidate = {
+            targetId: haul.targetId,
+            type: haul.targetType,
+            amount: haul.amount,
+            remainingEnergy: remainingEnergy,
+            sourceId: sourceInfo.sourceId,
+            remoteRoomName: sourceInfo.roomName,
+            pickupRoom: sourceInfo.roomName,
+            homeRoomName: homeRoomName,
+            estimatedDistance: estimatedDistance,
+            pickupScore: pickupScore
+        };
 
-        if (!best || isBetterRemotePickup(target, best)) {
-            best = copyRemotePickup(target);
+        if (!best || candidate.pickupScore > best.pickupScore) {
+            best = candidate;
         }
     }
 
@@ -1608,22 +1627,36 @@ function claimRemotePickupTarget(creep, pickupInfo) {
     }
 
     var homeRoomName = pickupInfo.homeRoomName || creep.memory.homeRoom || creep.room.name;
-    var planner = ensurePlannerMemory(homeRoomName);
+    var pickupRoom = pickupInfo.pickupRoom || pickupInfo.remoteRoomName;
+    var haul = utility.ensureSourceHaulMemory(pickupRoom, pickupInfo.sourceId, homeRoomName);
 
-    creep.memory.remoteFreighting = true;
-    creep.memory.freighterHomeRoom = homeRoomName;
-    creep.memory.freighterRemoteRoom = pickupInfo.remoteRoomName;
-    creep.memory.freighterPickupTargetId = pickupInfo.targetId;
-    creep.memory.freighterPickupSourceId = pickupInfo.sourceId;
-    creep.memory.freighterPickupType = pickupInfo.type;
+    if (!haul || haul.targetId !== pickupInfo.targetId) {
+        return false;
+    }
 
-    planner.remoteFreighterAssignments[creep.name] = {
-        targetId: pickupInfo.targetId,
-        sourceId: pickupInfo.sourceId,
-        remoteRoomName: pickupInfo.remoteRoomName,
-        amount: Math.min(creep.store.getFreeCapacity(RESOURCE_ENERGY), pickupInfo.remainingEnergy || pickupInfo.amount || 0),
-        tick: Game.time
-    };
+    releaseRemoteFreighterReservation(creep);
+    syncSourceHaulReservation(pickupRoom, pickupInfo.sourceId, haul, creep.name);
+
+    var remainingEnergy = haul.amount - haul.reservedCarry;
+    var reservedCarry = Math.min(
+        creep.store.getFreeCapacity(RESOURCE_ENERGY),
+        Math.max(0, remainingEnergy)
+    );
+
+    if (reservedCarry <= 0) {
+        return false;
+    }
+
+    creep.memory.freighterJob = 'remote';
+    creep.memory.pickupRoom = pickupRoom;
+    creep.memory.pickupSourceId = pickupInfo.sourceId;
+    creep.memory.pickupTargetId = pickupInfo.targetId;
+    creep.memory.pickupTargetType = pickupInfo.type;
+    creep.memory.homeRoom = homeRoomName;
+    creep.memory.freighterReservedCarry = reservedCarry;
+    creep.memory.freighterReservedUntil = Game.time + HAUL_RESERVATION_TICKS;
+
+    syncSourceHaulReservation(pickupRoom, pickupInfo.sourceId, haul, null);
 
     return true;
 }
@@ -1633,11 +1666,17 @@ function clearRemoteFreighterMemory(creep) {
         return;
     }
 
-    var homeRoomName = creep.memory.freighterHomeRoom || creep.memory.homeRoom;
-    if (homeRoomName && Memory.rooms && Memory.rooms[homeRoomName] && Memory.rooms[homeRoomName].remotePlanner) {
-        delete Memory.rooms[homeRoomName].remotePlanner.remoteFreighterAssignments[creep.name];
-    }
+    releaseRemoteFreighterReservation(creep);
 
+    delete creep.memory.freighterJob;
+    delete creep.memory.pickupRoom;
+    delete creep.memory.pickupSourceId;
+    delete creep.memory.pickupTargetId;
+    delete creep.memory.pickupTargetType;
+    delete creep.memory.freighterReservedCarry;
+    delete creep.memory.freighterReservedUntil;
+
+    /* Remove fields written by the previous remote Freighter implementation. */
     delete creep.memory.remoteFreighting;
     delete creep.memory.freighterHomeRoom;
     delete creep.memory.freighterRemoteRoom;
@@ -1646,12 +1685,126 @@ function clearRemoteFreighterMemory(creep) {
     delete creep.memory.freighterPickupType;
 }
 
+function refreshRemoteFreighterReservation(creep) {
+    if (!creep || !creep.memory || creep.memory.freighterJob !== 'remote') {
+        return false;
+    }
+
+    var haul = utility.ensureSourceHaulMemory(
+        creep.memory.pickupRoom,
+        creep.memory.pickupSourceId,
+        creep.memory.homeRoom
+    );
+
+    if (!haul || haul.targetId !== creep.memory.pickupTargetId) {
+        return false;
+    }
+
+    var freeCapacity = creep.store.getFreeCapacity(RESOURCE_ENERGY);
+
+    if (freeCapacity <= 0) {
+        releaseRemoteFreighterReservation(creep);
+        return false;
+    }
+
+    creep.memory.freighterReservedCarry = Math.min(
+        creep.memory.freighterReservedCarry || freeCapacity,
+        freeCapacity
+    );
+    creep.memory.freighterReservedUntil = Game.time + HAUL_RESERVATION_TICKS;
+    syncSourceHaulReservation(creep.memory.pickupRoom, creep.memory.pickupSourceId, haul, null);
+    return true;
+}
+
+function releaseRemoteFreighterReservation(creep) {
+    if (!creep || !creep.memory || !creep.memory.pickupRoom || !creep.memory.pickupSourceId) {
+        return;
+    }
+
+    var haul = utility.ensureSourceHaulMemory(
+        creep.memory.pickupRoom,
+        creep.memory.pickupSourceId,
+        creep.memory.homeRoom
+    );
+
+    if (haul) {
+        syncSourceHaulReservation(creep.memory.pickupRoom, creep.memory.pickupSourceId, haul, creep.name);
+    }
+}
+
+function syncSourceHaulReservation(roomName, sourceId, haul, skipCreepName) {
+    var reservedBy = null;
+    var reservedUntil = 0;
+    var reservedCarry = 0;
+
+    /*
+     * Rebuild the source reservation from living Freighters. This is deliberately
+     * simple: dead creeps and expired claims disappear automatically, and clearing
+     * one Freighter never erases another Freighter's share of a large haul.
+     */
+    for (var creepName in Game.creeps) {
+        if (!Game.creeps.hasOwnProperty(creepName) || creepName === skipCreepName) {
+            continue;
+        }
+
+        var other = Game.creeps[creepName];
+
+        if (!other || !other.memory || other.memory.role !== 'Freighter') {
+            continue;
+        }
+
+        if (other.memory.freighterJob !== 'remote' || other.memory.FreighterWorking) {
+            continue;
+        }
+
+        if (other.memory.pickupRoom !== roomName || other.memory.pickupSourceId !== sourceId) {
+            continue;
+        }
+
+        if (other.memory.pickupTargetId !== haul.targetId) {
+            continue;
+        }
+
+        var otherUntil = other.memory.freighterReservedUntil || 0;
+        if (otherUntil < Game.time) {
+            continue;
+        }
+
+        var otherCarry = other.memory.freighterReservedCarry ||
+            other.store.getFreeCapacity(RESOURCE_ENERGY);
+
+        if (otherCarry <= 0) {
+            continue;
+        }
+
+        if (!reservedBy) {
+            reservedBy = other.name;
+        }
+
+        reservedCarry += otherCarry;
+        reservedUntil = Math.max(reservedUntil, otherUntil);
+    }
+
+    haul.reservedBy = reservedBy;
+    haul.reservedUntil = reservedUntil;
+    haul.reservedCarry = reservedCarry;
+}
+
+function clearSourceHaulTarget(haul) {
+    haul.targetId = null;
+    haul.targetType = null;
+    haul.amount = 0;
+    haul.reservedBy = null;
+    haul.reservedUntil = 0;
+    haul.reservedCarry = 0;
+}
+
 function getHomeDeliveryTarget(creep) {
     if (!creep || !creep.memory) {
         return null;
     }
 
-    var homeRoomName = creep.memory.freighterHomeRoom || creep.memory.homeRoom || creep.room.name;
+    var homeRoomName = creep.memory.homeRoom || creep.room.name;
     var homeRoom = Game.rooms[homeRoomName];
 
     if (!homeRoom) {
@@ -1696,7 +1849,7 @@ function getHomeDeliveryTarget(creep) {
 }
 
 function getBestRemoteRoomForFreighter(creep) {
-    var homeRoomName = creep && creep.memory ? (creep.memory.freighterHomeRoom || creep.memory.homeRoom || creep.room.name) : null;
+    var homeRoomName = creep && creep.memory ? (creep.memory.homeRoom || creep.room.name) : null;
     if (!homeRoomName) {
         return null;
     }
@@ -1723,10 +1876,10 @@ function moveFreighterToRemotePickup(creep) {
         return false;
     }
 
-    var homeRoomName = creep.memory.freighterHomeRoom || creep.memory.homeRoom;
-    var sourceId = creep.memory.freighterPickupSourceId;
-    var remoteRoomName = creep.memory.freighterRemoteRoom;
-    var target = creep.memory.freighterPickupTargetId ? Game.getObjectById(creep.memory.freighterPickupTargetId) : null;
+    var homeRoomName = creep.memory.homeRoom;
+    var sourceId = creep.memory.pickupSourceId;
+    var remoteRoomName = creep.memory.pickupRoom;
+    var target = creep.memory.pickupTargetId ? Game.getObjectById(creep.memory.pickupTargetId) : null;
 
     if (target) {
         return travel.move(creep, target, { range: 1, visualizePathStyle: { stroke: '#ffaa00' } }) === OK;
@@ -1741,242 +1894,6 @@ function moveFreighterToRemotePickup(creep) {
     }
 
     return false;
-}
-
-function refreshRemoteFreighterTargets(homeRoomName) {
-    var planner = ensurePlannerMemory(homeRoomName);
-
-    if (
-        planner.lastFreighterTargetScan &&
-        Game.time - planner.lastFreighterTargetScan < FREIGHTER_TARGET_SCAN_INTERVAL
-    ) {
-        return;
-    }
-
-    if (!canSpendPlanningCpu()) {
-        return;
-    }
-
-    planner.lastFreighterTargetScan = Game.time;
-    planner.freighterTargets = [];
-
-    cleanupRemoteFreighterAssignmentMemory(homeRoomName);
-
-    for (var i = 0; i < planner.activeSourceIds.length; i++) {
-        var sourceId = planner.activeSourceIds[i];
-        var sourceInfo = planner.sourceInfos[sourceId];
-
-        if (!sourceInfo || !sourceInfo.active) {
-            continue;
-        }
-
-        var remoteRoom = Game.rooms[sourceInfo.roomName];
-        if (!remoteRoom || hasInvaderCore(remoteRoom) || hasSeriousDanger(remoteRoom)) {
-            continue;
-        }
-
-        addFreighterTargetsNearSource(homeRoomName, planner, remoteRoom, sourceInfo);
-    }
-}
-
-function addFreighterTargetsNearSource(homeRoomName, planner, remoteRoom, sourceInfo) {
-    var sourcePos = getRemoteSourcePosition(homeRoomName, sourceInfo.sourceId);
-
-    if (!sourcePos || sourcePos.roomName !== remoteRoom.name) {
-        return;
-    }
-
-    var structures = sourcePos.findInRange(FIND_STRUCTURES, 2, {
-        filter: function(structure) {
-            return structure.structureType === STRUCTURE_CONTAINER && getObjectEnergyAmount(structure) > 0;
-        }
-    });
-
-    for (var i = 0; i < structures.length; i++) {
-        addRemoteFreighterTarget(planner, homeRoomName, sourceInfo, structures[i], 'container', getObjectEnergyAmount(structures[i]), 80);
-    }
-
-    var drops = sourcePos.findInRange(FIND_DROPPED_RESOURCES, 3, {
-        filter: function(resource) {
-            return resource.resourceType === RESOURCE_ENERGY && resource.amount > 0;
-        }
-    });
-
-    for (var j = 0; j < drops.length; j++) {
-        addRemoteFreighterTarget(planner, homeRoomName, sourceInfo, drops[j], 'dropped', drops[j].amount, 120);
-    }
-
-    var ruins = sourcePos.findInRange(FIND_RUINS, 3, {
-        filter: function(ruin) {
-            return getObjectEnergyAmount(ruin) > 0;
-        }
-    });
-
-    for (var k = 0; k < ruins.length; k++) {
-        addRemoteFreighterTarget(planner, homeRoomName, sourceInfo, ruins[k], 'ruin', getObjectEnergyAmount(ruins[k]), 60);
-    }
-
-    var tombstones = sourcePos.findInRange(FIND_TOMBSTONES, 3, {
-        filter: function(tombstone) {
-            return getObjectEnergyAmount(tombstone) > 0;
-        }
-    });
-
-    for (var m = 0; m < tombstones.length; m++) {
-        addRemoteFreighterTarget(planner, homeRoomName, sourceInfo, tombstones[m], 'tombstone', getObjectEnergyAmount(tombstones[m]), 60);
-    }
-}
-
-function addRemoteFreighterTarget(planner, homeRoomName, sourceInfo, target, type, amount, bonus) {
-    if (!target || !target.id || amount <= 0) {
-        return;
-    }
-
-    planner.freighterTargets.push({
-        targetId: target.id,
-        type: type,
-        amount: amount,
-        sourceId: sourceInfo.sourceId,
-        remoteRoomName: sourceInfo.roomName,
-        homeRoomName: homeRoomName,
-        packedPos: packCoord(target.pos),
-        bonus: bonus || 0,
-        sourceScore: sourceInfo.score || 0,
-        tick: Game.time
-    });
-}
-
-function buildRemoteFreighterReservations(homeRoomName, skipCreepName) {
-    var reservations = {
-        byTargetCount: {},
-        byTargetEnergy: {},
-        bySourceCount: {}
-    };
-
-    for (var creepName in Game.creeps) {
-        if (!Game.creeps.hasOwnProperty(creepName) || creepName === skipCreepName) {
-            continue;
-        }
-
-        var creep = Game.creeps[creepName];
-        if (!creep || !creep.memory || creep.memory.role !== 'Freighter') {
-            continue;
-        }
-
-        if (!creep.memory.remoteFreighting || creep.memory.FreighterWorking) {
-            continue;
-        }
-
-        if ((creep.memory.freighterHomeRoom || creep.memory.homeRoom) !== homeRoomName) {
-            continue;
-        }
-
-        var targetId = creep.memory.freighterPickupTargetId;
-        var sourceId = creep.memory.freighterPickupSourceId;
-        if (!targetId) {
-            continue;
-        }
-
-        var freeCapacity = creep.store ? creep.store.getFreeCapacity(RESOURCE_ENERGY) : 0;
-        if (freeCapacity <= 0) {
-            continue;
-        }
-
-        reservations.byTargetCount[targetId] = (reservations.byTargetCount[targetId] || 0) + 1;
-        reservations.byTargetEnergy[targetId] = (reservations.byTargetEnergy[targetId] || 0) + freeCapacity;
-
-        if (sourceId) {
-            reservations.bySourceCount[sourceId] = (reservations.bySourceCount[sourceId] || 0) + 1;
-        }
-    }
-
-    return reservations;
-}
-
-function cleanupRemoteFreighterAssignmentMemory(homeRoomName) {
-    var planner = ensurePlannerMemory(homeRoomName);
-    var clean = {};
-
-    for (var creepName in planner.remoteFreighterAssignments) {
-        if (!planner.remoteFreighterAssignments.hasOwnProperty(creepName)) {
-            continue;
-        }
-
-        var creep = Game.creeps[creepName];
-        if (!creep || !creep.memory || !creep.memory.remoteFreighting) {
-            continue;
-        }
-
-        if ((creep.memory.freighterHomeRoom || creep.memory.homeRoom) !== homeRoomName) {
-            continue;
-        }
-
-        clean[creepName] = planner.remoteFreighterAssignments[creepName];
-    }
-
-    planner.remoteFreighterAssignments = clean;
-}
-
-function estimateFreighterDistance(creep, homeRoomName, target) {
-    var distance = 0;
-    if (creep && creep.pos && target.remoteRoomName) {
-        if (creep.pos.roomName === target.remoteRoomName && target.packedPos !== undefined) {
-            distance += creep.pos.getRangeTo(unpackCoord(target.packedPos, target.remoteRoomName));
-        } else {
-            distance += Game.map.getRoomLinearDistance(creep.pos.roomName, target.remoteRoomName) * 50;
-        }
-    }
-
-    if (homeRoomName && target.remoteRoomName) {
-        distance += Game.map.getRoomLinearDistance(homeRoomName, target.remoteRoomName) * 50;
-    }
-
-    return distance;
-}
-
-function scoreRemotePickupTarget(target) {
-    return (target.remainingEnergy || 0) +
-        (target.bonus || 0) +
-        ((target.activeSourceScore || target.sourceScore || 0) * 100) -
-        ((target.targetAssignedCount || 0) * 1000) -
-        ((target.sourceAssignedCount || 0) * 100) -
-        (target.estimatedDistance || 0);
-}
-
-function isBetterRemotePickup(candidate, best) {
-    if (candidate.targetAssignedCount !== best.targetAssignedCount) {
-        return candidate.targetAssignedCount < best.targetAssignedCount;
-    }
-
-    if (candidate.sourceAssignedCount !== best.sourceAssignedCount) {
-        return candidate.sourceAssignedCount < best.sourceAssignedCount;
-    }
-
-    if (candidate.remainingEnergy !== best.remainingEnergy) {
-        return candidate.remainingEnergy > best.remainingEnergy;
-    }
-
-    if (candidate.estimatedDistance !== best.estimatedDistance) {
-        return candidate.estimatedDistance < best.estimatedDistance;
-    }
-
-    return candidate.pickupScore > best.pickupScore;
-}
-
-function copyRemotePickup(target) {
-    return {
-        targetId: target.targetId,
-        type: target.type,
-        amount: target.amount,
-        remainingEnergy: target.remainingEnergy,
-        sourceId: target.sourceId,
-        remoteRoomName: target.remoteRoomName,
-        homeRoomName: target.homeRoomName,
-        packedPos: target.packedPos,
-        estimatedDistance: target.estimatedDistance,
-        activeSourceScore: target.activeSourceScore,
-        pickupScore: target.pickupScore
-    };
 }
 
 function getObjectEnergyAmount(target) {
@@ -2072,6 +1989,8 @@ module.exports = {
     getRemoteFreighterDemand: getRemoteFreighterDemand,
     getBestRemotePickupForFreighter: getBestRemotePickupForFreighter,
     claimRemotePickupTarget: claimRemotePickupTarget,
+    refreshRemoteFreighterReservation: refreshRemoteFreighterReservation,
+    releaseRemoteFreighterReservation: releaseRemoteFreighterReservation,
     clearRemoteFreighterMemory: clearRemoteFreighterMemory,
     getHomeDeliveryTarget: getHomeDeliveryTarget,
     getBestRemoteRoomForFreighter: getBestRemoteRoomForFreighter,

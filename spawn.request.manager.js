@@ -194,10 +194,6 @@ function countHealthyCreeps(roomName, role, replacementLeadTicks) {
             continue;
         }
 
-        if (role === 'Freighter' && (creep.memory.remoteFreighting || creep.memory.remoteFreightingWanted)) {
-            continue;
-        }
-
         /*
          * homeRoom tells us which room owns this creep.
          *
@@ -261,13 +257,6 @@ function countQueuedRequests(roomName, role) {
         }
 
         if (request.role === role) {
-            if (role === 'Freighter') {
-                var requestMemory = request.memory || {};
-                if (requestMemory.remoteFreightingWanted || requestMemory.remoteFreighting) {
-                    continue;
-                }
-            }
-
             count++;
         }
     }
@@ -275,81 +264,6 @@ function countQueuedRequests(roomName, role) {
     return count;
 }
 
-
-function getBodyPartCount(body, bodyPartType) {
-    var count = 0;
-
-    if (!body) {
-        return count;
-    }
-
-    for (var i = 0; i < body.length; i++) {
-        if (body[i] === bodyPartType) {
-            count++;
-        }
-    }
-
-    return count;
-}
-
-function countRemoteFreighters(roomName, replacementLeadTicks) {
-    var count = 0;
-
-    for (var creepName in Game.creeps) {
-        if (!Game.creeps.hasOwnProperty(creepName)) {
-            continue;
-        }
-
-        var creep = Game.creeps[creepName];
-        if (!creep || !creep.memory || creep.memory.role !== 'Freighter') {
-            continue;
-        }
-
-        if (!creep.memory.remoteFreighting && !creep.memory.remoteFreightingWanted) {
-            continue;
-        }
-
-        if ((creep.memory.freighterHomeRoom || creep.memory.homeRoom || creep.room.name) !== roomName) {
-            continue;
-        }
-
-        if (creep.ticksToLive === undefined || creep.ticksToLive > replacementLeadTicks) {
-            count++;
-        }
-    }
-
-    return count;
-}
-
-function countQueuedRemoteFreighters(roomName) {
-    var queue = spawnManager.getSpawnQueue(roomName);
-    var count = 0;
-
-    if (!queue) {
-        return count;
-    }
-
-    for (var i = 0; i < queue.length; i++) {
-        var request = queue[i];
-        var memory = request && request.memory ? request.memory : {};
-
-        if (!request || request.role !== 'Freighter') {
-            continue;
-        }
-
-        if (!memory.remoteFreightingWanted && !memory.remoteFreighting) {
-            continue;
-        }
-
-        if ((memory.freighterHomeRoom || memory.homeRoom) !== roomName) {
-            continue;
-        }
-
-        count++;
-    }
-
-    return count;
-}
 
 function requestRemoteExtractorsForRoom(room, extractorBody, priority) {
     var queue = spawnManager.getSpawnQueue(room.name);
@@ -403,62 +317,21 @@ function requestRemoteExtractorsForRoom(room, extractorBody, priority) {
     };
 }
 
-function requestRemoteFreightersForRoom(room, freighterBody, priority, localFreighterDesired) {
-    var queue = spawnManager.getSpawnQueue(room.name);
-    var replacementLeadTicks = getReplacementLeadTicks('Freighter', freighterBody);
+function getDesiredFreighterCount(room, freighterBody) {
+    var localDesired = DESIRED_COUNTS.Freighter;
     var remoteDemand = RemotePlanner.getRemoteFreighterDemand(room.name, freighterBody);
     var remoteDesired = remoteDemand.wanted || 0;
-    var maxRemoteAllowed = Math.max(0, MAX_TOTAL_FREIGHTERS_WITH_REMOTES - localFreighterDesired);
+    var totalDesired = localDesired + remoteDesired;
 
-    if (remoteDesired > maxRemoteAllowed) {
-        remoteDesired = maxRemoteAllowed;
+    if (totalDesired > MAX_TOTAL_FREIGHTERS_WITH_REMOTES) {
+        totalDesired = MAX_TOTAL_FREIGHTERS_WITH_REMOTES;
     }
-
-    var healthyRemote = countRemoteFreighters(room.name, replacementLeadTicks);
-    var queuedRemote = countQueuedRemoteFreighters(room.name);
-    var missing = remoteDesired - healthyRemote - queuedRemote;
-    var added = 0;
-
-    if (!queue || missing <= 0) {
-        return {
-            ok: true,
-            role: 'Freighter',
-            requested: 0,
-            remote: true,
-            desired: remoteDesired,
-            healthy: healthyRemote,
-            queued: queuedRemote,
-            demand: remoteDemand
-        };
-    }
-
-    for (var i = 0; i < missing; i++) {
-        queue.push({
-            role: 'Freighter',
-            body: freighterBody,
-            priority: priority,
-            memory: {
-                role: 'Freighter',
-                homeRoom: room.name,
-                freighterHomeRoom: room.name,
-                remoteFreightingWanted: true
-            },
-            requestedAt: Game.time
-        });
-        added++;
-    }
-
-    sortSpawnQueue(queue);
 
     return {
-        ok: true,
-        role: 'Freighter',
-        requested: added,
-        remote: true,
-        desired: remoteDesired,
-        healthy: healthyRemote,
-        queued: queuedRemote,
-        demand: remoteDemand
+        localDesired: localDesired,
+        remoteDesired: remoteDesired,
+        totalDesired: totalDesired,
+        remoteDemand: remoteDemand
     };
 }
 
@@ -850,23 +723,23 @@ function requestRoleForRoom(room, role, desiredCount) {
 
     if (role === 'Freighter') {
         var freighterQueue = spawnManager.getSpawnQueue(roomName);
-        var localPlannedCount = healthyCount + queuedCount;
-        var localMissingCount = desiredCount - localPlannedCount;
-        var localAdded = 0;
+        var totalPlannedFreighters = healthyCount + queuedCount;
+        var missingFreighters = desiredCount - totalPlannedFreighters;
+        var freightersAdded = 0;
 
-        if (freighterQueue && localMissingCount > 0) {
-            for (var freighterIndex = 0; freighterIndex < localMissingCount; freighterIndex++) {
+        if (freighterQueue && missingFreighters > 0) {
+            for (var freighterIndex = 0; freighterIndex < missingFreighters; freighterIndex++) {
                 freighterQueue.push({
-                    role: role,
+                    role: 'Freighter',
                     body: body,
                     priority: priority,
                     memory: {
-                        role: role,
+                        role: 'Freighter',
                         homeRoom: roomName
                     },
                     requestedAt: Game.time
                 });
-                localAdded++;
+                freightersAdded++;
             }
 
             sortSpawnQueue(freighterQueue);
@@ -875,10 +748,11 @@ function requestRoleForRoom(room, role, desiredCount) {
         return {
             ok: true,
             role: role,
-            requested: localAdded,
+            requested: freightersAdded,
             healthy: healthyCount,
             queued: queuedCount,
-            desired: desiredCount
+            desired: desiredCount,
+            replacementLeadTicks: replacementLeadTicks
         };
     }
 
@@ -1329,8 +1203,12 @@ function run() {
 
     report.requests.push(requestRoleForRoom(room, 'Extractor', getDesiredExtractorCount(room)));
     var freighterBody = creepBodyConfig.getBody('Freighter', room);
-    report.requests.push(requestRoleForRoom(room, 'Freighter', DESIRED_COUNTS.Freighter));
-    report.requests.push(requestRemoteFreightersForRoom(room, freighterBody, PRIORITY.Freighter - 1, DESIRED_COUNTS.Freighter));
+    var freighterDemand = getDesiredFreighterCount(room, freighterBody);
+    var freighterRequest = requestRoleForRoom(room, 'Freighter', freighterDemand.totalDesired);
+    freighterRequest.localDesired = freighterDemand.localDesired;
+    freighterRequest.remoteDesired = freighterDemand.remoteDesired;
+    freighterRequest.remoteDemand = freighterDemand.remoteDemand;
+    report.requests.push(freighterRequest);
     report.requests.push(requestRoleForRoom(room, 'ScoreRunner', DESIRED_COUNTS.ScoreRunner));
     report.requests.push(requestRoleForRoom(room, 'Tech', DESIRED_COUNTS.Tech));
     report.requests.push(requestRoleForRoom(room, 'Artificer', DESIRED_COUNTS.Artificer));
@@ -1356,5 +1234,5 @@ module.exports = {
     countHealthyCreeps: countHealthyCreeps,
     getReplacementLeadTicks: getReplacementLeadTicks,
     requestRemoteExtractorsForRoom: requestRemoteExtractorsForRoom,
-    requestRemoteFreightersForRoom: requestRemoteFreightersForRoom
+    getDesiredFreighterCount: getDesiredFreighterCount
 };

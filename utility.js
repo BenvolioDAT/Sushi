@@ -179,7 +179,8 @@ function scanRoom(creep) {
             assignedMiner: null,
             containerId: null,
             linkId: null,
-            roadPlanned: false
+            roadPlanned: false,
+            haul: createSourceHaulMemory(null)
         };
 
         /*
@@ -1072,6 +1073,89 @@ function getContainerPlanningAnchor(room) {
 
     return null;
 }
+
+/**
+ * Make sure one source has the shared hauling record used by Extractors and
+ * Freighters. Older room scans do not have this object, so callers use this
+ * helper to upgrade source memory in place without rescanning the room.
+ *
+ * @param {string} roomName
+ * @param {string} sourceId
+ * @param {string|null} homeRoomName
+ * @returns {object|null}
+ */
+function ensureSourceHaulMemory(roomName, sourceId, homeRoomName) {
+    if (!roomName || !sourceId) {
+        return null;
+    }
+
+    if (!Memory.rooms) {
+        Memory.rooms = {};
+    }
+
+    if (!Memory.rooms[roomName]) {
+        Memory.rooms[roomName] = {};
+    }
+
+    if (!Memory.rooms[roomName].sources) {
+        Memory.rooms[roomName].sources = {};
+    }
+
+    if (!Memory.rooms[roomName].sources[sourceId]) {
+        Memory.rooms[roomName].sources[sourceId] = {
+            id: sourceId
+        };
+    }
+
+    var sourceMemory = Memory.rooms[roomName].sources[sourceId];
+
+    if (!sourceMemory.haul) {
+        sourceMemory.haul = createSourceHaulMemory(homeRoomName || null);
+    }
+
+    if (sourceMemory.haul.targetId === undefined) {
+        sourceMemory.haul.targetId = null;
+    }
+    if (sourceMemory.haul.targetType === undefined) {
+        sourceMemory.haul.targetType = null;
+    }
+    if (typeof sourceMemory.haul.amount !== 'number') {
+        sourceMemory.haul.amount = 0;
+    }
+    if (typeof sourceMemory.haul.lastSeen !== 'number') {
+        sourceMemory.haul.lastSeen = 0;
+    }
+    if (sourceMemory.haul.reservedBy === undefined) {
+        sourceMemory.haul.reservedBy = null;
+    }
+    if (typeof sourceMemory.haul.reservedUntil !== 'number') {
+        sourceMemory.haul.reservedUntil = 0;
+    }
+    if (typeof sourceMemory.haul.reservedCarry !== 'number') {
+        sourceMemory.haul.reservedCarry = 0;
+    }
+    if (sourceMemory.haul.homeRoom === undefined) {
+        sourceMemory.haul.homeRoom = homeRoomName || null;
+    }
+    else if (!sourceMemory.haul.homeRoom && homeRoomName) {
+        sourceMemory.haul.homeRoom = homeRoomName;
+    }
+
+    return sourceMemory.haul;
+}
+
+function createSourceHaulMemory(homeRoomName) {
+    return {
+        targetId: null,
+        targetType: null,
+        amount: 0,
+        lastSeen: 0,
+        reservedBy: null,
+        reservedUntil: 0,
+        reservedCarry: 0,
+        homeRoom: homeRoomName || null
+    };
+}
 ////////////////////////////////////////////////////////////////////////////
 // ============================================================================
 // Exports
@@ -1081,4 +1165,5 @@ module.exports = {
     createSourceFlagsFromMemory,
 
     planSourceContainers,
+    ensureSourceHaulMemory: ensureSourceHaulMemory,
 };
