@@ -362,16 +362,8 @@ function getArtificerBody(room) {
 function getRoninBody(room) {
     return chooseBestAffordableBody(room, [
         [
-            [ATTACK, 10],
-            [MOVE, 10]
-        ],
-        [
-            [ATTACK, 6],
-            [MOVE, 6]
-        ],
-        [
-            [ATTACK, 4],
-            [MOVE, 4]
+            [ATTACK, 3],
+            [MOVE, 3]
         ],
         [
             [ATTACK, 2],
@@ -395,14 +387,6 @@ function getRoninBody(room) {
  */
 function getVolleyBody(room) {
     return chooseBestAffordableBody(room, [
-        [
-            [RANGED_ATTACK, 6],
-            [MOVE, 6]
-        ],
-        [
-            [RANGED_ATTACK, 4],
-            [MOVE, 4]
-        ],
         [
             [RANGED_ATTACK, 3],
             [MOVE, 3]
@@ -429,14 +413,6 @@ function getVolleyBody(room) {
  */
 function getClericBody(room) {
     return chooseBestAffordableBody(room, [
-        [
-            [HEAL, 6],
-            [MOVE, 6]
-        ],
-        [
-            [HEAL, 4],
-            [MOVE, 4]
-        ],
         [
             [HEAL, 3],
             [MOVE, 3]
