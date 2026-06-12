@@ -48,7 +48,14 @@ var roleExtractor = {
              * assignment returns null (usually because local sources are full) do
              * we ask the remote planner for an extra source.
              */
-            source = getRemoteAssignedSource(creep);
+            var remoteResult = getRemoteAssignedSourceResult(creep);
+
+            if(remoteResult.moved) {
+                creep.memory.extractorState = 'movingToRemoteSource';
+                return;
+            }
+
+            source = remoteResult.source;
         }
 
         if(!source) {
@@ -56,9 +63,14 @@ var roleExtractor = {
              * No local or remote source means there is nothing useful for this
              * creep to mine. Idle near home instead of crowding a full source.
              */
+            creep.memory.extractorState = 'idleNoSource';
             idleNearHome(creep);
             return;
         }
+
+        creep.memory.extractorState = isHomeRoomSource(creep, source) ?
+            'miningLocalSource' :
+            'miningRemoteSource';
 
         /*
          * If the creep has free energy capacity, keep harvesting. The RESOURCE_ENERGY
@@ -114,7 +126,7 @@ function isHomeRoomSource(creep, source) {
     return source.pos.roomName === homeRoomName;
 }
 
-function getRemoteAssignedSource(creep) {
+function getRemoteAssignedSourceResult(creep) {
     /*
      * A remote Extractor is still role: 'Extractor'. Planner.Remote only adds a
      * remoteMining assignment plus sourceId, targetSourceId, sourceRoom,
@@ -124,17 +136,26 @@ function getRemoteAssignedSource(creep) {
 
     if (!remoteInfo) {
         delete creep.memory.remoteMining;
-        return null;
+        return {
+            source: null,
+            moved: false
+        };
     }
 
     var source = Game.getObjectById(remoteInfo.sourceId);
 
     if (source) {
-        return source;
+        return {
+            source: source,
+            moved: false
+        };
     }
 
     moveTowardRemoteSource(creep, remoteInfo);
-    return null;
+    return {
+        source: null,
+        moved: true
+    };
 }
 
 function moveTowardRemoteSource(creep, remoteInfo) {
