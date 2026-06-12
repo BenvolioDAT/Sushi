@@ -23,6 +23,9 @@ var REMOTE_ROAD_REPAIR_START_PERCENT = 0.60;
 var REMOTE_CONTAINER_REPAIR_START_PERCENT = 0.80;
 var REMOTE_WORK_EMPTY_SCAN_COOLDOWN = 15;
 
+/* Small energy amounts remain fallbacks, but larger refills are tried first. */
+var MIN_USEFUL_ENERGY_AMOUNT = 50;
+
 /*
  * Higher priority structures are chosen before lower priority structures.
  * Assignment statements keep Screeps structure constants safe as object keys.
@@ -435,17 +438,33 @@ function collectEnergyForArtificer(creep) {
         }
     }
 
-    var target = findStoredEnergy(creep);
+    var ignoredTargetIds = {};
+    var target = findStoredEnergy(creep, ignoredTargetIds);
 
-    if(target) {
-        if(target.resourceType) {
-            if(creep.pickup(target) === ERR_NOT_IN_RANGE) {
-                utilityTravelCreep.move(creep, target, {visualizePathStyle: {stroke: '#ffaa00'}});
-            }
-        } else if(creep.withdraw(target, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
-            utilityTravelCreep.move(creep, target, {visualizePathStyle: {stroke: '#ffaa00'}});
+    /*
+     * Pickup and withdraw can fail even after a target was found. Handle the
+     * result and try another target instead of silently standing beside a bad
+     * one forever.
+     */
+    while(target) {
+        if(useEnergyTarget(creep, target)) {
+            return;
         }
 
+        if(!target.id) {
+            break;
+        }
+
+        ignoredTargetIds[target.id] = true;
+        target = findStoredEnergy(creep, ignoredTargetIds);
+    }
+
+    /*
+     * A partial-energy creep should not get stuck forever in collect mode. If
+     * no reusable target worked, let it spend the energy it already carries.
+     */
+    if(creep.store[RESOURCE_ENERGY] > 0) {
+        creep.memory.builderWorking = true;
         return;
     }
 
@@ -454,6 +473,48 @@ function collectEnergyForArtificer(creep) {
     if(source && creep.harvest(source) === ERR_NOT_IN_RANGE) {
         utilityTravelCreep.move(creep, source, {visualizePathStyle: {stroke: '#ffaa00'}});
     }
+}
+
+function useEnergyTarget(creep, target) {
+    var result;
+
+    if(!target) {
+        return false;
+    }
+
+    /*
+     * Dropped resources use pickup, while structures and remains use withdraw.
+     * The result must be handled so a failed action does not look successful.
+     */
+    if(target.resourceType) {
+        result = creep.pickup(target);
+    } else {
+        result = creep.withdraw(target, RESOURCE_ENERGY);
+    }
+
+    if(result === OK) {
+        return true;
+    }
+
+    if(result === ERR_NOT_IN_RANGE) {
+        utilityTravelCreep.move(creep, target, {
+            range: 1,
+            visualizePathStyle: {
+                stroke: '#ffaa00'
+            }
+        });
+        return true;
+    }
+
+    /*
+     * ERR_FULL means collection is finished, so switch to work mode next tick.
+     */
+    if(result === ERR_FULL) {
+        creep.memory.builderWorking = true;
+        return true;
+    }
+
+    return false;
 }
 
 function buildLocalConstruction(creep) {
@@ -906,50 +967,24 @@ function doBuildOrRepairTarget(creep, target, workType) {
 }
 
 function collectRemoteEnergy(creep) {
-    var target = creep.pos.findClosestByRange(FIND_DROPPED_RESOURCES, {
-        filter: function(resource) {
-            return resource.resourceType === RESOURCE_ENERGY && resource.amount > 0;
-        }
-    });
+    var ignoredTargetIds = {};
+    var target = findRemoteStoredEnergy(creep, ignoredTargetIds);
 
-    if(target) {
-        if(creep.pickup(target) === ERR_NOT_IN_RANGE) {
-            utilityTravelCreep.move(creep, target, {range: 1, visualizePathStyle: {stroke: '#ffaa00'}});
+    while(target) {
+        if(useEnergyTarget(creep, target)) {
+            return true;
         }
-        return true;
+
+        if(!target.id) {
+            break;
+        }
+
+        ignoredTargetIds[target.id] = true;
+        target = findRemoteStoredEnergy(creep, ignoredTargetIds);
     }
 
-    target = creep.pos.findClosestByRange(FIND_TOMBSTONES, {
-        filter: function(tombstone) {
-            return tombstone.store && tombstone.store[RESOURCE_ENERGY] > 0;
-        }
-    });
-
-    if(!target) {
-        target = creep.pos.findClosestByRange(FIND_RUINS, {
-            filter: function(ruin) {
-                return ruin.store && ruin.store[RESOURCE_ENERGY] > 0;
-            }
-        });
-    }
-
-    if(target) {
-        if(creep.withdraw(target, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
-            utilityTravelCreep.move(creep, target, {range: 1, visualizePathStyle: {stroke: '#ffaa00'}});
-        }
-        return true;
-    }
-
-    target = creep.pos.findClosestByRange(FIND_STRUCTURES, {
-        filter: function(structure) {
-            return structure.structureType === STRUCTURE_CONTAINER && structure.store && structure.store[RESOURCE_ENERGY] > 0;
-        }
-    });
-
-    if(target) {
-        if(creep.withdraw(target, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
-            utilityTravelCreep.move(creep, target, {range: 1, visualizePathStyle: {stroke: '#ffaa00'}});
-        }
+    if(creep.store[RESOURCE_ENERGY] > 0) {
+        creep.memory.builderWorking = true;
         return true;
     }
 
@@ -963,6 +998,84 @@ function collectRemoteEnergy(creep) {
     }
 
     return false;
+}
+
+function findRemoteStoredEnergy(creep, ignoredTargetIds) {
+    var minimumUsefulAmount = getMinimumUsefulEnergyAmount(creep);
+    var target = creep.pos.findClosestByRange(FIND_DROPPED_RESOURCES, {
+        filter: function(resource) {
+            return (
+                resource.resourceType === RESOURCE_ENERGY &&
+                getStoredEnergyAmount(resource) >= minimumUsefulAmount &&
+                !isIgnoredEnergyTarget(resource, ignoredTargetIds)
+            );
+        }
+    });
+
+    if(target) {
+        return target;
+    }
+
+    target = creep.pos.findClosestByRange(FIND_TOMBSTONES, {
+        filter: function(tombstone) {
+            return (
+                getStoredEnergyAmount(tombstone) > 0 &&
+                !isIgnoredEnergyTarget(tombstone, ignoredTargetIds)
+            );
+        }
+    });
+
+    if(target) {
+        return target;
+    }
+
+    target = creep.pos.findClosestByRange(FIND_RUINS, {
+        filter: function(ruin) {
+            return getStoredEnergyAmount(ruin) > 0 && !isIgnoredEnergyTarget(ruin, ignoredTargetIds);
+        }
+    });
+
+    if(target) {
+        return target;
+    }
+
+    target = creep.pos.findClosestByRange(FIND_STRUCTURES, {
+        filter: function(structure) {
+            return (
+                structure.structureType === STRUCTURE_CONTAINER &&
+                getStoredEnergyAmount(structure) >= minimumUsefulAmount &&
+                !isIgnoredEnergyTarget(structure, ignoredTargetIds)
+            );
+        }
+    });
+
+    if(target) {
+        return target;
+    }
+
+    target = creep.pos.findClosestByRange(FIND_STRUCTURES, {
+        filter: function(structure) {
+            return (
+                structure.structureType === STRUCTURE_CONTAINER &&
+                getStoredEnergyAmount(structure) > 0 &&
+                !isIgnoredEnergyTarget(structure, ignoredTargetIds)
+            );
+        }
+    });
+
+    if(target) {
+        return target;
+    }
+
+    return creep.pos.findClosestByRange(FIND_DROPPED_RESOURCES, {
+        filter: function(resource) {
+            return (
+                resource.resourceType === RESOURCE_ENERGY &&
+                getStoredEnergyAmount(resource) > 0 &&
+                !isIgnoredEnergyTarget(resource, ignoredTargetIds)
+            );
+        }
+    });
 }
 
 function findClosestActiveRemoteSource(creep) {
@@ -1002,16 +1115,49 @@ function findClosestActiveRemoteSource(creep) {
     return closestSource || creep.pos.findClosestByRange(FIND_SOURCES);
 }
 
-function findStoredEnergy(creep) {
+function getStoredEnergyAmount(target) {
+    if(!target) {
+        return 0;
+    }
+
+    if(target.resourceType) {
+        return target.resourceType === RESOURCE_ENERGY ? target.amount : 0;
+    }
+
+    if(target.store && typeof target.store.getUsedCapacity === 'function') {
+        return target.store.getUsedCapacity(RESOURCE_ENERGY) || 0;
+    }
+
+    if(target.store) {
+        return target.store[RESOURCE_ENERGY] || 0;
+    }
+
+    return 0;
+}
+
+function getMinimumUsefulEnergyAmount(creep) {
+    var freeCapacity = creep.store.getFreeCapacity(RESOURCE_ENERGY);
+
+    return Math.max(1, Math.min(MIN_USEFUL_ENERGY_AMOUNT, freeCapacity));
+}
+
+function findStoredEnergy(creep, ignoredTargetIds) {
+    var minimumUsefulAmount = getMinimumUsefulEnergyAmount(creep);
+
     /*
-     * Pick up dropped energy in the room first.
+     * Pick up dropped energy first when the pile is large enough to be worth
+     * the trip. Tiny piles are checked later so a full container can win.
      *
      * creep.pos.findClosestByPath searches from this creep's current position,
      * so this only looks in the room the creep is currently standing in.
      */
     var droppedEnergy = creep.pos.findClosestByPath(FIND_DROPPED_RESOURCES, {
         filter: function(resource) {
-            return resource.resourceType === RESOURCE_ENERGY && resource.amount > 0;
+            return (
+                resource.resourceType === RESOURCE_ENERGY &&
+                getStoredEnergyAmount(resource) >= minimumUsefulAmount &&
+                !isIgnoredEnergyTarget(resource, ignoredTargetIds)
+            );
         }
     });
 
@@ -1022,19 +1168,24 @@ function findStoredEnergy(creep) {
     /*
      * If no dropped energy exists, use storage.
      */
-    if(creep.room.storage && creep.room.storage.store[RESOURCE_ENERGY] > 0) {
+    if(
+        creep.room.storage &&
+        getStoredEnergyAmount(creep.room.storage) > 0 &&
+        !isIgnoredEnergyTarget(creep.room.storage, ignoredTargetIds)
+    ) {
         return creep.room.storage;
     }
 
     /*
-     * If no storage energy is available, use the closest container.
+     * If no storage energy is available, prefer a container with enough energy
+     * to provide a useful refill.
      */
     var container = creep.pos.findClosestByPath(FIND_STRUCTURES, {
         filter: function(structure) {
             return (
                 structure.structureType === STRUCTURE_CONTAINER &&
-                structure.store &&
-                structure.store[RESOURCE_ENERGY] > 0
+                getStoredEnergyAmount(structure) >= minimumUsefulAmount &&
+                !isIgnoredEnergyTarget(structure, ignoredTargetIds)
             );
         }
     });
@@ -1043,7 +1194,43 @@ function findStoredEnergy(creep) {
         return container;
     }
 
+    /*
+     * Small containers and drops are still reusable when no better option is
+     * available. Containers come first here to avoid chasing a one-energy pile.
+     */
+    container = creep.pos.findClosestByPath(FIND_STRUCTURES, {
+        filter: function(structure) {
+            return (
+                structure.structureType === STRUCTURE_CONTAINER &&
+                getStoredEnergyAmount(structure) > 0 &&
+                !isIgnoredEnergyTarget(structure, ignoredTargetIds)
+            );
+        }
+    });
+
+    if(container) {
+        return container;
+    }
+
+    droppedEnergy = creep.pos.findClosestByPath(FIND_DROPPED_RESOURCES, {
+        filter: function(resource) {
+            return (
+                resource.resourceType === RESOURCE_ENERGY &&
+                getStoredEnergyAmount(resource) > 0 &&
+                !isIgnoredEnergyTarget(resource, ignoredTargetIds)
+            );
+        }
+    });
+
+    if(droppedEnergy) {
+        return droppedEnergy;
+    }
+
     return null;
+}
+
+function isIgnoredEnergyTarget(target, ignoredTargetIds) {
+    return !!(target && target.id && ignoredTargetIds && ignoredTargetIds[target.id]);
 }
 
 module.exports = roleArtificer;
