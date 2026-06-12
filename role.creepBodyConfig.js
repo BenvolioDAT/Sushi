@@ -105,24 +105,60 @@ function buildBody(bodyPlan) {
 
 function chooseBestAffordableBody(room, bodyPlans) {
     /*
-     * Body plans are ordered from strongest to weakest. The first plan the
-     * room's full energy capacity can afford is selected.
+     * Body plans are ordered from strongest to weakest.
      *
-     * This means the queue may wait for energy to refill instead of instantly
-     * downgrading to the current available energy. spawn.manager.js checks the
-     * configured body again immediately before an idle spawn spends energy.
+     * Old behavior:
+     * - Used room.energyCapacityAvailable.
+     * - This made the room wait for full energy before spawning bigger bodies.
+     *
+     * New behavior:
+     * - Uses room.energyAvailable first.
+     * - This lets the room spawn the best body it can afford right now.
+     *
+     * We still read energyCapacityAvailable so the function understands what the
+     * room could afford when full, but current energy decides what gets returned.
      */
     var energyCapacity = getRoomEnergyCapacity(room);
+    var energyAvailable = energyCapacity;
 
+    if(room && room.energyAvailable !== undefined) {
+        energyAvailable = room.energyAvailable;
+    }
+
+    /*
+     * First pass:
+     * Pick the strongest body that current energy can afford right now.
+     */
     for(var i = 0; i < bodyPlans.length; i++) {
         var body = buildBody(bodyPlans[i]);
         var bodyCost = getBodyCost(body);
 
-        if(energyCapacity >= bodyCost) {
+        if(energyAvailable >= bodyCost) {
             return body;
         }
     }
 
+    /*
+     * Second pass:
+     * If current energy cannot afford any listed body, pick the smallest body
+     * the room can eventually afford when full.
+     *
+     * This keeps the queue from getting a body that the room can never spawn.
+     * It may still wait if current energy is too low.
+     */
+    for(var j = bodyPlans.length - 1; j >= 0; j--) {
+        var fallbackBody = buildBody(bodyPlans[j]);
+        var fallbackCost = getBodyCost(fallbackBody);
+
+        if(energyCapacity >= fallbackCost) {
+            return fallbackBody;
+        }
+    }
+
+    /*
+     * Last emergency fallback.
+     * This costs 200 energy.
+     */
     return [WORK, CARRY, MOVE];
 }
 
