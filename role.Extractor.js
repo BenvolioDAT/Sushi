@@ -116,9 +116,9 @@ function isHomeRoomSource(creep, source) {
 
 function getRemoteAssignedSource(creep) {
     /*
-     * Planner.Remote writes the same memory fields local mining already uses:
-     * sourceId, targetSourceId, sourceRoom, targetRoom, and homeRoom. That keeps
-     * remote mining an add-on instead of a new role or spawn system.
+     * A remote Extractor is still role: 'Extractor'. Planner.Remote only adds a
+     * remoteMining assignment plus sourceId, targetSourceId, sourceRoom,
+     * targetRoom, and homeRoom memory; there is no separate remote role.
      */
     var remoteInfo = RemotePlanner.getBestRemoteSourceForExtractor(creep);
 

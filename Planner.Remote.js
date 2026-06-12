@@ -87,6 +87,10 @@ function scanVisibleRoom(homeRoomName, room) {
         return false;
     }
 
+    if (!isAdjacentToHomeRoom(homeRoomName, room.name)) {
+        return false;
+    }
+
     updateVisibleControllerMemory(room);
 
     if (isOwnedEnemyRoom(room)) {
@@ -122,6 +126,34 @@ function getHomeRoomName(creepOrRoom) {
     }
 
     return null;
+}
+
+/*
+ * Remote rooms are limited to direct map exits from the home/spawn room.
+ * Longer routes may still be useful for travel, but they are not remote mines.
+ */
+function isAdjacentToHomeRoom(homeRoomName, remoteRoomName) {
+    if (!homeRoomName || !remoteRoomName || homeRoomName === remoteRoomName) {
+        return false;
+    }
+
+    var exits = Game.map.describeExits(homeRoomName);
+
+    if (!exits) {
+        return false;
+    }
+
+    for (var direction in exits) {
+        if (!exits.hasOwnProperty(direction)) {
+            continue;
+        }
+
+        if (exits[direction] === remoteRoomName) {
+            return true;
+        }
+    }
+
+    return false;
 }
 
 function ensurePlannerMemory(homeRoomName) {
@@ -167,6 +199,10 @@ function ensurePlannerMemory(homeRoomName) {
 
 function generateRemotePlan(homeRoomName, remoteRoom) {
     if (!homeRoomName || !remoteRoom || remoteRoom.name === homeRoomName) {
+        return false;
+    }
+
+    if (!isAdjacentToHomeRoom(homeRoomName, remoteRoom.name)) {
         return false;
     }
 
@@ -231,6 +267,14 @@ function scoreRemoteRoom(homeRoomName, remoteRoomName) {
 
     if (!remoteInfo) {
         return 0;
+    }
+
+    if (!isAdjacentToHomeRoom(homeRoomName, remoteRoomName)) {
+        remoteInfo.score = -999;
+        remoteInfo.netEnergyPerTick = 0;
+        remoteInfo.status = 'rejected';
+        remoteInfo.lastRejectReason = 'not adjacent to home room';
+        return remoteInfo.score;
     }
 
     var netEnergyPerTick = 0;
@@ -350,6 +394,10 @@ function getBestRemoteSourceForExtractor(creep) {
             continue;
         }
 
+        if (!isAdjacentToHomeRoom(homeRoomName, info.roomName)) {
+            continue;
+        }
+
         if (!hasRemoteAssignmentCapacity(homeRoomName, info, creep)) {
             continue;
         }
@@ -410,6 +458,11 @@ function shouldUseRemoteSource(homeRoomName, sourceId, ignoreScore) {
     var info = planner.sourceInfos[sourceId];
 
     if (!info) {
+        return false;
+    }
+
+    if (!isAdjacentToHomeRoom(homeRoomName, info.roomName)) {
+        info.rejectReason = 'not adjacent to home room';
         return false;
     }
 
@@ -941,6 +994,10 @@ function refreshVisibleCandidatePlans(homeRoomName) {
             continue;
         }
 
+        if (!isAdjacentToHomeRoom(homeRoomName, roomName)) {
+            continue;
+        }
+
         var room = Game.rooms[roomName];
         if (!room || isOwnedEnemyRoom(room) || hasInvaderCore(room) || hasSeriousDanger(room)) {
             continue;
@@ -987,7 +1044,11 @@ function selectActiveSources(homeRoomName) {
         scoreRemoteSource(homeRoomName, sourceId);
         info.active = false;
 
-        if (shouldUseRemoteSource(homeRoomName, sourceId) && info.netIncome > 0) {
+        if (
+            isAdjacentToHomeRoom(homeRoomName, info.roomName) &&
+            shouldUseRemoteSource(homeRoomName, sourceId) &&
+            info.netIncome > 0
+        ) {
             candidates.push(info);
         }
     }
@@ -1048,6 +1109,12 @@ function claimBestParentForSource(homeRoomName, newInfo) {
 
         var oldInfo = planner.sourceInfos[newInfo.sourceId];
         if (oldInfo.parentRoomName === homeRoomName) {
+            continue;
+        }
+
+        if (!isAdjacentToHomeRoom(oldInfo.parentRoomName, oldInfo.roomName)) {
+            delete planner.sourceInfos[newInfo.sourceId];
+            removeFromActiveList(planner, newInfo.sourceId);
             continue;
         }
 
@@ -1134,7 +1201,7 @@ function isCreepAssignedToRemote(creep, homeRoomName, info) {
         return false;
     }
 
-    if (creep.memory.role !== 'Extractor' && creep.memory.task !== 'Extractor') {
+    if (creep.memory.role !== 'Extractor') {
         return false;
     }
 
@@ -1145,35 +1212,25 @@ function isCreepAssignedToRemote(creep, homeRoomName, info) {
 }
 
 function hasRemoteAssignmentCapacity(homeRoomName, info, requestingCreep) {
-    var remoteMemory = Memory.rooms && Memory.rooms[info.roomName];
-    var sourceMemory = remoteMemory && remoteMemory.sources ? remoteMemory.sources[info.sourceId] : null;
-    var assignedCount = 0;
-    var assignedWork = 0;
-    var seen = {};
-
-    if (sourceMemory && sourceMemory.assignedMiner) {
-        for (var i = 0; i < sourceMemory.assignedMiner.length; i++) {
-            var creep = Game.getObjectById(sourceMemory.assignedMiner[i]) || Game.creeps[sourceMemory.assignedMiner[i]];
-            if (!isCreepAssignedToRemote(creep, homeRoomName, info)) {
-                continue;
-            }
-            if (seen[creep.id]) {
-                continue;
-            }
-            seen[creep.id] = true;
-            assignedCount++;
-            assignedWork += getCreepWorkParts(creep);
-        }
-    }
-
-    if (requestingCreep && seen[requestingCreep.id]) {
+    if (requestingCreep && isCreepAssignedToRemote(requestingCreep, homeRoomName, info)) {
         return true;
     }
 
-    return assignedCount < info.numOpen && assignedWork < SOURCE_WORK_TARGET;
+    var assigned = countRemoteAssignedExtractorWork(homeRoomName, info);
+    var queue = Memory.rooms && Memory.rooms[homeRoomName] ? Memory.rooms[homeRoomName].spawnQueue : null;
+    var queued = countPendingRemoteExtractorRequest(homeRoomName, info, queue);
+
+    // One remote source gets one normal Extractor to avoid over-mining and spawn spam.
+    return assigned.count + queued.count < 1;
 }
 
 function claimRemoteSource(creep, homeRoomName, info) {
+    if (!creep || !creep.memory || !info || !isAdjacentToHomeRoom(homeRoomName, info.roomName)) {
+        return false;
+    }
+
+    // Remote Extractor is assignment state, not a separate role.
+    creep.memory.role = 'Extractor';
     creep.memory.sourceId = info.sourceId;
     creep.memory.targetSourceId = info.sourceId;
     creep.memory.sourceRoom = info.roomName;
@@ -1185,7 +1242,7 @@ function claimRemoteSource(creep, homeRoomName, info) {
     var sourceMemory = remoteMemory && remoteMemory.sources ? remoteMemory.sources[info.sourceId] : null;
 
     if (!sourceMemory) {
-        return;
+        return true;
     }
 
     if (!sourceMemory.assignedMiner || !Array.isArray(sourceMemory.assignedMiner)) {
@@ -1194,11 +1251,12 @@ function claimRemoteSource(creep, homeRoomName, info) {
 
     for (var i = 0; i < sourceMemory.assignedMiner.length; i++) {
         if (sourceMemory.assignedMiner[i] === creep.id) {
-            return;
+            return true;
         }
     }
 
     sourceMemory.assignedMiner.push(creep.id);
+    return true;
 }
 
 function isBetterExtractorRemote(candidate, best) {
@@ -1211,26 +1269,6 @@ function isBetterExtractorRemote(candidate, best) {
     }
 
     return candidate.sourceId < best.sourceId;
-}
-
-function getCreepWorkParts(creep) {
-    if (!creep) {
-        return 0;
-    }
-
-    if (typeof creep.getActiveBodyparts === 'function') {
-        return creep.getActiveBodyparts(WORK);
-    }
-
-    var count = 0;
-    if (creep.body) {
-        for (var i = 0; i < creep.body.length; i++) {
-            if (creep.body[i] && creep.body[i].type === WORK) {
-                count++;
-            }
-        }
-    }
-    return count;
 }
 
 function moveExtractorAlongRemotePath(creep, homeRoomName, sourceId) {
@@ -1295,7 +1333,12 @@ function getActiveRemoteSourcesForHome(homeRoomName) {
         var sourceId = planner.activeSourceIds[i];
         var info = planner.sourceInfos[sourceId];
 
-        if (!info || !info.active || info.parentRoomName !== homeRoomName) {
+        if (
+            !info ||
+            !info.active ||
+            info.parentRoomName !== homeRoomName ||
+            !isAdjacentToHomeRoom(homeRoomName, info.roomName)
+        ) {
             continue;
         }
 
@@ -1390,15 +1433,18 @@ function getRemoteExtractorDemand(homeRoomName, extractorBody, queue) {
 
     for (var i = 0; i < activeSources.length; i++) {
         var sourceInfo = activeSources[i];
-        var sourceMemory = Memory.rooms && Memory.rooms[sourceInfo.roomName] && Memory.rooms[sourceInfo.roomName].sources ?
-            Memory.rooms[sourceInfo.roomName].sources[sourceInfo.sourceId] : null;
-        var seats = getSourceSeatCount(sourceMemory) || sourceInfo.numOpen || 1;
+
+        if (!isAdjacentToHomeRoom(homeRoomName, sourceInfo.roomName)) {
+            continue;
+        }
+
         var assigned = countRemoteAssignedExtractorWork(homeRoomName, sourceInfo);
         var queued = countPendingRemoteExtractorRequest(homeRoomName, sourceInfo, queue);
         var plannedCount = assigned.count + queued.count;
         var plannedWork = assigned.work + queued.work;
 
-        if (plannedCount >= seats || plannedWork >= SOURCE_WORK_TARGET) {
+        // Capacity is creep count only: one assigned or queued Extractor per source.
+        if (plannedCount >= 1) {
             continue;
         }
 
@@ -1407,7 +1453,7 @@ function getRemoteExtractorDemand(homeRoomName, extractorBody, queue) {
             sourceId: sourceInfo.sourceId,
             remoteRoomName: sourceInfo.roomName,
             homeRoomName: homeRoomName,
-            seats: seats,
+            seats: 1,
             assignedCount: assigned.count,
             assignedWork: assigned.work,
             queuedCount: queued.count,
@@ -1474,7 +1520,7 @@ function isRemoteExtractorForSource(creep, homeRoomName, sourceInfo) {
         return false;
     }
 
-    if (creep.memory.role !== 'Extractor' && creep.memory.task !== 'Extractor') {
+    if (creep.memory.role !== 'Extractor') {
         return false;
     }
 

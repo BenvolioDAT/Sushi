@@ -281,9 +281,8 @@ function requestRemoteExtractorsForRoom(room, extractorBody, priority) {
         var demand = demands[i];
 
         /*
-         * Queue one exact source-targeted Extractor at a time. If the body is
-         * small, later ticks can add more until the source reaches 6 planned WORK
-         * or runs out of remembered mining seats.
+         * Queue one source-targeted normal Extractor. remoteMining is assignment
+         * state only, and Planner.Remote caps each remote source at one Extractor.
          */
         queue.push({
             role: 'Extractor',
