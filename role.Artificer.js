@@ -23,6 +23,22 @@ var REMOTE_ROAD_REPAIR_START_PERCENT = 0.60;
 var REMOTE_CONTAINER_REPAIR_START_PERCENT = 0.80;
 var REMOTE_WORK_EMPTY_SCAN_COOLDOWN = 15;
 
+/*
+ * Higher priority structures are chosen before lower priority structures.
+ * Assignment statements keep Screeps structure constants safe as object keys.
+ */
+var STRUCTURE_BUILD_PRIORITY = {};
+STRUCTURE_BUILD_PRIORITY[STRUCTURE_SPAWN] = 100;
+STRUCTURE_BUILD_PRIORITY[STRUCTURE_EXTENSION] = 90;
+STRUCTURE_BUILD_PRIORITY[STRUCTURE_TOWER] = 85;
+STRUCTURE_BUILD_PRIORITY[STRUCTURE_STORAGE] = 80;
+STRUCTURE_BUILD_PRIORITY[STRUCTURE_CONTAINER] = 70;
+STRUCTURE_BUILD_PRIORITY[STRUCTURE_LINK] = 65;
+STRUCTURE_BUILD_PRIORITY[STRUCTURE_TERMINAL] = 60;
+STRUCTURE_BUILD_PRIORITY[STRUCTURE_ROAD] = 30;
+STRUCTURE_BUILD_PRIORITY[STRUCTURE_RAMPART] = 20;
+STRUCTURE_BUILD_PRIORITY[STRUCTURE_WALL] = 10;
+
 var roleArtificer = {
 
     /** @param {Creep} creep **/
@@ -452,17 +468,124 @@ function buildLocalConstruction(creep) {
      * unlock capacity, defense, or logistics. Remote infrastructure is checked
      * only after the local room has no construction work.
      */
-    var target = creep.pos.findClosestByPath(FIND_CONSTRUCTION_SITES);
+    var target = getRememberedBuildTarget(creep);
+
+    /*
+     * buildTargetId helps the Artificer stay focused on one construction site.
+     * A new higher-priority site can still override a remembered lower-priority
+     * site so important structures are not delayed.
+     */
+    if(target && !hasHigherPriorityConstructionSite(creep, target)) {
+        return buildTarget(creep, target);
+    }
+
+    target = findBestLocalConstructionSite(creep);
 
     if(!target) {
+        clearBuildTarget(creep);
         return false;
     }
 
-    if(creep.build(target) === ERR_NOT_IN_RANGE) {
-        utilityTravelCreep.move(creep, target, {visualizePathStyle: {stroke: '#ffffff'}});
+    rememberBuildTarget(creep, target);
+    return buildTarget(creep, target);
+}
+
+function getConstructionSitePriority(site) {
+    if(!site || !site.structureType) {
+        return 0;
     }
 
-    return true;
+    return STRUCTURE_BUILD_PRIORITY[site.structureType] || 0;
+}
+
+function getRememberedBuildTarget(creep) {
+    if(!creep.memory.buildTargetId) {
+        return null;
+    }
+
+    var target = Game.getObjectById(creep.memory.buildTargetId);
+    var homeRoomName = getHomeRoomName(creep);
+
+    if(
+        !target ||
+        !target.pos ||
+        target.pos.roomName !== homeRoomName ||
+        target.progress === undefined ||
+        target.progressTotal === undefined ||
+        target.progress >= target.progressTotal ||
+        target.my === false
+    ) {
+        clearBuildTarget(creep);
+        return null;
+    }
+
+    return target;
+}
+
+function hasHigherPriorityConstructionSite(creep, currentTarget) {
+    var currentPriority = getConstructionSitePriority(currentTarget);
+    var sites = creep.room.find(FIND_MY_CONSTRUCTION_SITES);
+
+    for(var i = 0; i < sites.length; i++) {
+        if(getConstructionSitePriority(sites[i]) > currentPriority) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+function findBestLocalConstructionSite(creep) {
+    var sites = creep.room.find(FIND_MY_CONSTRUCTION_SITES);
+
+    if(!sites || sites.length === 0) {
+        return null;
+    }
+
+    var highestPriority = -1;
+    var bestPrioritySites = [];
+
+    for(var i = 0; i < sites.length; i++) {
+        var priority = getConstructionSitePriority(sites[i]);
+
+        if(priority > highestPriority) {
+            highestPriority = priority;
+            bestPrioritySites = [sites[i]];
+        } else if(priority === highestPriority) {
+            bestPrioritySites.push(sites[i]);
+        }
+    }
+
+    return creep.pos.findClosestByPath(bestPrioritySites) || bestPrioritySites[0];
+}
+
+function rememberBuildTarget(creep, target) {
+    creep.memory.buildTargetId = target.id;
+}
+
+function clearBuildTarget(creep) {
+    delete creep.memory.buildTargetId;
+}
+
+function buildTarget(creep, target) {
+    var result = creep.build(target);
+
+    if(result === ERR_NOT_IN_RANGE) {
+        utilityTravelCreep.move(creep, target, {
+            range: 3,
+            visualizePathStyle: {
+                stroke: '#ffffff'
+            }
+        });
+        return true;
+    }
+
+    if(result === OK) {
+        return true;
+    }
+
+    clearBuildTarget(creep);
+    return false;
 }
 
 function upgradeController(creep) {
