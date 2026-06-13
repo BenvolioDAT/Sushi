@@ -32,7 +32,7 @@ var DESIRED_COUNTS = {
      * Annex uses this as a maximum cap, not a fixed desired count. It only
      * spawns when an active remote room needs controller reservation help.
      */
-    Annex: 1,
+    Annex: 6,
     ScoreRunner: 0,
     Tech: 3,
     Artificer: 4,
@@ -53,7 +53,7 @@ var PRIORITY = {
     Foreman: 100,
     Extractor: 80,
     Freighter: 60,
-    Annex: 55,
+    Annex: 8,
     ScoreRunner: 5,
     Tech: 30,
     Artificer: 20,
