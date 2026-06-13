@@ -344,7 +344,8 @@ module.exports.loop = function () {
     for (var roomName in Game.rooms) {
     var room = Game.rooms[roomName];
 
-    if (room.controller && room.controller.my) {
+    //if (room.controller && room.controller.my) {
+    if (Game.time % 5 === 0) {
         updateRepairStructureMemory(room);
         /*
          * Road construction now belongs to Planner.Roads.js.
