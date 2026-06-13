@@ -250,7 +250,53 @@ function getAssignedMinerCount(assignedMiner) {
     return typeof assignedMiner === 'string' && assignedMiner ? 1 : 0;
 }
 
-function makeSourceStat(sourceMemory, sourceId, index) {
+function packCoord(pos) {
+    return pos.x + (pos.y * 50);
+}
+
+function hasPlannedRoadNearSource(homeRoomName, source) {
+    if (!homeRoomName || !source || !source.pos) {
+        return false;
+    }
+
+    var homeMemory = Memory.rooms && Memory.rooms[homeRoomName];
+    var roadPlanner = homeMemory && homeMemory.roadPlanner;
+
+    if (!roadPlanner || !roadPlanner.rooms) {
+        return false;
+    }
+
+    var roomPlan = roadPlanner.rooms[source.pos.roomName];
+
+    if (!roomPlan || !Array.isArray(roomPlan.roadCoords)) {
+        return false;
+    }
+
+    var roadLookup = {};
+
+    for (var i = 0; i < roomPlan.roadCoords.length; i++) {
+        roadLookup[roomPlan.roadCoords[i]] = true;
+    }
+
+    for (var dx = -1; dx <= 1; dx++) {
+        for (var dy = -1; dy <= 1; dy++) {
+            var x = source.pos.x + dx;
+            var y = source.pos.y + dy;
+
+            if (x < 0 || x > 49 || y < 0 || y > 49) {
+                continue;
+            }
+
+            if (roadLookup[packCoord({ x: x, y: y })]) {
+                return true;
+            }
+        }
+    }
+
+    return false;
+}
+
+function makeSourceStat(homeRoomName, sourceMemory, sourceId, index) {
     sourceMemory = sourceMemory || {};
     sourceId = sourceMemory.id || sourceId;
 
@@ -267,7 +313,9 @@ function makeSourceStat(sourceMemory, sourceId, index) {
         reservedCarry: safeNumber(haul.reservedCarry),
         haulLastSeen: safeNumber(haul.lastSeen),
         containerKnown: !!sourceMemory.containerId,
-        roadPlanned: !!sourceMemory.roadPlanned,
+        roadPlanned: source ?
+            hasPlannedRoadNearSource(homeRoomName, source) :
+            !!sourceMemory.roadPlanned,
         containerPlanned: !!(
             sourceMemory.containerPlanned ||
             sourceMemory.containerPlannedPos ||
@@ -294,14 +342,14 @@ function getRoomSourceStats(room) {
 
     for (var i = 0; i < sourceIds.length; i++) {
         var id = sourceIds[i];
-        result.push(makeSourceStat(sourceMemory[id], id, i + 1));
+        result.push(makeSourceStat(room.name, sourceMemory[id], id, i + 1));
     }
 
     if (result.length === 0) {
         var visibleSources = room.find(FIND_SOURCES);
 
         for (var j = 0; j < visibleSources.length; j++) {
-            result.push(makeSourceStat({ id: visibleSources[j].id }, visibleSources[j].id, j + 1));
+            result.push(makeSourceStat(room.name, { id: visibleSources[j].id }, visibleSources[j].id, j + 1));
         }
     }
 
