@@ -173,7 +173,8 @@ function createRoomCreepStats() {
 function buildCreepStats() {
     var stats = {
         total: 0,
-        byRoom: {}
+        byRoom: {},
+        freighterDetails: []
     };
 
     for (var creepName in Game.creeps) {
@@ -215,6 +216,16 @@ function buildCreepStats() {
             else {
                 roomStats.freighters.idle++;
             }
+
+            stats.freighterDetails.push({
+                job: creep.memory.freighterJob || null,
+                pickupRoom: creep.memory.pickupRoom || null,
+                legacyRemoteRoom: creep.memory.freighterRemoteRoom ||
+                    creep.memory.remoteRoomName || creep.memory.remoteRoom || null,
+                pickupSourceId: creep.memory.pickupSourceId ||
+                    creep.memory.freighterPickupSourceId || null,
+                currentRoom: creep.room && creep.room.name ? creep.room.name : null
+            });
         }
     }
 
@@ -337,6 +348,8 @@ function getSourceHaulSnapshot(roomName, sourceId) {
 
     return {
         hasHaulData: !!haul,
+        targetId: haul && haul.targetId ? haul.targetId : null,
+        targetType: haul && haul.targetType ? haul.targetType : null,
         amount: haul ? safeNumber(haul.amount) : 0,
         reservedCarry: haul ? safeNumber(haul.reservedCarry) : 0,
         lastSeen: haul ? safeNumber(haul.lastSeen) : 0
@@ -375,6 +388,8 @@ function getRemoteStats(room) {
             roomName: info.roomName || '?',
             distance: safeNumber(info.distance),
             netIncome: safeNumber(info.netIncome),
+            haulTargetId: haul.targetId,
+            haulTargetType: haul.targetType,
             haulAmount: haul.amount,
             reservedCarry: haul.reservedCarry,
             haulLastSeen: haul.lastSeen,
@@ -440,6 +455,89 @@ function getRemoteStats(room) {
     return result;
 }
 
+function getActiveRemoteRoomsForDashboard(ownedRooms) {
+    var groupsByRoom = {};
+
+    for (var i = 0; i < ownedRooms.length; i++) {
+        var homeRoom = ownedRooms[i];
+        var remoteStats = getRemoteStats(homeRoom);
+
+        for (var j = 0; j < remoteStats.active.length; j++) {
+            var active = remoteStats.active[j];
+            var remoteRoomName = active.roomName;
+
+            if (!remoteRoomName || remoteRoomName === '?') {
+                continue;
+            }
+
+            if (!groupsByRoom[remoteRoomName]) {
+                groupsByRoom[remoteRoomName] = {
+                    roomName: remoteRoomName,
+                    homeRoomName: homeRoom.name,
+                    sources: [],
+                    sourceIds: {},
+                    netIncome: 0
+                };
+            }
+
+            var group = groupsByRoom[remoteRoomName];
+            if (group.sourceIds[active.sourceId]) {
+                continue;
+            }
+
+            group.sourceIds[active.sourceId] = true;
+            group.sources.push(active);
+            group.netIncome += safeNumber(active.netIncome);
+        }
+    }
+
+    var groups = [];
+    for (var roomName in groupsByRoom) {
+        if (groupsByRoom.hasOwnProperty(roomName)) {
+            groups.push(groupsByRoom[roomName]);
+        }
+    }
+
+    groups.sort(function(a, b) {
+        return a.roomName < b.roomName ? -1 : a.roomName > b.roomName ? 1 : 0;
+    });
+
+    return groups;
+}
+
+function getRemoteFreighterCounts(remoteRoomName, sourceIds, creepStats) {
+    var result = {
+        remote: 0,
+        delivery: 0
+    };
+    var details = creepStats.freighterDetails || [];
+
+    for (var i = 0; i < details.length; i++) {
+        var detail = details[i];
+
+        if (detail.job === 'remote' && detail.pickupRoom === remoteRoomName) {
+            result.remote++;
+            continue;
+        }
+
+        if (detail.job !== 'remoteDelivery') {
+            continue;
+        }
+
+        var matchesRememberedRoom = detail.pickupRoom === remoteRoomName ||
+            detail.legacyRemoteRoom === remoteRoomName;
+        var matchesRememberedSource = detail.pickupSourceId && sourceIds[detail.pickupSourceId];
+        var matchesCurrentRoom = !detail.pickupRoom && !detail.legacyRemoteRoom &&
+            !detail.pickupSourceId && detail.currentRoom === remoteRoomName;
+
+        if (matchesRememberedRoom || matchesRememberedSource || matchesCurrentRoom) {
+            result.delivery++;
+        }
+    }
+
+    return result;
+}
+
 function getStoredEnergy(structure) {
     if (!structure || !structure.store) {
         return 0;
@@ -450,6 +548,150 @@ function getStoredEnergy(structure) {
     }
 
     return safeNumber(structure.store[RESOURCE_ENERGY]);
+}
+
+function getRemoteDangerStatus(room) {
+    var hostileCreeps = room.find(FIND_HOSTILE_CREEPS);
+    var invaderCoreType = typeof STRUCTURE_INVADER_CORE !== 'undefined' ?
+        STRUCTURE_INVADER_CORE : 'invaderCore';
+    var invaderCores = room.find(FIND_HOSTILE_STRUCTURES, {
+        filter: function(structure) {
+            return structure.structureType === invaderCoreType;
+        }
+    });
+
+    if (hostileCreeps.length > 0 || invaderCores.length > 0) {
+        var detail = hostileCreeps.length > 0 ? ' H' + hostileCreeps.length : '';
+        detail += invaderCores.length > 0 ? ' Core' : '';
+
+        return {
+            text: 'danger' + detail,
+            color: COLORS.danger
+        };
+    }
+
+    return {
+        text: 'active',
+        color: COLORS.good
+    };
+}
+
+function getRemoteTargetTypeLabel(targetType) {
+    if (targetType === 'container') {
+        return 'Cont';
+    }
+
+    if (targetType === 'dropped' || targetType === 'drop') {
+        return 'Drop';
+    }
+
+    return '-';
+}
+
+function getLiveRemoteSourceData(remoteRoom, remoteSources) {
+    var containers = remoteRoom.find(FIND_STRUCTURES, {
+        filter: function(structure) {
+            return structure.structureType === STRUCTURE_CONTAINER;
+        }
+    });
+    var drops = remoteRoom.find(FIND_DROPPED_RESOURCES, {
+        filter: function(resource) {
+            return resource.resourceType === RESOURCE_ENERGY;
+        }
+    });
+    var countedContainers = {};
+    var countedDrops = {};
+    var result = {
+        containerEnergy: 0,
+        droppedEnergy: 0,
+        reservedCarry: 0,
+        worstAge: null,
+        sourceRows: []
+    };
+
+    for (var i = 0; i < remoteSources.length; i++) {
+        var remoteSource = remoteSources[i];
+        var source = remoteSource.sourceId ? Game.getObjectById(remoteSource.sourceId) : null;
+        var sourceVisible = !!(source && source.pos && source.pos.roomName === remoteRoom.name);
+        var sourceContainerEnergy = 0;
+        var sourceDroppedEnergy = 0;
+
+        if (sourceVisible) {
+            for (var containerIndex = 0; containerIndex < containers.length; containerIndex++) {
+                var container = containers[containerIndex];
+                if (source.pos.getRangeTo(container) > 2) {
+                    continue;
+                }
+
+                var containerEnergy = getStoredEnergy(container);
+                sourceContainerEnergy += containerEnergy;
+
+                if (!countedContainers[container.id]) {
+                    countedContainers[container.id] = true;
+                    result.containerEnergy += containerEnergy;
+                }
+            }
+
+            for (var dropIndex = 0; dropIndex < drops.length; dropIndex++) {
+                var drop = drops[dropIndex];
+                if (source.pos.getRangeTo(drop) > 3) {
+                    continue;
+                }
+
+                sourceDroppedEnergy += safeNumber(drop.amount);
+
+                if (!countedDrops[drop.id]) {
+                    countedDrops[drop.id] = true;
+                    result.droppedEnergy += safeNumber(drop.amount);
+                }
+            }
+        }
+
+        var targetType = remoteSource.haulTargetType;
+        var targetLabel = getRemoteTargetTypeLabel(targetType);
+        var displayAmount = safeNumber(remoteSource.haulAmount);
+        var liveTarget = remoteSource.haulTargetId ? Game.getObjectById(remoteSource.haulTargetId) : null;
+
+        if (targetLabel === 'Cont' && sourceVisible) {
+            displayAmount = sourceContainerEnergy;
+        }
+        else if (targetLabel === 'Drop' && sourceVisible) {
+            displayAmount = sourceDroppedEnergy;
+        }
+        else if (liveTarget && liveTarget.structureType === STRUCTURE_CONTAINER) {
+            targetLabel = 'Cont';
+            displayAmount = getStoredEnergy(liveTarget);
+        }
+        else if (liveTarget && liveTarget.resourceType === RESOURCE_ENERGY) {
+            targetLabel = 'Drop';
+            displayAmount = safeNumber(liveTarget.amount);
+        }
+        else if (sourceContainerEnergy > 0) {
+            targetLabel = 'Cont';
+            displayAmount = sourceContainerEnergy;
+        }
+        else if (sourceDroppedEnergy > 0) {
+            targetLabel = 'Drop';
+            displayAmount = sourceDroppedEnergy;
+        }
+
+        var age = getHaulAge(remoteSource.haulLastSeen);
+        if (age !== null && (result.worstAge === null || age > result.worstAge)) {
+            result.worstAge = age;
+        }
+
+        result.reservedCarry += safeNumber(remoteSource.reservedCarry);
+        result.sourceRows.push({
+            index: i + 1,
+            targetLabel: targetLabel,
+            amount: displayAmount,
+            reservedCarry: safeNumber(remoteSource.reservedCarry),
+            age: age,
+            hasHaulData: remoteSource.hasHaulData
+        });
+    }
+
+    return result;
 }
 
 function getSpawnStatus(room, queue) {
@@ -583,7 +825,8 @@ function drawRoomPanel(visual, room, sourceStats, remoteStats, roomCreeps) {
     var x = 1;
     var y = 3.7;
     var width = 18;
-    var height = 12.2;
+    var showRoleCounts = Memory.settings && Memory.settings.dashboardShowRoleCounts === true;
+    var height = showRoleCounts ? 12.2 : 10.1;
     var controller = room.controller;
     var queue = getSpawnQueueInfo(room.name);
     var progressText = controller && controller.progressTotal ?
@@ -641,11 +884,14 @@ function drawRoomPanel(visual, room, sourceStats, remoteStats, roomCreeps) {
         roles.Freighter > 0 ? COLORS.good : COLORS.warning
     );
     rowY += LINE_HEIGHT;
-    drawText(visual, 'Fore ' + roles.Foreman + ' Ext ' + roles.Extractor + ' Tech ' + roles.Tech, x, rowY, COLORS.text);
-    rowY += LINE_HEIGHT;
-    drawText(visual, 'Art ' + roles.Artificer + ' Scout ' + roles.Scout + ' Ronin ' + roles.Ronin, x, rowY, COLORS.text);
-    rowY += LINE_HEIGHT;
-    drawText(visual, 'Volley ' + roles.Volley + ' Cleric ' + roles.Cleric + ' Score ' + roles.ScoreRunner, x, rowY, COLORS.text);
+
+    if (showRoleCounts) {
+        drawText(visual, 'Fore ' + roles.Foreman + ' Ext ' + roles.Extractor + ' Tech ' + roles.Tech, x, rowY, COLORS.text);
+        rowY += LINE_HEIGHT;
+        drawText(visual, 'Art ' + roles.Artificer + ' Scout ' + roles.Scout + ' Ronin ' + roles.Ronin, x, rowY, COLORS.text);
+        rowY += LINE_HEIGHT;
+        drawText(visual, 'Volley ' + roles.Volley + ' Cleric ' + roles.Cleric + ' Score ' + roles.ScoreRunner, x, rowY, COLORS.text);
+    }
 }
 
 function drawSourcePanel(visual, sourceStats) {
@@ -779,6 +1025,83 @@ function drawRemotePanel(visual, remoteStats, sourcePanel) {
     }
 }
 
+function drawRemoteRoomDashboard(remoteRoom, homeRoomName, remoteSources, creepStats) {
+    var x = 1;
+    var y = 1;
+    var width = 22;
+    var visual = new RoomVisual(remoteRoom.name);
+    var sourceIds = {};
+    var netIncome = 0;
+
+    for (var sourceIndex = 0; sourceIndex < remoteSources.length; sourceIndex++) {
+        sourceIds[remoteSources[sourceIndex].sourceId] = true;
+        netIncome += safeNumber(remoteSources[sourceIndex].netIncome);
+    }
+
+    var liveData = getLiveRemoteSourceData(remoteRoom, remoteSources);
+    var dangerStatus = getRemoteDangerStatus(remoteRoom);
+    var haulers = getRemoteFreighterCounts(remoteRoom.name, sourceIds, creepStats);
+    var visibleSourceRows = liveData.sourceRows.slice(0, 4);
+    var hiddenSourceCount = liveData.sourceRows.length - visibleSourceRows.length;
+    var rowCount = 4 + visibleSourceRows.length + (hiddenSourceCount > 0 ? 1 : 0);
+    var height = 2.15 + (rowCount * LINE_HEIGHT);
+    var rowY = y + 1;
+
+    drawPanel(visual, x, y, width, height, 'REMOTE ' + homeRoomName + ' -> ' + remoteRoom.name);
+    drawRow(visual, [
+        'State',
+        dangerStatus,
+        'Sources',
+        remoteSources.length
+    ], x, rowY, [3.3, 6.8, 4.2, 3]);
+    rowY += LINE_HEIGHT;
+    drawRow(visual, [
+        'Net',
+        { text: round(netIncome, 2) + '/t', color: netIncome > 0 ? COLORS.good : COLORS.warning },
+        'Cont',
+        { text: compactNumber(liveData.containerEnergy), color: liveData.containerEnergy > 0 ? COLORS.good : COLORS.muted }
+    ], x, rowY, [3.3, 6.8, 4.2, 3]);
+    rowY += LINE_HEIGHT;
+    drawRow(visual, [
+        'Drop',
+        { text: compactNumber(liveData.droppedEnergy), color: liveData.droppedEnergy > 0 ? COLORS.good : COLORS.muted },
+        'Reserved',
+        compactNumber(liveData.reservedCarry)
+    ], x, rowY, [3.3, 6.8, 4.2, 3]);
+    rowY += LINE_HEIGHT;
+    drawRow(visual, [
+        'Worst age',
+        {
+            text: liveData.worstAge === null ? '-' : liveData.worstAge,
+            color: getAgeColor(liveData.worstAge, liveData.worstAge === null)
+        },
+        'Haul',
+        'R' + haulers.remote + ' D' + haulers.delivery
+    ], x, rowY, [5.8, 4.3, 4.2, 3]);
+
+    for (var i = 0; i < visibleSourceRows.length; i++) {
+        var sourceRow = visibleSourceRows[i];
+        rowY += LINE_HEIGHT;
+        drawRow(visual, [
+            { text: 'S' + sourceRow.index, color: COLORS.title },
+            { text: sourceRow.targetLabel, color: sourceRow.targetLabel === '-' ? COLORS.muted : COLORS.text },
+            { text: compactNumber(sourceRow.amount), color: sourceRow.amount > 0 ? COLORS.good : COLORS.muted },
+            'Res',
+            compactNumber(sourceRow.reservedCarry),
+            'Age',
+            {
+                text: sourceRow.age === null ? '-' : sourceRow.age,
+                color: getAgeColor(sourceRow.age, !sourceRow.hasHaulData)
+            }
+        ], x, rowY, [2, 3.2, 4, 2.6, 3.5, 2.7, 2]);
+    }
+
+    if (hiddenSourceCount > 0) {
+        rowY += LINE_HEIGHT;
+        drawText(visual, '+' + hiddenSourceCount + ' more sources', x, rowY, COLORS.muted);
+    }
+}
+
 function drawDashboard(room, ownedRoomCount, creepStats) {
     var visual = new RoomVisual(room.name);
     var sourceStats = getRoomSourceStats(room);
@@ -799,6 +1122,14 @@ var Dashboard = {
 
         if (Memory.settings.showDashboard === undefined) {
             Memory.settings.showDashboard = true;
+        }
+
+        if (Memory.settings.showRemoteRoomDashboard === undefined) {
+            Memory.settings.showRemoteRoomDashboard = true;
+        }
+
+        if (Memory.settings.dashboardShowRoleCounts === undefined) {
+            Memory.settings.dashboardShowRoleCounts = false;
         }
 
         if (Memory.settings.showDashboard === false) {
@@ -826,6 +1157,26 @@ var Dashboard = {
 
         for (var i = 0; i < ownedRooms.length; i++) {
             drawDashboard(ownedRooms[i], ownedRoomCount, creepStats);
+        }
+
+        if (Memory.settings.showRemoteRoomDashboard !== false) {
+            var remoteGroups = getActiveRemoteRoomsForDashboard(ownedRooms);
+
+            for (var remoteIndex = 0; remoteIndex < remoteGroups.length; remoteIndex++) {
+                var remoteGroup = remoteGroups[remoteIndex];
+                var remoteRoom = Game.rooms[remoteGroup.roomName];
+
+                if (!remoteRoom) {
+                    continue;
+                }
+
+                drawRemoteRoomDashboard(
+                    remoteRoom,
+                    remoteGroup.homeRoomName,
+                    remoteGroup.sources,
+                    creepStats
+                );
+            }
         }
     }
 };
