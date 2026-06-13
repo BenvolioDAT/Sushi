@@ -17,11 +17,31 @@ CLAIM = 600 = Claims, reserves, and signs controllers.
  */
 var BODY_PLANS = {
     Foreman: [
+        [[CARRY, 25], [MOVE, 25]],
+        [[CARRY, 24], [MOVE, 24]],
+        [[CARRY, 23], [MOVE, 23]],
+        [[CARRY, 22], [MOVE, 22]],
+        [[CARRY, 21], [MOVE, 21]],
+        [[CARRY, 20], [MOVE, 20]],
+        [[CARRY, 19], [MOVE, 19]],
+        [[CARRY, 18], [MOVE, 18]],
+        [[CARRY, 17], [MOVE, 17]],
+        [[CARRY, 16], [MOVE, 16]],
+        [[CARRY, 15], [MOVE, 15]],
+        [[CARRY, 14], [MOVE, 14]],
+        [[CARRY, 13], [MOVE, 13]],    
         [[CARRY, 12], [MOVE, 12]],
+        [[CARRY, 11], [MOVE, 11]],
+        [[CARRY, 10], [MOVE, 10]],
+        [[CARRY, 9], [MOVE, 9]],
+        [[CARRY, 8], [MOVE, 8]],
+        [[CARRY, 7], [MOVE, 7]],
         [[CARRY, 6], [MOVE, 6]],
-        [[CARRY, 6], [MOVE, 3]],
-        [[CARRY, 4], [MOVE, 2]],
-        [[CARRY, 2], [MOVE, 1]]
+        [[CARRY, 5], [MOVE, 5]],
+        [[CARRY, 4], [MOVE, 4]],
+        [[CARRY, 3], [MOVE, 3]],
+        [[CARRY, 2], [MOVE, 2]],
+        [[CARRY, 1], [MOVE, 1]]
     ],
 
     Extractor: [
@@ -32,14 +52,36 @@ var BODY_PLANS = {
     ],
 
     Freighter: [
+        [[CARRY, 25], [MOVE, 25]],
+        [[CARRY, 24], [MOVE, 24]],
+        [[CARRY, 23], [MOVE, 23]],
+        [[CARRY, 22], [MOVE, 22]],
+        [[CARRY, 21], [MOVE, 21]],
+        [[CARRY, 20], [MOVE, 20]],
+        [[CARRY, 19], [MOVE, 19]],
+        [[CARRY, 18], [MOVE, 18]],
+        [[CARRY, 17], [MOVE, 17]],
+        [[CARRY, 16], [MOVE, 16]],
+        [[CARRY, 15], [MOVE, 15]],
+        [[CARRY, 14], [MOVE, 14]],
+        [[CARRY, 13], [MOVE, 13]],    
         [[CARRY, 12], [MOVE, 12]],
+        [[CARRY, 11], [MOVE, 11]],
+        [[CARRY, 10], [MOVE, 10]],
+        [[CARRY, 9], [MOVE, 9]],
+        [[CARRY, 8], [MOVE, 8]],
+        [[CARRY, 7], [MOVE, 7]],
         [[CARRY, 6], [MOVE, 6]],
-        [[CARRY, 6], [MOVE, 3]],
-        [[CARRY, 4], [MOVE, 2]],
-        [[CARRY, 2], [MOVE, 1]]
+        [[CARRY, 5], [MOVE, 5]],
+        [[CARRY, 4], [MOVE, 4]],
+        [[CARRY, 3], [MOVE, 3]],
+        [[CARRY, 2], [MOVE, 2]],
+        [[CARRY, 1], [MOVE, 1]]
     ],
 
     Annex: [
+        [[CLAIM, 4], [MOVE, 4]],
+        [[CLAIM, 3], [MOVE, 3]],
         [[CLAIM, 2], [MOVE, 2]],
         [[CLAIM, 1], [MOVE, 1]]
     ],

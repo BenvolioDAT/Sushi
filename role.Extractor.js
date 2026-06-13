@@ -73,6 +73,12 @@ var roleExtractor = {
             'miningRemoteSource';
 
         /*
+         * Keep the source-side pickup advertisement fresh every tick with
+         * vision, including ticks where mining-seat handling returns early.
+         */
+        refreshVisibleSourceHaulTarget(creep, source);
+
+        /*
          * If the creep has free energy capacity, keep harvesting. The RESOURCE_ENERGY
          * argument asks Screeps specifically about energy space, not other resources.
          */
@@ -395,9 +401,16 @@ function updateSourceHaulMemory(creep, source, force) {
         return;
     }
 
-    if (!force && haul.lastSeen && Game.time - haul.lastSeen < SOURCE_HAUL_SCAN_INTERVAL) {
+    if (
+        !force &&
+        typeof haul.lastScannedAt === 'number' &&
+        Game.time - haul.lastScannedAt < SOURCE_HAUL_SCAN_INTERVAL
+    ) {
         return;
     }
+
+    haul.lastScannedAt = Game.time;
+    clearDeadHaulReservation(haul);
 
     var options = [];
     var droppedEnergy = source.pos.findInRange(FIND_DROPPED_RESOURCES, 3, {
@@ -413,19 +426,19 @@ function updateSourceHaulMemory(creep, source, force) {
         }
     });
 
-    for (var dropIndex = 0; dropIndex < droppedEnergy.length; dropIndex++) {
-        options.push({
-            targetId: droppedEnergy[dropIndex].id,
-            targetType: 'dropped',
-            amount: droppedEnergy[dropIndex].amount
-        });
-    }
-
     for (var containerIndex = 0; containerIndex < sourceContainers.length; containerIndex++) {
         options.push({
             targetId: sourceContainers[containerIndex].id,
             targetType: 'container',
             amount: getStoredEnergy(sourceContainers[containerIndex])
+        });
+    }
+
+    for (var dropIndex = 0; dropIndex < droppedEnergy.length; dropIndex++) {
+        options.push({
+            targetId: droppedEnergy[dropIndex].id,
+            targetType: 'dropped',
+            amount: droppedEnergy[dropIndex].amount
         });
     }
 
@@ -449,12 +462,23 @@ function updateSourceHaulMemory(creep, source, force) {
      * already traveling. Once that reservation ends, the largest nearby target
      * becomes the advertised job on the next scan.
      */
-    if (current && isLivingHaulReservation(haul)) {
-        best = current;
+    var hasLivingReservation = isLivingHaulReservation(haul);
+
+    if (hasLivingReservation) {
+        if (current) {
+            best = current;
+        }
+        else if (best) {
+            haul.homeRoom = homeRoomName;
+            return;
+        }
     }
 
     if (!best) {
-        clearObservedHaulTarget(haul);
+        clearObservedHaulTargetFields(haul);
+        if (!hasLivingReservation) {
+            clearHaulReservation(haul);
+        }
         haul.lastSeen = Game.time;
         haul.homeRoom = homeRoomName;
         return;
@@ -469,6 +493,125 @@ function updateSourceHaulMemory(creep, source, force) {
     haul.amount = best.amount;
     haul.lastSeen = Game.time;
     haul.homeRoom = homeRoomName;
+}
+
+function refreshVisibleSourceHaulTarget(creep, source) {
+    if (!creep || !creep.memory || !source || !source.pos) {
+        return;
+    }
+
+    var homeRoomName = creep.memory.homeRoom || creep.room.name;
+    var haul = utility.ensureSourceHaulMemory(source.pos.roomName, source.id, homeRoomName);
+
+    if (!haul) {
+        return;
+    }
+
+    clearDeadHaulReservation(haul);
+
+    var bestContainer = null;
+    var bestDrop = null;
+    var currentTarget = null;
+    var sourceContainers = source.pos.findInRange(FIND_STRUCTURES, 2, {
+        filter: function(structure) {
+            return structure.structureType === STRUCTURE_CONTAINER &&
+                structure.store &&
+                getStoredEnergy(structure) > 0;
+        }
+    });
+    var droppedEnergy = source.pos.findInRange(FIND_DROPPED_RESOURCES, 3, {
+        filter: function(resource) {
+            return resource.resourceType === RESOURCE_ENERGY && resource.amount > 0;
+        }
+    });
+
+    for (var containerIndex = 0; containerIndex < sourceContainers.length; containerIndex++) {
+        var containerOption = {
+            targetId: sourceContainers[containerIndex].id,
+            targetType: 'container',
+            amount: getStoredEnergy(sourceContainers[containerIndex])
+        };
+
+        if (containerOption.targetId === haul.targetId) {
+            currentTarget = containerOption;
+        }
+
+        if (!bestContainer || containerOption.amount > bestContainer.amount) {
+            bestContainer = containerOption;
+        }
+    }
+
+    for (var dropIndex = 0; dropIndex < droppedEnergy.length; dropIndex++) {
+        var dropOption = {
+            targetId: droppedEnergy[dropIndex].id,
+            targetType: 'dropped',
+            amount: droppedEnergy[dropIndex].amount
+        };
+
+        if (dropOption.targetId === haul.targetId) {
+            currentTarget = dropOption;
+        }
+
+        if (!bestDrop || dropOption.amount > bestDrop.amount) {
+            bestDrop = dropOption;
+        }
+    }
+
+    /* Containers win ties; a larger dropped pile is still worth advertising. */
+    var bestTarget = bestContainer;
+    if (bestDrop && (!bestTarget || bestDrop.amount > bestTarget.amount)) {
+        bestTarget = bestDrop;
+    }
+
+    if (!bestTarget) {
+        var preserveReservation = isLivingHaulReservation(haul);
+        clearObservedHaulTargetFields(haul);
+        if (!preserveReservation) {
+            clearHaulReservation(haul);
+        }
+        recordHaulAdvertisement(haul, creep, source, homeRoomName);
+        return;
+    }
+
+    if (haul.targetId === bestTarget.targetId) {
+        updateObservedHaulTarget(haul, bestTarget);
+        recordHaulAdvertisement(haul, creep, source, homeRoomName);
+        return;
+    }
+
+    if (isLivingHaulReservation(haul)) {
+        if (currentTarget) {
+            updateObservedHaulTarget(haul, currentTarget);
+            recordHaulAdvertisement(haul, creep, source, homeRoomName);
+        }
+        else {
+            /* Keep the claim stable, but do not refresh an unobserved target. */
+            recordHaulAdvertisement(haul, creep, source, homeRoomName, false);
+        }
+        return;
+    }
+
+    clearHaulReservation(haul);
+    updateObservedHaulTarget(haul, bestTarget);
+    recordHaulAdvertisement(haul, creep, source, homeRoomName);
+}
+
+function updateObservedHaulTarget(haul, target) {
+    haul.targetId = target.targetId;
+    haul.targetType = target.targetType;
+    haul.amount = target.amount;
+}
+
+function recordHaulAdvertisement(haul, creep, source, homeRoomName, updateLastSeen) {
+    if (updateLastSeen !== false) {
+        haul.lastSeen = Game.time;
+    }
+    haul.homeRoom = homeRoomName;
+    haul.roomName = source.pos.roomName;
+    haul.sourceId = source.id;
+    haul.lastAdvertisedBy = creep.name;
+    haul.lastAdvertisedRoom = creep.room.name;
+    haul.lastAdvertisedAt = Game.time;
 }
 
 function recordSourceContainerHaul(creep, source, target) {
@@ -516,11 +659,20 @@ function isLivingHaulReservation(haul) {
         Game.creeps[haul.reservedBy];
 }
 
-function clearObservedHaulTarget(haul) {
+function clearDeadHaulReservation(haul) {
+    if (!haul || isLivingHaulReservation(haul)) {
+        return;
+    }
+
+    if (haul.reservedBy || haul.reservedUntil || haul.reservedCarry) {
+        clearHaulReservation(haul);
+    }
+}
+
+function clearObservedHaulTargetFields(haul) {
     haul.targetId = null;
     haul.targetType = null;
     haul.amount = 0;
-    clearHaulReservation(haul);
 }
 
 function clearHaulReservation(haul) {

@@ -1033,19 +1033,37 @@ function ensureSourceHaulMemory(roomName, sourceId, homeRoomName) {
         return null;
     }
 
-    if (!Memory.rooms) {
+    if (Memory.rooms === undefined || Memory.rooms === null) {
         Memory.rooms = {};
     }
+    else if (typeof Memory.rooms !== 'object' || Array.isArray(Memory.rooms)) {
+        return null;
+    }
 
-    if (!Memory.rooms[roomName]) {
+    if (Memory.rooms[roomName] === undefined || Memory.rooms[roomName] === null) {
         Memory.rooms[roomName] = {};
     }
-
-    if (!Memory.rooms[roomName].sources) {
-        Memory.rooms[roomName].sources = {};
+    else if (typeof Memory.rooms[roomName] !== 'object' || Array.isArray(Memory.rooms[roomName])) {
+        return null;
     }
 
-    if (!Memory.rooms[roomName].sources[sourceId]) {
+    if (
+        Memory.rooms[roomName].sources === undefined ||
+        Memory.rooms[roomName].sources === null
+    ) {
+        Memory.rooms[roomName].sources = {};
+    }
+    else if (
+        typeof Memory.rooms[roomName].sources !== 'object' ||
+        Array.isArray(Memory.rooms[roomName].sources)
+    ) {
+        return null;
+    }
+
+    if (
+        Memory.rooms[roomName].sources[sourceId] === undefined ||
+        Memory.rooms[roomName].sources[sourceId] === null
+    ) {
         Memory.rooms[roomName].sources[sourceId] = {
             id: sourceId
         };
@@ -1053,7 +1071,12 @@ function ensureSourceHaulMemory(roomName, sourceId, homeRoomName) {
 
     var sourceMemory = Memory.rooms[roomName].sources[sourceId];
 
-    if (!sourceMemory.haul) {
+    /* Never replace an existing source record just to repair haul metadata. */
+    if (!sourceMemory || typeof sourceMemory !== 'object' || Array.isArray(sourceMemory)) {
+        return null;
+    }
+
+    if (!sourceMemory.haul || typeof sourceMemory.haul !== 'object' || Array.isArray(sourceMemory.haul)) {
         sourceMemory.haul = createSourceHaulMemory(homeRoomName || null);
     }
 
