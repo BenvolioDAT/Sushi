@@ -29,28 +29,39 @@ var roleRonin = {
         }
 
         /*
-         * If Ronin has a remote target room and is not there yet,
-         * travel to that room first.
+         * Local danger always matters more than a remote flag or target room.
+         */
+        var target = WarRoom.getCombatTarget(creep);
+
+        if(target) {
+            attackMeleeTarget(creep, target);
+
+            /*
+             * Attacking and moving are separate actions. If the attack did not
+             * already request movement, step inward after crossing an exit.
+             */
+            travel.moveOffExit(creep);
+            return;
+        }
+
+        /*
+         * Leave the room edge before normal marching so an old path cannot
+         * send the creep back through the exit on the next tick.
+         */
+        if(travel.moveOffExit(creep)) {
+            creep.say('inward');
+            return;
+        }
+
+        /*
+         * Only march toward a remote assignment when this room is quiet.
          */
         if(moveToCombatRoom(creep)) {
             creep.say('march');
             return;
         }
 
-        /*
-         * Find something hostile to attack.
-         */
-        var target = WarRoom.getCombatTarget(creep);
-
-        if(!target) {
-            WarRoom.idleCombat(creep);
-            return;
-        }
-
-        /*
-         * Ronin is melee, so it must stand beside the target.
-         */
-        attackMeleeTarget(creep, target);
+        WarRoom.idleCombat(creep);
     }
 };
 

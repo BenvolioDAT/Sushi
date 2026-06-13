@@ -29,25 +29,39 @@ var roleVolley = {
         }
 
         /*
-         * If Volley has a remote target room and is not there yet,
-         * travel to that room first.
+         * Local danger always matters more than a remote flag or target room.
+         */
+        var target = WarRoom.getCombatTarget(creep);
+
+        if(target) {
+            attackRangedTarget(creep, target);
+
+            /*
+             * Shooting and moving are separate actions. If approaching the
+             * target did not already request movement, step off the exit.
+             */
+            travel.moveOffExit(creep);
+            return;
+        }
+
+        /*
+         * Leave the room edge before normal marching so an old path cannot
+         * send the creep back through the exit on the next tick.
+         */
+        if(travel.moveOffExit(creep)) {
+            creep.say('inward');
+            return;
+        }
+
+        /*
+         * Only march toward a remote assignment when this room is quiet.
          */
         if(moveToCombatRoom(creep)) {
             creep.say('march');
             return;
         }
 
-        /*
-         * Find something hostile to shoot.
-         */
-        var target = WarRoom.getCombatTarget(creep);
-
-        if(!target) {
-            WarRoom.idleCombat(creep);
-            return;
-        }
-
-        attackRangedTarget(creep, target);
+        WarRoom.idleCombat(creep);
     }
 };
 

@@ -35,10 +35,43 @@ var roleCleric = {
          */
         if(creep.hits < creep.hitsMax) {
             creep.heal(creep);
+
+            /*
+             * Healing and moving are separate actions. A wounded Cleric may
+             * still step inward, but it must not march away while hurt.
+             */
+            travel.moveOffExit(creep);
+            return;
         }
 
         /*
-         * Move to remote combat room if assigned.
+         * Heal wounded combat creeps in this room before following any remote
+         * assignment.
+         */
+        var healTarget = WarRoom.findBestHealTarget(creep);
+
+        if(healTarget) {
+            healFriendly(creep, healTarget);
+
+            /*
+             * If healing did not already request movement, leave the exit tile
+             * so the next tick starts safely inside the room.
+             */
+            travel.moveOffExit(creep);
+            return;
+        }
+
+        /*
+         * Leave the room edge before normal marching so an old path cannot
+         * send the creep back through the exit on the next tick.
+         */
+        if(travel.moveOffExit(creep)) {
+            creep.say('inward');
+            return;
+        }
+
+        /*
+         * Only march toward a remote assignment when nobody here needs healing.
          */
         if(moveToCombatRoom(creep)) {
             creep.say('march');
@@ -46,17 +79,7 @@ var roleCleric = {
         }
 
         /*
-         * Heal the most damaged friendly creep in the room.
-         */
-        var healTarget = WarRoom.findBestHealTarget(creep);
-
-        if(healTarget) {
-            healFriendly(creep, healTarget);
-            return;
-        }
-
-        /*
-         * If nobody needs healing, follow a combat buddy.
+         * In the combat room, follow a fighter or idle near the flag.
          */
         followCombatBuddy(creep);
     }

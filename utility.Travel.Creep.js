@@ -91,6 +91,99 @@ function getTargetPosition(target) {
 }
 
 /**
+ * Return true when a position is on a room exit tile.
+ *
+ * @param {RoomPosition} pos
+ * @returns {boolean}
+ */
+function isOnExitTile(pos) {
+    if (!pos || pos.x === undefined || pos.y === undefined) {
+        return false;
+    }
+
+    return pos.x === 0 || pos.x === 49 || pos.y === 0 || pos.y === 49;
+}
+
+/**
+ * Get the nearest position one tile inward from a room exit.
+ *
+ * Corner exits move both coordinates inward so the destination is not still
+ * on another exit edge.
+ *
+ * @param {RoomPosition} pos
+ * @returns {RoomPosition|null}
+ */
+function getInwardExitPosition(pos) {
+    if (!isOnExitTile(pos) || !pos.roomName) {
+        return null;
+    }
+
+    var x = pos.x;
+    var y = pos.y;
+
+    if (x === 0) {
+        x = 1;
+    } else if (x === 49) {
+        x = 48;
+    }
+
+    if (y === 0) {
+        y = 1;
+    } else if (y === 49) {
+        y = 48;
+    }
+
+    return new RoomPosition(x, y, pos.roomName);
+}
+
+/**
+ * Move a creep inward after it crosses a room exit.
+ *
+ * Returns false when the creep is not on an exit. Returns true when the exit
+ * position was handled, including when another move was already requested this
+ * tick.
+ *
+ * @param {Creep} creep
+ * @returns {boolean}
+ */
+function moveOffExit(creep) {
+    if (!creep || !creep.memory || !isOnExitTile(creep.pos)) {
+        return false;
+    }
+
+    /*
+     * Do not clear movement memory or submit a second move when another system
+     * already handled this creep during the current tick.
+     */
+    if (creep.memory._sushiMoveTick === Game.time) {
+        return true;
+    }
+
+    var inwardPosition = getInwardExitPosition(creep.pos);
+
+    if (!inwardPosition) {
+        return false;
+    }
+
+    /*
+     * The previous room path may point back through the exit. Clear it before
+     * asking Traveler and the traffic manager for the one-tile inward shove.
+     */
+    delete creep.memory._trav;
+    delete creep.memory._move;
+    delete creep.memory._sushiRoute;
+
+    move(creep, inwardPosition, {
+        range: 0,
+        maxRooms: 1,
+        reusePath: 0,
+        disableSharedRouteCache: true
+    });
+
+    return true;
+}
+
+/**
  * Read Sushi's movement feature switch.
  *
  * Default is enabled. Set Memory.settings.useTrafficManager = false in the
@@ -1149,6 +1242,7 @@ module.exports = {
     move: move,
     moveToRoom: moveToRoom,
     moveDirection: moveDirection,
+    moveOffExit: moveOffExit,
     requestMove: requestMove,
     shouldUseTrafficManager: shouldUseTrafficManager,
     clearTravelMemory: clearTravelMemory,
