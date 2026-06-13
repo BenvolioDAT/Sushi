@@ -11,7 +11,7 @@
  * objects with Game.getObjectById or RoomPosition when needed.
  */
 /**
- * First-scan the creep's current room and save important room data into memory.
+ * Scan the creep's current room and merge important room data into memory.
  *
  * This function scans:
  * - energy sources
@@ -25,11 +25,49 @@
  * Memory.rooms[roomName].controller
  * Memory.rooms[roomName].Mineral[mineralId]
  *
- * This function exits early if source memory already exists.
- *
  * @param {Creep} creep - A creep inside the room you want to scan.
  * @returns {object|null} The saved room memory, or null if something is wrong.
  */
+function buildSourceSeats(room, source) {
+    var seats = [];
+    var terrain = room.getTerrain();
+
+    for (var dx = -1; dx <= 1; dx++) {
+        for (var dy = -1; dy <= 1; dy++) {
+            if (dx === 0 && dy === 0) {
+                continue;
+            }
+
+            var seatX = source.pos.x + dx;
+            var seatY = source.pos.y + dy;
+
+            if (seatX < 0 || seatX > 49 || seatY < 0 || seatY > 49) {
+                continue;
+            }
+
+            if (terrain.get(seatX, seatY) === TERRAIN_MASK_WALL) {
+                continue;
+            }
+
+            seats.push({
+                x: seatX,
+                y: seatY,
+                roomName: source.pos.roomName
+            });
+        }
+    }
+
+    return seats;
+}
+
+function sourceNeedsSeatRepair(sourceMemory) {
+    return !sourceMemory ||
+        !Array.isArray(sourceMemory.seats) ||
+        sourceMemory.seats.length <= 0 ||
+        typeof sourceMemory.seatCount !== 'number' ||
+        sourceMemory.seatCount <= 0;
+}
+
 function scanRoom(creep) {
     /*
      * This function uses the creep's current room as the room to scan. In
@@ -54,21 +92,13 @@ function scanRoom(creep) {
         Memory.rooms[roomName] = {};
     }
 
-    /*
-     * Early exit.
-     *
-     * If this room already has source memory, we treat the room as already scanned.
-     * This protects your source Flag data and saves CPU.
-     *
-     * Later, if you want to force a rescan, you can delete:
-     * delete Memory.rooms['W1N1'].sources;
-     */
-    if (Memory.rooms[roomName].sources) {
-        return Memory.rooms[roomName];
+    if (!Memory.rooms[roomName].sources) {
+        Memory.rooms[roomName].sources = {};
     }
 
-    Memory.rooms[roomName].sources = {};
-    Memory.rooms[roomName].Mineral = {};
+    if (!Memory.rooms[roomName].Mineral) {
+        Memory.rooms[roomName].Mineral = {};
+    }
 
     /*
      * Save basic room scan info.
@@ -83,59 +113,31 @@ function scanRoom(creep) {
      * Some special rooms may not have a controller, so we check first.
      */
     if (room.controller) {
-        Memory.rooms[roomName].controller = {
-            id: room.controller.id,
+        var controllerMemory = Memory.rooms[roomName].controller || {};
 
-            pos: {
-                x: room.controller.pos.x,
-                y: room.controller.pos.y,
-                roomName: room.controller.pos.roomName
-            },
-
-            /*
-             * owner is null if nobody owns the controller.
-             * If someone owns it, save the username only.
-             */
-            owner: room.controller.owner ? room.controller.owner.username : null,
-
-            /*
-             * reservation is for remote rooms reserved by a player.
-             * This can matter later for remote mining logic.
-             */
-            reservation: room.controller.reservation ? {
-                username: room.controller.reservation.username,
-                ticksToEnd: room.controller.reservation.ticksToEnd
-            } : null,
-
-            /*
-             * true if this is your controller.
-             */
-            my: room.controller.my === true,
-
-            /*
-             * Controller level.
-             * Neutral controllers usually show level 0.
-             */
-            level: room.controller.level || 0,
-
-            /*
-             * Placeholder for a controller flag.
-             * Later code can flip this to true after it creates a controller flag.
-             */
-            flag: false,
-            flagName: null,
-
-            /*
-             * Future-use placeholders.
-             * These are handy later for upgrader positions, controller container,
-             * controller link, or road planning.
-             */
-            seats: [],
-            seatCount: 0,
-            containerId: null,
-            linkId: null,
-            roadPlanned: false
+        controllerMemory.id = room.controller.id;
+        controllerMemory.pos = {
+            x: room.controller.pos.x,
+            y: room.controller.pos.y,
+            roomName: room.controller.pos.roomName
         };
+        controllerMemory.owner = room.controller.owner ? room.controller.owner.username : null;
+        controllerMemory.reservation = room.controller.reservation ? {
+            username: room.controller.reservation.username,
+            ticksToEnd: room.controller.reservation.ticksToEnd
+        } : null;
+        controllerMemory.my = room.controller.my === true;
+        controllerMemory.level = room.controller.level || 0;
+
+        if (controllerMemory.flag === undefined) controllerMemory.flag = false;
+        if (controllerMemory.flagName === undefined) controllerMemory.flagName = null;
+        if (!Array.isArray(controllerMemory.seats)) controllerMemory.seats = [];
+        if (typeof controllerMemory.seatCount !== 'number') controllerMemory.seatCount = 0;
+        if (controllerMemory.containerId === undefined) controllerMemory.containerId = null;
+        if (controllerMemory.linkId === undefined) controllerMemory.linkId = null;
+        if (controllerMemory.roadPlanned === undefined) controllerMemory.roadPlanned = false;
+
+        Memory.rooms[roomName].controller = controllerMemory;
     } else {
         Memory.rooms[roomName].controller = null;
     }
@@ -143,7 +145,6 @@ function scanRoom(creep) {
     /*
      * Scan energy sources.
      */
-    var terrain = room.getTerrain();
     var sources = room.find(FIND_SOURCES);
 
     /*
@@ -152,70 +153,31 @@ function scanRoom(creep) {
      */
     for (var sourceIndex = 0; sourceIndex < sources.length; sourceIndex++) {
         var source = sources[sourceIndex];
+        var existing = Memory.rooms[roomName].sources[source.id] || {};
+        var needsSeatRepair = sourceNeedsSeatRepair(existing);
 
-        var sourceMemory = {
-            id: source.id,
-
-            pos: {
-                x: source.pos.x,
-                y: source.pos.y,
-                roomName: source.pos.roomName
-            },
-
-            seats: [],
-            seatCount: 0,
-            lastScanned: Game.time,
-
-            /*
-             * Source flag starts false.
-             * Your source flag function can update this to true later.
-             */
-            Flag: false,
-            flagName: null,
-
-            /*
-             * Future-use placeholders.
-             */
-            assignedMiner: null,
-            containerId: null,
-            linkId: null,
-            roadPlanned: false,
-            haul: createSourceHaulMemory(null)
+        existing.id = source.id;
+        existing.pos = {
+            x: source.pos.x,
+            y: source.pos.y,
+            roomName: source.pos.roomName
         };
+        existing.lastScanned = Game.time;
 
-        /*
-         * Check all 8 tiles around the source for valid mining seats.
-         * dx and dy are offsets from the source position. For example, dx=-1
-         * checks one tile to the left, and dy=1 checks one tile down.
-         */
-        for (var dx = -1; dx <= 1; dx++) {
-            for (var dy = -1; dy <= 1; dy++) {
-                if (dx === 0 && dy === 0) {
-                    continue;
-                }
-
-                var seatX = source.pos.x + dx;
-                var seatY = source.pos.y + dy;
-
-                if (seatX < 0 || seatX > 49 || seatY < 0 || seatY > 49) {
-                    continue;
-                }
-
-                if (terrain.get(seatX, seatY) === TERRAIN_MASK_WALL) {
-                    continue;
-                }
-
-                sourceMemory.seats.push({
-                    x: seatX,
-                    y: seatY,
-                    roomName: roomName
-                });
-            }
+        if (needsSeatRepair) {
+            existing.seats = buildSourceSeats(room, source);
+            existing.seatCount = existing.seats.length;
         }
 
-        sourceMemory.seatCount = sourceMemory.seats.length;
+        if (existing.Flag === undefined) existing.Flag = false;
+        if (existing.flagName === undefined) existing.flagName = null;
+        if (existing.assignedMiner === undefined) existing.assignedMiner = null;
+        if (existing.containerId === undefined) existing.containerId = null;
+        if (existing.linkId === undefined) existing.linkId = null;
+        if (existing.roadPlanned === undefined) existing.roadPlanned = false;
+        if (!existing.haul) existing.haul = createSourceHaulMemory(null);
 
-        Memory.rooms[roomName].sources[source.id] = sourceMemory;
+        Memory.rooms[roomName].sources[source.id] = existing;
     }
 
     /*
@@ -228,45 +190,27 @@ function scanRoom(creep) {
 
     for (var mineralIndex = 0; mineralIndex < minerals.length; mineralIndex++) {
         var mineral = minerals[mineralIndex];
+        var mineralMemory = Memory.rooms[roomName].Mineral[mineral.id] || {};
 
-        Memory.rooms[roomName].Mineral[mineral.id] = {
-            id: mineral.id,
-
-            pos: {
-                x: mineral.pos.x,
-                y: mineral.pos.y,
-                roomName: mineral.pos.roomName
-            },
-
-            density: mineral.density,
-            mineralType: mineral.mineralType,
-
-            /*
-             * Placeholder amount.
-             * Another function can update this later when you want live mineral tracking.
-             */
-            Amount: 0,
-
-            /*
-             * Optional useful live value from the first scan.
-             * You can remove this if you only want the placeholder.
-             */
-            lastKnownAmount: mineral.mineralAmount,
-
-            /*
-             * Placeholder for mineral flag logic later.
-             */
-            flag: false,
-            flagName: null,
-
-            /*
-             * Future-use placeholders.
-             */
-            extractorId: null,
-            containerId: null,
-            roadPlanned: false,
-            lastScanned: Game.time
+        mineralMemory.id = mineral.id;
+        mineralMemory.pos = {
+            x: mineral.pos.x,
+            y: mineral.pos.y,
+            roomName: mineral.pos.roomName
         };
+        mineralMemory.density = mineral.density;
+        mineralMemory.mineralType = mineral.mineralType;
+        mineralMemory.lastKnownAmount = mineral.mineralAmount;
+        mineralMemory.lastScanned = Game.time;
+
+        if (mineralMemory.Amount === undefined) mineralMemory.Amount = 0;
+        if (mineralMemory.flag === undefined) mineralMemory.flag = false;
+        if (mineralMemory.flagName === undefined) mineralMemory.flagName = null;
+        if (mineralMemory.extractorId === undefined) mineralMemory.extractorId = null;
+        if (mineralMemory.containerId === undefined) mineralMemory.containerId = null;
+        if (mineralMemory.roadPlanned === undefined) mineralMemory.roadPlanned = false;
+
+        Memory.rooms[roomName].Mineral[mineral.id] = mineralMemory;
     }
 
     return Memory.rooms[roomName];
