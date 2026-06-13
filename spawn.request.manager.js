@@ -34,8 +34,8 @@ var DESIRED_COUNTS = {
      */
     Annex: 6,
     ScoreRunner: 0,
-    Tech: 3,
-    Artificer: 4,
+    Tech: 1,
+    Artificer: 2,
     Scout: 1,
     Ronin: 1,
     Volley: 1,
