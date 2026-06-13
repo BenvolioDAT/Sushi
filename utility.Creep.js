@@ -1041,7 +1041,7 @@ function getAssignedMiningSeat(creep, source) {
      *
      * Priority:
      * 1. If this source has a live container, reserve the container tile first.
-     * 2. If the container tile is already reserved/occupied, use another source seat.
+     * 2. If a healthy full miner owns it, wait; weak/death handoffs may use a side seat.
      * 3. If no seat is open, return null and let the role decide what to do.
      */
     if (!creep || !source || !creep.room) {
