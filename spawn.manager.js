@@ -18,28 +18,10 @@
 var spawnUtility = require('utility.spawn');
 var creepBodyConfig = require('role.creepBodyConfig');
 
-/**
- * Calculate the energy cost of a creep body.
- *
- * @param {array} body
- * @returns {number}
- */
-function getBodyCost(body) {
-    var cost = 0;
-
-    if (!body) {
-        return cost;
-    }
-
-    for (var index = 0; index < body.length; index++) {
-        cost += BODYPART_COST[body[index]] || 0;
-    }
-
-    return cost;
-}
+var getBodyCost = creepBodyConfig.getBodyCost;
 
 /**
- * Refresh a queued body at the last possible moment before spawning.
+ * Select the strongest body for this role that current room energy can afford.
  *
  * spawn.request.manager.js decides what roles are needed, but queued Memory can
  * become stale because spawning takes many ticks. spawn.manager.js is the last
@@ -52,56 +34,44 @@ function getBodyCost(body) {
  * @param {object} request
  * @returns {object}
  */
-function maybeRefreshQueuedBodyForSpawn(spawn, request) {
+function selectAffordableQueuedBodyForSpawn(spawn, request) {
     if (!spawn || !spawn.room || !request || !request.role) {
         return {
             changed: false,
+            affordable: false,
             reason: 'missing spawn or request'
         };
     }
 
-    var bestBody = creepBodyConfig.getBody(request.role, spawn.room);
+    var energyAvailable = spawn.room.energyAvailable;
+    var bestBody = creepBodyConfig.getBestBodyForAvailableEnergy(
+        request.role,
+        spawn.room
+    );
 
     if (!bestBody || bestBody.length === 0) {
         return {
             changed: false,
-            reason: 'no best body found'
+            affordable: false,
+            energyAvailable: energyAvailable,
+            reason: 'no affordable body for current energy'
         };
     }
 
-    var currentCost = getBodyCost(request.body);
-    var bestCost = getBodyCost(bestBody);
-
-    /*
-     * Upgrade only when the configured body is stronger by cost and the room
-     * can pay for it now. Otherwise the queued request stays exactly as it was.
-     */
-    if (bestCost <= currentCost) {
-        return {
-            changed: false,
-            currentCost: currentCost,
-            bestCost: bestCost,
-            reason: 'queued body is already equal or better'
-        };
-    }
-
-    if (bestCost > spawn.room.energyAvailable) {
-        return {
-            changed: false,
-            currentCost: currentCost,
-            bestCost: bestCost,
-            energyAvailable: spawn.room.energyAvailable,
-            reason: 'best body is not affordable right now'
-        };
-    }
+    var oldCost = getBodyCost(request.body);
+    var newCost = getBodyCost(bestBody);
 
     request.body = bestBody;
 
     return {
-        changed: true,
-        oldCost: currentCost,
-        newCost: bestCost,
-        reason: 'queued body upgraded before spawn'
+        changed: oldCost !== newCost,
+        affordable: true,
+        oldCost: oldCost,
+        newCost: newCost,
+        energyAvailable: energyAvailable,
+        reason: newCost < oldCost ? 'downgraded to affordable body' :
+            newCost > oldCost ? 'upgraded to affordable body' :
+            'kept affordable body'
     };
 }
 
@@ -444,7 +414,23 @@ function runRoom(roomName) {
         };
     }
 
-    var refreshResult = maybeRefreshQueuedBodyForSpawn(spawn, request);
+    var bodySelection = selectAffordableQueuedBodyForSpawn(spawn, request);
+
+    if (!bodySelection.affordable) {
+        console.log(
+            'Waiting to spawn ' + request.role +
+            ' in ' + roomName +
+            ': no affordable body for current energy'
+        );
+
+        return {
+            ok: false,
+            result: ERR_NOT_ENOUGH_ENERGY,
+            role: request.role,
+            bodySelection: bodySelection,
+            reason: bodySelection.reason
+        };
+    }
 
     var creepName = spawnUtility.genCreepName(request.role);
 
@@ -483,10 +469,11 @@ function runRoom(roomName) {
         console.log(
             'Spawning ' + creepName +
             ' as ' + request.role +
-            ' in room ' + roomName +
-            (refreshResult.changed ?
-                ' after refreshing body from ' + refreshResult.oldCost +
-                ' to ' + refreshResult.newCost + ' energy' : '')
+            ' in ' + roomName +
+            (bodySelection.reason === 'downgraded to affordable body' ?
+                ' after downgrading body from ' + bodySelection.oldCost +
+                ' to ' + bodySelection.newCost + ' energy' :
+                ' using affordable body cost ' + bodySelection.newCost)
         );
 
         return {
@@ -494,7 +481,7 @@ function runRoom(roomName) {
             result: result,
             name: creepName,
             role: request.role,
-            bodyRefresh: refreshResult
+            bodySelection: bodySelection
         };
     }
 
@@ -553,7 +540,7 @@ function runRoom(roomName) {
 
 module.exports = {
     getBodyCost: getBodyCost,
-    maybeRefreshQueuedBodyForSpawn: maybeRefreshQueuedBodyForSpawn,
+    selectAffordableQueuedBodyForSpawn: selectAffordableQueuedBodyForSpawn,
     getSpawnQueue: getSpawnQueue,
     countAliveRole: countAliveRole,
     countQueuedRole: countQueuedRole,

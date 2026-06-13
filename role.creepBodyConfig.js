@@ -1,42 +1,99 @@
 /*
 Body part = Build cost = Effect
-MOVE = 50 = Moves the creep. Reduces creep fatigue by 2/tick. See movement.
-WORK = 100 = Harvests energy from target source. Gathers 2 energy/tick.Constructs a target structure. Builds the designated structure at a construction site, at 5 points/tick, consuming 1 energy/point. See building Costs. Repairs a target structure. Repairs a structure for 100 hits/tick. Consumes 0.01 energy/hit repaired, rounded up to the nearest whole number.
-CARRY = 50 = Stores energy. Contains up to 50 energy units. Weighs nothing when empty.
-ATTACK = 80 = Attacks a target creep/structure. Deals 30 damage/tick. Short-ranged attack (1 tile).
-RANGED_ATTACK = 150 = Attacks a target creep/structure. Deals 10 damage/tick. Long-ranged attack (1 to 3 tiles).
-HEAL = 250 = Heals a target creep. Restores 12 hit points/tick at short range (1 tile) or 4 hits/tick at a distance (up to 3 tiles).
-TOUGH = 10 = No effect other than the 100 hit points all body parts add. This provides a cheap way to add hit points to a creep.
-CLAIM = 600 = To sign the room controller, it's about change your room sign.
+MOVE = 50 = Moves the creep.
+WORK = 100 = Harvests, builds, and repairs.
+CARRY = 50 = Stores up to 50 resource units.
+ATTACK = 80 = Deals short-range damage.
+RANGED_ATTACK = 150 = Deals ranged damage.
+HEAL = 250 = Heals creeps.
+TOUGH = 10 = Adds inexpensive hit points.
+CLAIM = 600 = Claims, reserves, and signs controllers.
 */
 
 /*
- * role.creepBodyConfig.js
- *
- * This file chooses creep bodies.
- *
- * The spawn request manager can ask:
- * "What body should Foreman use in this room?"
- *
- * Later you can make this smarter.
- * For now, keep it simple and readable.
+ * Body plans are ordered from strongest to weakest. Keeping the plans in one
+ * place lets request planning use room capacity while the spawn manager uses
+ * the energy available on the current tick.
  */
+var BODY_PLANS = {
+    Foreman: [
+        [[CARRY, 12], [MOVE, 12]],
+        [[CARRY, 6], [MOVE, 6]],
+        [[CARRY, 6], [MOVE, 3]],
+        [[CARRY, 4], [MOVE, 2]],
+        [[CARRY, 2], [MOVE, 1]]
+    ],
 
-/**
- * Get the energy level we want to use for body choices.
- *
- * We use room.energyCapacityAvailable, not room.energyAvailable.
- *
- * Why?
- * - energyAvailable = energy right now
- * - energyCapacityAvailable = what the room can hold when full
- *
- * If the room has 550 max energy but only 300 right now,
- * we still may want to queue the 550 body and wait until energy fills.
- *
- * @param {Room} room
- * @returns {number}
- */
+    Extractor: [
+        [[WORK, 6], [MOVE, 3], [CARRY, 1]],
+        [[WORK, 4], [MOVE, 2], [CARRY, 1]],
+        [[WORK, 2], [MOVE, 1], [CARRY, 1]],
+        [[WORK, 1], [MOVE, 1], [CARRY, 1]]
+    ],
+
+    Freighter: [
+        [[CARRY, 12], [MOVE, 12]],
+        [[CARRY, 6], [MOVE, 6]],
+        [[CARRY, 6], [MOVE, 3]],
+        [[CARRY, 4], [MOVE, 2]],
+        [[CARRY, 2], [MOVE, 1]]
+    ],
+
+    Tech: [
+        [[WORK, 4], [CARRY, 4], [MOVE, 8]],
+        [[WORK, 4], [CARRY, 4], [MOVE, 7]],
+        [[WORK, 4], [CARRY, 3], [MOVE, 7]],
+        [[WORK, 4], [CARRY, 3], [MOVE, 6]],
+        [[WORK, 3], [CARRY, 3], [MOVE, 6]],
+        [[WORK, 3], [CARRY, 3], [MOVE, 5]],
+        [[WORK, 3], [CARRY, 2], [MOVE, 5]],
+        [[WORK, 2], [CARRY, 2], [MOVE, 4]],
+        [[WORK, 2], [CARRY, 1], [MOVE, 3]],
+        [[WORK, 2], [CARRY, 1], [MOVE, 2]],
+        [[WORK, 1], [CARRY, 1], [MOVE, 1]]
+    ],
+
+    Artificer: [
+        [[WORK, 4], [CARRY, 4], [MOVE, 8]],
+        [[WORK, 4], [CARRY, 4], [MOVE, 7]],
+        [[WORK, 4], [CARRY, 3], [MOVE, 7]],
+        [[WORK, 4], [CARRY, 3], [MOVE, 6]],
+        [[WORK, 3], [CARRY, 3], [MOVE, 6]],
+        [[WORK, 3], [CARRY, 3], [MOVE, 5]],
+        [[WORK, 3], [CARRY, 2], [MOVE, 5]],
+        [[WORK, 2], [CARRY, 2], [MOVE, 4]],
+        [[WORK, 2], [CARRY, 1], [MOVE, 3]],
+        [[WORK, 2], [CARRY, 1], [MOVE, 2]],
+        [[WORK, 1], [CARRY, 1], [MOVE, 1]]
+    ],
+
+    Scout: [
+        [[MOVE, 1]]
+    ],
+
+    Ronin: [
+        [[ATTACK, 3], [MOVE, 3]],
+        [[ATTACK, 2], [MOVE, 2]],
+        [[ATTACK, 1], [MOVE, 1]]
+    ],
+
+    Volley: [
+        [[RANGED_ATTACK, 3], [MOVE, 3]],
+        [[RANGED_ATTACK, 2], [MOVE, 2]],
+        [[RANGED_ATTACK, 1], [MOVE, 1]]
+    ],
+
+    Cleric: [
+        [[HEAL, 3], [MOVE, 3]],
+        [[HEAL, 2], [MOVE, 2]],
+        [[HEAL, 1], [MOVE, 1]]
+    ],
+
+    ScoreRunner: [
+        [[MOVE, 1]]
+    ]
+};
+
 function getRoomEnergyCapacity(room) {
     if (!room) {
         return 300;
@@ -45,31 +102,13 @@ function getRoomEnergyCapacity(room) {
     return room.energyCapacityAvailable || 300;
 }
 
-/**
- * Calculate how much a body costs.
- *
- * Example:
- * [WORK, CARRY, MOVE]
- * 100 + 50 + 50 = 200
- *
- * @param {array} body
- * @returns {number}
- */
 function getBodyCost(body) {
     var cost = 0;
 
-    /*
-     * If a caller passes no body, return 0 instead of crashing on body.length.
-     * This makes the helper safe for quick console tests.
-     */
     if (!body) {
         return cost;
     }
 
-    /*
-     * Loop over every body part in the array. BODYPART_COST is a Screeps
-     * constant that maps WORK, CARRY, MOVE, etc. to their energy cost.
-     */
     for (var index = 0; index < body.length; index++) {
         cost += BODYPART_COST[body[index]] || 0;
     }
@@ -78,24 +117,17 @@ function getBodyCost(body) {
 }
 
 function buildBody(bodyPlan) {
-    /*
-     * bodyPlan is a compact description like:
-     * [
-     *     [WORK, 2],
-     *     [CARRY, 1],
-     *     [MOVE, 3]
-     * ]
-     *
-     * Screeps spawnCreep needs the expanded array:
-     * [WORK, WORK, CARRY, MOVE, MOVE, MOVE]
-     */
     var body = [];
 
-    for(var i = 0; i < bodyPlan.length; i++) {
-        var bodyPart = bodyPlan[i][0];
-        var count = bodyPlan[i][1];
+    if (!bodyPlan) {
+        return body;
+    }
 
-        for(var j = 0; j < count; j++) {
+    for (var planIndex = 0; planIndex < bodyPlan.length; planIndex++) {
+        var bodyPart = bodyPlan[planIndex][0];
+        var count = bodyPlan[planIndex][1];
+
+        for (var partIndex = 0; partIndex < count; partIndex++) {
             body.push(bodyPart);
         }
     }
@@ -103,445 +135,94 @@ function buildBody(bodyPlan) {
     return body;
 }
 
-function chooseBestAffordableBody(room, bodyPlans) {
-    /*
-     * Body plans are ordered from strongest to weakest.
-     *
-     * Old behavior:
-     * - Used room.energyCapacityAvailable.
-     * - This made the room wait for full energy before spawning bigger bodies.
-     *
-     * New behavior:
-     * - Uses room.energyAvailable first.
-     * - This lets the room spawn the best body it can afford right now.
-     *
-     * We still read energyCapacityAvailable so the function understands what the
-     * room could afford when full, but current energy decides what gets returned.
-     */
-    var energyCapacity = getRoomEnergyCapacity(room);
-    var energyAvailable = energyCapacity;
+function getBestBodyForEnergy(role, energy) {
+    var bodyPlans = BODY_PLANS[role];
 
-    if(room && room.energyAvailable !== undefined) {
-        energyAvailable = room.energyAvailable;
+    if (!bodyPlans || typeof energy !== 'number' || energy < 0) {
+        return null;
     }
 
-    /*
-     * First pass:
-     * Pick the strongest body that current energy can afford right now.
-     */
-    for(var i = 0; i < bodyPlans.length; i++) {
-        var body = buildBody(bodyPlans[i]);
-        var bodyCost = getBodyCost(body);
+    for (var index = 0; index < bodyPlans.length; index++) {
+        var body = buildBody(bodyPlans[index]);
 
-        if(energyAvailable >= bodyCost) {
+        if (getBodyCost(body) <= energy) {
             return body;
         }
     }
 
-    /*
-     * Second pass:
-     * If current energy cannot afford any listed body, pick the smallest body
-     * the room can eventually afford when full.
-     *
-     * This keeps the queue from getting a body that the room can never spawn.
-     * It may still wait if current energy is too low.
-     */
-    for(var j = bodyPlans.length - 1; j >= 0; j--) {
-        var fallbackBody = buildBody(bodyPlans[j]);
-        var fallbackCost = getBodyCost(fallbackBody);
+    return null;
+}
 
-        if(energyCapacity >= fallbackCost) {
-            return fallbackBody;
-        }
+/**
+ * Pick the strongest configured body the room can support when full. This is
+ * normal request-planning behavior; the spawn manager performs a second choice
+ * from current energy when the request reaches the front of the queue.
+ */
+function getBody(role, room) {
+    var body = getBestBodyForEnergy(role, getRoomEnergyCapacity(room));
+
+    if (body) {
+        return body;
     }
 
-    /*
-     * Last emergency fallback.
-     * This costs 200 energy.
-     */
     return [WORK, CARRY, MOVE];
 }
 
 /**
- * Foreman body.
- *
- * Foreman moves energy into spawn/extensions/towers.
- * So Foreman mostly needs CARRY and MOVE.
- *
- * @param {Room} room
- * @returns {array}
+ * Pick the strongest configured body affordable on the current tick.
+ * Unknown roles and rooms that cannot afford their smallest plan return null.
  */
+function getBestBodyForAvailableEnergy(role, room) {
+    if (!room || typeof room.energyAvailable !== 'number') {
+        return null;
+    }
+
+    return getBestBodyForEnergy(role, room.energyAvailable);
+}
+
 function getForemanBody(room) {
-    return chooseBestAffordableBody(room, [
-        [
-            [CARRY, 12],
-            [MOVE, 12]
-        ],
-        [
-            [CARRY, 6],
-            [MOVE, 6]
-        ],
-        [
-            [CARRY, 6],
-            [MOVE, 3]
-        ],
-        [
-            [CARRY, 4],
-            [MOVE, 2]
-        ],
-        [
-            [CARRY, 2],
-            [MOVE, 1]
-        ]
-    ]);
+    return getBody('Foreman', room);
 }
-/**
- * Extractor body.
- *
- * Extractor is your source harvester.
- *
- * @param {Room} room
- * @returns {array}
- */
+
 function getExtractorBody(room) {
-    return chooseBestAffordableBody(room, [
-        [
-            [WORK, 6],
-            [MOVE, 3],
-            [CARRY, 1],
-        ],
-        [
-            [WORK, 4],
-            [MOVE, 2], 
-            [CARRY, 1], 
-        ],
-        [
-            [WORK, 2],
-            [MOVE, 1],
-            [CARRY, 1],
-        ],
-        [
-            [WORK, 1],
-            [MOVE, 1],
-            [CARRY, 1],
-        ],
-    ]);
+    return getBody('Extractor', room);
 }
-/**
- * Freighter body.
- *
- * Freighter hauls energy.
- *
- * @param {Room} room
- * @returns {array}
- */
+
 function getFreighterBody(room) {
-    return chooseBestAffordableBody(room, [
-        [
-            [CARRY, 12],
-            [MOVE, 12]
-        ],
-        [
-            [CARRY, 6],
-            [MOVE, 6]
-        ],
-        [
-            [CARRY, 6],
-            [MOVE, 3]
-        ],
-        [
-            [CARRY, 4],
-            [MOVE, 2]
-        ],
-        [
-            [CARRY, 2],
-            [MOVE, 1]
-        ]
-    ]);
+    return getBody('Freighter', room);
 }
 
-/**
- * Tech body.
- *
- * @param {Room} room
- * @returns {array}
- */
 function getTechBody(room) {
-    return chooseBestAffordableBody(room, [
-        [
-            [WORK, 4],
-            [CARRY, 4],
-            [MOVE, 8],
-        ],
-        [
-            [WORK, 4],
-            [CARRY, 4],
-            [MOVE, 7],
-        ],
-        [
-            [WORK, 4],
-            [CARRY, 3],
-            [MOVE, 7],
-        ],
-        [
-            [WORK, 4],
-            [CARRY, 3],
-            [MOVE, 6],
-        ],
-        [
-            [WORK, 3],
-            [CARRY, 3],
-            [MOVE, 6],
-        ],
-        [
-            [WORK, 3],
-            [CARRY, 3],
-            [MOVE, 5],
-        ],
-        [
-            [WORK, 3],
-            [CARRY, 2],
-            [MOVE, 5],
-        ],
-        [
-            [WORK, 2],
-            [CARRY, 2],
-            [MOVE, 4],
-        ],  
-        [
-            [WORK, 2],
-            [CARRY, 1],
-            [MOVE, 3],
-        ],
-        [
-            [WORK, 2],
-            [CARRY, 1],
-            [MOVE, 2],
-        ],
-        [
-            [WORK, 1],
-            [CARRY, 1],
-            [MOVE, 1],
-        ],
-
-    ]);
+    return getBody('Tech', room);
 }
 
 function getArtificerBody(room) {
-    return chooseBestAffordableBody(room, [
-        [
-            [WORK, 4],
-            [CARRY, 4],
-            [MOVE, 8],
-        ],
-        [
-            [WORK, 4],
-            [CARRY, 4],
-            [MOVE, 7],
-        ],
-        [
-            [WORK, 4],
-            [CARRY, 3],
-            [MOVE, 7],
-        ],
-        [
-            [WORK, 4],
-            [CARRY, 3],
-            [MOVE, 6],
-        ],
-        [
-            [WORK, 3],
-            [CARRY, 3],
-            [MOVE, 6],
-        ],
-        [
-            [WORK, 3],
-            [CARRY, 3],
-            [MOVE, 5],
-        ],
-        [
-            [WORK, 3],
-            [CARRY, 2],
-            [MOVE, 5],
-        ],
-        [
-            [WORK, 2],
-            [CARRY, 2],
-            [MOVE, 4],
-        ],  
-        [
-            [WORK, 2],
-            [CARRY, 1],
-            [MOVE, 3],
-        ],
-        [
-            [WORK, 2],
-            [CARRY, 1],
-            [MOVE, 2],
-        ],
-        [
-            [WORK, 1],
-            [CARRY, 1],
-            [MOVE, 1],
-        ],
-
-    ]);
-}
-
-/**
- * Ronin body.
- *
- * Ronin is the close-range rhythm section: one MOVE for each ATTACK keeps it
- * mobile enough to reach the fight.
- *
- * @param {Room} room
- * @returns {array}
- */
-function getRoninBody(room) {
-    return chooseBestAffordableBody(room, [
-        [
-            [ATTACK, 3],
-            [MOVE, 3]
-        ],
-        [
-            [ATTACK, 2],
-            [MOVE, 2]
-        ],
-        [
-            [ATTACK, 1],
-            [MOVE, 1]
-        ]
-    ]);
-}
-
-/**
- * Volley body.
- *
- * Volley plays at range with one MOVE for each RANGED_ATTACK so it can keep
- * position while dealing damage.
- *
- * @param {Room} room
- * @returns {array}
- */
-function getVolleyBody(room) {
-    return chooseBestAffordableBody(room, [
-        [
-            [RANGED_ATTACK, 3],
-            [MOVE, 3]
-        ],
-        [
-            [RANGED_ATTACK, 2],
-            [MOVE, 2]
-        ],
-        [
-            [RANGED_ATTACK, 1],
-            [MOVE, 1]
-        ]
-    ]);
-}
-
-/**
- * Cleric body.
- *
- * Cleric keeps the group in tune with one MOVE for each HEAL so it can stay
- * beside the creeps it supports.
- *
- * @param {Room} room
- * @returns {array}
- */
-function getClericBody(room) {
-    return chooseBestAffordableBody(room, [
-        [
-            [HEAL, 3],
-            [MOVE, 3]
-        ],
-        [
-            [HEAL, 2],
-            [MOVE, 2]
-        ],
-        [
-            [HEAL, 1],
-            [MOVE, 1]
-        ]
-    ]);
+    return getBody('Artificer', room);
 }
 
 function getScoutBody(room) {
-    return chooseBestAffordableBody(room, [
-        [
-            [MOVE, 1]
-        ]
-    ]);
+    return getBody('Scout', room);
+}
+
+function getRoninBody(room) {
+    return getBody('Ronin', room);
+}
+
+function getVolleyBody(room) {
+    return getBody('Volley', room);
+}
+
+function getClericBody(room) {
+    return getBody('Cleric', room);
 }
 
 function getScoreRunnerBody(room) {
-    return chooseBestAffordableBody(room, [
-        [
-            [MOVE, 1]
-        ]
-    ]);
-}
-
-/**
- * Main body picker.
- *
- * @param {string} role
- * @param {Room} room
- * @returns {array}
- */
-function getBody(role, room) {
-    /*
-     * This is a simple role-to-body router. The spawn request manager calls one
-     * function and gets the correct body array for the role it wants to spawn.
-     */
-    if (role === 'Foreman') {
-        return getForemanBody(room);
-    }
-
-    if (role === 'Extractor') {
-        return getExtractorBody(room);
-    }
-
-    if (role === 'Freighter') {
-        return getFreighterBody(room);
-    }
-
-    if (role === 'Tech') {
-        return getTechBody(room);
-    }
-
-    if (role === 'Artificer') {
-        return getArtificerBody(room);
-    }
-
-    if (role === 'Ronin') {
-        return getRoninBody(room);
-    }
-
-    if (role === 'Volley') {
-        return getVolleyBody(room);
-    }
-
-    if (role === 'Cleric') {
-        return getClericBody(room);
-    }
-
-    if (role === 'Scout') {
-        return getScoutBody(room);
-    }
-
-    if (role === 'ScoreRunner') {
-        return getScoreRunnerBody(room);
-    }
-
-    /*
-     * Safe fallback body.
-     */
-    return [WORK, CARRY, MOVE];
+    return getBody('ScoreRunner', room);
 }
 
 module.exports = {
     getBody: getBody,
+    getBestBodyForAvailableEnergy: getBestBodyForAvailableEnergy,
     getBodyCost: getBodyCost,
 
     getScoutBody: getScoutBody,
