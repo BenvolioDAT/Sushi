@@ -77,6 +77,12 @@ var roleExtractor = {
          * argument asks Screeps specifically about energy space, not other resources.
          */
         var miningSeat = utilityCreep.getAssignedMiningSeat(creep, source);
+
+        if (!miningSeat && creep.memory.extractorState === 'waitingForContainerSeat') {
+            waitForContainerSeat(creep, source);
+            return;
+        }
+
         setExtractorWorkingArea(creep, source);
         updateSourceHaulMemory(creep, source, false);
 
@@ -258,6 +264,39 @@ function setExtractorWorkingArea(creep, source) {
     }
 
     creep.setWorkingArea(source.pos, 1);
+}
+
+function waitForContainerSeat(creep, source) {
+    if (!creep || !source || !source.pos) {
+        return;
+    }
+
+    if (typeof creep.setWorkingArea === 'function') {
+        creep.setWorkingArea(source.pos, 3);
+    }
+
+    var range = creep.pos.getRangeTo(source.pos);
+
+    if (range >= 2 && range <= 3) {
+        return;
+    }
+
+    if (range > 3) {
+        utilityTravelCreep.move(creep, source, {
+            range: 2,
+            visualizePathStyle: {
+                stroke: '#777777'
+            }
+        });
+        return;
+    }
+
+    /* Move outward one tile without pathing through the occupied container. */
+    var outwardDirection = source.pos.getDirectionTo(creep.pos);
+
+    if (outwardDirection) {
+        creep.move(outwardDirection);
+    }
 }
 
 function getSourceFromRoomMemory(creep) {

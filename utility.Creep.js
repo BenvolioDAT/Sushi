@@ -691,6 +691,7 @@ function idleNearBase(creep) {
     }
 }
 var SOURCE_WORK_TARGET = 6;
+var EXTRACTOR_HANDOFF_TICKS = 100;
 
 function getCreepWorkParts(creep) {
     if (!creep) {
@@ -777,69 +778,205 @@ function getAssignedWorkTotal(sourceMemory, sourceId, roomName) {
     return totalWork;
 }
 
-function sourceHasOpenWorkCapacity(sourceRecord) {
-    /*
-     * Source capacity has two limits:
-     * - seat count: how many creeps can physically stand around the source
-     * - SOURCE_WORK_TARGET: how much total WORK is useful for mining speed
-     *
-     * A source is full when either limit is reached.
-     */
-    var sourceMemory = sourceRecord.sourceMemory;
-    var livingAssignedCount = 0;
-    var totalAssignedWorkParts = 0;
-    var maxSeats = sourceRecord.seatCount;
-    var roomName = sourceRecord.source && sourceRecord.source.pos ? sourceRecord.source.pos.roomName : null;
+function sourceHasLiveContainer(sourceRecord) {
+    if (!sourceRecord || !sourceRecord.source || !sourceRecord.sourceMemory) {
+        return false;
+    }
+
+    return !!getLiveSourceContainerPosition(
+        sourceRecord.source,
+        sourceRecord.sourceMemory
+    );
+}
+
+function isExtractorAssignedToSource(creep, sourceId, roomName) {
+    if (!creep || !creep.my || !creep.memory) {
+        return false;
+    }
+
+    var creepRole = creep.memory.role;
+    var creepTask = creep.memory.task;
+
+    if (
+        creepRole !== 'Extractor' &&
+        creepRole !== 'Miner' &&
+        creepTask !== 'Extractor' &&
+        creepTask !== 'Miner' &&
+        creepTask !== 'extractor' &&
+        creepTask !== 'miner'
+    ) {
+        return false;
+    }
+
+    if (
+        creep.memory.sourceId !== sourceId &&
+        creep.memory.targetSourceId !== sourceId &&
+        creep.memory.assignedSource !== sourceId
+    ) {
+        return false;
+    }
+
+    if (creep.memory.sourceRoom && creep.memory.sourceRoom !== roomName) {
+        return false;
+    }
+
+    if (creep.memory.targetRoom && creep.memory.targetRoom !== roomName) {
+        return false;
+    }
+
+    if (
+        !creep.memory.sourceRoom &&
+        !creep.memory.targetRoom &&
+        creep.memory.homeRoom &&
+        creep.memory.homeRoom !== roomName
+    ) {
+        return false;
+    }
+
+    return true;
+}
+
+function getAssignedExtractorSummary(sourceRecord) {
+    var summary = {
+        count: 0,
+        work: 0,
+        hasHealthyFullWorker: false,
+        hasDyingWorker: false,
+        oldestTicksToLive: null,
+        workers: []
+    };
+
+    if (!sourceRecord || !sourceRecord.source || !sourceRecord.sourceMemory) {
+        return summary;
+    }
+
+    var assignedMiners = sourceRecord.sourceMemory.assignedMiner;
+    var roomName = sourceRecord.source.pos.roomName;
     var seenIds = {};
 
-    if (!maxSeats || maxSeats < 1) {
-        maxSeats = getSafeSeatCount(sourceMemory);
+    if (!assignedMiners) {
+        return summary;
     }
 
-    if (!sourceMemory || !sourceMemory.assignedMiner) {
-        return true;
+    if (typeof assignedMiners === 'string') {
+        assignedMiners = [assignedMiners];
     }
 
-    for (var i = 0; i < sourceMemory.assignedMiner.length; i++) {
-        var creepId = sourceMemory.assignedMiner[i];
+    if (!Array.isArray(assignedMiners)) {
+        return summary;
+    }
+
+    for (var i = 0; i < assignedMiners.length; i++) {
+        var creepId = assignedMiners[i];
         var assignedCreep = Game.getObjectById(creepId) || Game.creeps[creepId];
 
-        if (!assignedCreep || !assignedCreep.my || !assignedCreep.memory) {
-            continue;
-        }
-
-        if (seenIds[assignedCreep.id]) {
-            continue;
-        }
-
         if (
-            assignedCreep.memory.sourceId !== sourceRecord.sourceId &&
-            assignedCreep.memory.targetSourceId !== sourceRecord.sourceId &&
-            assignedCreep.memory.assignedSource !== sourceRecord.sourceId
-        ) {
-            continue;
-        }
-
-        if (assignedCreep.memory.sourceRoom && assignedCreep.memory.sourceRoom !== roomName) {
-            continue;
-        }
-
-        if (assignedCreep.memory.targetRoom && assignedCreep.memory.targetRoom !== roomName) {
-            continue;
-        }
-
-        if (
-            !assignedCreep.memory.sourceRoom &&
-            !assignedCreep.memory.targetRoom &&
-            assignedCreep.memory.homeRoom &&
-            assignedCreep.memory.homeRoom !== roomName
+            !isExtractorAssignedToSource(
+                assignedCreep,
+                sourceRecord.sourceId,
+                roomName
+            ) ||
+            seenIds[assignedCreep.id]
         ) {
             continue;
         }
 
         seenIds[assignedCreep.id] = true;
-        livingAssignedCount++;
-        totalAssignedWorkParts += getCreepWorkParts(assignedCreep);
+
+        var workParts = getCreepWorkParts(assignedCreep);
+        var ticksToLive = assignedCreep.ticksToLive;
+
+        summary.count++;
+        summary.work += workParts;
+        summary.workers.push(assignedCreep);
+
+        if (ticksToLive !== undefined) {
+            if (
+                summary.oldestTicksToLive === null ||
+                ticksToLive < summary.oldestTicksToLive
+            ) {
+                summary.oldestTicksToLive = ticksToLive;
+            }
+
+            if (ticksToLive <= EXTRACTOR_HANDOFF_TICKS) {
+                summary.hasDyingWorker = true;
+            }
+        }
+
+        if (
+            workParts >= SOURCE_WORK_TARGET &&
+            (ticksToLive === undefined || ticksToLive > EXTRACTOR_HANDOFF_TICKS)
+        ) {
+            summary.hasHealthyFullWorker = true;
+        }
+    }
+
+    return summary;
+}
+
+function summaryHasHealthyWorker(summary) {
+    for (var i = 0; i < summary.workers.length; i++) {
+        var worker = summary.workers[i];
+
+        if (
+            worker.ticksToLive === undefined ||
+            worker.ticksToLive > EXTRACTOR_HANDOFF_TICKS
+        ) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+function sourceHasOpenWorkCapacity(sourceRecord, requestingCreep) {
+    /*
+     * Container sources use one primary mining station plus an optional weak
+     * miner supplement or replacement handoff. Sources without containers keep
+     * the normal seat-count and total-WORK limits.
+     */
+    var sourceMemory = sourceRecord.sourceMemory;
+    var maxSeats = sourceRecord.seatCount;
+    var roomName = sourceRecord.source && sourceRecord.source.pos ? sourceRecord.source.pos.roomName : null;
+    var assignedSummary = getAssignedExtractorSummary(sourceRecord);
+
+    if (!maxSeats || maxSeats < 1) {
+        maxSeats = getSafeSeatCount(sourceMemory);
+    }
+
+    if (sourceHasLiveContainer(sourceRecord)) {
+        if (
+            requestingCreep &&
+            isExtractorAssignedToSource(
+                requestingCreep,
+                sourceRecord.sourceId,
+                roomName
+            )
+        ) {
+            return true;
+        }
+
+        /* A container source has one primary miner and at most one handoff. */
+        if (assignedSummary.count >= 2) {
+            return false;
+        }
+
+        if (assignedSummary.work < SOURCE_WORK_TARGET) {
+            return true;
+        }
+
+        if (
+            assignedSummary.hasDyingWorker &&
+            !summaryHasHealthyWorker(assignedSummary)
+        ) {
+            return true;
+        }
+
+        if (assignedSummary.hasHealthyFullWorker) {
+            return false;
+        }
+
+        return assignedSummary.count < 1;
     }
 
     /*
@@ -847,7 +984,10 @@ function sourceHasOpenWorkCapacity(sourceRecord) {
      * enough mining power for one source. Once either cap is reached, skip
      * this source instead of assigning another Extractor to it.
      */
-    return livingAssignedCount < maxSeats && totalAssignedWorkParts < SOURCE_WORK_TARGET;
+    return (
+        assignedSummary.count < maxSeats &&
+        assignedSummary.work < SOURCE_WORK_TARGET
+    );
 }
 /**
  * Find or claim the best source for this creep to harvest from.
@@ -857,7 +997,7 @@ function sourceHasOpenWorkCapacity(sourceRecord) {
  * 2. Cleans dead creep IDs out of each source's assignedMiner list.
  * 3. Keeps this creep on its old source if the assignment is still valid.
  * 4. Otherwise picks the source with the fewest assigned miners.
- * 5. Respects seatCount, so a source with 3 seats can hold up to 3 miners.
+ * 5. Uses single-station policy for containers and seatCount otherwise.
  *
  * @param {Creep} creep
  * @returns {Source|null}
@@ -934,6 +1074,23 @@ function getAssignedMiningSeat(creep, source) {
         if (!isMiningSeatTakenByOtherCreep(creep, containerPosition)) {
             rememberMiningSeat(creep, source.id, containerPosition, 'container');
             return containerPosition;
+        }
+
+        /*
+         * Do not let an overflow Extractor settle beside a healthy full-strength
+         * container miner. Weak-miner supplementation and death handoffs may
+         * still use an ordinary source seat until the container becomes free.
+         */
+        var assignedSummary = getAssignedExtractorSummary({
+            sourceId: source.id,
+            source: source,
+            sourceMemory: sourceMemory
+        });
+
+        if (summaryHasHealthyFullWorkerOtherThan(assignedSummary, creep)) {
+            clearMiningSeatMemory(creep);
+            creep.memory.extractorState = 'waitingForContainerSeat';
+            return null;
         }
     }
 
@@ -1468,6 +1625,28 @@ function cleanDeadAssignedMiners(sourceMemory, sourceId, roomName) {
     sourceMemory.assignedMiner = cleanList;
 }
 
+function summaryHasHealthyFullWorkerOtherThan(summary, creep) {
+    for (var i = 0; i < summary.workers.length; i++) {
+        var worker = summary.workers[i];
+
+        if (creep && worker.id === creep.id) {
+            continue;
+        }
+
+        if (
+            getCreepWorkParts(worker) >= SOURCE_WORK_TARGET &&
+            (
+                worker.ticksToLive === undefined ||
+                worker.ticksToLive > EXTRACTOR_HANDOFF_TICKS
+            )
+        ) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
 /**
  * Read seatCount safely.
  *
@@ -1530,8 +1709,8 @@ function reclaimRememberedSource(creep, sourceRecords) {
             continue;
         }
 
-        // If this source has both an open seat and less than 6 WORK, claim it again.
-        if(sourceHasOpenWorkCapacity(record)) {
+        // Existing assignments may reclaim their source without displacing peers.
+        if(sourceHasOpenWorkCapacity(record, creep)) {
             claimSourceRecord(creep, record);
             return record.source;
         }
@@ -1569,7 +1748,7 @@ function findBestSourceRecord(creep, sourceRecords) {
          * Skip sources that hit either cap: the miner parking limit or
          * 6 total assigned WORK parts.
          */
-        if(!sourceHasOpenWorkCapacity(record)) {
+        if(!sourceHasOpenWorkCapacity(record, creep)) {
             continue;
         }
 

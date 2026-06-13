@@ -22,12 +22,12 @@ var RemotePlanner = require('Planner.Remote');
  */
 var DESIRED_COUNTS = {
     Foreman: 1,
-    Extractor: 7,
+    Extractor: 6,
     Freighter: 4,
     ScoreRunner: 0,
     Tech: 3,
     Artificer: 4,
-    Scout: 1,
+    Scout: 5,
     Ronin: 1,
     Volley: 1,
     Cleric: 1
@@ -428,6 +428,8 @@ function requestRoleForRoom(room, role, desiredCount) {
             var maxSeats = 1;
             var livingAssignedCount = 0;
             var totalAssignedWorkParts = 0;
+            var healthyAssignedCount = 0;
+            var hasDyingAssignedExtractor = false;
             var cleanAssignedMiners = [];
             var seenAssignedCreeps = {};
 
@@ -508,6 +510,16 @@ function requestRoleForRoom(room, role, desiredCount) {
                 }
 
                 totalAssignedWorkParts += assignedWorkParts;
+
+                if (
+                    assignedCreep.ticksToLive !== undefined &&
+                    assignedCreep.ticksToLive <= EXTRACTOR_HANDOFF_TICKS
+                ) {
+                    hasDyingAssignedExtractor = true;
+                }
+                else {
+                    healthyAssignedCount++;
+                }
             }
 
             /*
@@ -589,6 +601,16 @@ function requestRoleForRoom(room, role, desiredCount) {
                 }
 
                 totalAssignedWorkParts += livingWorkParts;
+
+                if (
+                    livingCreep.ticksToLive !== undefined &&
+                    livingCreep.ticksToLive <= EXTRACTOR_HANDOFF_TICKS
+                ) {
+                    hasDyingAssignedExtractor = true;
+                }
+                else {
+                    healthyAssignedCount++;
+                }
             }
 
             sourceMemory.assignedMiner = cleanAssignedMiners;
@@ -644,16 +666,25 @@ function requestRoleForRoom(room, role, desiredCount) {
                 }
             }
 
-            /*
-             * seatCount is the miner parking limit. Six combined living WORK
-             * parts is enough mining power for one source. A source is skipped
-             * once either cap is reached, or once a matching source request is
-             * already pending in this room's spawnQueue.
-             */
-            if (
+            if (hasPendingSourceRequest) {
+                continue;
+            }
+
+            var hasLiveContainer = sourceHasLiveContainer(realSourceId, sourceMemory);
+
+            if (hasLiveContainer) {
+                if (!containerSourceNeedsExtractor(
+                    livingAssignedCount,
+                    totalAssignedWorkParts,
+                    hasDyingAssignedExtractor,
+                    healthyAssignedCount
+                )) {
+                    continue;
+                }
+            }
+            else if (
                 livingAssignedCount >= maxSeats ||
-                totalAssignedWorkParts >= SOURCE_WORK_TARGET ||
-                hasPendingSourceRequest
+                totalAssignedWorkParts >= SOURCE_WORK_TARGET
             ) {
                 continue;
             }
@@ -859,6 +890,68 @@ function runStartupBootstrap(room, report) {
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 var SOURCE_WORK_TARGET = 6;
+var EXTRACTOR_HANDOFF_TICKS = 100;
+
+function sourceHasLiveContainer(sourceId, sourceMemory) {
+    if (!sourceId || !sourceMemory) {
+        return false;
+    }
+
+    var source = Game.getObjectById(sourceId);
+
+    if (!source || !source.pos) {
+        return false;
+    }
+
+    if (sourceMemory.containerId) {
+        var rememberedContainer = Game.getObjectById(sourceMemory.containerId);
+
+        if (
+            rememberedContainer &&
+            rememberedContainer.structureType === STRUCTURE_CONTAINER &&
+            rememberedContainer.pos.getRangeTo(source.pos) <= 1
+        ) {
+            return true;
+        }
+
+        sourceMemory.containerId = null;
+    }
+
+    var nearbyContainers = source.pos.findInRange(FIND_STRUCTURES, 1, {
+        filter: function(structure) {
+            return structure.structureType === STRUCTURE_CONTAINER;
+        }
+    });
+
+    if (nearbyContainers.length === 0) {
+        return false;
+    }
+
+    sourceMemory.containerId = nearbyContainers[0].id;
+    return true;
+}
+
+function containerSourceNeedsExtractor(
+    assignedCount,
+    assignedWork,
+    hasDyingExtractor,
+    healthyAssignedCount
+) {
+    if (assignedCount <= 0) {
+        return true;
+    }
+
+    /* A live container gets one primary miner and at most one replacement. */
+    if (assignedCount >= 2) {
+        return false;
+    }
+
+    if (assignedWork < SOURCE_WORK_TARGET) {
+        return true;
+    }
+
+    return hasDyingExtractor && healthyAssignedCount === 0;
+}
 
 function countBodyParts(body, bodyPartType) {
     var count = 0;
