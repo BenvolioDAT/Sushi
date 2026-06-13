@@ -22,6 +22,7 @@ var trafficManager = require('traffic_manager');
 var travelUtility = require('utility.Travel.Creep');
 var RemotePlanner = require('Planner.Remote');
 var RoadPlanner = require('Planner.Roads');
+var Dashboard = require('Visual.Dashboard');
 
 /*
  * Harabi-style traffic movement is initialized once when this global is loaded.
@@ -452,4 +453,5 @@ module.exports.loop = function () {
     }
 
     runTrafficManagerForVisibleRooms();
+    Dashboard.run();
 }
