@@ -225,10 +225,31 @@ WarRoom.findBestThreatInRoom = function(room) {
 };
 
 /*
+ * Return true when a hostile creep has an active body part that can threaten
+ * our creeps, structures, or operations.
+ */
+WarRoom.isHostileCreepThreat = function(hostile) {
+    if(!hostile) {
+        return false;
+    }
+
+    return (
+        hostile.getActiveBodyparts(ATTACK) > 0 ||
+        hostile.getActiveBodyparts(RANGED_ATTACK) > 0 ||
+        hostile.getActiveBodyparts(HEAL) > 0 ||
+        hostile.getActiveBodyparts(WORK) > 0
+    );
+};
+
+/*
  * Find the highest-scoring hostile creep in a visible room.
  */
 WarRoom.findBestHostileCreepInRoom = function(room) {
-    var hostiles = room.find(FIND_HOSTILE_CREEPS);
+    var hostiles = room.find(FIND_HOSTILE_CREEPS, {
+        filter: function(hostile) {
+            return WarRoom.isHostileCreepThreat(hostile);
+        }
+    });
 
     if(hostiles.length === 0) {
         return null;
@@ -313,7 +334,7 @@ WarRoom.saveActiveThreat = function(threat, type) {
         ownerName = threat.owner.username;
     }
 
-    Memory.WarRoom.activeThreat = {
+    var activeThreat = {
         type: type,
         id: threat.id,
         roomName: threat.pos.roomName,
@@ -323,6 +344,17 @@ WarRoom.saveActiveThreat = function(threat, type) {
         structureType: threat.structureType || null,
         lastSeen: Game.time
     };
+
+    if(type === 'creep' && threat.body) {
+        activeThreat.threatParts = {
+            attack: threat.getActiveBodyparts(ATTACK),
+            ranged: threat.getActiveBodyparts(RANGED_ATTACK),
+            heal: threat.getActiveBodyparts(HEAL),
+            work: threat.getActiveBodyparts(WORK)
+        };
+    }
+
+    Memory.WarRoom.activeThreat = activeThreat;
 };
 
 /*
@@ -499,7 +531,11 @@ WarRoom.findHostileCreeps = function(creep) {
         return [];
     }
 
-    return creep.room.find(FIND_HOSTILE_CREEPS);
+    return creep.room.find(FIND_HOSTILE_CREEPS, {
+        filter: function(hostile) {
+            return WarRoom.isHostileCreepThreat(hostile);
+        }
+    });
 };
 
 /*
@@ -675,7 +711,8 @@ WarRoom.getCombatTarget = function(creep) {
             oldTarget &&
             oldTarget.hits > 0 &&
             oldTarget.pos &&
-            oldTarget.pos.roomName === creep.room.name
+            oldTarget.pos.roomName === creep.room.name &&
+            (!oldTarget.body || WarRoom.isHostileCreepThreat(oldTarget))
         ) {
             return oldTarget;
         }
