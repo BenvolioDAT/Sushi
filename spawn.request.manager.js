@@ -840,8 +840,8 @@ function runStartupBootstrap(room, report) {
         return true;
     }
 
-    if (getHealthyRoleCount(room, 'Freighter') < 1) {
-        report.requests.push(requestRoleForRoom(room, 'Freighter', 1));
+    if (getHealthyRoleCount(room, 'Freighter') < 2) {
+        report.requests.push(requestRoleForRoom(room, 'Freighter', 2));
         return true;
     }
 
