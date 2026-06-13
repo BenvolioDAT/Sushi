@@ -60,6 +60,26 @@ function compactNumber(value) {
     return String(round(value, 1));
 }
 
+function getHaulAge(lastSeen) {
+    return lastSeen > 0 ? Game.time - lastSeen : null;
+}
+
+function getAgeColor(age, muted) {
+    if (muted || age === null) {
+        return COLORS.muted;
+    }
+
+    if (age <= 25) {
+        return COLORS.good;
+    }
+
+    if (age <= 100) {
+        return COLORS.warning;
+    }
+
+    return COLORS.danger;
+}
+
 function truncate(value, maxLength) {
     var text = value === undefined || value === null ? '' : String(value);
 
@@ -250,57 +270,12 @@ function getAssignedMinerCount(assignedMiner) {
     return typeof assignedMiner === 'string' && assignedMiner ? 1 : 0;
 }
 
-function packCoord(pos) {
-    return pos.x + (pos.y * 50);
-}
-
-function hasPlannedRoadNearSource(homeRoomName, source) {
-    if (!homeRoomName || !source || !source.pos) {
-        return false;
-    }
-
-    var homeMemory = Memory.rooms && Memory.rooms[homeRoomName];
-    var roadPlanner = homeMemory && homeMemory.roadPlanner;
-
-    if (!roadPlanner || !roadPlanner.rooms) {
-        return false;
-    }
-
-    var roomPlan = roadPlanner.rooms[source.pos.roomName];
-
-    if (!roomPlan || !Array.isArray(roomPlan.roadCoords)) {
-        return false;
-    }
-
-    var roadLookup = {};
-
-    for (var i = 0; i < roomPlan.roadCoords.length; i++) {
-        roadLookup[roomPlan.roadCoords[i]] = true;
-    }
-
-    for (var dx = -1; dx <= 1; dx++) {
-        for (var dy = -1; dy <= 1; dy++) {
-            var x = source.pos.x + dx;
-            var y = source.pos.y + dy;
-
-            if (x < 0 || x > 49 || y < 0 || y > 49) {
-                continue;
-            }
-
-            if (roadLookup[packCoord({ x: x, y: y })]) {
-                return true;
-            }
-        }
-    }
-
-    return false;
-}
-
 function makeSourceStat(homeRoomName, sourceMemory, sourceId, index) {
     sourceMemory = sourceMemory || {};
     sourceId = sourceMemory.id || sourceId;
 
     var source = sourceId ? Game.getObjectById(sourceId) : null;
+    var hasHaulData = !!sourceMemory.haul;
     var haul = sourceMemory.haul || {};
 
     return {
@@ -312,10 +287,8 @@ function makeSourceStat(homeRoomName, sourceMemory, sourceId, index) {
         haulAmount: safeNumber(haul.amount),
         reservedCarry: safeNumber(haul.reservedCarry),
         haulLastSeen: safeNumber(haul.lastSeen),
+        hasHaulData: hasHaulData,
         containerKnown: !!sourceMemory.containerId,
-        roadPlanned: source ?
-            hasPlannedRoadNearSource(homeRoomName, source) :
-            !!sourceMemory.roadPlanned,
         containerPlanned: !!(
             sourceMemory.containerPlanned ||
             sourceMemory.containerPlannedPos ||
@@ -356,6 +329,20 @@ function getRoomSourceStats(room) {
     return result;
 }
 
+function getSourceHaulSnapshot(roomName, sourceId) {
+    var roomMemory = Memory.rooms && Memory.rooms[roomName];
+    var sources = roomMemory && roomMemory.sources;
+    var sourceMemory = sources && sources[sourceId];
+    var haul = sourceMemory && sourceMemory.haul;
+
+    return {
+        hasHaulData: !!haul,
+        amount: haul ? safeNumber(haul.amount) : 0,
+        reservedCarry: haul ? safeNumber(haul.reservedCarry) : 0,
+        lastSeen: haul ? safeNumber(haul.lastSeen) : 0
+    };
+}
+
 function getRemoteStats(room) {
     var roomMemory = Memory.rooms && Memory.rooms[room.name];
     var planner = roomMemory && roomMemory.remotePlanner;
@@ -380,6 +367,7 @@ function getRemoteStats(room) {
     for (var i = 0; i < activeSourceIds.length; i++) {
         var sourceId = activeSourceIds[i];
         var info = sourceInfos[sourceId] || {};
+        var haul = getSourceHaulSnapshot(info.roomName, sourceId);
         activeLookup[sourceId] = true;
         result.totalIncome += safeNumber(info.netIncome);
         result.active.push({
@@ -387,7 +375,10 @@ function getRemoteStats(room) {
             roomName: info.roomName || '?',
             distance: safeNumber(info.distance),
             netIncome: safeNumber(info.netIncome),
-            score: safeNumber(info.score),
+            haulAmount: haul.amount,
+            reservedCarry: haul.reservedCarry,
+            haulLastSeen: haul.lastSeen,
+            hasHaulData: haul.hasHaulData,
             reason: ''
         });
     }
@@ -461,6 +452,110 @@ function getStoredEnergy(structure) {
     return safeNumber(structure.store[RESOURCE_ENERGY]);
 }
 
+function getSpawnStatus(room, queue) {
+    var spawns = room.find(FIND_MY_SPAWNS);
+
+    for (var i = 0; i < spawns.length; i++) {
+        var spawn = spawns[i];
+
+        if (!spawn.spawning) {
+            continue;
+        }
+
+        var spawningName = spawn.spawning.name;
+        var spawningCreep = Game.creeps[spawningName];
+        var role = spawningCreep && spawningCreep.memory && spawningCreep.memory.role;
+
+        return {
+            text: 'Spawn ' + truncate(role || spawningName || 'creep', 12),
+            color: COLORS.title
+        };
+    }
+
+    if (spawns.length === 0) {
+        return {
+            text: 'Spawn none',
+            color: COLORS.danger
+        };
+    }
+
+    if (queue.length === 0) {
+        return {
+            text: 'Spawn idle',
+            color: COLORS.good
+        };
+    }
+
+    if (room.energyAvailable < queue.bodyCost) {
+        return {
+            text: 'Spawn waiting energy',
+            color: COLORS.warning
+        };
+    }
+
+    return {
+        text: 'Spawn ready',
+        color: COLORS.good
+    };
+}
+
+function getThreatStatus() {
+    var threat = Memory.WarRoom && Memory.WarRoom.activeThreat;
+
+    if (!threat) {
+        return {
+            text: 'Threat none',
+            color: COLORS.muted
+        };
+    }
+
+    var age = threat.lastSeen > 0 ? Game.time - threat.lastSeen : 0;
+    var stale = threat.lastSeen > 0 && age > 50;
+    var text = stale ? 'Threat stale ' : 'Threat ';
+    text += (threat.roomName || '?') + ' ' + (threat.type || '?') + ' ' + (threat.owner || 'unknown');
+
+    if (threat.threatParts) {
+        text += ' A' + safeNumber(threat.threatParts.attack) +
+            ' R' + safeNumber(threat.threatParts.ranged) +
+            ' H' + safeNumber(threat.threatParts.heal) +
+            ' W' + safeNumber(threat.threatParts.work);
+    }
+
+    return {
+        text: text,
+        color: COLORS.danger
+    };
+}
+
+function getBuildCount(room) {
+    var count = 0;
+    var sites = Game.constructionSites || {};
+
+    for (var siteId in sites) {
+        if (!sites.hasOwnProperty(siteId)) {
+            continue;
+        }
+
+        var site = sites[siteId];
+        if (site && site.pos && site.pos.roomName === room.name) {
+            count++;
+        }
+    }
+
+    return count;
+}
+
+function getRepairCount(roomName) {
+    var roomMemory = Memory.rooms && Memory.rooms[roomName];
+    var repairs = roomMemory && roomMemory.RepairStructure;
+    return Array.isArray(repairs) ? repairs.length : 0;
+}
+
+function getBacklogColor(count, warningAt, dangerAt) {
+    return count >= dangerAt ? COLORS.danger :
+        count >= warningAt ? COLORS.warning : COLORS.good;
+}
+
 function drawGlobalPanel(visual, ownedRoomCount, totalCreeps) {
     var x = 1;
     var y = 1;
@@ -497,6 +592,10 @@ function drawRoomPanel(visual, room, sourceStats, remoteStats, roomCreeps) {
         COLORS.warning : COLORS.good;
     var storageEnergy = getStoredEnergy(room.storage);
     var terminalEnergy = getStoredEnergy(room.terminal);
+    var spawnStatus = getSpawnStatus(room, queue);
+    var threatStatus = getThreatStatus();
+    var buildCount = getBuildCount(room);
+    var repairCount = getRepairCount(room.name);
     var freighters = roomCreeps.freighters;
     var roles = roomCreeps.roles;
     var rowY = y + 1;
@@ -508,6 +607,13 @@ function drawRoomPanel(visual, room, sourceStats, remoteStats, roomCreeps) {
     rowY += LINE_HEIGHT;
     drawRow(visual, ['Terminal', { text: room.terminal ? compactNumber(terminalEnergy) : 'none', color: room.terminal ? COLORS.good : COLORS.muted }], x, rowY, [5.3, 5]);
     rowY += LINE_HEIGHT;
+    drawRow(visual, [
+        'Energy',
+        safeNumber(room.energyAvailable) + '/' + safeNumber(room.energyCapacityAvailable),
+        '|',
+        spawnStatus
+    ], x, rowY, [3.8, 5.6, 1, 7.2]);
+    rowY += LINE_HEIGHT;
     drawRow(visual, ['Spawn queue', { text: queue.length, color: queue.length > 3 ? COLORS.warning : COLORS.text }], x, rowY, [7, 4]);
     rowY += LINE_HEIGHT;
     drawRow(visual, ['Next', queue.role ? truncate(queue.role, 9) + ' ' + queue.bodyCost + 'e' : 'none'], x, rowY, [3.2, 12]);
@@ -515,6 +621,15 @@ function drawRoomPanel(visual, room, sourceStats, remoteStats, roomCreeps) {
     drawRow(visual, ['Sources', sourceStats.length, 'Remote', { text: remoteStats.activeCount, color: remoteStats.activeCount ? COLORS.good : COLORS.muted }], x, rowY, [4.2, 2, 4.2, 3]);
     rowY += LINE_HEIGHT;
     drawRow(visual, ['Remote income', { text: round(remoteStats.totalIncome, 2) + '/t', color: remoteStats.totalIncome > 0 ? COLORS.good : COLORS.muted }], x, rowY, [7.4, 6]);
+    rowY += LINE_HEIGHT;
+    drawText(visual, threatStatus.text, x, rowY, threatStatus.color, 0.5);
+    rowY += LINE_HEIGHT;
+    drawRow(visual, [
+        'Build',
+        { text: buildCount, color: getBacklogColor(buildCount, 10, 50) },
+        'Repair',
+        { text: repairCount, color: getBacklogColor(repairCount, 25, 100) }
+    ], x, rowY, [3.4, 2.5, 4.2, 3]);
     rowY += LINE_HEIGHT;
     drawRow(visual, ['Creeps', roomCreeps.total], x, rowY, [4.2, 3]);
     rowY += LINE_HEIGHT;
@@ -548,17 +663,17 @@ function drawSourcePanel(visual, sourceStats) {
         { text: 'Ext', color: COLORS.title },
         { text: 'Haul', color: COLORS.title },
         { text: 'Res', color: COLORS.title },
+        { text: 'Age', color: COLORS.title },
         { text: 'Cont', color: COLORS.title },
-        { text: 'Road', color: COLORS.title },
         { text: 'CPlan', color: COLORS.title }
     ], x, headerY, columnWidths);
 
     for (var i = 0; i < sourceStats.length; i++) {
         var stat = sourceStats[i];
         var rowY = headerY + ((i + 1) * LINE_HEIGHT);
-        var haulAge = stat.haulLastSeen > 0 ? Game.time - stat.haulLastSeen : 0;
-        var haulColor = !stat.haulTargetId || stat.haulAmount <= 0 ? COLORS.muted :
-            haulAge > 25 ? COLORS.danger :
+        var haulAge = getHaulAge(stat.haulLastSeen);
+        var missingHaulTarget = !stat.hasHaulData || !stat.haulTargetId;
+        var haulColor = missingHaulTarget ? COLORS.muted :
             stat.haulAmount > stat.reservedCarry ? COLORS.good : COLORS.warning;
 
         drawRow(visual, [
@@ -567,8 +682,8 @@ function drawSourcePanel(visual, sourceStats) {
             stat.assignedMiners,
             { text: compactNumber(stat.haulAmount), color: haulColor },
             compactNumber(stat.reservedCarry),
+            { text: haulAge === null ? '-' : haulAge, color: getAgeColor(haulAge, missingHaulTarget) },
             { text: stat.containerKnown ? 'Y' : 'N', color: stat.containerKnown ? COLORS.good : COLORS.muted },
-            { text: stat.roadPlanned ? 'Y' : 'N', color: stat.roadPlanned ? COLORS.good : COLORS.muted },
             { text: stat.containerPlanned ? 'Y' : 'N', color: stat.containerPlanned ? COLORS.good : COLORS.muted }
         ], x, rowY, columnWidths);
     }
@@ -597,7 +712,7 @@ function drawRemotePanel(visual, remoteStats, sourcePanel) {
     var hasRejectedHeader = rejectedRows.length > 0 && remainingRows > rejectedRows.length;
     var shownRows = activeRows.length + rejectedRows.length + (hasRejectedHeader ? 1 : 0) + (showHiddenRow ? 1 : 0);
     var height = Math.max(4.2, 2.15 + (shownRows * LINE_HEIGHT));
-    var columnWidths = [7, 4.5, 4.5, 3.5, 8.5];
+    var columnWidths = [6.2, 3.8, 3.2, 3.4, 3.4, 3.4, 5.8];
     var rowY = y + 1;
     var title = remoteStats.planner ?
         'REMOTES ' + remoteStats.activeCount + ' active | ' + round(remoteStats.totalIncome, 2) + '/t' :
@@ -613,20 +728,28 @@ function drawRemotePanel(visual, remoteStats, sourcePanel) {
     drawRow(visual, [
         { text: 'Room', color: COLORS.title },
         { text: 'Net', color: COLORS.title },
-        { text: 'Score', color: COLORS.title },
         { text: 'Dist', color: COLORS.title },
+        { text: 'Haul', color: COLORS.title },
+        { text: 'Res', color: COLORS.title },
+        { text: 'Age', color: COLORS.title },
         { text: 'State', color: COLORS.title }
     ], x, rowY, columnWidths);
 
     for (var i = 0; i < activeRows.length; i++) {
         var active = activeRows[i];
+        var age = getHaulAge(active.haulLastSeen);
+        var stateColor = !active.hasHaulData || age === null ? COLORS.warning :
+            age > 100 ? COLORS.danger :
+            age > 25 ? COLORS.warning : COLORS.good;
         rowY += LINE_HEIGHT;
         drawRow(visual, [
             active.roomName,
             { text: round(active.netIncome, 2), color: active.netIncome > 0 ? COLORS.good : COLORS.warning },
-            round(active.score, 2),
             active.distance,
-            { text: 'active', color: COLORS.good }
+            compactNumber(active.haulAmount),
+            compactNumber(active.reservedCarry),
+            { text: age === null ? '-' : age, color: getAgeColor(age, !active.hasHaulData) },
+            { text: 'active', color: stateColor }
         ], x, rowY, columnWidths);
     }
 
@@ -640,10 +763,12 @@ function drawRemotePanel(visual, remoteStats, sourcePanel) {
         rowY += LINE_HEIGHT;
         drawRow(visual, [
             rejected.roomName,
-            round(rejected.netIncome, 2),
-            round(rejected.score, 2),
+            { text: round(rejected.netIncome, 2), color: rejected.netIncome > 0 ? COLORS.good : COLORS.warning },
             rejected.distance,
-            { text: truncate(rejected.reason, 14), color: COLORS.danger }
+            0,
+            0,
+            { text: '-', color: COLORS.muted },
+            { text: truncate(rejected.reason, 10), color: COLORS.danger }
         ], x, rowY, columnWidths);
     }
 
