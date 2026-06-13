@@ -27,7 +27,7 @@ var DESIRED_COUNTS = {
     ScoreRunner: 0,
     Tech: 3,
     Artificer: 4,
-    Scout: 5,
+    Scout: 1,
     Ronin: 1,
     Volley: 1,
     Cleric: 1
