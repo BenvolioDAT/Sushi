@@ -15,6 +15,10 @@ var spawnManager = require('spawn.manager');
 var creepBodyConfig = require('role.creepBodyConfig');
 var RemotePlanner = require('Planner.Remote');
 
+var RESERVE_DESIRED_TICKS = 4000;
+var RESERVE_SPAWN_AT_TICKS = 2500;
+var ANNEX_LIVING_MIN_TTL = 100;
+
 /*
  * How many creeps we want for now.
  *
@@ -24,6 +28,11 @@ var DESIRED_COUNTS = {
     Foreman: 1,
     Extractor: 6,
     Freighter: 4,
+    /*
+     * Annex uses this as a maximum cap, not a fixed desired count. It only
+     * spawns when an active remote room needs controller reservation help.
+     */
+    Annex: 1,
     ScoreRunner: 0,
     Tech: 3,
     Artificer: 4,
@@ -44,6 +53,7 @@ var PRIORITY = {
     Foreman: 100,
     Extractor: 80,
     Freighter: 60,
+    Annex: 55,
     ScoreRunner: 5,
     Tech: 30,
     Artificer: 20,
@@ -63,6 +73,7 @@ var REPLACEMENT_BUFFER_TICKS = {
     Foreman: 30,
     Extractor: 30,
     Freighter: 40,
+    Annex: 80,
     Tech: 40,
     Artificer: 40,
     Scout: 10,
@@ -326,6 +337,201 @@ function sortSpawnQueue(queue) {
 
         return a.requestedAt - b.requestedAt;
     });
+}
+
+function getMyUsername(room) {
+    if (room && room.controller && room.controller.owner) {
+        return room.controller.owner.username;
+    }
+
+    for (var spawnName in Game.spawns) {
+        if (
+            Game.spawns.hasOwnProperty(spawnName) &&
+            Game.spawns[spawnName].owner
+        ) {
+            return Game.spawns[spawnName].owner.username;
+        }
+    }
+
+    return Memory.username || null;
+}
+
+function getControllerOwnerUsername(controllerMemory) {
+    if (!controllerMemory || !controllerMemory.owner) {
+        return null;
+    }
+
+    if (typeof controllerMemory.owner === 'string') {
+        return controllerMemory.owner;
+    }
+
+    return controllerMemory.owner.username || null;
+}
+
+function getControllerReservation(controllerMemory) {
+    if (!controllerMemory || !controllerMemory.reservation) {
+        return null;
+    }
+
+    if (typeof controllerMemory.reservation === 'string') {
+        return {
+            username: controllerMemory.reservation,
+            ticksToEnd: controllerMemory.ticksToEnd || 0
+        };
+    }
+
+    return {
+        username: controllerMemory.reservation.username || null,
+        ticksToEnd: controllerMemory.reservation.ticksToEnd || controllerMemory.ticksToEnd || 0
+    };
+}
+
+function isLivingAnnexForHome(creep, homeRoomName) {
+    return !!(
+        creep &&
+        creep.memory &&
+        creep.memory.role === 'Annex' &&
+        creep.memory.homeRoom === homeRoomName &&
+        (creep.ticksToLive === undefined || creep.ticksToLive > ANNEX_LIVING_MIN_TTL)
+    );
+}
+
+function isQueuedAnnexForHome(request, homeRoomName) {
+    var memory = request && request.memory;
+
+    return !!(
+        request &&
+        request.role === 'Annex' &&
+        memory &&
+        memory.homeRoom === homeRoomName
+    );
+}
+
+function requestAnnexForRoom(room) {
+    var result = {
+        ok: true,
+        role: 'Annex',
+        requested: 0,
+        desiredReservationTicks: RESERVE_DESIRED_TICKS,
+        spawnAtTicks: RESERVE_SPAWN_AT_TICKS
+    };
+
+    if (!room) {
+        result.ok = false;
+        result.reason = 'Missing home room';
+        return result;
+    }
+
+    var activeSources = RemotePlanner.getActiveRemoteSourcesForHome(room.name);
+    var queue = spawnManager.getSpawnQueue(room.name);
+    var annexBody = creepBodyConfig.getAnnexBody(room);
+
+    if (!queue || !annexBody || !activeSources || activeSources.length === 0) {
+        result.reason = !annexBody ? 'Room cannot support an Annex body' : 'No active remote rooms';
+        return result;
+    }
+
+    var livingAnnexes = [];
+    for (var creepName in Game.creeps) {
+        if (!Game.creeps.hasOwnProperty(creepName)) {
+            continue;
+        }
+
+        if (isLivingAnnexForHome(Game.creeps[creepName], room.name)) {
+            livingAnnexes.push(Game.creeps[creepName]);
+        }
+    }
+
+    var queuedAnnexes = [];
+    for (var queueIndex = 0; queueIndex < queue.length; queueIndex++) {
+        if (isQueuedAnnexForHome(queue[queueIndex], room.name)) {
+            queuedAnnexes.push(queue[queueIndex]);
+        }
+    }
+
+    /* DESIRED_COUNTS.Annex is a max cap, not a fixed desired count. */
+    var totalPlannedAnnexes = livingAnnexes.length + queuedAnnexes.length;
+    if (totalPlannedAnnexes >= DESIRED_COUNTS.Annex) {
+        result.reason = 'Annex max cap reached';
+        return result;
+    }
+
+    var myUsername = getMyUsername(room);
+    var seenRemoteRooms = {};
+
+    for (var sourceIndex = 0; sourceIndex < activeSources.length; sourceIndex++) {
+        var sourceInfo = activeSources[sourceIndex];
+        var remoteRoomName = sourceInfo && sourceInfo.roomName;
+
+        if (!remoteRoomName || seenRemoteRooms[remoteRoomName]) {
+            continue;
+        }
+        seenRemoteRooms[remoteRoomName] = true;
+
+        var controllerMemory = Memory.rooms && Memory.rooms[remoteRoomName] ?
+            Memory.rooms[remoteRoomName].controller : null;
+        var ownerUsername = getControllerOwnerUsername(controllerMemory);
+        var reservation = getControllerReservation(controllerMemory);
+
+        if (ownerUsername && ownerUsername !== myUsername) {
+            continue;
+        }
+
+        if (controllerMemory && controllerMemory.my === true) {
+            continue;
+        }
+
+        if (reservation && reservation.username && reservation.username !== myUsername) {
+            continue;
+        }
+
+        if (
+            reservation &&
+            reservation.username === myUsername &&
+            reservation.ticksToEnd >= RESERVE_SPAWN_AT_TICKS
+        ) {
+            continue;
+        }
+
+        var duplicate = false;
+        for (var livingIndex = 0; livingIndex < livingAnnexes.length; livingIndex++) {
+            if (livingAnnexes[livingIndex].memory.targetRoom === remoteRoomName) {
+                duplicate = true;
+                break;
+            }
+        }
+
+        for (var queuedIndex = 0; !duplicate && queuedIndex < queuedAnnexes.length; queuedIndex++) {
+            if (queuedAnnexes[queuedIndex].memory.targetRoom === remoteRoomName) {
+                duplicate = true;
+            }
+        }
+
+        if (duplicate) {
+            continue;
+        }
+
+        queue.push({
+            role: 'Annex',
+            body: annexBody,
+            priority: PRIORITY.Annex,
+            memory: {
+                role: 'Annex',
+                homeRoom: room.name,
+                targetRoom: remoteRoomName,
+                annexMode: 'reserve'
+            },
+            requestedAt: Game.time
+        });
+        sortSpawnQueue(queue);
+
+        result.requested = 1;
+        result.targetRoom = remoteRoomName;
+        return result;
+    }
+
+    result.reason = 'No active remote room needs reservation';
+    return result;
 }
 
 /**
@@ -1077,6 +1283,7 @@ function run() {
 
     report.requests.push(requestRoleForRoom(room, 'Extractor', getDesiredExtractorCount(room)));
     report.requests.push(requestRoleForRoom(room, 'Freighter', DESIRED_COUNTS.Freighter));
+    report.requests.push(requestAnnexForRoom(room));
     report.requests.push(requestRoleForRoom(room, 'ScoreRunner', DESIRED_COUNTS.ScoreRunner));
     report.requests.push(requestRoleForRoom(room, 'Tech', DESIRED_COUNTS.Tech));
     report.requests.push(requestRoleForRoom(room, 'Artificer', DESIRED_COUNTS.Artificer));
@@ -1099,5 +1306,6 @@ module.exports = {
     requestRoleForRoom: requestRoleForRoom,
     countHealthyCreeps: countHealthyCreeps,
     getReplacementLeadTicks: getReplacementLeadTicks,
-    requestRemoteExtractorsForRoom: requestRemoteExtractorsForRoom
+    requestRemoteExtractorsForRoom: requestRemoteExtractorsForRoom,
+    requestAnnexForRoom: requestAnnexForRoom
 };

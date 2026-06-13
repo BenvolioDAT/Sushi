@@ -2,6 +2,7 @@ var roleForeman = require('role.Foreman');
 var roleExtractor = require('role.Extractor');
 var roleTech = require('role.Tech');
 var roleFreighter = require('role.Freighter');
+var roleAnnex = require('role.Annex');
 var roleArtificer = require('role.Artificer');
 var roleScout = require('role.Scout');
 var roleRonin = require('role.Ronin');
@@ -433,6 +434,9 @@ module.exports.loop = function () {
         }
         if(creep.memory.role == 'Freighter') {
             roleFreighter.run(creep);
+        }
+        if(creep.memory.role == 'Annex') {
+            roleAnnex.run(creep);
         }
         if(creep.memory.role == 'Artificer') {
             roleArtificer.run(creep);

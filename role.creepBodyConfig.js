@@ -39,6 +39,11 @@ var BODY_PLANS = {
         [[CARRY, 2], [MOVE, 1]]
     ],
 
+    Annex: [
+        [[CLAIM, 2], [MOVE, 2]],
+        [[CLAIM, 1], [MOVE, 1]]
+    ],
+
     Tech: [
         [[WORK, 4], [CARRY, 4], [MOVE, 8]],
         [[WORK, 4], [CARRY, 4], [MOVE, 7]],
@@ -165,6 +170,11 @@ function getBody(role, room) {
         return body;
     }
 
+    /* Annex must never receive the generic worker fallback body. */
+    if (role === 'Annex') {
+        return null;
+    }
+
     return [WORK, CARRY, MOVE];
 }
 
@@ -190,6 +200,10 @@ function getExtractorBody(room) {
 
 function getFreighterBody(room) {
     return getBody('Freighter', room);
+}
+
+function getAnnexBody(room) {
+    return getBody('Annex', room);
 }
 
 function getTechBody(room) {
@@ -229,6 +243,7 @@ module.exports = {
     getForemanBody: getForemanBody,
     getExtractorBody: getExtractorBody,
     getFreighterBody: getFreighterBody,
+    getAnnexBody: getAnnexBody,
     getTechBody: getTechBody,
     getArtificerBody: getArtificerBody,
     getRoninBody: getRoninBody,
