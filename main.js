@@ -345,11 +345,10 @@ module.exports.loop = function () {
     for (var roomName in Game.rooms) {
     var room = Game.rooms[roomName];
 
-    //if (room.controller && room.controller.my) {
-    if (Game.time % 5 === 0) {
+    if (room.controller && room.controller.my && Game.time % 10 === 0) {
         updateRepairStructureMemory(room);
         /*
-         * Road construction now belongs to Planner.Roads.js.
+         * Road construction now belongs to Planner.Roads.js.   
          * The travel route cache remains enabled for movement/fallback only,
          * so creep-walked paths no longer become the main source of roads.
          */
