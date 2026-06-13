@@ -22,7 +22,7 @@ var RemotePlanner = require('Planner.Remote');
  */
 var DESIRED_COUNTS = {
     Foreman: 1,
-    Extractor: 6,
+    Extractor: 7,
     Freighter: 4,
     ScoreRunner: 0,
     Tech: 3,
