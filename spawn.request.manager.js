@@ -18,6 +18,9 @@ var RemotePlanner = require('Planner.Remote');
 var RESERVE_DESIRED_TICKS = 4000;
 var RESERVE_SPAWN_AT_TICKS = 2500;
 var ANNEX_LIVING_MIN_TTL = 100;
+var TECH_DOWNGRADE_DANGER_TICKS = 5000;
+var TECH_MAX_DESIRED_WORK = 24;
+var TECH_RCL8_MAX_WORK = 15;
 
 /*
  * How many creeps we want for now.
@@ -34,7 +37,6 @@ var DESIRED_COUNTS = {
      */
     Annex: 6,
     ScoreRunner: 0,
-    Tech: 1,
     Artificer: 2,
     Scout: 1,
     Ronin: 1,
@@ -271,6 +273,315 @@ function countQueuedRequests(roomName, role) {
     }
 
     return count;
+}
+
+function getStoredEnergy(structure) {
+    if (!structure || !structure.store) {
+        return 0;
+    }
+
+    if (typeof structure.store.getUsedCapacity === 'function') {
+        return structure.store.getUsedCapacity(RESOURCE_ENERGY) || 0;
+    }
+
+    return structure.store[RESOURCE_ENERGY] || 0;
+}
+
+function getControllerContainerEnergy(room) {
+    if (!room || !room.controller) {
+        return 0;
+    }
+
+    var containers = room.controller.pos.findInRange(FIND_STRUCTURES, 3, {
+        filter: function(structure) {
+            return structure.structureType === STRUCTURE_CONTAINER;
+        }
+    });
+    var energy = 0;
+
+    for (var i = 0; i < containers.length; i++) {
+        energy += getStoredEnergy(containers[i]);
+    }
+
+    return energy;
+}
+
+function getActiveRemoteNetIncome(roomName) {
+    var activeSources = RemotePlanner.getActiveRemoteSourcesForHome(roomName);
+    var income = 0;
+
+    if (!activeSources) {
+        return income;
+    }
+
+    for (var i = 0; i < activeSources.length; i++) {
+        var netIncome = activeSources[i] && activeSources[i].netIncome;
+
+        if (typeof netIncome === 'number' && netIncome > 0) {
+            income += netIncome;
+        }
+    }
+
+    return income;
+}
+
+function getConstructionSiteCount(room) {
+    if (!room) {
+        return 0;
+    }
+
+    var sites = room.find(FIND_CONSTRUCTION_SITES);
+    return sites ? sites.length : 0;
+}
+
+/**
+ * Calculate the room's desired active Tech WORK parts.
+ *
+ * Storage is the main long-term signal. Controller-container energy and
+ * profitable remote income add small bonuses, while a construction backlog
+ * reserves more income for Artificers. The result is a WORK target, not a
+ * creep count.
+ */
+function getDesiredTechWork(room) {
+    if (!room || !room.controller) {
+        return 0;
+    }
+
+    var level = room.controller.level || 1;
+    var energyCapacity = room.energyCapacityAvailable || 300;
+    var storageEnergy = getStoredEnergy(room.storage);
+    var desiredWork;
+
+    if (!room.storage) {
+        if (level <= 2) {
+            desiredWork = energyCapacity >= 550 ? 4 :
+                energyCapacity >= 400 ? 3 : 2;
+        }
+        else if (level <= 4) {
+            desiredWork = energyCapacity >= 800 ? 6 : 4;
+        }
+        else {
+            /* A high-RCL room without storage is probably recovering. */
+            desiredWork = energyCapacity >= 1300 ? 6 : 4;
+        }
+    }
+    else if (storageEnergy < 20000) {
+        desiredWork = 4;
+    }
+    else if (storageEnergy < 50000) {
+        desiredWork = 6;
+    }
+    else if (storageEnergy < 100000) {
+        desiredWork = 9;
+    }
+    else if (storageEnergy < 200000) {
+        desiredWork = 14;
+    }
+    else {
+        desiredWork = 20;
+    }
+
+    if (getControllerContainerEnergy(room) >= 1000) {
+        desiredWork++;
+    }
+
+    /* Each 5 net remote energy/tick adds one WORK, up to four. */
+    var remoteBonus = Math.min(4, Math.floor(getActiveRemoteNetIncome(room.name) / 5));
+    desiredWork += remoteBonus;
+
+    if (!room.storage) {
+        desiredWork = Math.min(desiredWork, 8);
+    }
+
+    /* A nearly empty storage is a recovery state even if remotes look strong. */
+    if (room.storage && storageEnergy < 5000) {
+        desiredWork = Math.min(desiredWork, 4);
+    }
+
+    var upgradeRush = Memory.settings && Memory.settings.upgradeRush === true;
+    var constructionSites = getConstructionSiteCount(room);
+
+    if (!upgradeRush) {
+        if (constructionSites >= 25) {
+            desiredWork = Math.ceil(desiredWork * 0.5);
+        }
+        else if (constructionSites >= 10) {
+            desiredWork = Math.ceil(desiredWork * 0.75);
+        }
+    }
+    else {
+        desiredWork = Math.ceil(desiredWork * 1.35);
+    }
+
+    if (room.controller.ticksToDowngrade < TECH_DOWNGRADE_DANGER_TICKS) {
+        var emergencyMinimum = energyCapacity >= 550 ? 5 : 2;
+        desiredWork = Math.max(desiredWork, emergencyMinimum);
+    }
+
+    desiredWork = Math.max(2, Math.min(desiredWork, TECH_MAX_DESIRED_WORK));
+
+    /* RCL 8 controllers accept at most 15 normal upgrade energy per tick. */
+    if (level === 8) {
+        desiredWork = Math.min(desiredWork, TECH_RCL8_MAX_WORK);
+    }
+
+    return desiredWork;
+}
+
+function getCreepActiveBodyParts(creep, partType) {
+    if (!creep) {
+        return 0;
+    }
+
+    if (typeof creep.getActiveBodyparts === 'function') {
+        return creep.getActiveBodyparts(partType);
+    }
+
+    var count = 0;
+    var body = creep.body || [];
+
+    for (var i = 0; i < body.length; i++) {
+        if (body[i] && body[i].type === partType && body[i].hits !== 0) {
+            count++;
+        }
+    }
+
+    return count;
+}
+
+function countLivingRoleWork(roomName, role) {
+    var work = 0;
+
+    for (var creepName in Game.creeps) {
+        if (!Game.creeps.hasOwnProperty(creepName)) {
+            continue;
+        }
+
+        var creep = Game.creeps[creepName];
+
+        if (!creep || !creep.memory || creep.memory.role !== role) {
+            continue;
+        }
+
+        var creepHomeRoom = creep.memory.homeRoom ||
+            (creep.room ? creep.room.name : null);
+
+        if (creepHomeRoom !== roomName) {
+            continue;
+        }
+
+        var bodyLength = creep.body ? creep.body.length : 0;
+        var replacementLeadTicks = (bodyLength * 3) +
+            (REPLACEMENT_BUFFER_TICKS[role] || 30);
+
+        if (
+            creep.ticksToLive !== undefined &&
+            creep.ticksToLive <= replacementLeadTicks
+        ) {
+            continue;
+        }
+
+        work += getCreepActiveBodyParts(creep, WORK);
+    }
+
+    return work;
+}
+
+function countQueuedRoleWork(roomName, role) {
+    var queue = spawnManager.getSpawnQueue(roomName);
+    var work = 0;
+
+    if (!queue) {
+        return work;
+    }
+
+    for (var i = 0; i < queue.length; i++) {
+        var request = queue[i];
+        var requestRole = request && (request.role ||
+            (request.memory && request.memory.role));
+
+        if (requestRole === role) {
+            work += countBodyParts(request.body, WORK);
+        }
+    }
+
+    return work;
+}
+
+function saveTechWorkDebug(roomName, desiredWork, livingWork, queuedWork) {
+    if (!Memory.rooms) {
+        Memory.rooms = {};
+    }
+
+    if (!Memory.rooms[roomName]) {
+        Memory.rooms[roomName] = {};
+    }
+
+    Memory.rooms[roomName].techDesiredWork = desiredWork;
+    Memory.rooms[roomName].techLivingWork = livingWork;
+    Memory.rooms[roomName].techQueuedWork = queuedWork;
+}
+
+function requestTechWorkForRoom(room) {
+    if (!room) {
+        return {
+            ok: false,
+            role: 'Tech',
+            requested: 0,
+            reason: 'Missing room'
+        };
+    }
+
+    var desiredWork = getDesiredTechWork(room);
+    var livingWork = countLivingRoleWork(room.name, 'Tech');
+    var queuedWork = countQueuedRoleWork(room.name, 'Tech');
+    var missingWork = desiredWork - livingWork - queuedWork;
+    var result = {
+        ok: true,
+        role: 'Tech',
+        requested: 0,
+        desiredWork: desiredWork,
+        livingWork: livingWork,
+        queuedWork: queuedWork,
+        missingWork: Math.max(0, missingWork)
+    };
+
+    saveTechWorkDebug(room.name, desiredWork, livingWork, queuedWork);
+
+    if (missingWork <= 0) {
+        return result;
+    }
+
+    var body = creepBodyConfig.getTechBodyForWork(room, missingWork);
+    var requestedWork = countBodyParts(body, WORK);
+    var queue = spawnManager.getSpawnQueue(room.name);
+
+    if (!body || requestedWork <= 0 || !queue) {
+        result.ok = false;
+        result.reason = 'No Tech body or spawn queue available';
+        return result;
+    }
+
+    /* Add exactly one Tech request per tick. Later ticks can fill more WORK. */
+    queue.push({
+        role: 'Tech',
+        body: body,
+        maxWorkParts: requestedWork,
+        priority: PRIORITY.Tech,
+        memory: {
+            role: 'Tech',
+            homeRoom: room.name
+        },
+        requestedAt: Game.time
+    });
+    sortSpawnQueue(queue);
+
+    result.requested = 1;
+    result.requestedWork = requestedWork;
+    result.queuedWork += requestedWork;
+    saveTechWorkDebug(room.name, desiredWork, livingWork, result.queuedWork);
+
+    return result;
 }
 
 
@@ -1285,7 +1596,7 @@ function run() {
     report.requests.push(requestRoleForRoom(room, 'Freighter', DESIRED_COUNTS.Freighter));
     report.requests.push(requestAnnexForRoom(room));
     report.requests.push(requestRoleForRoom(room, 'ScoreRunner', DESIRED_COUNTS.ScoreRunner));
-    report.requests.push(requestRoleForRoom(room, 'Tech', DESIRED_COUNTS.Tech));
+    report.requests.push(requestTechWorkForRoom(room));
     report.requests.push(requestRoleForRoom(room, 'Artificer', DESIRED_COUNTS.Artificer));
     report.requests.push(requestRoleForRoom(room, 'Scout', DESIRED_COUNTS.Scout));
     report.requests.push(requestRoleForRoom(room, 'Ronin', DESIRED_COUNTS.Ronin));
@@ -1304,7 +1615,12 @@ module.exports = {
     getFirstSpawn: getFirstSpawn,
     getManagedRoom: getManagedRoom,
     requestRoleForRoom: requestRoleForRoom,
+    requestTechWorkForRoom: requestTechWorkForRoom,
     countHealthyCreeps: countHealthyCreeps,
+    countLivingRoleWork: countLivingRoleWork,
+    countQueuedRoleWork: countQueuedRoleWork,
+    countBodyParts: countBodyParts,
+    getDesiredTechWork: getDesiredTechWork,
     getReplacementLeadTicks: getReplacementLeadTicks,
     requestRemoteExtractorsForRoom: requestRemoteExtractorsForRoom,
     requestAnnexForRoom: requestAnnexForRoom

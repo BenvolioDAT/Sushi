@@ -87,31 +87,14 @@ var BODY_PLANS = {
     ],
 
     Tech: [
-        //[[WORK, 12], [CARRY, 12], [MOVE, 24]],
-        //[[WORK, 12], [CARRY, 11], [MOVE, 23]],
-        //[[WORK, 11], [CARRY, 11], [MOVE, 22]],
-        //[[WORK, 11], [CARRY, 10], [MOVE, 21]],
-        //[[WORK, 10], [CARRY, 10], [MOVE, 20]],
-        //[[WORK, 10], [CARRY, 9], [MOVE, 19]],
-        //[[WORK, 9], [CARRY, 9], [MOVE, 18]],
-        //[[WORK, 9], [CARRY, 8], [MOVE, 17]],
-        //[[WORK, 8], [CARRY, 8], [MOVE, 16]],
-        //[[WORK, 8], [CARRY, 7], [MOVE, 15]],
-        //[[WORK, 7], [CARRY, 7], [MOVE, 14]],
-        //[[WORK, 7], [CARRY, 6], [MOVE, 13]],
-        [[WORK, 6], [CARRY, 6], [MOVE, 12]],
-        [[WORK, 6], [CARRY, 5], [MOVE, 11]],
-        [[WORK, 6], [CARRY, 4], [MOVE, 10]],
-        [[WORK, 5], [CARRY, 4], [MOVE, 9]],
-        [[WORK, 4], [CARRY, 4], [MOVE, 8]],
-        [[WORK, 4], [CARRY, 4], [MOVE, 7]],
-        [[WORK, 4], [CARRY, 3], [MOVE, 7]],
-        [[WORK, 4], [CARRY, 3], [MOVE, 6]],
-        [[WORK, 3], [CARRY, 3], [MOVE, 6]],
-        [[WORK, 3], [CARRY, 3], [MOVE, 5]],
-        [[WORK, 3], [CARRY, 2], [MOVE, 5]],
-        [[WORK, 2], [CARRY, 2], [MOVE, 4]],
-        [[WORK, 2], [CARRY, 1], [MOVE, 3]],
+        /* Controller-fed Techs favor WORK over carrying a large energy load. */
+        [[WORK, 12], [CARRY, 6], [MOVE, 9]],
+        [[WORK, 10], [CARRY, 5], [MOVE, 8]],
+        [[WORK, 8], [CARRY, 4], [MOVE, 6]],
+        [[WORK, 6], [CARRY, 4], [MOVE, 5]],
+        [[WORK, 5], [CARRY, 3], [MOVE, 4]],
+        [[WORK, 4], [CARRY, 3], [MOVE, 4]],
+        [[WORK, 3], [CARRY, 2], [MOVE, 3]],
         [[WORK, 2], [CARRY, 1], [MOVE, 2]],
         [[WORK, 1], [CARRY, 1], [MOVE, 1]]
     ],
@@ -232,6 +215,45 @@ function getBestBodyForEnergy(role, energy) {
     return null;
 }
 
+function countBodyParts(body, partType) {
+    var count = 0;
+
+    if (!body) {
+        return count;
+    }
+
+    for (var index = 0; index < body.length; index++) {
+        if (body[index] === partType) {
+            count++;
+        }
+    }
+
+    return count;
+}
+
+function getTechBodyForEnergyAndWork(energy, desiredWork) {
+    var bodyPlans = BODY_PLANS.Tech;
+
+    if (typeof energy !== 'number' || energy < 0 || desiredWork <= 0) {
+        return null;
+    }
+
+    /*
+     * Plans are strongest first. Requiring work <= desiredWork prevents a
+     * small shortage from turning into a needlessly oversized upgrader.
+     */
+    for (var index = 0; index < bodyPlans.length; index++) {
+        var body = buildBody(bodyPlans[index]);
+        var workParts = countBodyParts(body, WORK);
+
+        if (workParts <= desiredWork && getBodyCost(body) <= energy) {
+            return body;
+        }
+    }
+
+    return null;
+}
+
 /**
  * Pick the strongest configured body the room can support when full. This is
  * normal request-planning behavior; the spawn manager performs a second choice
@@ -284,6 +306,18 @@ function getTechBody(room) {
     return getBody('Tech', room);
 }
 
+function getTechBodyForWork(room, desiredWork) {
+    return getTechBodyForEnergyAndWork(getRoomEnergyCapacity(room), desiredWork);
+}
+
+function getTechBodyForAvailableEnergy(room, desiredWork) {
+    if (!room || typeof room.energyAvailable !== 'number') {
+        return null;
+    }
+
+    return getTechBodyForEnergyAndWork(room.energyAvailable, desiredWork);
+}
+
 function getArtificerBody(room) {
     return getBody('Artificer', room);
 }
@@ -312,6 +346,8 @@ module.exports = {
     getBody: getBody,
     getBestBodyForAvailableEnergy: getBestBodyForAvailableEnergy,
     getBodyCost: getBodyCost,
+    getTechBodyForWork: getTechBodyForWork,
+    getTechBodyForAvailableEnergy: getTechBodyForAvailableEnergy,
 
     getScoutBody: getScoutBody,
     getForemanBody: getForemanBody,

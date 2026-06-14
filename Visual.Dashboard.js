@@ -826,8 +826,9 @@ function drawRoomPanel(visual, room, sourceStats, remoteStats, roomCreeps) {
     var y = 3.7;
     var width = 18;
     var showRoleCounts = Memory.settings && Memory.settings.dashboardShowRoleCounts === true;
-    var height = showRoleCounts ? 12.2 : 10.1;
+    var height = showRoleCounts ? 12.9 : 10.8;
     var controller = room.controller;
+    var roomMemory = Memory.rooms && Memory.rooms[room.name];
     var queue = getSpawnQueueInfo(room.name);
     var progressText = controller && controller.progressTotal ?
         round(percent(controller.progress, controller.progressTotal), 1) + '%' : 'max';
@@ -841,6 +842,11 @@ function drawRoomPanel(visual, room, sourceStats, remoteStats, roomCreeps) {
     var repairCount = getRepairCount(room.name);
     var freighters = roomCreeps.freighters;
     var roles = roomCreeps.roles;
+    var hasTechWork = roomMemory && typeof roomMemory.techDesiredWork === 'number';
+    var techWorkText = hasTechWork ?
+        safeNumber(roomMemory.techLivingWork) + '/' + safeNumber(roomMemory.techDesiredWork) :
+        '-/-';
+    var techQueuedWork = hasTechWork ? safeNumber(roomMemory.techQueuedWork) : 0;
     var rowY = y + 1;
 
     drawPanel(visual, x, y, width, height, 'ROOM ' + room.name);
@@ -875,6 +881,14 @@ function drawRoomPanel(visual, room, sourceStats, remoteStats, roomCreeps) {
     ], x, rowY, [3.4, 2.5, 4.2, 3]);
     rowY += LINE_HEIGHT;
     drawRow(visual, ['Creeps', roomCreeps.total], x, rowY, [4.2, 3]);
+    rowY += LINE_HEIGHT;
+    drawText(
+        visual,
+        'Tech W ' + techWorkText + (techQueuedWork > 0 ? ' +' + techQueuedWork + 'q' : ''),
+        x,
+        rowY,
+        hasTechWork ? COLORS.text : COLORS.muted
+    );
     rowY += LINE_HEIGHT;
     drawText(
         visual,

@@ -20,6 +20,22 @@ var creepBodyConfig = require('role.creepBodyConfig');
 
 var getBodyCost = creepBodyConfig.getBodyCost;
 
+function countBodyParts(body, partType) {
+    var count = 0;
+
+    if (!body) {
+        return count;
+    }
+
+    for (var index = 0; index < body.length; index++) {
+        if (body[index] === partType) {
+            count++;
+        }
+    }
+
+    return count;
+}
+
 /**
  * Select the strongest body for this role that current room energy can afford.
  *
@@ -44,10 +60,26 @@ function selectAffordableQueuedBodyForSpawn(spawn, request) {
     }
 
     var energyAvailable = spawn.room.energyAvailable;
-    var bestBody = creepBodyConfig.getBestBodyForAvailableEnergy(
-        request.role,
-        spawn.room
-    );
+    var bestBody;
+
+    if (request.role === 'Tech') {
+        /*
+         * Tech requests are sized to a missing WORK amount. Preserve that cap
+         * while still allowing the body to shrink when current energy is low.
+         * Reading request.body also keeps old queued Tech requests compatible.
+         */
+        var requestedWork = request.maxWorkParts || countBodyParts(request.body, WORK);
+        bestBody = creepBodyConfig.getTechBodyForAvailableEnergy(
+            spawn.room,
+            requestedWork
+        );
+    }
+    else {
+        bestBody = creepBodyConfig.getBestBodyForAvailableEnergy(
+            request.role,
+            spawn.room
+        );
+    }
 
     if (!bestBody || bestBody.length === 0) {
         return {
