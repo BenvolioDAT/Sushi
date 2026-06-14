@@ -254,6 +254,26 @@ function getTechBodyForEnergyAndWork(energy, desiredWork) {
     return null;
 }
 
+function getArtificerBodyForEnergyAndWork(energy, desiredWork) {
+    var bodyPlans = BODY_PLANS.Artificer;
+
+    if (typeof energy !== 'number' || energy < 0 || desiredWork <= 0) {
+        return null;
+    }
+
+    /* Keep the configured off-road movement safety without overshooting WORK. */
+    for (var index = 0; index < bodyPlans.length; index++) {
+        var body = buildBody(bodyPlans[index]);
+        var workParts = countBodyParts(body, WORK);
+
+        if (workParts <= desiredWork && getBodyCost(body) <= energy) {
+            return body;
+        }
+    }
+
+    return null;
+}
+
 function getFreighterBodyForEnergyAndCarry(energy, desiredCarryParts) {
     var bodyPlans = BODY_PLANS.Freighter;
 
@@ -363,6 +383,24 @@ function getArtificerBody(room) {
     return getBody('Artificer', room);
 }
 
+function getArtificerBodyForWork(room, desiredWork) {
+    return getArtificerBodyForEnergyAndWork(
+        getRoomEnergyCapacity(room),
+        desiredWork
+    );
+}
+
+function getArtificerBodyForAvailableEnergy(room, desiredWork) {
+    if (!room || typeof room.energyAvailable !== 'number') {
+        return null;
+    }
+
+    return getArtificerBodyForEnergyAndWork(
+        room.energyAvailable,
+        desiredWork
+    );
+}
+
 function getScoutBody(room) {
     return getBody('Scout', room);
 }
@@ -389,6 +427,8 @@ module.exports = {
     getBodyCost: getBodyCost,
     getTechBodyForWork: getTechBodyForWork,
     getTechBodyForAvailableEnergy: getTechBodyForAvailableEnergy,
+    getArtificerBodyForWork: getArtificerBodyForWork,
+    getArtificerBodyForAvailableEnergy: getArtificerBodyForAvailableEnergy,
     getFreighterBodyForCarry: getFreighterBodyForCarry,
     getFreighterBodyForAvailableEnergy: getFreighterBodyForAvailableEnergy,
 

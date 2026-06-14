@@ -74,6 +74,15 @@ function selectAffordableQueuedBodyForSpawn(spawn, request) {
             requestedWork
         );
     }
+    else if (request.role === 'Artificer') {
+        /* Artificer requests also carry a WORK shortage cap. */
+        var requestedArtificerWork = request.requestedWorkParts ||
+            request.maxWorkParts || countBodyParts(request.body, WORK);
+        bestBody = creepBodyConfig.getArtificerBodyForAvailableEnergy(
+            spawn.room,
+            requestedArtificerWork
+        );
+    }
     else if (request.role === 'Freighter') {
         /* Preserve the requested CARRY shortage while shrinking for energy. */
         var requestedCarry = request.requestedCarryParts ||

@@ -14,6 +14,7 @@
 var spawnManager = require('spawn.manager');
 var creepBodyConfig = require('role.creepBodyConfig');
 var RemotePlanner = require('Planner.Remote');
+var creepUtility = require('utility.Creep');
 
 var RESERVE_DESIRED_TICKS = 4000;
 var RESERVE_SPAWN_AT_TICKS = 2500;
@@ -21,6 +22,12 @@ var ANNEX_LIVING_MIN_TTL = 100;
 var TECH_DOWNGRADE_DANGER_TICKS = 5000;
 var TECH_MAX_DESIRED_WORK = 24;
 var TECH_RCL8_MAX_WORK = 15;
+var ARTIFICER_MAX_DESIRED_WORK = 24;
+var ARTIFICER_LOW_STORAGE_ENERGY = 20000;
+var ARTIFICER_CRITICAL_STORAGE_ENERGY = 5000;
+var ARTIFICER_HEALTHY_STORAGE_ENERGY = 50000;
+var REMOTE_CONTAINER_REPAIR_START_PERCENT = 0.80;
+var REMOTE_ROAD_REPAIR_START_PERCENT = 0.60;
 
 /*
  * How many creeps we want for now.
@@ -35,7 +42,6 @@ var DESIRED_COUNTS = {
      */
     Annex: 6,
     ScoreRunner: 0,
-    Artificer: 2,
     Scout: 1,
     Ronin: 1,
     Volley: 1,
@@ -587,6 +593,511 @@ function requestTechWorkForRoom(room) {
     result.queuedWork += requestedWork;
     saveTechWorkDebug(room.name, desiredWork, livingWork, result.queuedWork);
 
+    return result;
+}
+
+function isCriticalArtificerStructureType(structureType) {
+    return structureType === STRUCTURE_SPAWN ||
+        structureType === STRUCTURE_EXTENSION ||
+        structureType === STRUCTURE_TOWER ||
+        structureType === STRUCTURE_STORAGE ||
+        structureType === STRUCTURE_CONTAINER ||
+        structureType === STRUCTURE_LINK ||
+        structureType === STRUCTURE_TERMINAL;
+}
+
+function isLowPriorityArtificerStructureType(structureType) {
+    return structureType === STRUCTURE_ROAD ||
+        structureType === STRUCTURE_RAMPART ||
+        structureType === STRUCTURE_WALL;
+}
+
+function getProgressRemaining(site) {
+    if (!site) {
+        return 0;
+    }
+
+    return Math.max(0, (site.progressTotal || 0) - (site.progress || 0));
+}
+
+function localStructureNeedsRepair(structure) {
+    if (creepUtility.shouldRepairStructure) {
+        return creepUtility.shouldRepairStructure(structure);
+    }
+
+    return !!(structure && structure.hits < structure.hitsMax);
+}
+
+function remoteStructureNeedsArtificerRepair(structure) {
+    if (!structure || structure.hits >= structure.hitsMax) {
+        return false;
+    }
+
+    if (structure.structureType === STRUCTURE_CONTAINER) {
+        return structure.hits <
+            structure.hitsMax * REMOTE_CONTAINER_REPAIR_START_PERCENT;
+    }
+
+    if (structure.structureType === STRUCTURE_ROAD) {
+        return structure.hits <
+            structure.hitsMax * REMOTE_ROAD_REPAIR_START_PERCENT;
+    }
+
+    return false;
+}
+
+function getValidLocalRepairDemand(room) {
+    var roomMemory = Memory.rooms && Memory.rooms[room.name];
+    var repairList = roomMemory && roomMemory.RepairStructure;
+    var seen = {};
+    var targets = 0;
+    var emergencyTargets = 0;
+
+    if (!repairList || !Array.isArray(repairList)) {
+        return {
+            targets: targets,
+            emergencyTargets: emergencyTargets
+        };
+    }
+
+    for (var i = 0; i < repairList.length; i++) {
+        var targetId = repairList[i];
+
+        if (!targetId || seen[targetId]) {
+            continue;
+        }
+
+        seen[targetId] = true;
+        var target = Game.getObjectById(targetId);
+
+        if (
+            !target ||
+            !target.pos ||
+            target.pos.roomName !== room.name ||
+            !localStructureNeedsRepair(target)
+        ) {
+            continue;
+        }
+
+        targets++;
+
+        if (isCriticalArtificerStructureType(target.structureType)) {
+            emergencyTargets++;
+        }
+    }
+
+    return {
+        targets: targets,
+        emergencyTargets: emergencyTargets
+    };
+}
+
+function getVisibleRemoteArtificerDemand(roomName) {
+    var activeSources = RemotePlanner.getActiveRemoteSourcesForHome(roomName);
+    var seenRooms = {};
+    var result = {
+        constructionSites: 0,
+        constructionProgressRemaining: 0,
+        containerConstructionSites: 0,
+        containerConstructionProgressRemaining: 0,
+        roadConstructionSites: 0,
+        roadConstructionProgressRemaining: 0,
+        repairTargets: 0,
+        containerRepairTargets: 0,
+        roadRepairTargets: 0
+    };
+
+    for (var i = 0; i < activeSources.length; i++) {
+        var sourceInfo = activeSources[i];
+        var remoteRoomName = sourceInfo && sourceInfo.roomName;
+
+        if (!remoteRoomName || seenRooms[remoteRoomName]) {
+            continue;
+        }
+
+        seenRooms[remoteRoomName] = true;
+        var remoteRoom = Game.rooms[remoteRoomName];
+
+        /* Unseen remotes have no trustworthy live construction or repair data. */
+        if (!remoteRoom) {
+            continue;
+        }
+
+        var sites = remoteRoom.find(FIND_MY_CONSTRUCTION_SITES, {
+            filter: function(site) {
+                return site.structureType === STRUCTURE_CONTAINER ||
+                    site.structureType === STRUCTURE_ROAD;
+            }
+        });
+
+        for (var siteIndex = 0; siteIndex < sites.length; siteIndex++) {
+            var site = sites[siteIndex];
+            var remaining = getProgressRemaining(site);
+
+            result.constructionSites++;
+            result.constructionProgressRemaining += remaining;
+
+            if (site.structureType === STRUCTURE_CONTAINER) {
+                result.containerConstructionSites++;
+                result.containerConstructionProgressRemaining += remaining;
+            }
+            else {
+                result.roadConstructionSites++;
+                result.roadConstructionProgressRemaining += remaining;
+            }
+        }
+
+        var structures = remoteRoom.find(FIND_STRUCTURES, {
+            filter: function(structure) {
+                return remoteStructureNeedsArtificerRepair(structure);
+            }
+        });
+
+        for (var structureIndex = 0;
+            structureIndex < structures.length;
+            structureIndex++
+        ) {
+            result.repairTargets++;
+
+            if (structures[structureIndex].structureType === STRUCTURE_CONTAINER) {
+                result.containerRepairTargets++;
+            }
+            else {
+                result.roadRepairTargets++;
+            }
+        }
+    }
+
+    return result;
+}
+
+function getCountScaledWork(count, baseWork, mediumAt, highAt, maxWork) {
+    if (count <= 0) {
+        return 0;
+    }
+
+    var work = baseWork;
+
+    if (count >= mediumAt) {
+        work += 2;
+    }
+
+    if (count >= highAt) {
+        work += 2;
+    }
+
+    return Math.min(maxWork, work);
+}
+
+/** Calculate live Artificer WORK demand from local and visible remote work. */
+function getArtificerBuildDemand(room) {
+    if (!room) {
+        return {
+            desiredWork: 0,
+            livingWork: 0,
+            queuedWork: 0,
+            missingWork: 0,
+            localBuildProgressRemaining: 0,
+            localConstructionSites: 0,
+            repairTargets: 0,
+            remoteConstructionSites: 0,
+            remoteRepairTargets: 0,
+            mode: 'missing-room'
+        };
+    }
+
+    var sites = room.find(FIND_MY_CONSTRUCTION_SITES);
+    var localBuildProgressRemaining = 0;
+    var criticalSites = 0;
+    var criticalProgress = 0;
+    var regularSites = 0;
+    var regularProgress = 0;
+    var lowPrioritySites = 0;
+    var lowPriorityProgress = 0;
+
+    for (var i = 0; i < sites.length; i++) {
+        var remaining = getProgressRemaining(sites[i]);
+        localBuildProgressRemaining += remaining;
+
+        if (isCriticalArtificerStructureType(sites[i].structureType)) {
+            criticalSites++;
+            criticalProgress += remaining;
+        }
+        else if (isLowPriorityArtificerStructureType(sites[i].structureType)) {
+            lowPrioritySites++;
+            lowPriorityProgress += remaining;
+        }
+        else {
+            regularSites++;
+            regularProgress += remaining;
+        }
+    }
+
+    var repairDemand = getValidLocalRepairDemand(room);
+    var remoteDemand = getVisibleRemoteArtificerDemand(room.name);
+    var energyCapacity = room.energyCapacityAvailable || 300;
+    var storageEnergy = getStoredEnergy(room.storage);
+    var criticalBuildWork = 0;
+
+    if (criticalSites > 0) {
+        criticalBuildWork = energyCapacity >= 1300 ? 10 :
+            energyCapacity >= 800 ? 8 : 6;
+
+        if (room.storage && storageEnergy >= 100000) {
+            criticalBuildWork += 2;
+        }
+
+        criticalBuildWork += Math.min(2, Math.floor(criticalProgress / 25000));
+
+        if (criticalSites >= 10) {
+            criticalBuildWork += 2;
+        }
+
+        criticalBuildWork = Math.min(16, criticalBuildWork);
+    }
+
+    var regularBuildWork = getCountScaledWork(
+        regularSites,
+        4,
+        5,
+        15,
+        10
+    );
+    regularBuildWork += Math.min(2, Math.floor(regularProgress / 50000));
+    regularBuildWork = Math.min(10, regularBuildWork);
+
+    var lowPriorityBuildWork = getCountScaledWork(
+        lowPrioritySites,
+        2,
+        10,
+        30,
+        6
+    );
+    lowPriorityBuildWork += Math.min(2, Math.floor(lowPriorityProgress / 75000));
+    lowPriorityBuildWork = Math.min(6, lowPriorityBuildWork);
+
+    /* Critical sites dominate; lower priority local sites wait behind them. */
+    var localBuildWork = criticalBuildWork || regularBuildWork ||
+        lowPriorityBuildWork;
+    var repairWork = getCountScaledWork(
+        repairDemand.targets,
+        2,
+        5,
+        15,
+        6
+    );
+    var remoteContainerBuildWork = getCountScaledWork(
+        remoteDemand.containerConstructionSites,
+        4,
+        2,
+        5,
+        8
+    );
+    var remoteRoadBuildWork = getCountScaledWork(
+        remoteDemand.roadConstructionSites,
+        2,
+        10,
+        25,
+        6
+    );
+    var remoteContainerRepairWork = getCountScaledWork(
+        remoteDemand.containerRepairTargets,
+        2,
+        3,
+        8,
+        4
+    );
+    var remoteRoadRepairWork = getCountScaledWork(
+        remoteDemand.roadRepairTargets,
+        1,
+        10,
+        30,
+        3
+    );
+    var desiredWork = localBuildWork + repairWork +
+        remoteContainerBuildWork + remoteRoadBuildWork +
+        remoteContainerRepairWork + remoteRoadRepairWork;
+    var mode = 'idle';
+
+    if (criticalSites > 0) {
+        mode = 'critical-local-build';
+    }
+    else if (regularSites > 0) {
+        mode = 'local-build';
+    }
+    else if (lowPrioritySites > 0) {
+        mode = 'low-priority-build';
+    }
+    else if (remoteDemand.containerConstructionSites > 0) {
+        mode = 'remote-container-build';
+    }
+    else if (remoteDemand.roadConstructionSites > 0) {
+        mode = 'remote-road-build';
+    }
+    else if (repairDemand.targets > 0) {
+        mode = 'repair';
+    }
+    else if (remoteDemand.repairTargets > 0) {
+        mode = 'remote-repair';
+    }
+
+    var upgradeRush = Memory.settings &&
+        Memory.settings.upgradeRush === true;
+
+    if (upgradeRush) {
+        var emergencyRepairWork = repairDemand.emergencyTargets > 0 ?
+            repairWork : Math.min(2, Math.floor(repairWork / 2));
+        var reducedWork = regularBuildWork + lowPriorityBuildWork +
+            remoteRoadBuildWork + remoteRoadRepairWork;
+
+        desiredWork = criticalBuildWork + remoteContainerBuildWork +
+            remoteContainerRepairWork + emergencyRepairWork +
+            Math.floor(reducedWork / 2);
+        mode = desiredWork > 0 ? 'upgrade-rush-' + mode : 'upgrade-rush';
+    }
+
+    var controllerDanger = room.controller &&
+        room.controller.ticksToDowngrade < TECH_DOWNGRADE_DANGER_TICKS;
+    var hasCriticalWork = criticalSites > 0 ||
+        remoteDemand.containerConstructionSites > 0 ||
+        repairDemand.emergencyTargets > 0;
+
+    if (room.storage && !hasCriticalWork) {
+        if (storageEnergy < ARTIFICER_CRITICAL_STORAGE_ENERGY) {
+            desiredWork = Math.min(desiredWork, 2);
+            mode = desiredWork > 0 ? 'low-energy-' + mode : mode;
+        }
+        else if (storageEnergy < ARTIFICER_LOW_STORAGE_ENERGY) {
+            desiredWork = Math.min(desiredWork, 4);
+            mode = desiredWork > 0 ? 'energy-safe-' + mode : mode;
+        }
+    }
+
+    if (controllerDanger) {
+        desiredWork = Math.min(desiredWork, hasCriticalWork ? 8 : 2);
+        mode = desiredWork > 0 ? 'downgrade-safe-' + mode : mode;
+    }
+
+    if (
+        desiredWork === 0 &&
+        room.storage &&
+        storageEnergy >= ARTIFICER_HEALTHY_STORAGE_ENERGY &&
+        !upgradeRush &&
+        !controllerDanger
+    ) {
+        desiredWork = 1;
+        mode = 'fallback-upgrade';
+    }
+
+    desiredWork = Math.max(0, Math.min(
+        ARTIFICER_MAX_DESIRED_WORK,
+        Math.ceil(desiredWork)
+    ));
+    var livingWork = countLivingRoleBodyParts(room.name, 'Artificer', WORK);
+    var queuedWork = countQueuedRoleBodyParts(room.name, 'Artificer', WORK);
+
+    return {
+        desiredWork: desiredWork,
+        livingWork: livingWork,
+        queuedWork: queuedWork,
+        missingWork: Math.max(0, desiredWork - livingWork - queuedWork),
+        localBuildProgressRemaining: localBuildProgressRemaining,
+        localConstructionSites: sites.length,
+        repairTargets: repairDemand.targets,
+        remoteConstructionSites: remoteDemand.constructionSites,
+        remoteRepairTargets: remoteDemand.repairTargets,
+        mode: mode
+    };
+}
+
+function saveArtificerDemandDebug(roomName, demand) {
+    if (!Memory.rooms) {
+        Memory.rooms = {};
+    }
+
+    if (!Memory.rooms[roomName]) {
+        Memory.rooms[roomName] = {};
+    }
+
+    var roomMemory = Memory.rooms[roomName];
+    roomMemory.artificerDesiredWork = demand.desiredWork;
+    roomMemory.artificerLivingWork = demand.livingWork;
+    roomMemory.artificerQueuedWork = demand.queuedWork;
+    roomMemory.artificerBuildBacklog = demand.localBuildProgressRemaining;
+    roomMemory.artificerRepairTargets = demand.repairTargets;
+    roomMemory.artificerRemoteBuildTargets = demand.remoteConstructionSites;
+    roomMemory.artificerRemoteRepairTargets = demand.remoteRepairTargets;
+    roomMemory.artificerMode = demand.mode;
+}
+
+function requestDynamicArtificersForRoom(room) {
+    if (!room) {
+        return {
+            ok: false,
+            role: 'Artificer',
+            requested: 0,
+            reason: 'Missing room'
+        };
+    }
+
+    var demand = getArtificerBuildDemand(room);
+    var result = {
+        ok: true,
+        role: 'Artificer',
+        requested: 0,
+        requestedWork: 0,
+        desiredWork: demand.desiredWork,
+        livingWork: demand.livingWork,
+        queuedWork: demand.queuedWork,
+        missingWork: demand.missingWork,
+        mode: demand.mode
+    };
+
+    saveArtificerDemandDebug(room.name, demand);
+
+    if (demand.missingWork <= 0) {
+        return result;
+    }
+
+    var body = creepBodyConfig.getArtificerBodyForWork(
+        room,
+        demand.missingWork
+    );
+    var requestedWork = countBodyParts(body, WORK);
+    var queue = spawnManager.getSpawnQueue(room.name);
+
+    if (!body || requestedWork <= 0 || !queue) {
+        result.ok = false;
+        result.reason = 'No Artificer body or spawn queue available';
+        return result;
+    }
+
+    /* Add one request per tick; queued WORK prevents repeated over-requesting. */
+    queue.push({
+        role: 'Artificer',
+        body: body,
+        requestedWorkParts: requestedWork,
+        maxWorkParts: requestedWork,
+        priority: PRIORITY.Artificer,
+        memory: {
+            role: 'Artificer',
+            homeRoom: room.name
+        },
+        requestedAt: Game.time
+    });
+    sortSpawnQueue(queue);
+
+    demand.queuedWork += requestedWork;
+    demand.missingWork = Math.max(
+        0,
+        demand.desiredWork - demand.livingWork - demand.queuedWork
+    );
+    saveArtificerDemandDebug(room.name, demand);
+
+    result.requested = 1;
+    result.requestedWork = requestedWork;
+    result.queuedWork = demand.queuedWork;
+    result.missingWork = demand.missingWork;
     return result;
 }
 
@@ -2028,7 +2539,7 @@ function run() {
     report.requests.push(requestAnnexForRoom(room));
     report.requests.push(requestRoleForRoom(room, 'ScoreRunner', DESIRED_COUNTS.ScoreRunner));
     report.requests.push(requestTechWorkForRoom(room));
-    report.requests.push(requestRoleForRoom(room, 'Artificer', DESIRED_COUNTS.Artificer));
+    report.requests.push(requestDynamicArtificersForRoom(room));
     report.requests.push(requestRoleForRoom(room, 'Scout', DESIRED_COUNTS.Scout));
     report.requests.push(requestRoleForRoom(room, 'Ronin', DESIRED_COUNTS.Ronin));
     report.requests.push(requestRoleForRoom(room, 'Volley', DESIRED_COUNTS.Volley));
@@ -2047,6 +2558,9 @@ module.exports = {
     getManagedRoom: getManagedRoom,
     requestRoleForRoom: requestRoleForRoom,
     requestTechWorkForRoom: requestTechWorkForRoom,
+    getArtificerBuildDemand: getArtificerBuildDemand,
+    saveArtificerDemandDebug: saveArtificerDemandDebug,
+    requestDynamicArtificersForRoom: requestDynamicArtificersForRoom,
     countHealthyCreeps: countHealthyCreeps,
     countLivingRoleBodyParts: countLivingRoleBodyParts,
     countQueuedRoleBodyParts: countQueuedRoleBodyParts,

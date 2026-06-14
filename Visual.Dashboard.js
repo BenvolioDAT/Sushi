@@ -826,7 +826,7 @@ function drawRoomPanel(visual, room, sourceStats, remoteStats, roomCreeps) {
     var y = 3.7;
     var width = 18;
     var showRoleCounts = Memory.settings && Memory.settings.dashboardShowRoleCounts === true;
-    var height = showRoleCounts ? 15 : 12.9;
+    var height = showRoleCounts ? 15.7 : 13.6;
     var controller = room.controller;
     var roomMemory = Memory.rooms && Memory.rooms[room.name];
     var queue = getSpawnQueueInfo(room.name);
@@ -847,6 +847,13 @@ function drawRoomPanel(visual, room, sourceStats, remoteStats, roomCreeps) {
         safeNumber(roomMemory.techLivingWork) + '/' + safeNumber(roomMemory.techDesiredWork) :
         '-/-';
     var techQueuedWork = hasTechWork ? safeNumber(roomMemory.techQueuedWork) : 0;
+    var hasArtificerWork = roomMemory &&
+        typeof roomMemory.artificerDesiredWork === 'number';
+    var artificerWorkText = hasArtificerWork ?
+        safeNumber(roomMemory.artificerLivingWork) + '/' +
+            safeNumber(roomMemory.artificerDesiredWork) : '-/-';
+    var artificerQueuedWork = hasArtificerWork ?
+        safeNumber(roomMemory.artificerQueuedWork) : 0;
     var hasExtractorWork = roomMemory &&
         typeof roomMemory.extractorDesiredWork === 'number';
     var extractorWorkText = hasExtractorWork ?
@@ -915,6 +922,15 @@ function drawRoomPanel(visual, room, sourceStats, remoteStats, roomCreeps) {
         x,
         rowY,
         hasTechWork ? COLORS.text : COLORS.muted
+    );
+    rowY += LINE_HEIGHT;
+    drawText(
+        visual,
+        'Art W ' + artificerWorkText +
+            (artificerQueuedWork > 0 ? ' +' + artificerQueuedWork + 'q' : ''),
+        x,
+        rowY,
+        hasArtificerWork ? COLORS.text : COLORS.muted
     );
     rowY += LINE_HEIGHT;
     drawText(
