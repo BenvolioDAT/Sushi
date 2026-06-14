@@ -34,12 +34,28 @@ var roleRonin = {
         var target = WarRoom.getCombatTarget(creep);
 
         if(target) {
+            /*
+             * Healing is a support action, so Ronin can heal and still use its
+             * ATTACK parts this tick. Do not chase a heal target while an
+             * enemy target exists because melee positioning comes first.
+             */
+            supportCombatHealing(creep, false);
             attackMeleeTarget(creep, target);
 
             /*
              * Attacking and moving are separate actions. If the attack did not
              * already request movement, step inward after crossing an exit.
              */
+            travel.moveOffExit(creep);
+            return;
+        }
+
+        /*
+         * With no enemy target, help a wounded combat creep before marching
+         * away or idling. The helper may move toward a distant ally through
+         * Sushi's normal travel wrapper.
+         */
+        if(supportCombatHealing(creep, true)) {
             travel.moveOffExit(creep);
             return;
         }
@@ -64,6 +80,68 @@ var roleRonin = {
         WarRoom.idleCombat(creep);
     }
 };
+
+function supportCombatHealing(creep, allowMoveToHealTarget) {
+    /*
+     * Damaged or unspawned HEAL parts cannot perform a healing action. Check
+     * this before asking WarRoom to scan the room for wounded combat creeps.
+     */
+    if(!creep || creep.getActiveBodyparts(HEAL) <= 0) {
+        return false;
+    }
+
+    /*
+     * Priority 1: keep Ronin alive so it can continue holding melee range.
+     */
+    if(creep.hits < creep.hitsMax) {
+        creep.heal(creep);
+        creep.say('patch');
+        return true;
+    }
+
+    /*
+     * Priority 2: support the most wounded Ronin, Volley, or Cleric in this
+     * room. Logic.WarRoom owns that shared target selection.
+     */
+    var healTarget = WarRoom.findBestHealTarget(creep);
+
+    if(!healTarget) {
+        return false;
+    }
+
+    var range = creep.pos.getRangeTo(healTarget);
+
+    /* Direct healing is strongest and works at range 1. */
+    if(range <= 1) {
+        creep.heal(healTarget);
+        creep.say('heal');
+        return true;
+    }
+
+    /* Ranged healing supports allies at range 2 or 3 without repositioning. */
+    if(range <= 3) {
+        creep.rangedHeal(healTarget);
+        creep.say('mend');
+        return true;
+    }
+
+    /*
+     * Only approach a distant heal target when run() found no attack target.
+     * The movement guard keeps healing support from replacing another move.
+     */
+    if(allowMoveToHealTarget && creep.memory._sushiMoveTick !== Game.time) {
+        travel.move(creep, healTarget, {
+            range: 1,
+            reusePath: 10,
+            visualizePathStyle: { stroke: '#00ff88' }
+        });
+
+        creep.say('aid');
+        return true;
+    }
+
+    return false;
+}
 
 function attackMeleeTarget(creep, target) {
     /*

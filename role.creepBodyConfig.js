@@ -134,15 +134,23 @@ var BODY_PLANS = {
     ],
 
     Ronin: [
-        [[ATTACK, 3], [MOVE, 3]],
-        [[ATTACK, 2], [MOVE, 2]],
-        [[ATTACK, 1], [MOVE, 1]]
+        /*
+         * TOUGH parts absorb damage first and HEAL stays protected at the end.
+         * Each tier has enough MOVE parts to avoid crawling on plain terrain.
+         */
+        [[TOUGH, 3], [MOVE, 5], [ATTACK, 6], [HEAL, 1]],
+        [[TOUGH, 2], [MOVE, 4], [ATTACK, 4], [HEAL, 1]],
+        [[TOUGH, 1], [MOVE, 2], [ATTACK, 2], [HEAL, 1]]
     ],
 
     Volley: [
-        [[RANGED_ATTACK, 3], [MOVE, 3]],
-        [[RANGED_ATTACK, 2], [MOVE, 2]],
-        [[RANGED_ATTACK, 1], [MOVE, 1]]
+        /*
+         * Volley keeps one backup HEAL part at the protected end of the body.
+         * MOVE stays near the non-MOVE count so ranged positioning remains fast.
+         */
+        [[MOVE, 4], [RANGED_ATTACK, 5], [HEAL, 1]],
+        [[MOVE, 3], [RANGED_ATTACK, 3], [HEAL, 1]],
+        [[MOVE, 2], [RANGED_ATTACK, 2], [HEAL, 1]]
     ],
 
     Cleric: [
