@@ -67,7 +67,6 @@ var PRIORITY = {
     Ronin: 15,
     Volley: 15,
     Cleric: 16,
-    Quad: 18,
 };
 
 /*
@@ -87,7 +86,6 @@ var REPLACEMENT_BUFFER_TICKS = {
     Ronin: 40,
     Volley: 40,
     Cleric: 40,
-    Quad: 40,
     ScoreRunner: 20
 };
 
@@ -2061,171 +2059,6 @@ function getSourceSeatCount(source, sourceMemory) {
     return Math.max(1, seats);
 }
 
-/**
- * Maintain the four fixed slots in the experimental Alpha quad.
- *
- * This intentionally does not replace or alter the old combat role requests.
- * It adds at most one missing slot per tick so a persistent Attack flag cannot
- * flood the room's spawn queue.
- *
- * @param {Room} room
- * @returns {object}
- */
-function requestQuadForAttackFlag(room) {
-    var result = {
-        ok: true,
-        role: 'Quad',
-        requested: 0,
-        desired: 4,
-        quadId: 'Alpha'
-    };
-    var attackFlag = Game.flags && Game.flags.Attack;
-
-    if (!room) {
-        result.ok = false;
-        result.reason = 'Missing room';
-        return result;
-    }
-
-    var queue = spawnManager.getSpawnQueue(room.name);
-
-    if (!attackFlag) {
-        /* Removing the flag also stops already queued Alpha test creeps. */
-        if (queue) {
-            for (var removeIndex = queue.length - 1; removeIndex >= 0; removeIndex--) {
-                var queuedRequest = queue[removeIndex];
-                var queuedMemory = queuedRequest && queuedRequest.memory;
-
-                if (
-                    queuedRequest &&
-                    queuedRequest.role === 'Quad' &&
-                    queuedMemory &&
-                    queuedMemory.homeRoom === room.name &&
-                    queuedMemory.quadId === 'Alpha'
-                ) {
-                    queue.splice(removeIndex, 1);
-                }
-            }
-        }
-
-        result.reason = 'Attack flag not found';
-        return result;
-    }
-
-    var body = creepBodyConfig.getQuadBody(room);
-
-    if (!queue || !body) {
-        result.reason = !body ? 'Room cannot support the 500 energy Quad body' : 'Missing spawn queue';
-        return result;
-    }
-
-    var replacementLeadTicks = getReplacementLeadTicks('Quad', body);
-    var occupiedSlots = {};
-    var queuedSlots = {};
-    var healthyCount = 0;
-    var queuedCount = 0;
-
-    for (var creepName in Game.creeps) {
-        if (!Game.creeps.hasOwnProperty(creepName)) {
-            continue;
-        }
-
-        var creep = Game.creeps[creepName];
-        var memory = creep && creep.memory;
-
-        if (
-            !memory ||
-            memory.role !== 'Quad' ||
-            memory.homeRoom !== room.name ||
-            memory.quadId !== 'Alpha' ||
-            memory.quadSlot < 0 ||
-            memory.quadSlot > 3
-        ) {
-            continue;
-        }
-
-        if (
-            creep.ticksToLive !== undefined &&
-            creep.ticksToLive <= replacementLeadTicks
-        ) {
-            continue;
-        }
-
-        occupiedSlots[memory.quadSlot] = true;
-        healthyCount++;
-    }
-
-    for (var queueIndex = 0; queueIndex < queue.length; queueIndex++) {
-        var request = queue[queueIndex];
-        var requestMemory = request && request.memory;
-
-        if (
-            !request ||
-            request.role !== 'Quad' ||
-            !requestMemory ||
-            requestMemory.homeRoom !== room.name ||
-            requestMemory.quadId !== 'Alpha' ||
-            requestMemory.quadSlot < 0 ||
-            requestMemory.quadSlot > 3
-        ) {
-            continue;
-        }
-
-        queuedSlots[requestMemory.quadSlot] = true;
-        queuedCount++;
-    }
-
-    result.healthy = healthyCount;
-    result.queued = queuedCount;
-
-    Memory.quads = Memory.quads || {};
-    Memory.quads.Alpha = Memory.quads.Alpha || {
-        quadId: 'Alpha',
-        targetFlagName: 'Attack',
-        stage: 'testing'
-    };
-
-    if (Memory.quads.Alpha.lastRequestTick === Game.time) {
-        result.reason = 'Quad request already added this tick';
-        return result;
-    }
-
-    for (var slot = 0; slot < 4; slot++) {
-        if (occupiedSlots[slot] || queuedSlots[slot]) {
-            continue;
-        }
-
-        queue.push({
-            role: 'Quad',
-            body: body,
-            priority: PRIORITY.Quad,
-            memory: {
-                role: 'Quad',
-                homeRoom: room.name,
-                quadId: 'Alpha',
-                quadSlot: slot,
-                targetFlagName: 'Attack'
-            },
-            requestedAt: Game.time
-        });
-
-        queue.sort(function(a, b) {
-            if (b.priority !== a.priority) {
-                return b.priority - a.priority;
-            }
-
-            return a.requestedAt - b.requestedAt;
-        });
-
-        result.requested = 1;
-        result.quadSlot = slot;
-        Memory.quads.Alpha.lastRequestTick = Game.time;
-        break;
-    }
-
-    return result;
-}
-
 function getRememberedSourceMemory(roomName, sourceId) {
     var roomMemory = Memory.rooms && Memory.rooms[roomName];
     var sourcesMemory = roomMemory && roomMemory.sources;
@@ -2708,7 +2541,6 @@ function run() {
     report.requests.push(requestTechWorkForRoom(room));
     report.requests.push(requestDynamicArtificersForRoom(room));
     report.requests.push(requestRoleForRoom(room, 'Scout', DESIRED_COUNTS.Scout));
-    report.requests.push(requestQuadForAttackFlag(room));
     report.requests.push(requestRoleForRoom(room, 'Ronin', DESIRED_COUNTS.Ronin));
     report.requests.push(requestRoleForRoom(room, 'Volley', DESIRED_COUNTS.Volley));
     report.requests.push(requestRoleForRoom(room, 'Cleric', DESIRED_COUNTS.Cleric));
@@ -2725,7 +2557,6 @@ module.exports = {
     getFirstSpawn: getFirstSpawn,
     getManagedRoom: getManagedRoom,
     requestRoleForRoom: requestRoleForRoom,
-    requestQuadForAttackFlag: requestQuadForAttackFlag,
     requestTechWorkForRoom: requestTechWorkForRoom,
     getArtificerBuildDemand: getArtificerBuildDemand,
     saveArtificerDemandDebug: saveArtificerDemandDebug,

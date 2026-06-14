@@ -151,11 +151,6 @@ var BODY_PLANS = {
         [[HEAL, 1], [MOVE, 1]]
     ],
 
-    /* Fixed small body for the first experimental ranged/heal quad. */
-    Quad: [
-        [[MOVE, 2], [RANGED_ATTACK, 1], [HEAL, 1]]
-    ],
-
     ScoreRunner: [
         [[MOVE, 1]]
     ]
@@ -422,11 +417,6 @@ function getClericBody(room) {
     return getBody('Cleric', room);
 }
 
-function getQuadBody(room) {
-    /* Quad must stay on its fixed test body; never use the worker fallback. */
-    return getBestBodyForEnergy('Quad', getRoomEnergyCapacity(room));
-}
-
 function getScoreRunnerBody(room) {
     return getBody('ScoreRunner', room);
 }
@@ -452,6 +442,5 @@ module.exports = {
     getRoninBody: getRoninBody,
     getVolleyBody: getVolleyBody,
     getClericBody: getClericBody,
-    getQuadBody: getQuadBody,
     getScoreRunnerBody: getScoreRunnerBody
 };

@@ -8,7 +8,6 @@ var roleScout = require('role.Scout');
 var roleRonin = require('role.Ronin');
 var roleVolley = require('role.Volley');
 var roleCleric = require('role.Cleric');
-var roleQuad = require('role.Quad');
 var roleScoreRunner = require('role.scorerunner');
 
 var utility_spawn = require('utility.spawn');
@@ -453,9 +452,6 @@ module.exports.loop = function () {
         }
         if(creep.memory.role == 'Cleric') {
             roleCleric.run(creep);
-        }
-        if(creep.memory.role == 'Quad') {
-            roleQuad.run(creep);
         }
     }
 
