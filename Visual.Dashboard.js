@@ -826,7 +826,7 @@ function drawRoomPanel(visual, room, sourceStats, remoteStats, roomCreeps) {
     var y = 3.7;
     var width = 18;
     var showRoleCounts = Memory.settings && Memory.settings.dashboardShowRoleCounts === true;
-    var height = showRoleCounts ? 12.9 : 10.8;
+    var height = showRoleCounts ? 15 : 12.9;
     var controller = room.controller;
     var roomMemory = Memory.rooms && Memory.rooms[room.name];
     var queue = getSpawnQueueInfo(room.name);
@@ -847,6 +847,24 @@ function drawRoomPanel(visual, room, sourceStats, remoteStats, roomCreeps) {
         safeNumber(roomMemory.techLivingWork) + '/' + safeNumber(roomMemory.techDesiredWork) :
         '-/-';
     var techQueuedWork = hasTechWork ? safeNumber(roomMemory.techQueuedWork) : 0;
+    var hasExtractorWork = roomMemory &&
+        typeof roomMemory.extractorDesiredWork === 'number';
+    var extractorWorkText = hasExtractorWork ?
+        safeNumber(roomMemory.extractorLivingWork) + '/' +
+            safeNumber(roomMemory.extractorDesiredWork) : '-/-';
+    var extractorQueuedWork = hasExtractorWork ?
+        safeNumber(roomMemory.extractorQueuedWork) : 0;
+    var hasFreighterCarry = roomMemory &&
+        typeof roomMemory.freighterDesiredCarry === 'number';
+    var freighterCarryText = hasFreighterCarry ?
+        safeNumber(roomMemory.freighterLivingCarry) + '/' +
+            safeNumber(roomMemory.freighterDesiredCarry) : '-/-';
+    var freighterQueuedCarry = hasFreighterCarry ?
+        safeNumber(roomMemory.freighterQueuedCarry) : 0;
+    var remoteBacklog = roomMemory ?
+        safeNumber(roomMemory.freighterRemoteBacklog) : 0;
+    var worstHaulAge = roomMemory ?
+        safeNumber(roomMemory.freighterWorstHaulAge) : 0;
     var rowY = y + 1;
 
     drawPanel(visual, x, y, width, height, 'ROOM ' + room.name);
@@ -884,10 +902,37 @@ function drawRoomPanel(visual, room, sourceStats, remoteStats, roomCreeps) {
     rowY += LINE_HEIGHT;
     drawText(
         visual,
+        'Extract W ' + extractorWorkText +
+            (extractorQueuedWork > 0 ? ' +' + extractorQueuedWork + 'q' : ''),
+        x,
+        rowY,
+        hasExtractorWork ? COLORS.text : COLORS.muted
+    );
+    rowY += LINE_HEIGHT;
+    drawText(
+        visual,
         'Tech W ' + techWorkText + (techQueuedWork > 0 ? ' +' + techQueuedWork + 'q' : ''),
         x,
         rowY,
         hasTechWork ? COLORS.text : COLORS.muted
+    );
+    rowY += LINE_HEIGHT;
+    drawText(
+        visual,
+        'Freight C ' + freighterCarryText +
+            (freighterQueuedCarry > 0 ? ' +' + freighterQueuedCarry + 'q' : ''),
+        x,
+        rowY,
+        hasFreighterCarry ? COLORS.text : COLORS.muted
+    );
+    rowY += LINE_HEIGHT;
+    drawText(
+        visual,
+        'Remote haul ' + compactNumber(remoteBacklog) +
+            ' age ' + (worstHaulAge > 0 ? worstHaulAge : '-'),
+        x,
+        rowY,
+        remoteBacklog > 0 ? COLORS.text : COLORS.muted
     );
     rowY += LINE_HEIGHT;
     drawText(

@@ -254,6 +254,29 @@ function getTechBodyForEnergyAndWork(energy, desiredWork) {
     return null;
 }
 
+function getFreighterBodyForEnergyAndCarry(energy, desiredCarryParts) {
+    var bodyPlans = BODY_PLANS.Freighter;
+
+    if (typeof energy !== 'number' || energy < 0 || desiredCarryParts <= 0) {
+        return null;
+    }
+
+    /*
+     * Keep the safe one CARRY to one MOVE plans, but do not build more hauling
+     * capacity than the current demand shortage asked for.
+     */
+    for (var index = 0; index < bodyPlans.length; index++) {
+        var body = buildBody(bodyPlans[index]);
+        var carryParts = countBodyParts(body, CARRY);
+
+        if (carryParts <= desiredCarryParts && getBodyCost(body) <= energy) {
+            return body;
+        }
+    }
+
+    return null;
+}
+
 /**
  * Pick the strongest configured body the room can support when full. This is
  * normal request-planning behavior; the spawn manager performs a second choice
@@ -296,6 +319,24 @@ function getExtractorBody(room) {
 
 function getFreighterBody(room) {
     return getBody('Freighter', room);
+}
+
+function getFreighterBodyForCarry(room, desiredCarryParts) {
+    return getFreighterBodyForEnergyAndCarry(
+        getRoomEnergyCapacity(room),
+        desiredCarryParts
+    );
+}
+
+function getFreighterBodyForAvailableEnergy(room, desiredCarryParts) {
+    if (!room || typeof room.energyAvailable !== 'number') {
+        return null;
+    }
+
+    return getFreighterBodyForEnergyAndCarry(
+        room.energyAvailable,
+        desiredCarryParts
+    );
 }
 
 function getAnnexBody(room) {
@@ -348,6 +389,8 @@ module.exports = {
     getBodyCost: getBodyCost,
     getTechBodyForWork: getTechBodyForWork,
     getTechBodyForAvailableEnergy: getTechBodyForAvailableEnergy,
+    getFreighterBodyForCarry: getFreighterBodyForCarry,
+    getFreighterBodyForAvailableEnergy: getFreighterBodyForAvailableEnergy,
 
     getScoutBody: getScoutBody,
     getForemanBody: getForemanBody,

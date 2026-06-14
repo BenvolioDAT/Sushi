@@ -74,6 +74,15 @@ function selectAffordableQueuedBodyForSpawn(spawn, request) {
             requestedWork
         );
     }
+    else if (request.role === 'Freighter') {
+        /* Preserve the requested CARRY shortage while shrinking for energy. */
+        var requestedCarry = request.requestedCarryParts ||
+            request.maxCarryParts || countBodyParts(request.body, CARRY);
+        bestBody = creepBodyConfig.getFreighterBodyForAvailableEnergy(
+            spawn.room,
+            requestedCarry
+        );
+    }
     else {
         bestBody = creepBodyConfig.getBestBodyForAvailableEnergy(
             request.role,

@@ -6,7 +6,7 @@
  * It does not directly spawn creeps.
  * It asks spawn.manager.js to queue the creeps.
  *
- * Current simple setup:
+ * Current setup:
  * - Uses Spawn1's room as the room to manage.
  * - Later we can make this loop all owned rooms.
  */
@@ -29,8 +29,6 @@ var TECH_RCL8_MAX_WORK = 15;
  */
 var DESIRED_COUNTS = {
     Foreman: 1,
-    Extractor: 6,
-    Freighter: 4,
     /*
      * Annex uses this as a maximum cap, not a fixed desired count. It only
      * spawns when an active remote room needs controller reservation help.
@@ -449,8 +447,8 @@ function getCreepActiveBodyParts(creep, partType) {
     return count;
 }
 
-function countLivingRoleWork(roomName, role) {
-    var work = 0;
+function countLivingRoleBodyParts(roomName, role, partType) {
+    var partCount = 0;
 
     for (var creepName in Game.creeps) {
         if (!Game.creeps.hasOwnProperty(creepName)) {
@@ -481,18 +479,18 @@ function countLivingRoleWork(roomName, role) {
             continue;
         }
 
-        work += getCreepActiveBodyParts(creep, WORK);
+        partCount += getCreepActiveBodyParts(creep, partType);
     }
 
-    return work;
+    return partCount;
 }
 
-function countQueuedRoleWork(roomName, role) {
+function countQueuedRoleBodyParts(roomName, role, partType) {
     var queue = spawnManager.getSpawnQueue(roomName);
-    var work = 0;
+    var partCount = 0;
 
     if (!queue) {
-        return work;
+        return partCount;
     }
 
     for (var i = 0; i < queue.length; i++) {
@@ -501,11 +499,19 @@ function countQueuedRoleWork(roomName, role) {
             (request.memory && request.memory.role));
 
         if (requestRole === role) {
-            work += countBodyParts(request.body, WORK);
+            partCount += countBodyParts(request.body, partType);
         }
     }
 
-    return work;
+    return partCount;
+}
+
+function countLivingRoleWork(roomName, role) {
+    return countLivingRoleBodyParts(roomName, role, WORK);
+}
+
+function countQueuedRoleWork(roomName, role) {
+    return countQueuedRoleBodyParts(roomName, role, WORK);
 }
 
 function saveTechWorkDebug(roomName, desiredWork, livingWork, queuedWork) {
@@ -585,10 +591,14 @@ function requestTechWorkForRoom(room) {
 }
 
 
-function requestRemoteExtractorsForRoom(room, extractorBody, priority) {
+function requestRemoteExtractorsForRoom(room, extractorBody, priority, maxRequests) {
     var queue = spawnManager.getSpawnQueue(room.name);
     var demands = RemotePlanner.getRemoteExtractorDemand(room.name, extractorBody, queue);
     var added = 0;
+
+    if (typeof maxRequests !== 'number' || maxRequests < 0) {
+        maxRequests = demands ? demands.length : 0;
+    }
 
     if (!queue || !demands || demands.length === 0) {
         return {
@@ -600,6 +610,10 @@ function requestRemoteExtractorsForRoom(room, extractorBody, priority) {
     }
 
     for (var i = 0; i < demands.length; i++) {
+        if (added >= maxRequests) {
+            break;
+        }
+
         var demand = demands[i];
 
         /*
@@ -858,9 +872,10 @@ function requestAnnexForRoom(room) {
  * @param {Room} room
  * @param {string} role
  * @param {number} desiredCount
+ * @param {number} priorityOverride
  * @returns {object}
  */
-function requestRoleForRoom(room, role, desiredCount) {
+function requestRoleForRoom(room, role, desiredCount, priorityOverride) {
     /*
      * Validate the request before doing body calculations or writing anything to
      * the spawn queue.
@@ -879,7 +894,8 @@ function requestRoleForRoom(room, role, desiredCount) {
      * only decides "how many" and not the exact body-part layout.
      */
     var body = creepBodyConfig.getBody(role, room);
-    var priority = PRIORITY[role] || 0;
+    var priority = typeof priorityOverride === 'number' ?
+        priorityOverride : (PRIORITY[role] || 0);
     var replacementLeadTicks = getReplacementLeadTicks(role, body);
 
     var healthyCount = countHealthyCreeps(roomName, role, replacementLeadTicks);
@@ -1222,6 +1238,9 @@ function requestRoleForRoom(room, role, desiredCount) {
             });
 
             sourceRequestsAdded++;
+
+            /* Fill one source assignment per tick instead of creating a wave. */
+            break;
         }
 
         if (managedSourceCount > 0) {
@@ -1233,7 +1252,12 @@ function requestRoleForRoom(room, role, desiredCount) {
                 return a.requestedAt - b.requestedAt;
             });
 
-            var remoteExtractorReport = requestRemoteExtractorsForRoom(room, body, priority - 1);
+            var remoteExtractorReport = requestRemoteExtractorsForRoom(
+                room,
+                body,
+                priority - 1,
+                sourceRequestsAdded > 0 ? 0 : 1
+            );
 
             return {
                 ok: true,
@@ -1363,7 +1387,7 @@ function runStartupBootstrap(room, report) {
      * Startup order:
      * 1. Foreman first.
      * 2. Then two Extractors.
-     * 3. Then one Freighter.
+     * 3. Then two Freighters.
      * 4. Then one Tech.
      * 5. Then one Artificer.
      *
@@ -1408,6 +1432,7 @@ function runStartupBootstrap(room, report) {
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 var SOURCE_WORK_TARGET = 6;
 var EXTRACTOR_HANDOFF_TICKS = 100;
+var FREIGHTER_MAX_DESIRED_CARRY = 50;
 
 function sourceHasLiveContainer(sourceId, sourceMemory) {
     if (!sourceId || !sourceMemory) {
@@ -1486,69 +1511,457 @@ function countBodyParts(body, bodyPartType) {
     return count;
 }
 
-function getSourceCount(room) {
+function getSourceSeatCount(source, sourceMemory) {
+    if (sourceMemory) {
+        if (sourceMemory.seatCount && sourceMemory.seatCount > 0) {
+            return sourceMemory.seatCount;
+        }
+
+        if (sourceMemory.seats && sourceMemory.seats.length > 0) {
+            return sourceMemory.seats.length;
+        }
+    }
+
+    if (!source || !source.pos || !source.room) {
+        return 1;
+    }
+
+    var terrain = source.room.getTerrain();
+    var seats = 0;
+
+    for (var x = source.pos.x - 1; x <= source.pos.x + 1; x++) {
+        for (var y = source.pos.y - 1; y <= source.pos.y + 1; y++) {
+            if (x < 0 || x > 49 || y < 0 || y > 49) {
+                continue;
+            }
+
+            if (x === source.pos.x && y === source.pos.y) {
+                continue;
+            }
+
+            if (terrain.get(x, y) !== TERRAIN_MASK_WALL) {
+                seats++;
+            }
+        }
+    }
+
+    return Math.max(1, seats);
+}
+
+function getRememberedSourceMemory(roomName, sourceId) {
+    var roomMemory = Memory.rooms && Memory.rooms[roomName];
+    var sourcesMemory = roomMemory && roomMemory.sources;
+
+    if (!sourcesMemory) {
+        return null;
+    }
+
+    if (sourcesMemory[sourceId]) {
+        return sourcesMemory[sourceId];
+    }
+
+    for (var key in sourcesMemory) {
+        if (
+            sourcesMemory.hasOwnProperty(key) &&
+            sourcesMemory[key] &&
+            sourcesMemory[key].id === sourceId
+        ) {
+            return sourcesMemory[key];
+        }
+    }
+
+    return null;
+}
+
+function ensureLocalSourceMemory(roomName, sourceId) {
+    if (!Memory.rooms) {
+        Memory.rooms = {};
+    }
+
+    if (!Memory.rooms[roomName]) {
+        Memory.rooms[roomName] = {};
+    }
+
+    if (!Memory.rooms[roomName].sources) {
+        Memory.rooms[roomName].sources = {};
+    }
+
+    if (!Memory.rooms[roomName].sources[sourceId]) {
+        Memory.rooms[roomName].sources[sourceId] = {
+            id: sourceId,
+            assignedMiner: []
+        };
+    }
+
+    return Memory.rooms[roomName].sources[sourceId];
+}
+
+function ensureVisibleLocalSourceMemories(room) {
     if (!room) {
-        return 0;
+        return [];
     }
 
     var sources = room.find(FIND_SOURCES);
 
-    if (!sources) {
-        return 0;
+    for (var i = 0; i < sources.length; i++) {
+        ensureLocalSourceMemory(room.name, sources[i].id);
     }
 
-    return sources.length;
+    return sources;
 }
 
-function getDesiredExtractorCount(room) {
-    var sourceCount = getSourceCount(room);
-
-    if (sourceCount <= 0) {
-        return 0;
-    }
-
+function getSourceMiningDemand(room) {
     var extractorBody = creepBodyConfig.getBody('Extractor', room);
-    var workPartsPerExtractor = countBodyParts(extractorBody, WORK);
+    var bodyWork = Math.max(1, countBodyParts(extractorBody, WORK));
+    var localSources = ensureVisibleLocalSourceMemories(room);
+    var activeRemoteSources = room ?
+        RemotePlanner.getActiveRemoteSourcesForHome(room.name) : [];
+    var desiredWork = 0;
 
-    /*
-     * Safety fallback:
-     * If something goes wrong and the Extractor body has no WORK parts,
-     * ask for one per source instead of crashing or asking for zero forever.
-     */
-    if (workPartsPerExtractor <= 0) {
-        return sourceCount;
+    for (var i = 0; i < localSources.length; i++) {
+        var source = localSources[i];
+        var sourceMemory = ensureLocalSourceMemory(room.name, source.id);
+        var sourceWork = SOURCE_WORK_TARGET;
+
+        /* Without a container, available mining seats cap useful miner bodies. */
+        if (!sourceHasLiveContainer(source.id, sourceMemory)) {
+            sourceWork = Math.min(
+                SOURCE_WORK_TARGET,
+                getSourceSeatCount(source, sourceMemory) * bodyWork
+            );
+        }
+
+        desiredWork += sourceWork;
     }
 
-    /*
-     * Each normal source wants 6 WORK parts.
-     *
-     * Example:
-     * 2 sources * 6 WORK = 12 total WORK wanted.
-     *
-     * If each Extractor has 6 WORK:
-     * Math.ceil(12 / 6) = 2 Extractors.
-     *
-     * If each Extractor has 2 WORK:
-     * Math.ceil(12 / 2) = 6 Extractors.
-     */
-    var desiredCount = Math.ceil((sourceCount * SOURCE_WORK_TARGET) / workPartsPerExtractor);
+    desiredWork += activeRemoteSources.length * SOURCE_WORK_TARGET;
 
-    /*
-     * Keep at least one Extractor per source.
-     */
-    if (desiredCount < sourceCount) {
-        desiredCount = sourceCount;
+    var livingWork = room ?
+        countLivingRoleBodyParts(room.name, 'Extractor', WORK) : 0;
+    var queuedWork = room ?
+        countQueuedRoleBodyParts(room.name, 'Extractor', WORK) : 0;
+
+    return {
+        desiredWork: desiredWork,
+        livingWork: livingWork,
+        queuedWork: queuedWork,
+        missingWork: Math.max(0, desiredWork - livingWork - queuedWork),
+        localSources: localSources.length,
+        activeRemoteSources: activeRemoteSources.length
+    };
+}
+
+function countIdleFreighters(roomName) {
+    var idle = 0;
+
+    for (var creepName in Game.creeps) {
+        if (!Game.creeps.hasOwnProperty(creepName)) {
+            continue;
+        }
+
+        var creep = Game.creeps[creepName];
+        if (!creep || !creep.memory || creep.memory.role !== 'Freighter') {
+            continue;
+        }
+
+        var homeRoom = creep.memory.homeRoom || (creep.room && creep.room.name);
+        if (homeRoom !== roomName || creep.memory.freighterJob) {
+            continue;
+        }
+
+        var replacementLead = getReplacementLeadTicks('Freighter', creep.body || []);
+        if (
+            creep.ticksToLive !== undefined &&
+            creep.ticksToLive <= replacementLead
+        ) {
+            continue;
+        }
+
+        var carriedEnergy = creep.store ? (creep.store[RESOURCE_ENERGY] || 0) : 0;
+        if (!creep.memory.FreighterWorking && carriedEnergy === 0) {
+            idle++;
+        }
     }
 
-    /*
-     * Do not go above your old emergency cap.
-     * This prevents early tiny bodies from requesting a silly swarm.
-     */
-    if (desiredCount > DESIRED_COUNTS.Extractor) {
-        desiredCount = DESIRED_COUNTS.Extractor;
+    return idle;
+}
+
+function getFreighterCarryDemand(room) {
+    var energyCapacity = room ? (room.energyCapacityAvailable || 300) : 300;
+    var storageEnergy = room ? getStoredEnergy(room.storage) : 0;
+    var baseLocalCarry;
+
+    if (!room || !room.storage) {
+        baseLocalCarry = energyCapacity >= 800 ? 8 :
+            energyCapacity >= 550 ? 6 : 4;
+    }
+    else {
+        baseLocalCarry = storageEnergy >= 100000 ? 12 :
+            storageEnergy >= 20000 ? 10 : 8;
     }
 
-    return desiredCount;
+    var activeSources = room ?
+        RemotePlanner.getActiveRemoteSourcesForHome(room.name) : [];
+    var remoteBacklog = 0;
+    var remoteReservedCarry = 0;
+    var worstHaulAge = 0;
+
+    for (var i = 0; i < activeSources.length; i++) {
+        var sourceInfo = activeSources[i];
+        var sourceMemory = getRememberedSourceMemory(
+            sourceInfo.roomName,
+            sourceInfo.sourceId
+        );
+        var haul = sourceMemory && sourceMemory.haul;
+
+        if (!haul) {
+            continue;
+        }
+
+        var amount = typeof haul.amount === 'number' ? Math.max(0, haul.amount) : 0;
+        var reserved = typeof haul.reservedCarry === 'number' ?
+            Math.max(0, haul.reservedCarry) : 0;
+        remoteBacklog += amount;
+        remoteReservedCarry += reserved;
+
+        if (amount > 0) {
+            var age = haul.lastSeen > 0 ? Math.max(0, Game.time - haul.lastSeen) : 101;
+            worstHaulAge = Math.max(worstHaulAge, age);
+        }
+    }
+
+    var activeRemoteSources = activeSources.length;
+    var remoteBaseCarry = activeRemoteSources * 4;
+    var unreservedBacklog = Math.max(0, remoteBacklog - remoteReservedCarry);
+    var backlogBonus = Math.min(12, Math.ceil(unreservedBacklog / 500) * 2);
+    var ageBonus = worstHaulAge > 100 ? 4 : worstHaulAge > 50 ? 2 : 0;
+    var desiredCarryParts = baseLocalCarry + remoteBaseCarry + backlogBonus + ageBonus;
+
+    if (
+        Memory.settings &&
+        Memory.settings.upgradeRush === true &&
+        getControllerContainerEnergy(room) < 1000
+    ) {
+        var desiredTechWork = getDesiredTechWork(room);
+
+        if (desiredTechWork >= 8) {
+            desiredCarryParts += Math.min(
+                6,
+                Math.ceil((desiredTechWork - 4) / 3)
+            );
+        }
+    }
+
+    var idleFreighters = room ? countIdleFreighters(room.name) : 0;
+    var safeMinimum = baseLocalCarry + remoteBaseCarry;
+    var lowStorageRemoteRecovery = room && room.storage &&
+        storageEnergy < 10000 && activeRemoteSources > 0;
+
+    if (
+        idleFreighters >= 2 &&
+        unreservedBacklog < 250 &&
+        worstHaulAge <= 50 &&
+        !lowStorageRemoteRecovery
+    ) {
+        desiredCarryParts -= Math.min(4, (idleFreighters - 1) * 2);
+    }
+
+    desiredCarryParts = Math.max(safeMinimum, desiredCarryParts);
+    desiredCarryParts = Math.min(FREIGHTER_MAX_DESIRED_CARRY, desiredCarryParts);
+
+    var livingCarryParts = room ?
+        countLivingRoleBodyParts(room.name, 'Freighter', CARRY) : 0;
+    var queuedCarryParts = room ?
+        countQueuedRoleBodyParts(room.name, 'Freighter', CARRY) : 0;
+
+    return {
+        desiredCarryParts: desiredCarryParts,
+        livingCarryParts: livingCarryParts,
+        queuedCarryParts: queuedCarryParts,
+        missingCarryParts: Math.max(
+            0,
+            desiredCarryParts - livingCarryParts - queuedCarryParts
+        ),
+        remoteBacklog: remoteBacklog,
+        remoteReservedCarry: remoteReservedCarry,
+        worstHaulAge: worstHaulAge,
+        idleFreighters: idleFreighters,
+        activeRemoteSources: activeRemoteSources
+    };
+}
+
+function saveExtractorDemandDebug(roomName, demand) {
+    if (!Memory.rooms) {
+        Memory.rooms = {};
+    }
+
+    if (!Memory.rooms[roomName]) {
+        Memory.rooms[roomName] = {};
+    }
+
+    var roomMemory = Memory.rooms[roomName];
+    roomMemory.extractorDesiredWork = demand.desiredWork;
+    roomMemory.extractorLivingWork = demand.livingWork;
+    roomMemory.extractorQueuedWork = demand.queuedWork;
+}
+
+function saveFreighterDemandDebug(roomName, demand) {
+    if (!Memory.rooms) {
+        Memory.rooms = {};
+    }
+
+    if (!Memory.rooms[roomName]) {
+        Memory.rooms[roomName] = {};
+    }
+
+    var roomMemory = Memory.rooms[roomName];
+    roomMemory.freighterDesiredCarry = demand.desiredCarryParts;
+    roomMemory.freighterLivingCarry = demand.livingCarryParts;
+    roomMemory.freighterQueuedCarry = demand.queuedCarryParts;
+    roomMemory.freighterRemoteBacklog = demand.remoteBacklog;
+    roomMemory.freighterWorstHaulAge = demand.worstHaulAge;
+}
+
+function getEconomyRequestPriorities(miningDemand, freightDemand) {
+    var miningPressure = miningDemand.desiredWork > 0 ?
+        miningDemand.missingWork / miningDemand.desiredWork : 0;
+    var freightPressure = freightDemand.desiredCarryParts > 0 ?
+        freightDemand.missingCarryParts / freightDemand.desiredCarryParts : 0;
+    var unreservedBacklog = Math.max(
+        0,
+        freightDemand.remoteBacklog - freightDemand.remoteReservedCarry
+    );
+
+    freightPressure += Math.min(0.5, unreservedBacklog / 2000);
+    freightPressure += freightDemand.worstHaulAge > 100 ? 0.4 :
+        freightDemand.worstHaulAge > 50 ? 0.2 : 0;
+
+    var highPriority = Math.max(PRIORITY.Extractor, PRIORITY.Freighter) + 2;
+    var lowPriority = highPriority - 4;
+
+    return {
+        extractor: miningPressure >= freightPressure ? highPriority : lowPriority,
+        freighter: freightPressure > miningPressure ? highPriority : lowPriority
+    };
+}
+
+function requestDynamicExtractorsForRoom(room, priorityOverride, demandOverride) {
+    var demand = demandOverride || getSourceMiningDemand(room);
+    var requestPriority = priorityOverride;
+
+    if (typeof requestPriority !== 'number') {
+        var freightDemand = getFreighterCarryDemand(room);
+        requestPriority = getEconomyRequestPriorities(
+            demand,
+            freightDemand
+        ).extractor;
+    }
+    var body = creepBodyConfig.getBody('Extractor', room);
+    var bodyWork = Math.max(1, countBodyParts(body, WORK));
+    var targetCount = Math.ceil(demand.desiredWork / bodyWork);
+    var replacementLead = getReplacementLeadTicks('Extractor', body);
+    var healthyCount = countHealthyCreeps(room.name, 'Extractor', replacementLead);
+    var queuedCount = countQueuedRequests(room.name, 'Extractor');
+    var nextCount = Math.min(targetCount, healthyCount + queuedCount + 1);
+    var requestResult = {
+        ok: true,
+        role: 'Extractor',
+        requested: 0,
+        localRequested: 0,
+        remoteRequested: 0
+    };
+
+    if (demand.desiredWork > 0 && nextCount > 0) {
+        requestResult = requestRoleForRoom(
+            room,
+            'Extractor',
+            nextCount,
+            requestPriority
+        );
+    }
+
+    demand.queuedWork = countQueuedRoleBodyParts(room.name, 'Extractor', WORK);
+    demand.missingWork = Math.max(
+        0,
+        demand.desiredWork - demand.livingWork - demand.queuedWork
+    );
+    saveExtractorDemandDebug(room.name, demand);
+
+    return {
+        ok: requestResult.ok,
+        role: 'Extractor',
+        requested: requestResult.requested || 0,
+        localRequested: requestResult.localRequested || 0,
+        remoteRequested: requestResult.remoteRequested || 0,
+        desiredWork: demand.desiredWork,
+        livingWork: demand.livingWork,
+        queuedWork: demand.queuedWork,
+        missingWork: demand.missingWork
+    };
+}
+
+function requestDynamicFreightersForRoom(room, priorityOverride, demandOverride) {
+    var demand = demandOverride || getFreighterCarryDemand(room);
+    var requestPriority = priorityOverride;
+
+    if (typeof requestPriority !== 'number') {
+        var miningDemand = getSourceMiningDemand(room);
+        requestPriority = getEconomyRequestPriorities(
+            miningDemand,
+            demand
+        ).freighter;
+    }
+    var result = {
+        ok: true,
+        role: 'Freighter',
+        requested: 0,
+        desiredCarryParts: demand.desiredCarryParts,
+        livingCarryParts: demand.livingCarryParts,
+        queuedCarryParts: demand.queuedCarryParts,
+        missingCarryParts: demand.missingCarryParts,
+        requestedCarryParts: 0
+    };
+
+    if (demand.missingCarryParts > 0) {
+        var body = creepBodyConfig.getFreighterBodyForCarry(
+            room,
+            demand.missingCarryParts
+        );
+        var requestedCarry = countBodyParts(body, CARRY);
+        var queue = spawnManager.getSpawnQueue(room.name);
+
+        if (!body || requestedCarry <= 0 || !queue) {
+            result.ok = false;
+            result.reason = 'No Freighter body or spawn queue available';
+        }
+        else {
+            queue.push({
+                role: 'Freighter',
+                body: body,
+                requestedCarryParts: requestedCarry,
+                maxCarryParts: requestedCarry,
+                priority: requestPriority,
+                memory: {
+                    role: 'Freighter',
+                    homeRoom: room.name
+                },
+                requestedAt: Game.time
+            });
+            sortSpawnQueue(queue);
+            result.requested = 1;
+            result.requestedCarryParts = requestedCarry;
+            demand.queuedCarryParts += requestedCarry;
+            demand.missingCarryParts = Math.max(
+                0,
+                demand.desiredCarryParts - demand.livingCarryParts - demand.queuedCarryParts
+            );
+            result.queuedCarryParts = demand.queuedCarryParts;
+            result.missingCarryParts = demand.missingCarryParts;
+        }
+    }
+
+    saveFreighterDemandDebug(room.name, demand);
+    return result;
 }
 
 /**
@@ -1557,7 +1970,7 @@ function getDesiredExtractorCount(room) {
  * For now:
  * - get first spawn
  * - use that spawn's room
- * - request hard-coded creep counts
+ * - request source-driven mining and hauling capacity
  *
  * Later:
  * - room.manager.js can call requestRoleForRoom(room, ...)
@@ -1580,6 +1993,9 @@ function run() {
         requests: []
     };
 
+    /* Bootstrap Extractors still receive a concrete local source assignment. */
+    ensureVisibleLocalSourceMemories(room);
+
     if (runStartupBootstrap(room, report)) {
         return report;
     }
@@ -1592,8 +2008,23 @@ function run() {
      */
     report.requests.push(requestRoleForRoom(room, 'Foreman', DESIRED_COUNTS.Foreman));
 
-    report.requests.push(requestRoleForRoom(room, 'Extractor', getDesiredExtractorCount(room)));
-    report.requests.push(requestRoleForRoom(room, 'Freighter', DESIRED_COUNTS.Freighter));
+    var miningDemand = getSourceMiningDemand(room);
+    var freightDemand = getFreighterCarryDemand(room);
+    var economyPriorities = getEconomyRequestPriorities(
+        miningDemand,
+        freightDemand
+    );
+
+    report.requests.push(requestDynamicExtractorsForRoom(
+        room,
+        economyPriorities.extractor,
+        miningDemand
+    ));
+    report.requests.push(requestDynamicFreightersForRoom(
+        room,
+        economyPriorities.freighter,
+        freightDemand
+    ));
     report.requests.push(requestAnnexForRoom(room));
     report.requests.push(requestRoleForRoom(room, 'ScoreRunner', DESIRED_COUNTS.ScoreRunner));
     report.requests.push(requestTechWorkForRoom(room));
@@ -1617,11 +2048,17 @@ module.exports = {
     requestRoleForRoom: requestRoleForRoom,
     requestTechWorkForRoom: requestTechWorkForRoom,
     countHealthyCreeps: countHealthyCreeps,
+    countLivingRoleBodyParts: countLivingRoleBodyParts,
+    countQueuedRoleBodyParts: countQueuedRoleBodyParts,
     countLivingRoleWork: countLivingRoleWork,
     countQueuedRoleWork: countQueuedRoleWork,
     countBodyParts: countBodyParts,
+    getSourceMiningDemand: getSourceMiningDemand,
+    getFreighterCarryDemand: getFreighterCarryDemand,
     getDesiredTechWork: getDesiredTechWork,
     getReplacementLeadTicks: getReplacementLeadTicks,
+    requestDynamicExtractorsForRoom: requestDynamicExtractorsForRoom,
+    requestDynamicFreightersForRoom: requestDynamicFreightersForRoom,
     requestRemoteExtractorsForRoom: requestRemoteExtractorsForRoom,
     requestAnnexForRoom: requestAnnexForRoom
 };

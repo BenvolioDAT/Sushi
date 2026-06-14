@@ -31,6 +31,7 @@ var ROAD_REPAIR_COST_PER_TILE = 0.003;
 var MAX_PATH_ROOMS = 8;
 var MAX_PATH_OPS = 12000;
 var HAUL_RESERVATION_TICKS = 25;
+var EXTRACTOR_REPLACEMENT_BUFFER_TICKS = 30;
 
 function run() {
     if (!Memory.rooms) {
@@ -1365,6 +1366,15 @@ function countRemoteAssignedExtractorWork(homeRoomName, sourceInfo) {
 
         var creep = Game.creeps[creepName];
         if (!isRemoteExtractorForSource(creep, homeRoomName, sourceInfo)) {
+            continue;
+        }
+
+        var replacementLead = ((creep.body && creep.body.length) || 0) * 3 +
+            EXTRACTOR_REPLACEMENT_BUFFER_TICKS;
+        if (
+            creep.ticksToLive !== undefined &&
+            creep.ticksToLive <= replacementLead
+        ) {
             continue;
         }
 
