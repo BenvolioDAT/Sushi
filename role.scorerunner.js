@@ -5,8 +5,11 @@ var RUNNER_INTENT_TTL = 75;
 var HOSTILE_ROOM_TTL = 2000;
 var TARGET_MIN_TTL = 50;
 var TARGET_MAX_TTL = 150;
+var LOOK_FALLBACK_CPU_BUFFER = 5;
 
 var lastMaintenanceTick = -1;
+var scoreScanCacheTick = -1;
+var scoreScanCache = {};
 
 cleanHeavyScoreSeasonMemory();
 
@@ -384,7 +387,42 @@ function findScoresByLook(room) {
     return scores;
 }
 
+function shouldSkipLookFallback() {
+    if(
+        !Game.cpu ||
+        typeof Game.cpu.getUsed !== 'function' ||
+        typeof Game.cpu.tickLimit !== 'number'
+    ) {
+        return false;
+    }
+
+    return Game.cpu.getUsed() >= Game.cpu.tickLimit - LOOK_FALLBACK_CPU_BUFFER;
+}
+
+function getCachedRoomScores(room) {
+    if(!room) {
+        return [];
+    }
+
+    if(scoreScanCacheTick !== Game.time) {
+        scoreScanCache = {};
+        scoreScanCacheTick = Game.time;
+    }
+
+    if(scoreScanCache[room.name]) {
+        return scoreScanCache[room.name];
+    }
+
+    scoreScanCache[room.name] = findScoreObjectsUncached(room);
+
+    return scoreScanCache[room.name];
+}
+
 function findScoreObjects(room) {
+    return getCachedRoomScores(room);
+}
+
+function findScoreObjectsUncached(room) {
     var scores = [];
     var seenIds = {};
 
@@ -400,7 +438,7 @@ function findScoreObjects(room) {
         addScoreList(scores, seenIds, tryRoomFind(room, FIND_SCORE));
     }
 
-    if(scores.length === 0) {
+    if(scores.length === 0 && !shouldSkipLookFallback()) {
         addScoreList(scores, seenIds, findScoresByLook(room));
     }
 
