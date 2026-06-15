@@ -7,10 +7,16 @@ var RUNNER_INTENT_TTL = 50;
 var HOSTILE_ROOM_TTL = 2000;
 var EXPLORE_MIN_TTL = 50;
 var EXPLORE_MAX_TTL = 150;
-var FALLBACK_EXPLORE_MAX_RING = 15;
+var FALLBACK_EXPLORE_MAX_RING = 5;
 var FALLBACK_EXPLORE_REBUILD_TTL = 5000;
 var FALLBACK_EXPLORE_UNREACHABLE_TICKS = 300;
 var FALLBACK_EXPLORE_RECENT_CHECK_TTL = 500;
+var SCORE_ROOM_MEMORY_TTL = 10000;
+var FALLBACK_EXPLORE_PLAN_TTL = 10000;
+var FALLBACK_EXPLORE_FAILURE_TTL = 2000;
+var FALLBACK_EXPLORE_FINALIST_COUNT = 15;
+var FALLBACK_CPU_BUCKET_MIN = 1000;
+var FALLBACK_CPU_TICK_LIMIT_BUFFER = 5;
 var ROUTE_IMPOSSIBLE = 999999;
 
 var routeDistanceCacheTick = -1;
@@ -61,7 +67,7 @@ function run(creep) {
     }
 
     maybeLeaveCurrentRoomAfterScan(creep);
-    idleScoreRunner(creep);
+    idleScoreRunner(creep, true);
 }
 
 function isPlainObject(value) {
@@ -113,6 +119,8 @@ function maintainScoreSeasonMemory() {
     cleanOldScoreMemory();
     cleanRunnerIntents();
     cleanExpiredHostileRooms();
+    cleanOldScoreRoomMemory();
+    cleanOldExploreRoomMemory();
 
     scoreMemory.lastMaintenanceTick = Game.time;
 }
@@ -179,6 +187,136 @@ function cleanExpiredHostileRooms() {
                 scoreMemory.rooms[roomName].hostileUntil = 0;
                 scoreMemory.rooms[roomName].hostileReason = null;
             }
+        }
+    }
+}
+
+function getNewestScoreRoomTick(roomRecord) {
+    if(!roomRecord) {
+        return 0;
+    }
+
+    return Math.max(
+        roomRecord.lastSeen || 0,
+        roomRecord.lastChecked || 0,
+        roomRecord.lastScoreSeen || 0
+    );
+}
+
+function cleanOldScoreRoomMemory() {
+    /*
+     * Room intel grows as runners scout. Keep only recent rooms unless a room is
+     * still on a hostile cooldown; hostile records are safety data and are
+     * cleared by cleanExpiredHostileRooms() when their blacklist expires.
+     */
+    var scoreMemory = ensureScoreMemory();
+    var oldestAllowedTick = Game.time - SCORE_ROOM_MEMORY_TTL;
+
+    for(var roomName in scoreMemory.rooms) {
+        if(!scoreMemory.rooms.hasOwnProperty(roomName)) {
+            continue;
+        }
+
+        var roomRecord = scoreMemory.rooms[roomName];
+
+        if(!roomRecord || !isPlainObject(roomRecord)) {
+            delete scoreMemory.rooms[roomName];
+            continue;
+        }
+
+        if(isHostileRoomBlacklisted(roomName)) {
+            continue;
+        }
+
+        if(getNewestScoreRoomTick(roomRecord) < oldestAllowedTick) {
+            delete scoreMemory.rooms[roomName];
+        }
+    }
+}
+
+function isExplorePlanInUse(homeRoom) {
+    for(var creepName in Game.creeps) {
+        if(!Game.creeps.hasOwnProperty(creepName)) {
+            continue;
+        }
+
+        var creep = Game.creeps[creepName];
+
+        if(
+            creep &&
+            creep.memory &&
+            creep.memory.scoreExploreSource === 'fallback' &&
+            creep.memory.scoreExploreHome === homeRoom &&
+            creep.memory.scoreExploreUntil > Game.time
+        ) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+function cleanExploreRoomRecord(record) {
+    if(!record || !isPlainObject(record)) {
+        return false;
+    }
+
+    /*
+     * Failed route data is only a cooldown. Drop ancient failures so one bad map
+     * result does not make the plan remember unreachable rooms forever.
+     */
+    if(record.unreachableUntil && record.unreachableUntil <= Game.time) {
+        record.unreachableUntil = 0;
+    }
+
+    if(record.lastFailed && record.lastFailed < Game.time - FALLBACK_EXPLORE_FAILURE_TTL) {
+        record.lastFailed = 0;
+        record.failCount = 0;
+    }
+
+    return !!record.roomName;
+}
+
+function cleanOldExploreRoomMemory() {
+    /*
+     * Fallback plans are derived data. They can be rebuilt cheaply from the home
+     * room name, so stale, invalid, or old-ring plans should not live forever.
+     */
+    var scoreMemory = ensureScoreMemory();
+
+    for(var homeRoom in scoreMemory.exploreRooms) {
+        if(!scoreMemory.exploreRooms.hasOwnProperty(homeRoom)) {
+            continue;
+        }
+
+        var plan = scoreMemory.exploreRooms[homeRoom];
+
+        if(!isPlainObject(plan) || !isPlainObject(plan.rooms) || plan.homeRoom !== homeRoom) {
+            delete scoreMemory.exploreRooms[homeRoom];
+            continue;
+        }
+
+        if(plan.maxRing !== FALLBACK_EXPLORE_MAX_RING) {
+            delete scoreMemory.exploreRooms[homeRoom];
+            continue;
+        }
+
+        for(var roomName in plan.rooms) {
+            if(!plan.rooms.hasOwnProperty(roomName)) {
+                continue;
+            }
+
+            if(!cleanExploreRoomRecord(plan.rooms[roomName])) {
+                delete plan.rooms[roomName];
+            }
+        }
+
+        if(
+            plan.built &&
+            plan.built < Game.time - FALLBACK_EXPLORE_PLAN_TTL &&
+            !isExplorePlanInUse(homeRoom)
+        ) {
+            delete scoreMemory.exploreRooms[homeRoom];
         }
     }
 }
@@ -1477,6 +1615,31 @@ function getFallbackExplorePlan(homeRoom) {
     return plan;
 }
 
+function isFallbackCpuSafe() {
+    /*
+     * Known/visible Score collection is still allowed under CPU pressure. This
+     * guard only skips fallback roaming because it can score many rooms and ask
+     * Game.map.findRoute for finalists.
+     */
+    if(!Game.cpu) {
+        return true;
+    }
+
+    if(typeof Game.cpu.bucket === 'number' && Game.cpu.bucket < FALLBACK_CPU_BUCKET_MIN) {
+        return false;
+    }
+
+    if(
+        typeof Game.cpu.getUsed === 'function' &&
+        typeof Game.cpu.tickLimit === 'number' &&
+        Game.cpu.getUsed() >= Game.cpu.tickLimit - FALLBACK_CPU_TICK_LIMIT_BUFFER
+    ) {
+        return false;
+    }
+
+    return true;
+}
+
 function getFallbackExploreUnreachableUntil(homeRoom, roomName) {
     if(!homeRoom || !roomName) {
         return 0;
@@ -1695,7 +1858,11 @@ function getScoutRoomFromMemory(creep) {
 }
 
 function scoreFallbackExploreRoom(creep, roomName, roomRecord, summary) {
-    if(!isExploreRoomStillValid(creep, roomName)) {
+    if(!creep || !creep.room || !roomName || roomName === creep.room.name) {
+        return ROUTE_IMPOSSIBLE;
+    }
+
+    if(!isRoomUsableForScore(roomName)) {
         return ROUTE_IMPOSSIBLE;
     }
 
@@ -1737,8 +1904,67 @@ function scoreFallbackExploreRoom(creep, roomName, roomRecord, summary) {
         Math.min(3000, checkAge * 2);
 }
 
+function scoreFallbackExploreRoomCheap(creep, roomName, roomRecord, summary) {
+    /*
+     * Cheap pre-score: no findRoute here. This keeps a large fallback plan from
+     * doing hundreds of route searches every tick. Only the best few cheap
+     * candidates become finalists for scoreFallbackExploreRoom().
+     */
+    if(!creep || !creep.room || !roomName || roomName === creep.room.name) {
+        return ROUTE_IMPOSSIBLE;
+    }
+
+    if(!isRoomUsableForScore(roomName)) {
+        return ROUTE_IMPOSSIBLE;
+    }
+
+    if(roomRecord && roomRecord.unreachableUntil > Game.time) {
+        return ROUTE_IMPOSSIBLE;
+    }
+
+    var linearDistance = getLinearRoomDistance(creep.room.name, roomName);
+
+    if(linearDistance >= ROUTE_IMPOSSIBLE) {
+        return ROUTE_IMPOSSIBLE;
+    }
+
+    var scoreMemory = ensureScoreMemory();
+    var scoreRoomRecord = scoreMemory.rooms[roomName];
+    var lastChecked = scoreRoomRecord && scoreRoomRecord.lastChecked ? scoreRoomRecord.lastChecked : 0;
+    var checkAge = lastChecked ? Math.max(0, Game.time - lastChecked) : 10000;
+    var assignedCount = summary.roomCounts[roomName] || 0;
+    var recentAssignedCount = summary.recentRoomCounts[roomName] || 0;
+    var thisTickAssignedCount = summary.thisTickRoomCounts[roomName] || 0;
+    var ring = roomRecord && typeof roomRecord.ring === 'number' ? roomRecord.ring : FALLBACK_EXPLORE_MAX_RING;
+    var tieBreak = hashString(creep.name + ':fallbackCheap:' + roomName) % 100;
+
+    return linearDistance * 90 +
+        ring * 25 +
+        assignedCount * 4500 +
+        recentAssignedCount * 1200 +
+        thisTickAssignedCount * 12000 +
+        tieBreak -
+        Math.min(3000, checkAge * 2);
+}
+
+function addFallbackFinalist(finalists, candidate) {
+    finalists.push(candidate);
+    finalists.sort(function(left, right) {
+        return left.score - right.score;
+    });
+
+    if(finalists.length > FALLBACK_EXPLORE_FINALIST_COUNT) {
+        finalists.pop();
+    }
+}
+
 function getFallbackExploreRoom(creep) {
     if(!creep || !creep.room) {
+        return null;
+    }
+
+    if(!isFallbackCpuSafe()) {
+        clearCreepExploreTarget(creep);
         return null;
     }
 
@@ -1766,18 +1992,32 @@ function getFallbackExploreRoom(creep) {
     }
 
     var summary = getRunnerIntentSummary(creep.name);
-    var bestRoom = null;
-    var bestScore = ROUTE_IMPOSSIBLE;
+    var finalists = [];
 
     for(var roomName in plan.rooms) {
         if(!plan.rooms.hasOwnProperty(roomName)) {
             continue;
         }
 
-        var candidateScore = scoreFallbackExploreRoom(creep, roomName, plan.rooms[roomName], summary);
+        var cheapScore = scoreFallbackExploreRoomCheap(creep, roomName, plan.rooms[roomName], summary);
+
+        if(cheapScore < ROUTE_IMPOSSIBLE) {
+            addFallbackFinalist(finalists, {
+                roomName: roomName,
+                score: cheapScore
+            });
+        }
+    }
+
+    var bestRoom = null;
+    var bestScore = ROUTE_IMPOSSIBLE;
+
+    for(var i = 0; i < finalists.length; i++) {
+        var finalistRoom = finalists[i].roomName;
+        var candidateScore = scoreFallbackExploreRoom(creep, finalistRoom, plan.rooms[finalistRoom], summary);
 
         if(candidateScore < bestScore) {
-            bestRoom = roomName;
+            bestRoom = finalistRoom;
             bestScore = candidateScore;
         }
     }
@@ -2205,7 +2445,7 @@ function moveOutOfHostileRoom(creep) {
     return ERR_NO_PATH;
 }
 
-function idleScoreRunner(creep) {
+function idleScoreRunner(creep, skipScoreSearch) {
     /*
      * Idle is still productive:
      * 1. collect a newly visible Score if one exists
@@ -2222,11 +2462,13 @@ function idleScoreRunner(creep) {
         return;
     }
 
-    var target = getBestScoreTarget(creep);
+    if(!skipScoreSearch) {
+        var target = getBestScoreTarget(creep);
 
-    if(target) {
-        moveToScore(creep, target);
-        return;
+        if(target) {
+            moveToScore(creep, target);
+            return;
+        }
     }
 
     maybeLeaveCurrentRoomAfterScan(creep);
@@ -2268,11 +2510,57 @@ function idleScoreRunner(creep) {
     }
 }
 
+function countObjectKeys(object) {
+    var count = 0;
+
+    if(!isPlainObject(object)) {
+        return count;
+    }
+
+    for(var key in object) {
+        if(object.hasOwnProperty(key)) {
+            count++;
+        }
+    }
+
+    return count;
+}
+
+function getScoreMemoryStats() {
+    /*
+     * Console helper only; nothing calls this every tick. Example:
+     * require('role.scorerunner').getScoreMemoryStats()
+     */
+    var scoreMemory = ensureScoreMemory();
+    var fallbackRoomsByHome = {};
+
+    for(var homeRoom in scoreMemory.exploreRooms) {
+        if(!scoreMemory.exploreRooms.hasOwnProperty(homeRoom)) {
+            continue;
+        }
+
+        var plan = scoreMemory.exploreRooms[homeRoom];
+        fallbackRoomsByHome[homeRoom] = plan && isPlainObject(plan.rooms) ?
+            countObjectKeys(plan.rooms) :
+            0;
+    }
+
+    return {
+        knownScores: countObjectKeys(scoreMemory.knownScores),
+        rooms: countObjectKeys(scoreMemory.rooms),
+        runnerIntents: countObjectKeys(scoreMemory.runnerIntents),
+        hostileRooms: countObjectKeys(scoreMemory.hostileRooms),
+        exploreHomes: countObjectKeys(scoreMemory.exploreRooms),
+        fallbackRoomsByHome: fallbackRoomsByHome
+    };
+}
+
 module.exports = {
     run: run,
     findScoreObjects: findScoreObjects,
     rememberVisibleScores: rememberVisibleScores,
     getBestScoreTarget: getBestScoreTarget,
     moveToScore: moveToScore,
-    idleScoreRunner: idleScoreRunner
+    idleScoreRunner: idleScoreRunner,
+    getScoreMemoryStats: getScoreMemoryStats
 };
