@@ -6,6 +6,11 @@ var HOSTILE_ROOM_TTL = 2000;
 var TARGET_MIN_TTL = 50;
 var TARGET_MAX_TTL = 150;
 var LOOK_FALLBACK_CPU_BUFFER = 5;
+var RECENT_ROOM_TTL = 500;
+var RECENT_ROOM_LIMIT = 8;
+var INTENT_ROOM_PENALTY = 100000;
+var LAST_ROOM_PENALTY = 50000;
+var RECENT_ROOM_PENALTY = 10000;
 
 var lastMaintenanceTick = -1;
 var scoreScanCacheTick = -1;
@@ -28,6 +33,7 @@ function run(creep) {
     ensureScoreMemory();
     maintainScoreSeasonMemory();
     clearOldCreepScoreMemory(creep);
+    maintainCreepRoomHistory(creep);
 
     var hostileReason = getHostileRoomReason(creep.room);
 
@@ -195,6 +201,88 @@ function clearOldCreepScoreMemory(creep) {
     delete creep.memory.scoreExploreUntil;
     delete creep.memory.scoreExploreSource;
     delete creep.memory.scoreExploreHome;
+}
+
+function pruneRecentScoreRooms(creep) {
+    if(!creep || !creep.memory) {
+        return;
+    }
+
+    if(!Array.isArray(creep.memory.scoreRecentRooms)) {
+        creep.memory.scoreRecentRooms = [];
+        return;
+    }
+
+    var pruned = [];
+
+    for(var i = creep.memory.scoreRecentRooms.length - 1; i >= 0; i--) {
+        var record = creep.memory.scoreRecentRooms[i];
+
+        if(!record || !record.roomName || !record.tick) {
+            continue;
+        }
+
+        if(record.tick < Game.time - RECENT_ROOM_TTL) {
+            continue;
+        }
+
+        pruned.unshift({
+            roomName: record.roomName,
+            tick: record.tick
+        });
+    }
+
+    while(pruned.length > RECENT_ROOM_LIMIT) {
+        pruned.shift();
+    }
+
+    creep.memory.scoreRecentRooms = pruned;
+}
+
+function rememberRecentScoreRoom(creep, roomName) {
+    if(!creep || !creep.memory || !roomName) {
+        return;
+    }
+
+    pruneRecentScoreRooms(creep);
+
+    var recentRooms = creep.memory.scoreRecentRooms;
+
+    for(var i = recentRooms.length - 1; i >= 0; i--) {
+        if(recentRooms[i].roomName === roomName) {
+            recentRooms.splice(i, 1);
+        }
+    }
+
+    recentRooms.push({
+        roomName: roomName,
+        tick: Game.time
+    });
+
+    while(recentRooms.length > RECENT_ROOM_LIMIT) {
+        recentRooms.shift();
+    }
+}
+
+function maintainCreepRoomHistory(creep) {
+    if(!creep || !creep.memory || !creep.room) {
+        return;
+    }
+
+    pruneRecentScoreRooms(creep);
+
+    if(!creep.memory.scoreCurrentRoom) {
+        creep.memory.scoreCurrentRoom = creep.room.name;
+        return;
+    }
+
+    if(creep.memory.scoreCurrentRoom === creep.room.name) {
+        return;
+    }
+
+    rememberRecentScoreRoom(creep, creep.memory.scoreCurrentRoom);
+    creep.memory.scoreLastRoom = creep.memory.scoreCurrentRoom;
+    creep.memory.scoreCurrentRoom = creep.room.name;
 }
 
 function tryRoomFind(room, findConstant, options) {
@@ -390,13 +478,28 @@ function findScoresByLook(room) {
 function shouldSkipLookFallback() {
     if(
         !Game.cpu ||
-        typeof Game.cpu.getUsed !== 'function' ||
-        typeof Game.cpu.tickLimit !== 'number'
+        typeof Game.cpu.getUsed !== 'function'
     ) {
         return false;
     }
 
-    return Game.cpu.getUsed() >= Game.cpu.tickLimit - LOOK_FALLBACK_CPU_BUFFER;
+    var cpuCeiling = null;
+
+    if(typeof Game.cpu.limit === 'number' && Game.cpu.limit > 0) {
+        cpuCeiling = Game.cpu.limit;
+    }
+
+    if(typeof Game.cpu.tickLimit === 'number' && Game.cpu.tickLimit > 0) {
+        cpuCeiling = cpuCeiling === null ?
+            Game.cpu.tickLimit :
+            Math.min(cpuCeiling, Game.cpu.tickLimit);
+    }
+
+    if(cpuCeiling === null) {
+        return false;
+    }
+
+    return Game.cpu.getUsed() >= cpuCeiling - LOOK_FALLBACK_CPU_BUFFER;
 }
 
 function getCachedRoomScores(room) {
@@ -615,6 +718,11 @@ function getStoredTargetRoom(creep) {
         return null;
     }
 
+    if(creep.room && !isExitRoom(creep.room.name, roomName)) {
+        clearCreepScoreTarget(creep);
+        return null;
+    }
+
     if(roomName === creep.room.name) {
         clearCreepScoreTarget(creep);
         return null;
@@ -690,6 +798,18 @@ function getExitRooms(sourceRoom) {
     return rooms;
 }
 
+function isExitRoom(sourceRoom, targetRoom) {
+    var rooms = getExitRooms(sourceRoom);
+
+    for(var i = 0; i < rooms.length; i++) {
+        if(rooms[i] === targetRoom) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
 function getNearbyRooms(creep) {
     var rooms = [];
     var seen = {};
@@ -700,17 +820,47 @@ function getNearbyRooms(creep) {
 
     addExitRooms(creep.room.name, rooms, seen);
 
-    var homeRoom = getHomeRoomName(creep);
-
-    if(homeRoom && homeRoom !== creep.room.name) {
-        addExitRooms(homeRoom, rooms, seen);
-    }
-
     return rooms;
 }
 
 function getRoomChoiceRank(creep, roomName) {
     return hashString(creep.name + ':' + roomName + ':' + Math.floor(Game.time / RUNNER_INTENT_TTL));
+}
+
+function getRecentRoomTick(creep, roomName) {
+    if(!creep || !creep.memory || !Array.isArray(creep.memory.scoreRecentRooms)) {
+        return 0;
+    }
+
+    for(var i = creep.memory.scoreRecentRooms.length - 1; i >= 0; i--) {
+        var record = creep.memory.scoreRecentRooms[i];
+
+        if(record && record.roomName === roomName) {
+            return record.tick || 0;
+        }
+    }
+
+    return 0;
+}
+
+function getRoomHistoryPenalty(creep, roomName) {
+    if(!creep || !creep.memory || !roomName) {
+        return 0;
+    }
+
+    var penalty = 0;
+
+    if(creep.memory.scoreLastRoom === roomName) {
+        penalty += LAST_ROOM_PENALTY;
+    }
+
+    var recentTick = getRecentRoomTick(creep, roomName);
+
+    if(recentTick) {
+        penalty += RECENT_ROOM_PENALTY + Math.max(0, RECENT_ROOM_TTL - (Game.time - recentTick));
+    }
+
+    return penalty;
 }
 
 function chooseNearbyRoom(creep) {
@@ -726,7 +876,9 @@ function chooseNearbyRoom(creep) {
         }
 
         var intentCount = countRoomIntents(roomName);
-        var rank = intentCount * 100000 + getRoomChoiceRank(creep, roomName);
+        var rank = intentCount * INTENT_ROOM_PENALTY +
+            getRoomHistoryPenalty(creep, roomName) +
+            getRoomChoiceRank(creep, roomName);
 
         if(rank < bestRank) {
             bestRoom = roomName;
@@ -805,6 +957,163 @@ function moveOutOfHostileRoom(creep) {
     return ERR_NO_PATH;
 }
 
+function getDirectionOffset(direction) {
+    if(direction === 1) {
+        return { x: 0, y: -1 };
+    }
+
+    if(direction === 2) {
+        return { x: 1, y: -1 };
+    }
+
+    if(direction === 3) {
+        return { x: 1, y: 0 };
+    }
+
+    if(direction === 4) {
+        return { x: 1, y: 1 };
+    }
+
+    if(direction === 5) {
+        return { x: 0, y: 1 };
+    }
+
+    if(direction === 6) {
+        return { x: -1, y: 1 };
+    }
+
+    if(direction === 7) {
+        return { x: -1, y: 0 };
+    }
+
+    if(direction === 8) {
+        return { x: -1, y: -1 };
+    }
+
+    return null;
+}
+
+function isExitTilePosition(x, y) {
+    return x <= 0 || x >= 49 || y <= 0 || y >= 49;
+}
+
+function isWallPosition(room, x, y) {
+    if(x < 0 || x > 49 || y < 0 || y > 49) {
+        return true;
+    }
+
+    if(typeof TERRAIN_MASK_WALL === 'undefined') {
+        return false;
+    }
+
+    try {
+        if(room && typeof room.getTerrain === 'function') {
+            return room.getTerrain().get(x, y) === TERRAIN_MASK_WALL;
+        }
+
+        if(Game.map && typeof Game.map.getRoomTerrain === 'function') {
+            return Game.map.getRoomTerrain(room.name).get(x, y) === TERRAIN_MASK_WALL;
+        }
+    } catch(error) {
+        return false;
+    }
+
+    return false;
+}
+
+function getSafeFallbackDirection(creep) {
+    if(!creep || !creep.room || !creep.pos) {
+        return null;
+    }
+
+    var directions = [1, 2, 3, 4, 5, 6, 7, 8];
+    var start = hashString(creep.name + ':' + Game.time) % directions.length;
+
+    for(var i = 0; i < directions.length; i++) {
+        var direction = directions[(start + i) % directions.length];
+        var offset = getDirectionOffset(direction);
+
+        if(!offset) {
+            continue;
+        }
+
+        var x = creep.pos.x + offset.x;
+        var y = creep.pos.y + offset.y;
+
+        if(isExitTilePosition(x, y)) {
+            continue;
+        }
+
+        if(isWallPosition(creep.room, x, y)) {
+            continue;
+        }
+
+        return direction;
+    }
+
+    return null;
+}
+
+function findFallbackMovePosition(creep) {
+    if(!creep || !creep.room) {
+        return null;
+    }
+
+    for(var radius = 0; radius <= 5; radius++) {
+        for(var dx = -radius; dx <= radius; dx++) {
+            for(var dy = -radius; dy <= radius; dy++) {
+                if(Math.max(Math.abs(dx), Math.abs(dy)) !== radius) {
+                    continue;
+                }
+
+                var x = 25 + dx;
+                var y = 25 + dy;
+
+                if(isExitTilePosition(x, y) || isWallPosition(creep.room, x, y)) {
+                    continue;
+                }
+
+                return new RoomPosition(x, y, creep.room.name);
+            }
+        }
+    }
+
+    return null;
+}
+
+function keepScoreRunnerMoving(creep) {
+    if(!creep || !creep.room) {
+        return ERR_INVALID_ARGS;
+    }
+
+    writeRunnerIntent(creep, 'move', creep.room.name);
+
+    if(travel.moveOffExit && travel.moveOffExit(creep)) {
+        return OK;
+    }
+
+    var direction = getSafeFallbackDirection(creep);
+
+    if(direction) {
+        return travel.moveDirection(creep, direction);
+    }
+
+    var fallbackPosition = findFallbackMovePosition(creep);
+
+    if(fallbackPosition && !creep.pos.isEqualTo(fallbackPosition)) {
+        return travel.move(creep, fallbackPosition, {
+            range: 0,
+            maxRooms: 1,
+            reusePath: 5,
+            visualizePathStyle: {
+                stroke: '#999999'
+            }
+        });
+    }
+
+    return ERR_NO_PATH;
+}
+
 function idleScoreRunner(creep, skipScoreSearch) {
     if(!creep || !creep.room) {
         return;
@@ -832,11 +1141,7 @@ function idleScoreRunner(creep, skipScoreSearch) {
         return;
     }
 
-    writeRunnerIntent(creep, 'idle', creep.room.name);
-
-    if(travel.moveOffExit && travel.moveOffExit(creep)) {
-        return;
-    }
+    keepScoreRunnerMoving(creep);
 }
 
 function drawScoreVisual(creep, target) {
