@@ -9,8 +9,6 @@ var LOOK_FALLBACK_CPU_BUFFER = 5;
 var RECENT_ROOM_TTL = 500;
 var RECENT_ROOM_LIMIT = 8;
 var INTENT_ROOM_PENALTY = 100000;
-var LAST_ROOM_PENALTY = 50000;
-var RECENT_ROOM_PENALTY = 10000;
 
 var lastMaintenanceTick = -1;
 var scoreScanCacheTick = -1;
@@ -843,30 +841,13 @@ function getRecentRoomTick(creep, roomName) {
     return 0;
 }
 
-function getRoomHistoryPenalty(creep, roomName) {
-    if(!creep || !creep.memory || !roomName) {
-        return 0;
+function chooseRoomFromPass(creep, rooms, excludeLastRoom, excludeRecentRooms) {
+    if(!creep || !creep.memory) {
+        return null;
     }
 
-    var penalty = 0;
-
-    if(creep.memory.scoreLastRoom === roomName) {
-        penalty += LAST_ROOM_PENALTY;
-    }
-
-    var recentTick = getRecentRoomTick(creep, roomName);
-
-    if(recentTick) {
-        penalty += RECENT_ROOM_PENALTY + Math.max(0, RECENT_ROOM_TTL - (Game.time - recentTick));
-    }
-
-    return penalty;
-}
-
-function chooseNearbyRoom(creep) {
-    var rooms = getNearbyRooms(creep);
     var bestRoom = null;
-    var bestRank = 999999;
+    var bestRank = null;
 
     for(var i = 0; i < rooms.length; i++) {
         var roomName = rooms[i];
@@ -875,15 +856,36 @@ function chooseNearbyRoom(creep) {
             continue;
         }
 
-        var intentCount = countRoomIntents(roomName);
-        var rank = intentCount * INTENT_ROOM_PENALTY +
-            getRoomHistoryPenalty(creep, roomName) +
-            getRoomChoiceRank(creep, roomName);
+        if(excludeLastRoom && creep.memory.scoreLastRoom === roomName) {
+            continue;
+        }
 
-        if(rank < bestRank) {
+        if(excludeRecentRooms && getRecentRoomTick(creep, roomName)) {
+            continue;
+        }
+
+        var intentCount = countRoomIntents(roomName);
+        var rank = intentCount * INTENT_ROOM_PENALTY + getRoomChoiceRank(creep, roomName);
+
+        if(bestRank === null || rank < bestRank) {
             bestRoom = roomName;
             bestRank = rank;
         }
+    }
+
+    return bestRoom;
+}
+
+function chooseNearbyRoom(creep) {
+    var rooms = getNearbyRooms(creep);
+    var bestRoom = chooseRoomFromPass(creep, rooms, true, true);
+
+    if(!bestRoom) {
+        bestRoom = chooseRoomFromPass(creep, rooms, true, false);
+    }
+
+    if(!bestRoom) {
+        bestRoom = chooseRoomFromPass(creep, rooms, false, false);
     }
 
     if(bestRoom) {
