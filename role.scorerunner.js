@@ -8,6 +8,7 @@ var HOSTILE_ROOM_TTL = 2000;
 var EXPLORE_MIN_TTL = 50;
 var EXPLORE_MAX_TTL = 150;
 var FALLBACK_EXPLORE_MAX_RING = 5;
+var SCORE_DEEP_CLEAN_INTERVAL = 50;
 var FALLBACK_EXPLORE_REBUILD_TTL = 5000;
 var FALLBACK_EXPLORE_UNREACHABLE_TICKS = 300;
 var FALLBACK_EXPLORE_RECENT_CHECK_TTL = 500;
@@ -119,8 +120,11 @@ function maintainScoreSeasonMemory() {
     cleanOldScoreMemory();
     cleanRunnerIntents();
     cleanExpiredHostileRooms();
-    cleanOldScoreRoomMemory();
-    cleanOldExploreRoomMemory();
+
+    if(Game.time % SCORE_DEEP_CLEAN_INTERVAL === 0) {
+        cleanOldScoreRoomMemory();
+        cleanOldExploreRoomMemory();
+    }
 
     scoreMemory.lastMaintenanceTick = Game.time;
 }
