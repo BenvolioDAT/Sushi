@@ -26,6 +26,12 @@ var SUPPLY_RUNNER_PRIORITY = 54;
 var DESIRED_PIONEERS = 2;
 var DESIRED_SUPPLY_RUNNERS = 2;
 
+var EXPANSION_REPLACEMENT_BUFFER_TICKS = {
+    Annex: 150,
+    Pioneer: 150,
+    SupplyRunner: 200
+};
+
 function run() {
     if (!Memory.expansion || Memory.expansion.enabled !== true) {
         return {
@@ -1020,7 +1026,13 @@ function ensureExpansionCreepCount(
         return false;
     }
 
-    var planned = countLivingExpansionCreeps(originRoomName, targetRoomName, role) +
+    var replacementLeadTicks = getExpansionReplacementLeadTicks(role, body);
+    var planned = countLivingExpansionCreeps(
+        originRoomName,
+        targetRoomName,
+        role,
+        replacementLeadTicks
+    ) +
         countQueuedExpansionCreeps(queue, originRoomName, targetRoomName, role);
 
     if (planned >= desiredCount) {
@@ -1054,7 +1066,14 @@ function ensureExpansionCreepCount(
     return true;
 }
 
-function countLivingExpansionCreeps(originRoomName, targetRoomName, role) {
+function getExpansionReplacementLeadTicks(role, body) {
+    var bodyLength = body ? body.length : 0;
+    var buffer = EXPANSION_REPLACEMENT_BUFFER_TICKS[role] || 150;
+
+    return (bodyLength * 3) + buffer;
+}
+
+function countLivingExpansionCreeps(originRoomName, targetRoomName, role, replacementLeadTicks) {
     var count = 0;
 
     for (var creepName in Game.creeps) {
@@ -1065,6 +1084,13 @@ function countLivingExpansionCreeps(originRoomName, targetRoomName, role) {
         var creep = Game.creeps[creepName];
 
         if (!isExpansionCreepMemory(creep && creep.memory, originRoomName, targetRoomName, role)) {
+            continue;
+        }
+
+        if (
+            creep.ticksToLive !== undefined &&
+            creep.ticksToLive <= replacementLeadTicks
+        ) {
             continue;
         }
 
