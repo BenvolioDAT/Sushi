@@ -394,12 +394,11 @@ module.exports.loop = function () {
         }
     }
     /*
-     * Optional Season 10 expansion runs before normal spawn requests so it can
-     * add Annex/Pioneer/SupplyRunner work to the origin room queue first.
+     * Expansion runs before normal spawn requests so it can add
+     * Annex/Pioneer/SupplyRunner work to the origin room queue first.
+     * Logic.Expansion owns its Memory.expansion.enabled guard.
      */
-    if (Memory.settings && Memory.settings.season10ExpansionMode === true) {
-        ExpansionLogic.run();
-    }
+    ExpansionLogic.run();
 
     /*
      * Step 1:

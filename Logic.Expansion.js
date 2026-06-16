@@ -1,7 +1,7 @@
 /*
  * Logic.Expansion.js
  *
- * Season 10 expansion controller.
+ * Sushi expansion controller.
  *
  * State meanings:
  * - selectTarget: choose a safe scouted room while GCL allows another room.
@@ -27,22 +27,15 @@ var DESIRED_PIONEERS = 2;
 var DESIRED_SUPPLY_RUNNERS = 2;
 
 function run() {
-    if (!isExpansionModeEnabled()) {
+    if (!Memory.expansion || Memory.expansion.enabled !== true) {
         return {
             ok: true,
-            enabled: false
+            enabled: false,
+            reason: 'Memory.expansion.enabled is not true'
         };
     }
 
     var expansion = ensureExpansionMemory();
-
-    if (expansion.enabled === false) {
-        return {
-            ok: true,
-            enabled: false,
-            reason: 'Memory.expansion.enabled is false'
-        };
-    }
 
     expansion.lastUpdated = Game.time;
 
@@ -96,13 +89,6 @@ function run() {
     return makeReport(expansion, true, 'Reset unknown expansion state to selectTarget');
 }
 
-function isExpansionModeEnabled() {
-    return !!(
-        Memory.settings &&
-        Memory.settings.season10ExpansionMode === true
-    );
-}
-
 function ensureExpansionMemory() {
     if (!Memory.expansion) {
         Memory.expansion = {};
@@ -111,7 +97,7 @@ function ensureExpansionMemory() {
     var expansion = Memory.expansion;
 
     if (expansion.enabled === undefined) {
-        expansion.enabled = true;
+        expansion.enabled = false;
     }
 
     if (expansion.originRoom === undefined) {

@@ -33,6 +33,13 @@ var roleSupplyRunner = {
             creep.memory.supplyRunnerWorking = true;
         }
 
+        if (
+            !creep.memory.supplyRunnerWorking &&
+            shouldDeliverPartialEnergy(creep, originRoomName)
+        ) {
+            creep.memory.supplyRunnerWorking = true;
+        }
+
         if (!creep.memory.supplyRunnerWorking) {
             collectOriginEnergy(creep, originRoomName);
             return;
@@ -55,6 +62,12 @@ function collectOriginEnergy(creep, originRoomName) {
     var target = findOriginEnergySource(creep.room);
 
     if (!target) {
+        if (creep.store[RESOURCE_ENERGY] > 0) {
+            creep.memory.supplyRunnerWorking = true;
+            creep.memory.supplyRunnerState = 'deliveringPartialEnergy';
+            return true;
+        }
+
         creep.memory.supplyRunnerState = 'waitingForOriginEnergy';
         return false;
     }
@@ -72,6 +85,33 @@ function collectOriginEnergy(creep, originRoomName) {
             range: 1,
             visualizePathStyle: SUPPLY_PATH_STYLE
         });
+        return true;
+    }
+
+    return false;
+}
+
+function shouldDeliverPartialEnergy(creep, originRoomName) {
+    var energy = creep.store[RESOURCE_ENERGY];
+
+    if (energy <= 0) {
+        return false;
+    }
+
+    if (creep.room.name !== originRoomName) {
+        creep.memory.supplyRunnerState = 'deliveringPartialEnergyAwayFromOrigin';
+        return true;
+    }
+
+    var capacity = energy + creep.store.getFreeCapacity(RESOURCE_ENERGY);
+
+    if (capacity > 0 && energy >= Math.ceil(capacity * 0.5)) {
+        creep.memory.supplyRunnerState = 'deliveringHalfLoad';
+        return true;
+    }
+
+    if (!findOriginEnergySource(creep.room)) {
+        creep.memory.supplyRunnerState = 'deliveringPartialNoOriginEnergy';
         return true;
     }
 

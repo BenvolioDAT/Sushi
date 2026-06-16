@@ -41,6 +41,13 @@ var rolePioneer = {
             creep.memory.pioneerWorking = true;
         }
 
+        if (
+            !creep.memory.pioneerWorking &&
+            shouldWorkWithPartialEnergy(creep)
+        ) {
+            creep.memory.pioneerWorking = true;
+        }
+
         if (!creep.memory.pioneerWorking) {
             collectEnergy(creep);
             return;
@@ -57,6 +64,62 @@ var rolePioneer = {
         upgradeController(creep);
     }
 };
+
+function shouldWorkWithPartialEnergy(creep) {
+    var energy = creep.store[RESOURCE_ENERGY];
+
+    if (energy <= 0) {
+        return false;
+    }
+
+    if (getSpawnConstructionSite(creep.room)) {
+        creep.memory.pioneerState = 'buildingSpawnWithPartialEnergy';
+        return true;
+    }
+
+    var capacity = energy + creep.store.getFreeCapacity(RESOURCE_ENERGY);
+
+    if (capacity > 0 && energy >= Math.ceil(capacity * 0.5)) {
+        creep.memory.pioneerState = 'workingHalfLoad';
+        return true;
+    }
+
+    if (!hasGoodEnergySource(creep)) {
+        creep.memory.pioneerState = 'workingPartialNoEnergySource';
+        return true;
+    }
+
+    return false;
+}
+
+function hasGoodEnergySource(creep) {
+    if (creep.pos.findClosestByPath(FIND_DROPPED_RESOURCES, {
+        filter: function(resource) {
+            return resource.resourceType === RESOURCE_ENERGY && resource.amount > 0;
+        }
+    })) {
+        return true;
+    }
+
+    if (creep.pos.findClosestByPath(FIND_STRUCTURES, {
+        filter: function(structure) {
+            return (
+                structure.structureType === STRUCTURE_CONTAINER ||
+                structure.structureType === STRUCTURE_STORAGE
+            ) &&
+                structure.store &&
+                structure.store.getUsedCapacity(RESOURCE_ENERGY) > 0;
+        }
+    })) {
+        return true;
+    }
+
+    if (findEnergySupplyRunner(creep)) {
+        return true;
+    }
+
+    return !!creep.pos.findClosestByPath(FIND_SOURCES);
+}
 
 function collectEnergy(creep) {
     creep.memory.needsExpansionEnergy = true;
