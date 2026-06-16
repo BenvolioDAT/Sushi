@@ -573,7 +573,8 @@ function buildRoomPlanningContext(room, roomIndex, skipNormalPlanning) {
         livingCreeps: [],
         idleFreighters: 0,
         healthyLocalExtractors: 0,
-        queuedLocalExtractors: queueSummary.queuedLocalExtractors
+        queuedLocalExtractors: queueSummary.queuedLocalExtractors,
+        emergencyMinimumBypassByRole: {}
     };
 
     for (var creepName in Game.creeps) {
@@ -719,16 +720,35 @@ function canAddSpawnRequest(context, request, options) {
     var maxCreeps = getMaxCreepsForRoom(context.room, policy);
     var maxQueueLength = policy.maxQueueLengthPerRoom;
     var maxNewRequests = policy.maxNewRequestsPerRoomPerTick;
-    var emergencyMissingRole = emergency && plannedRole === 0;
+    var emergencyMinimumBypass = emergency &&
+        options &&
+        options.bypassRoleCap === true;
 
-    if (typeof roleCap === 'number' && plannedRole >= roleCap) {
+    if (
+        emergencyMinimumBypass &&
+        context.emergencyMinimumBypassByRole[role]
+    ) {
+        return {
+            ok: false,
+            reason: 'emergency minimum already queued'
+        };
+    }
+
+    if (
+        typeof roleCap === 'number' &&
+        plannedRole >= roleCap &&
+        !emergencyMinimumBypass
+    ) {
         return {
             ok: false,
             reason: 'role cap reached'
         };
     }
 
-    if (getPlannedTotal(context) >= maxCreeps && !emergencyMissingRole) {
+    if (
+        getPlannedTotal(context) >= maxCreeps &&
+        !emergencyMinimumBypass
+    ) {
         return {
             ok: false,
             reason: 'room creep cap reached'
@@ -738,7 +758,7 @@ function canAddSpawnRequest(context, request, options) {
     if (
         context.queue &&
         context.queue.length >= maxQueueLength &&
-        !emergencyMissingRole
+        !emergencyMinimumBypass
     ) {
         return {
             ok: false,
@@ -746,7 +766,10 @@ function canAddSpawnRequest(context, request, options) {
         };
     }
 
-    if (!emergency && context.newRequests >= maxNewRequests) {
+    if (
+        context.newRequests >= maxNewRequests &&
+        !emergencyMinimumBypass
+    ) {
         return {
             ok: false,
             reason: 'new request cap reached'
@@ -814,6 +837,16 @@ function addSpawnRequest(roomName, request, options) {
     }
 
     queue.push(request);
+
+    if (
+        context &&
+        options &&
+        options.emergency === true &&
+        options.bypassRoleCap === true
+    ) {
+        context.emergencyMinimumBypassByRole[role] = true;
+    }
+
     updateContextForQueuedRequest(context, request);
     sortSpawnQueue(queue);
 
@@ -3374,13 +3407,15 @@ function requestEmergencyTechForRoom(room) {
     }
 
     return requestTechWorkForRoom(room, demand, {
-        emergency: true
+        emergency: true,
+        bypassRoleCap: true
     });
 }
 
 function runEmergencyPlanning(room, report, context) {
     var emergencyOptions = {
-        emergency: true
+        emergency: true,
+        bypassRoleCap: true
     };
 
     if (getPlannedRoleCount(context, 'Foreman') < 1) {
