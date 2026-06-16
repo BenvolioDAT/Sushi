@@ -379,7 +379,9 @@ function runSelectTarget(expansion, ownedSpawnRooms) {
     var selected = chooseExpansionTarget(expansion, ownedSpawnRooms);
 
     if (!selected) {
-        expansion.state = 'selectTarget';
+        if (expansion.state !== 'manualTargetRejected') {
+            expansion.state = 'selectTarget';
+        }
         return makeReport(expansion, true, 'No safe expansion target available yet');
     }
 
@@ -546,7 +548,29 @@ function completeOnlineTarget(expansion) {
 
 function chooseExpansionTarget(expansion, ownedSpawnRooms) {
     if (expansion.targetRoom) {
-        return validateManualTarget(expansion, ownedSpawnRooms);
+        var manualTargetRoomName = expansion.targetRoom;
+        var manualTarget = validateManualTarget(expansion, ownedSpawnRooms);
+
+        if (manualTarget) {
+            return manualTarget;
+        }
+
+        var manualRejectReason = getCandidateRejectReason(
+            expansion,
+            manualTargetRoomName
+        ) || 'manual target failed validation';
+
+        recordRejectedManualTarget(
+            expansion,
+            manualTargetRoomName,
+            manualRejectReason
+        );
+        clearInactiveTarget(expansion, manualRejectReason);
+
+        if (!isAutoSelectEnabled(expansion)) {
+            expansion.state = 'manualTargetRejected';
+            return null;
+        }
     }
 
     if (!isAutoSelectEnabled(expansion)) {
@@ -601,19 +625,50 @@ function chooseExpansionTarget(expansion, ownedSpawnRooms) {
     return best;
 }
 
+function clearInactiveTarget(expansion, reason) {
+    expansion.targetRoom = null;
+    expansion.originRoom = null;
+    expansion.spawnSiteId = null;
+    expansion.spawnSitePos = null;
+    expansion.claimedAt = null;
+    expansion.blockReason = reason || null;
+}
+
+function recordRejectedManualTarget(expansion, roomName, reason) {
+    if (roomName) {
+        ensureCandidateMemory(expansion, roomName).rejectReason = reason;
+    }
+
+    expansion.lastRejectedManualTarget = {
+        roomName: roomName || null,
+        reason: reason || 'manual target rejected',
+        tick: Game.time
+    };
+}
+
+function getCandidateRejectReason(expansion, roomName) {
+    var candidate = expansion.candidates && expansion.candidates[roomName];
+
+    return candidate ? candidate.rejectReason : null;
+}
+
 function validateManualTarget(expansion, ownedSpawnRooms) {
     var roomName = expansion.targetRoom;
     var roomMemory = Memory.rooms && Memory.rooms[roomName];
     var candidate = buildCandidate(expansion, roomName, roomMemory);
 
     if (!candidate || !candidate.ok) {
+        if (!getCandidateRejectReason(expansion, roomName)) {
+            ensureCandidateMemory(expansion, roomName).rejectReason = 'manual target failed candidate validation';
+        }
         return null;
     }
 
     refreshCandidateRoutes(expansion, ownedSpawnRooms, [candidate]);
 
     if (typeof candidate.routeDistance !== 'number') {
-        ensureCandidateMemory(expansion, roomName).rejectReason = 'no valid route from owned spawn rooms';
+        ensureCandidateMemory(expansion, roomName).rejectReason =
+            'no valid route from owned spawn rooms';
         return null;
     }
 
