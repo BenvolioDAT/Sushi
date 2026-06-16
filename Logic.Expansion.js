@@ -11,11 +11,13 @@
  * - bootstrap: reserved for spawnless recovery support after claiming.
  * - online: target has a completed spawn and normal multi-room spawning takes over.
  * - blocked: target was proven unsafe or impossible; user should inspect Memory.expansion.
+ * - idle/complete: no active target; waiting for autoSelect/manual target or room limits.
  */
 var spawnManager = require('spawn.manager');
 var creepBodyConfig = require('role.creepBodyConfig');
 
 var DEFAULT_MAX_ROUTE_DISTANCE = 8;
+var DEFAULT_MIN_RANGE_BETWEEN_BASES = 3;
 var ROUTE_CACHE_TTL = 5000;
 var MAX_ROUTE_CALCS_PER_RUN = 3;
 
@@ -32,6 +34,13 @@ var EXPANSION_REPLACEMENT_BUFFER_TICKS = {
     SupplyRunner: 200
 };
 
+var ACTIVE_EXPANSION_STATES = {
+    claiming: true,
+    placeSpawn: true,
+    buildSpawn: true,
+    bootstrap: true
+};
+
 function run() {
     if (!Memory.expansion || Memory.expansion.enabled !== true) {
         return {
@@ -45,54 +54,71 @@ function run() {
 
     expansion.lastUpdated = Game.time;
 
-    var originRoom = getOriginRoom(expansion);
+    var ownedSpawnRooms = getOwnedSpawnRooms();
 
-    if (!originRoom) {
+    if (ownedSpawnRooms.length === 0) {
         expansion.state = 'blocked';
         expansion.blockReason = 'No visible owned spawn room is available as expansion origin';
         return makeReport(expansion, false, expansion.blockReason);
     }
 
-    if (!isExpansionTargetClaimed(expansion) && !canStartExpansion()) {
-        if (!expansion.targetRoom) {
-            expansion.state = 'selectTarget';
-        }
-        expansion.blockReason = 'Waiting for GCL capacity';
-        return makeReport(expansion, true, expansion.blockReason);
-    }
-
-    if (expansion.targetRoom && expansion.state === 'selectTarget') {
-        expansion.state = 'claiming';
-    }
-
     refreshVisibleTargetStatus(expansion);
 
     if (expansion.state === 'online') {
-        return runOnline(expansion);
+        return runOnline(expansion, ownedSpawnRooms);
     }
 
     if (expansion.state === 'blocked') {
         return makeReport(expansion, false, expansion.blockReason || 'Expansion is blocked');
     }
 
-    if (!expansion.targetRoom) {
-        return runSelectTarget(expansion, originRoom);
+    if (hasActiveExpansionTarget(expansion)) {
+        var activeOriginRoom = getActiveOriginRoom(expansion, ownedSpawnRooms);
+
+        if (!activeOriginRoom) {
+            expansion.state = 'blocked';
+            expansion.blockReason = 'No valid origin room for active expansion';
+            return makeReport(expansion, false, expansion.blockReason);
+        }
+
+        if (expansion.state === 'claiming') {
+            return runClaiming(expansion, activeOriginRoom);
+        }
+
+        if (expansion.state === 'placeSpawn') {
+            return runPlaceSpawn(expansion, activeOriginRoom);
+        }
+
+        if (expansion.state === 'buildSpawn' || expansion.state === 'bootstrap') {
+            return runBuildSpawn(expansion, activeOriginRoom);
+        }
     }
 
-    if (expansion.state === 'claiming') {
-        return runClaiming(expansion, originRoom);
+    if (!canStartExpansion(expansion)) {
+        expansion.state = 'complete';
+        return makeReport(expansion, true, 'Expansion room limit or GCL limit reached');
     }
 
-    if (expansion.state === 'placeSpawn') {
-        return runPlaceSpawn(expansion, originRoom);
+    if (
+        expansion.targetRoom &&
+        (
+            !expansion.state ||
+            expansion.state === 'selectTarget' ||
+            expansion.state === 'idle' ||
+            expansion.state === 'complete'
+        )
+    ) {
+        expansion.state = 'selectTarget';
+        return runSelectTarget(expansion, ownedSpawnRooms);
     }
 
-    if (expansion.state === 'buildSpawn' || expansion.state === 'bootstrap') {
-        return runBuildSpawn(expansion, originRoom);
+    if (!isAutoSelectEnabled(expansion)) {
+        expansion.state = 'idle';
+        return makeReport(expansion, true, 'Expansion autoSelect is disabled');
     }
 
     expansion.state = 'selectTarget';
-    return makeReport(expansion, true, 'Reset unknown expansion state to selectTarget');
+    return runSelectTarget(expansion, ownedSpawnRooms);
 }
 
 function ensureExpansionMemory() {
@@ -104,6 +130,22 @@ function ensureExpansionMemory() {
 
     if (expansion.enabled === undefined) {
         expansion.enabled = false;
+    }
+
+    if (expansion.autoSelect === undefined) {
+        expansion.autoSelect = true;
+    }
+
+    if (typeof expansion.maxOwnedRooms !== 'number') {
+        expansion.maxOwnedRooms = getGclLevel();
+    }
+
+    if (typeof expansion.minRangeBetweenBases !== 'number') {
+        expansion.minRangeBetweenBases = DEFAULT_MIN_RANGE_BETWEEN_BASES;
+    }
+
+    if (typeof expansion.maxRouteDistance !== 'number') {
+        expansion.maxRouteDistance = DEFAULT_MAX_ROUTE_DISTANCE;
     }
 
     if (expansion.originRoom === undefined) {
@@ -134,27 +176,51 @@ function ensureExpansionMemory() {
         expansion.candidates = {};
     }
 
+    if (
+        !expansion.completedRooms ||
+        typeof expansion.completedRooms !== 'object' ||
+        Array.isArray(expansion.completedRooms)
+    ) {
+        expansion.completedRooms = {};
+    }
+
     return expansion;
 }
 
 function makeReport(expansion, ok, reason) {
+    var ownedRooms = countOwnedRooms();
+    var maxOwnedRooms = getMaxOwnedRooms(expansion);
+    var gcl = getGclLevel();
+    var selectedTarget = expansion.targetRoom || null;
+    var selectedOrigin = expansion.originRoom || null;
+    var decisionReason = reason || null;
+
+    expansion.lastDecision = {
+        tick: Game.time,
+        state: expansion.state,
+        ownedRooms: ownedRooms,
+        maxOwnedRooms: maxOwnedRooms,
+        gcl: gcl,
+        selectedTarget: selectedTarget,
+        selectedOrigin: selectedOrigin,
+        reason: decisionReason
+    };
+
     return {
         ok: ok,
         state: expansion.state,
-        originRoom: expansion.originRoom,
-        targetRoom: expansion.targetRoom,
-        reason: reason || null
+        originRoom: selectedOrigin,
+        targetRoom: selectedTarget,
+        ownedRooms: ownedRooms,
+        maxOwnedRooms: maxOwnedRooms,
+        gcl: gcl,
+        reason: decisionReason
     };
 }
 
-function getOriginRoom(expansion) {
-    if (expansion.originRoom) {
-        var configuredRoom = Game.rooms[expansion.originRoom];
-
-        if (isOwnedSpawnRoom(configuredRoom)) {
-            return configuredRoom;
-        }
-    }
+function getOwnedSpawnRooms() {
+    var rooms = [];
+    var seenRooms = {};
 
     for (var spawnName in Game.spawns) {
         if (!Game.spawns.hasOwnProperty(spawnName)) {
@@ -163,16 +229,33 @@ function getOriginRoom(expansion) {
 
         var spawn = Game.spawns[spawnName];
 
-        if (!spawn || !spawn.room) {
+        if (!spawn || !spawn.room || !isOwnedSpawnRoom(spawn.room)) {
             continue;
         }
 
-        if (!isOwnedSpawnRoom(spawn.room)) {
+        if (seenRooms[spawn.room.name]) {
             continue;
         }
 
-        expansion.originRoom = spawn.room.name;
-        return spawn.room;
+        seenRooms[spawn.room.name] = true;
+        rooms.push(spawn.room);
+    }
+
+    return rooms;
+}
+
+function getActiveOriginRoom(expansion, ownedSpawnRooms) {
+    if (expansion.originRoom) {
+        var configuredRoom = Game.rooms[expansion.originRoom];
+
+        if (isOwnedSpawnRoom(configuredRoom)) {
+            return configuredRoom;
+        }
+    }
+
+    if (ownedSpawnRooms && ownedSpawnRooms.length > 0) {
+        expansion.originRoom = ownedSpawnRooms[0].name;
+        return ownedSpawnRooms[0];
     }
 
     return null;
@@ -187,33 +270,46 @@ function isOwnedSpawnRoom(room) {
     return spawns && spawns.length > 0;
 }
 
-function canStartExpansion() {
-    if (!Game.gcl || typeof Game.gcl.level !== 'number') {
-        return false;
-    }
+function canStartExpansion(expansion) {
+    var ownedRooms = countOwnedRooms();
 
-    return Game.gcl.level > countOwnedRooms();
+    return ownedRooms < getMaxOwnedRooms(expansion) &&
+        ownedRooms < getGclLevel();
 }
 
-function isExpansionTargetClaimed(expansion) {
-    if (!expansion || !expansion.targetRoom) {
-        return false;
+function getGclLevel() {
+    if (!Game.gcl || typeof Game.gcl.level !== 'number') {
+        return 0;
     }
 
-    var targetRoom = Game.rooms[expansion.targetRoom];
+    return Game.gcl.level;
+}
 
-    if (targetRoom && targetRoom.controller && targetRoom.controller.my) {
-        return true;
+function getMaxOwnedRooms(expansion) {
+    if (expansion && typeof expansion.maxOwnedRooms === 'number') {
+        return expansion.maxOwnedRooms;
     }
 
+    return getGclLevel();
+}
+
+function getMinRangeBetweenBases(expansion) {
+    if (expansion && typeof expansion.minRangeBetweenBases === 'number') {
+        return expansion.minRangeBetweenBases;
+    }
+
+    return DEFAULT_MIN_RANGE_BETWEEN_BASES;
+}
+
+function isAutoSelectEnabled(expansion) {
+    return expansion.autoSelect !== false;
+}
+
+function hasActiveExpansionTarget(expansion) {
     return !!(
-        expansion.claimedAt &&
-        (
-            expansion.state === 'placeSpawn' ||
-            expansion.state === 'buildSpawn' ||
-            expansion.state === 'bootstrap' ||
-            expansion.state === 'online'
-        )
+        expansion &&
+        expansion.targetRoom &&
+        ACTIVE_EXPANSION_STATES[expansion.state]
     );
 }
 
@@ -279,17 +375,26 @@ function saveVisibleCandidateIntel(expansion, room) {
     candidate.keeperRoom = isKeeperRoom(room.name, room);
 }
 
-function runSelectTarget(expansion, originRoom) {
-    var targetRoomName = chooseExpansionTarget(expansion, originRoom.name);
+function runSelectTarget(expansion, ownedSpawnRooms) {
+    var selected = chooseExpansionTarget(expansion, ownedSpawnRooms);
 
-    if (!targetRoomName) {
+    if (!selected) {
         expansion.state = 'selectTarget';
         return makeReport(expansion, true, 'No safe expansion target available yet');
     }
 
-    expansion.targetRoom = targetRoomName;
+    expansion.targetRoom = selected.roomName;
+    expansion.originRoom = selected.originRoom;
     expansion.state = 'claiming';
     expansion.blockReason = null;
+
+    var originRoom = Game.rooms[selected.originRoom];
+
+    if (!originRoom) {
+        expansion.state = 'blocked';
+        expansion.blockReason = 'Selected expansion origin room is not visible';
+        return makeReport(expansion, false, expansion.blockReason);
+    }
 
     return runClaiming(expansion, originRoom);
 }
@@ -331,7 +436,7 @@ function runPlaceSpawn(expansion, originRoom) {
     if (hasCompletedSpawn(targetRoom)) {
         expansion.state = 'online';
         expansion.spawnSiteId = null;
-        return makeReport(expansion, true, 'Target room has completed spawn');
+        return runOnline(expansion, getOwnedSpawnRooms());
     }
 
     var existingSite = findSpawnConstructionSite(targetRoom);
@@ -378,7 +483,7 @@ function runBuildSpawn(expansion, originRoom) {
     if (targetRoom && hasCompletedSpawn(targetRoom)) {
         expansion.state = 'online';
         expansion.spawnSiteId = null;
-        return makeReport(expansion, true, 'Target room is online');
+        return runOnline(expansion, getOwnedSpawnRooms());
     }
 
     if (targetRoom && targetRoom.controller && targetRoom.controller.my) {
@@ -396,7 +501,7 @@ function runBuildSpawn(expansion, originRoom) {
     return makeReport(expansion, true, 'Building target room spawn');
 }
 
-function runOnline(expansion) {
+function runOnline(expansion, ownedSpawnRooms) {
     var targetRoom = expansion.targetRoom ? Game.rooms[expansion.targetRoom] : null;
 
     if (targetRoom && targetRoom.controller && targetRoom.controller.my && !hasCompletedSpawn(targetRoom)) {
@@ -404,15 +509,51 @@ function runOnline(expansion) {
         return makeReport(expansion, true, 'Online room lost its spawn; returning to placement');
     }
 
-    return makeReport(expansion, true, 'Expansion target is online');
-}
+    completeOnlineTarget(expansion);
 
-function chooseExpansionTarget(expansion, originRoomName) {
-    if (expansion.targetRoom) {
-        return expansion.targetRoom;
+    if (!canStartExpansion(expansion)) {
+        expansion.state = 'complete';
+        return makeReport(expansion, true, 'Expansion target is online and room limit reached');
     }
 
-    var candidates = getScoutedCandidates(expansion, originRoomName);
+    if (!isAutoSelectEnabled(expansion)) {
+        expansion.state = 'idle';
+        return makeReport(expansion, true, 'Expansion target is online and autoSelect is disabled');
+    }
+
+    expansion.state = 'selectTarget';
+    return runSelectTarget(expansion, ownedSpawnRooms);
+}
+
+function completeOnlineTarget(expansion) {
+    var completedRoomName = expansion.targetRoom;
+
+    if (completedRoomName) {
+        expansion.completedRooms[completedRoomName] = {
+            roomName: completedRoomName,
+            originRoom: expansion.originRoom || null,
+            completedAt: Game.time
+        };
+    }
+
+    expansion.targetRoom = null;
+    expansion.originRoom = null;
+    expansion.spawnSiteId = null;
+    expansion.spawnSitePos = null;
+    expansion.claimedAt = null;
+    expansion.blockReason = null;
+}
+
+function chooseExpansionTarget(expansion, ownedSpawnRooms) {
+    if (expansion.targetRoom) {
+        return validateManualTarget(expansion, ownedSpawnRooms);
+    }
+
+    if (!isAutoSelectEnabled(expansion)) {
+        return null;
+    }
+
+    var candidates = getScoutedCandidates(expansion, ownedSpawnRooms);
 
     if (candidates.length === 0) {
         return null;
@@ -423,10 +564,10 @@ function chooseExpansionTarget(expansion, originRoomName) {
             return b.sourceCount - a.sourceCount;
         }
 
-        return a.linearDistance - b.linearDistance;
+        return b.spacingDistance - a.spacingDistance;
     });
 
-    refreshCandidateRoutes(expansion, originRoomName, candidates);
+    refreshCandidateRoutes(expansion, ownedSpawnRooms, candidates);
 
     var best = null;
     var maxRouteDistance = getMaxRouteDistance(expansion);
@@ -441,22 +582,54 @@ function chooseExpansionTarget(expansion, originRoomName) {
 
         if (routeDistance > maxRouteDistance) {
             candidate.rejectReason = 'route too far';
+            ensureCandidateMemory(expansion, candidate.roomName).rejectReason = candidate.rejectReason;
             continue;
         }
 
         candidate.score = (candidate.sourceCount * 100) -
             (routeDistance * 12) -
-            candidate.linearDistance;
+            candidate.linearDistance +
+            (candidate.spacingDistance * 4);
+
+        ensureCandidateMemory(expansion, candidate.roomName).score = candidate.score;
 
         if (!best || candidate.score > best.score) {
             best = candidate;
         }
     }
 
-    return best ? best.roomName : null;
+    return best;
 }
 
-function getScoutedCandidates(expansion, originRoomName) {
+function validateManualTarget(expansion, ownedSpawnRooms) {
+    var roomName = expansion.targetRoom;
+    var roomMemory = Memory.rooms && Memory.rooms[roomName];
+    var candidate = buildCandidate(expansion, roomName, roomMemory);
+
+    if (!candidate || !candidate.ok) {
+        return null;
+    }
+
+    refreshCandidateRoutes(expansion, ownedSpawnRooms, [candidate]);
+
+    if (typeof candidate.routeDistance !== 'number') {
+        ensureCandidateMemory(expansion, roomName).rejectReason = 'no valid route from owned spawn rooms';
+        return null;
+    }
+
+    if (candidate.routeDistance > getMaxRouteDistance(expansion)) {
+        ensureCandidateMemory(expansion, roomName).rejectReason = 'route too far';
+        return null;
+    }
+
+    candidate.score = (candidate.sourceCount * 100) -
+        (candidate.routeDistance * 12) +
+        (candidate.spacingDistance * 4);
+
+    return candidate;
+}
+
+function getScoutedCandidates(expansion, ownedSpawnRooms) {
     var candidates = [];
 
     if (!Memory.rooms) {
@@ -468,11 +641,7 @@ function getScoutedCandidates(expansion, originRoomName) {
             continue;
         }
 
-        if (roomName === originRoomName) {
-            continue;
-        }
-
-        var candidate = buildCandidate(expansion, originRoomName, roomName, Memory.rooms[roomName]);
+        var candidate = buildCandidate(expansion, roomName, Memory.rooms[roomName]);
 
         if (candidate && candidate.ok) {
             candidates.push(candidate);
@@ -482,8 +651,9 @@ function getScoutedCandidates(expansion, originRoomName) {
     return candidates;
 }
 
-function buildCandidate(expansion, originRoomName, roomName, roomMemory) {
+function buildCandidate(expansion, roomName, roomMemory) {
     if (!roomMemory) {
+        ensureCandidateMemory(expansion, roomName).rejectReason = 'no room intel';
         return null;
     }
 
@@ -494,12 +664,12 @@ function buildCandidate(expansion, originRoomName, roomName, roomMemory) {
     var reservationUsername = reservation ? reservation.username : null;
     var myUsername = getMyUsername();
     var scoutIntel = roomMemory.scoutIntel || {};
-    var linearDistance = getLinearRoomDistance(originRoomName, roomName);
+    var spacingDistance = getNearestBaseDistance(expansion, roomName);
 
     candidateMemory.sourceCount = sourceCount;
     candidateMemory.owner = owner;
     candidateMemory.reservation = reservationUsername;
-    candidateMemory.linearDistance = linearDistance;
+    candidateMemory.spacingDistance = spacingDistance;
     candidateMemory.lastEvaluated = Game.time;
 
     if (sourceCount <= 0) {
@@ -527,13 +697,16 @@ function buildCandidate(expansion, originRoomName, roomName, roomMemory) {
         return null;
     }
 
-    if (isKeeperRoom(roomName, Game.rooms[roomName])) {
-        candidateMemory.rejectReason = 'keeper room';
+    if (
+        typeof spacingDistance === 'number' &&
+        spacingDistance < getMinRangeBetweenBases(expansion)
+    ) {
+        candidateMemory.rejectReason = 'too close to existing base';
         return null;
     }
 
-    if (typeof linearDistance === 'number' && linearDistance > getMaxRouteDistance(expansion) + 2) {
-        candidateMemory.rejectReason = 'linear distance too far';
+    if (isKeeperRoom(roomName, Game.rooms[roomName])) {
+        candidateMemory.rejectReason = 'keeper room';
         return null;
     }
 
@@ -543,36 +716,70 @@ function buildCandidate(expansion, originRoomName, roomName, roomMemory) {
         ok: true,
         roomName: roomName,
         sourceCount: sourceCount,
-        linearDistance: typeof linearDistance === 'number' ? linearDistance : 99,
+        linearDistance: typeof spacingDistance === 'number' ? spacingDistance : 99,
+        spacingDistance: typeof spacingDistance === 'number' ? spacingDistance : 99,
+        originRoom: candidateMemory.originRoom || null,
         routeDistance: candidateMemory.routeDistance,
         routeLastChecked: candidateMemory.routeLastChecked || 0
     };
 }
 
-function refreshCandidateRoutes(expansion, originRoomName, candidates) {
+function refreshCandidateRoutes(expansion, ownedSpawnRooms, candidates) {
     var routeCalcs = 0;
 
     for (var i = 0; i < candidates.length; i++) {
-        if (routeCalcs >= MAX_ROUTE_CALCS_PER_RUN) {
-            break;
-        }
-
         var candidate = candidates[i];
         var candidateMemory = ensureCandidateMemory(expansion, candidate.roomName);
-        var stale = !candidateMemory.routeLastChecked ||
-            Game.time - candidateMemory.routeLastChecked > ROUTE_CACHE_TTL;
+        var bestOriginRoom = null;
+        var bestRouteDistance = null;
 
-        if (!stale) {
-            candidate.routeDistance = candidateMemory.routeDistance;
-            continue;
+        if (!candidateMemory.routes) {
+            candidateMemory.routes = {};
         }
 
-        var routeDistance = calculateRouteDistance(originRoomName, candidate.roomName);
-        routeCalcs++;
+        for (var originIndex = 0; originIndex < ownedSpawnRooms.length; originIndex++) {
+            var originRoom = ownedSpawnRooms[originIndex];
 
+            if (!originRoom || !originRoom.name) {
+                continue;
+            }
+
+            var routeMemory = candidateMemory.routes[originRoom.name];
+
+            if (!routeMemory) {
+                routeMemory = {};
+                candidateMemory.routes[originRoom.name] = routeMemory;
+            }
+
+            var stale = !routeMemory.lastChecked ||
+                Game.time - routeMemory.lastChecked > ROUTE_CACHE_TTL;
+
+            if (stale && routeCalcs < MAX_ROUTE_CALCS_PER_RUN) {
+                routeMemory.distance = calculateRouteDistance(
+                    originRoom.name,
+                    candidate.roomName
+                );
+                routeMemory.lastChecked = Game.time;
+                routeCalcs++;
+            }
+
+            if (
+                typeof routeMemory.distance === 'number' &&
+                (
+                    bestRouteDistance === null ||
+                    routeMemory.distance < bestRouteDistance
+                )
+            ) {
+                bestRouteDistance = routeMemory.distance;
+                bestOriginRoom = originRoom.name;
+            }
+        }
+
+        candidateMemory.originRoom = bestOriginRoom;
+        candidateMemory.routeDistance = bestRouteDistance;
         candidateMemory.routeLastChecked = Game.time;
-        candidateMemory.routeDistance = routeDistance;
-        candidate.routeDistance = routeDistance;
+        candidate.originRoom = bestOriginRoom;
+        candidate.routeDistance = bestRouteDistance;
     }
 }
 
@@ -808,6 +1015,63 @@ function getLinearRoomDistance(originRoomName, targetRoomName) {
     }
 
     return Math.max(Math.abs(origin.x - target.x), Math.abs(origin.y - target.y));
+}
+
+function getNearestBaseDistance(expansion, roomName) {
+    var baseRooms = getBaseRoomNamesForSpacing(expansion);
+    var nearestDistance = null;
+
+    for (var i = 0; i < baseRooms.length; i++) {
+        if (baseRooms[i] === roomName) {
+            nearestDistance = 0;
+            continue;
+        }
+
+        var distance = getLinearRoomDistance(baseRooms[i], roomName);
+
+        if (typeof distance !== 'number') {
+            continue;
+        }
+
+        if (nearestDistance === null || distance < nearestDistance) {
+            nearestDistance = distance;
+        }
+    }
+
+    return nearestDistance;
+}
+
+function getBaseRoomNamesForSpacing(expansion) {
+    var names = {};
+    var result = [];
+
+    for (var roomName in Game.rooms) {
+        if (!Game.rooms.hasOwnProperty(roomName)) {
+            continue;
+        }
+
+        var room = Game.rooms[roomName];
+
+        if (room && room.controller && room.controller.my) {
+            names[roomName] = true;
+        }
+    }
+
+    if (expansion.completedRooms) {
+        for (var completedRoomName in expansion.completedRooms) {
+            if (expansion.completedRooms.hasOwnProperty(completedRoomName)) {
+                names[completedRoomName] = true;
+            }
+        }
+    }
+
+    for (var name in names) {
+        if (names.hasOwnProperty(name)) {
+            result.push(name);
+        }
+    }
+
+    return result;
 }
 
 function hasCompletedSpawn(room) {
