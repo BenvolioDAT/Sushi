@@ -270,7 +270,8 @@ function getRememberedRepairTarget(room) {
     /*
      * Only repair the structure types this file understands. This protects the
      * tower from using an old or manually edited memory value on the wrong kind
-     * of object.
+     * of object. Roads are not wanted, so old remembered road targets are
+     * cleared here before any tower can repair them.
      */
     if (!isWantedRepairStructure(target)) {
         clearRepairTarget(room);
@@ -423,28 +424,32 @@ function getRoomControllerLevel(room) {
  * Lower number means higher priority.
  */
 function getRepairPriority(structure) {
-    if (structure.structureType === STRUCTURE_CONTAINER) {
+    if (structure.structureType === STRUCTURE_SPAWN) {
         return 1;
     }
 
-    if (structure.structureType === STRUCTURE_EXTENSION) {
+    if (structure.structureType === STRUCTURE_TOWER) {
         return 2;
     }
 
-    if (structure.structureType === STRUCTURE_SPAWN) {
+    if (structure.structureType === STRUCTURE_STORAGE) {
         return 3;
     }
 
-    if (structure.structureType === STRUCTURE_RAMPART) {
+    if (structure.structureType === STRUCTURE_CONTAINER) {
         return 4;
     }
 
-    if (structure.structureType === STRUCTURE_WALL) {
+    if (structure.structureType === STRUCTURE_EXTENSION) {
         return 5;
     }
 
-    if (structure.structureType === STRUCTURE_ROAD) {
+    if (structure.structureType === STRUCTURE_RAMPART) {
         return 6;
+    }
+
+    if (structure.structureType === STRUCTURE_WALL) {
+        return 7;
     }
 
     return 999;
@@ -454,12 +459,15 @@ function getRepairPriority(structure) {
  * Find the best new repair target in the room.
  *
  * Priority order:
- * 1. Containers
- * 2. Extensions
- * 3. Spawns
- * 4. Ramparts
- * 5. Walls
- * 6. Roads
+ * 1. Spawns
+ * 2. Towers
+ * 3. Storage
+ * 4. Containers
+ * 5. Extensions
+ * 6. Ramparts
+ * 7. Walls
+ *
+ * Roads are not listed because towers should never repair roads.
  */
 function findBestRepairTarget(room) {
     var repairableStructures = room.find(FIND_STRUCTURES, {
@@ -490,12 +498,13 @@ function findBestRepairTarget(room) {
  * Only these structures are repaired by towers.
  */
 function isWantedRepairStructure(structure) {
-    return structure.structureType === STRUCTURE_CONTAINER ||
+    return structure.structureType === STRUCTURE_SPAWN ||
+        structure.structureType === STRUCTURE_TOWER ||
+        structure.structureType === STRUCTURE_STORAGE ||
+        structure.structureType === STRUCTURE_CONTAINER ||
         structure.structureType === STRUCTURE_EXTENSION ||
-        structure.structureType === STRUCTURE_SPAWN ||
         structure.structureType === STRUCTURE_RAMPART ||
-        structure.structureType === STRUCTURE_WALL ||
-        structure.structureType === STRUCTURE_ROAD;
+        structure.structureType === STRUCTURE_WALL;
 }
 
 /*

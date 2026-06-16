@@ -9,6 +9,11 @@ var LOOK_FALLBACK_CPU_BUFFER = 5;
 var RECENT_ROOM_TTL = 500;
 var RECENT_ROOM_LIMIT = 8;
 var INTENT_ROOM_PENALTY = 100000;
+/*
+ * A room intent means a live ScoreRunner already picked that room.
+ * Keeping this at 1 makes runners spread out before they share a room.
+ */
+var MAX_RUNNERS_PER_SCORE_ROOM = 1;
 
 var lastMaintenanceTick = -1;
 var scoreScanCacheTick = -1;
@@ -43,6 +48,12 @@ function run(creep) {
     }
 
     if(isHostileRoomBlacklisted(creep.room.name)) {
+        clearCreepScoreTarget(creep);
+        moveOutOfHostileRoom(creep);
+        return;
+    }
+
+    if(!isRoomUsableForScore(creep.room.name)) {
         clearCreepScoreTarget(creep);
         moveOutOfHostileRoom(creep);
         return;
@@ -635,13 +646,17 @@ function writeRunnerIntent(creep, purpose, targetRoom) {
     };
 }
 
-function countRoomIntents(roomName) {
+function countRoomIntents(roomName, ignoreCreepName) {
     var count = 0;
     var scoreMemory = ensureScoreMemory();
     var intents = scoreMemory.runnerIntents;
 
     for(var creepName in intents) {
         if(!intents.hasOwnProperty(creepName)) {
+            continue;
+        }
+
+        if(ignoreCreepName && creepName === ignoreCreepName) {
             continue;
         }
 
@@ -653,6 +668,14 @@ function countRoomIntents(roomName) {
     }
 
     return count;
+}
+
+function isRoomAtRunnerIntentCap(roomName, ignoreCreepName) {
+    if(MAX_RUNNERS_PER_SCORE_ROOM <= 0) {
+        return false;
+    }
+
+    return countRoomIntents(roomName, ignoreCreepName) >= MAX_RUNNERS_PER_SCORE_ROOM;
 }
 
 function moveToScore(creep, target) {
@@ -708,21 +731,36 @@ function getStoredTargetRoom(creep) {
 
     if(!roomName || !creep.memory.scoreTargetUntil || creep.memory.scoreTargetUntil <= Game.time) {
         clearCreepScoreTarget(creep);
+        writeRunnerIntent(creep, 'move', creep.room && creep.room.name);
         return null;
     }
 
     if(!isRoomUsableForScore(roomName)) {
         clearCreepScoreTarget(creep);
+        writeRunnerIntent(creep, 'move', creep.room && creep.room.name);
         return null;
     }
 
     if(creep.room && !isExitRoom(creep.room.name, roomName)) {
         clearCreepScoreTarget(creep);
+        writeRunnerIntent(creep, 'move', creep.room.name);
         return null;
     }
 
     if(roomName === creep.room.name) {
         clearCreepScoreTarget(creep);
+        writeRunnerIntent(creep, 'move', creep.room.name);
+        return null;
+    }
+
+    /*
+     * If another live runner already intends to use this room, this runner can
+     * drop its saved target before entering. The next selection pass will try
+     * to spread it to a different nearby room.
+     */
+    if(isRoomAtRunnerIntentCap(roomName, creep.name)) {
+        clearCreepScoreTarget(creep);
+        writeRunnerIntent(creep, 'move', creep.room && creep.room.name);
         return null;
     }
 
@@ -841,7 +879,7 @@ function getRecentRoomTick(creep, roomName) {
     return 0;
 }
 
-function chooseRoomFromPass(creep, rooms, excludeLastRoom, excludeRecentRooms) {
+function chooseRoomFromPass(creep, rooms, excludeLastRoom, excludeRecentRooms, avoidRunnerCap) {
     if(!creep || !creep.memory) {
         return null;
     }
@@ -864,6 +902,10 @@ function chooseRoomFromPass(creep, rooms, excludeLastRoom, excludeRecentRooms) {
             continue;
         }
 
+        if(avoidRunnerCap && isRoomAtRunnerIntentCap(roomName)) {
+            continue;
+        }
+
         var intentCount = countRoomIntents(roomName);
         var rank = intentCount * INTENT_ROOM_PENALTY + getRoomChoiceRank(creep, roomName);
 
@@ -878,14 +920,23 @@ function chooseRoomFromPass(creep, rooms, excludeLastRoom, excludeRecentRooms) {
 
 function chooseNearbyRoom(creep) {
     var rooms = getNearbyRooms(creep);
-    var bestRoom = chooseRoomFromPass(creep, rooms, true, true);
+    var bestRoom = chooseRoomFromPass(creep, rooms, true, true, true);
 
     if(!bestRoom) {
-        bestRoom = chooseRoomFromPass(creep, rooms, true, false);
+        bestRoom = chooseRoomFromPass(creep, rooms, true, false, true);
     }
 
     if(!bestRoom) {
-        bestRoom = chooseRoomFromPass(creep, rooms, false, false);
+        bestRoom = chooseRoomFromPass(creep, rooms, false, false, true);
+    }
+
+    /*
+     * Emergency fallback:
+     * If every usable nearby room is already at the runner cap, sharing one is
+     * better than standing still forever.
+     */
+    if(!bestRoom) {
+        bestRoom = chooseRoomFromPass(creep, rooms, false, false, false);
     }
 
     if(bestRoom) {
@@ -902,6 +953,7 @@ function moveToExploreRoom(creep, roomName) {
 
     if(roomName === creep.room.name) {
         clearCreepScoreTarget(creep);
+        writeRunnerIntent(creep, 'move', creep.room.name);
         return OK;
     }
 
@@ -917,6 +969,7 @@ function moveToExploreRoom(creep, roomName) {
 
     if(result === ERR_NO_PATH || result === ERR_INVALID_TARGET || result === ERR_INVALID_ARGS) {
         clearCreepScoreTarget(creep);
+        writeRunnerIntent(creep, 'move', creep.room && creep.room.name);
     }
 
     return result;
