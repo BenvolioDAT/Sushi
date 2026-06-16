@@ -1,8 +1,7 @@
 /*
- * Annex reserves controllers in active remote mining rooms.
- *
- * Expansion support intentionally stops at a placeholder. Remote mining rooms
- * must be reserved, not permanently claimed.
+ * Annex reserves controllers in active remote mining rooms. When explicitly
+ * spawned with annexMode === 'expand', it claims the configured expansion
+ * target instead. Normal remote mining rooms still use reserve mode.
  */
 var travel = require('utility.Travel.Creep');
 
@@ -10,6 +9,7 @@ var ANNEX_PATH_STYLE = {
     stroke: '#b366ff'
 };
 var ANNEX_SIGN = '\uD83D\uDC1D Sushi Annex \u2014 reserved for remote logistics.';
+var ANNEX_EXPAND_SIGN = 'Sushi expansion outpost.';
 
 var roleAnnex = {
     /** @param {Creep} creep **/
@@ -19,12 +19,7 @@ var roleAnnex = {
         }
 
         if (creep.memory.annexMode === 'expand') {
-            creep.memory.annexState = 'expandPlaceholder';
-            /*
-             * Future expansion mode belongs here. It may claim a controller and
-             * coordinate spawn planning only after that workflow is designed.
-             * Do not claim controllers from this reservation-only version.
-             */
+            runExpandMode(creep);
             return;
         }
 
@@ -118,6 +113,127 @@ var roleAnnex = {
         }
     }
 };
+
+function runExpandMode(creep) {
+    var targetRoomName = creep.memory.targetRoom;
+
+    if (!targetRoomName) {
+        creep.memory.annexState = 'expandNoTarget';
+        idleNearHome(creep);
+        return;
+    }
+
+    if (creep.room.name !== targetRoomName) {
+        creep.memory.annexState = 'expandMovingToTargetRoom';
+        travel.moveToRoom(creep, targetRoomName, {
+            range: 22,
+            visualizePathStyle: ANNEX_PATH_STYLE
+        });
+        return;
+    }
+
+    var controller = creep.room.controller;
+
+    if (!controller) {
+        creep.memory.annexState = 'expandInvalidTarget';
+        blockExpansion(targetRoomName, 'Target room has no controller');
+        idleNearHome(creep);
+        return;
+    }
+
+    creep.memory.targetControllerId = controller.id;
+
+    if (controller.owner && !controller.my) {
+        creep.memory.annexState = 'expandBlockedOwnedController';
+        blockExpansion(targetRoomName, 'Target controller is owned by another player');
+        idleNearHome(creep);
+        return;
+    }
+
+    if (
+        controller.reservation &&
+        controller.reservation.username !== getMyUsername(creep)
+    ) {
+        creep.memory.annexState = 'expandBlockedHostileReservation';
+        blockExpansion(targetRoomName, 'Target controller has a hostile reservation');
+        idleNearHome(creep);
+        return;
+    }
+
+    if (controller.my) {
+        creep.memory.annexState = 'expandClaimed';
+        markExpansionClaimed(targetRoomName);
+        signExpansionController(creep, controller);
+        return;
+    }
+
+    var claimResult = creep.claimController(controller);
+
+    if (claimResult === ERR_NOT_IN_RANGE) {
+        creep.memory.annexState = 'expandMovingToController';
+        travel.move(creep, controller, {
+            range: 1,
+            visualizePathStyle: ANNEX_PATH_STYLE
+        });
+        return;
+    }
+
+    if (claimResult === OK) {
+        creep.memory.annexState = 'expandClaiming';
+        markExpansionClaimed(targetRoomName);
+        signExpansionController(creep, controller);
+        return;
+    }
+
+    if (claimResult === ERR_GCL_NOT_ENOUGH) {
+        creep.memory.annexState = 'expandBlockedGcl';
+        blockExpansion(targetRoomName, 'Not enough GCL to claim target controller');
+        return;
+    }
+
+    creep.memory.annexState = 'expandBlockedClaimResult';
+    blockExpansion(targetRoomName, 'claimController failed: ' + claimResult);
+}
+
+function signExpansionController(creep, controller) {
+    if (!controller || !creep.pos.inRangeTo(controller, 1)) {
+        return false;
+    }
+
+    if (controller.sign && controller.sign.text === ANNEX_EXPAND_SIGN) {
+        return true;
+    }
+
+    return creep.signController(controller, ANNEX_EXPAND_SIGN) === OK;
+}
+
+function markExpansionClaimed(targetRoomName) {
+    if (!Memory.expansion || Memory.expansion.targetRoom !== targetRoomName) {
+        return;
+    }
+
+    Memory.expansion.state = 'placeSpawn';
+    Memory.expansion.claimedAt = Memory.expansion.claimedAt || Game.time;
+    Memory.expansion.blockReason = null;
+}
+
+function blockExpansion(targetRoomName, reason) {
+    if (!Memory.expansion || Memory.expansion.targetRoom !== targetRoomName) {
+        return;
+    }
+
+    Memory.expansion.state = 'blocked';
+    Memory.expansion.blockReason = reason;
+    Memory.expansion.lastUpdated = Game.time;
+}
+
+function getMyUsername(creep) {
+    if (creep && creep.owner && creep.owner.username) {
+        return creep.owner.username;
+    }
+
+    return Memory.username || null;
+}
 
 function idleNearHome(creep) {
     var homeRoomName = creep.memory.homeRoom;

@@ -4,6 +4,8 @@ var roleTech = require('role.Tech');
 var roleFreighter = require('role.Freighter');
 var roleAnnex = require('role.Annex');
 var roleArtificer = require('role.Artificer');
+var rolePioneer = require('role.Pioneer');
+var roleSupplyRunner = require('role.SupplyRunner');
 var roleScout = require('role.Scout');
 var roleRonin = require('role.Ronin');
 var roleVolley = require('role.Volley');
@@ -16,6 +18,7 @@ var utility = require('utility');
 
 var TowerLogic = require('Logic.Tower');
 var WarRoom = require('Logic.WarRoom');
+var ExpansionLogic = require('Logic.Expansion');
 
 var spawnManager = require('spawn.manager');
 var spawnRequestManager = require('spawn.request.manager');
@@ -390,7 +393,15 @@ module.exports.loop = function () {
             console.log('Clearing non-existing creep memory:', name);
         }
     }
-     /*
+    /*
+     * Optional Season 10 expansion runs before normal spawn requests so it can
+     * add Annex/Pioneer/SupplyRunner work to the origin room queue first.
+     */
+    if (Memory.settings && Memory.settings.season10ExpansionMode === true) {
+        ExpansionLogic.run();
+    }
+
+    /*
      * Step 1:
      * Decide what the room needs.
      * This adds requests to Memory.rooms[roomName].spawnQueue.
@@ -444,6 +455,12 @@ module.exports.loop = function () {
         }
         if(creep.memory.role == 'Artificer') {
             roleArtificer.run(creep);
+        }
+        if(creep.memory.role == 'Pioneer') {
+            rolePioneer.run(creep);
+        }
+        if(creep.memory.role == 'SupplyRunner') {
+            roleSupplyRunner.run(creep);
         }
         if(creep.memory.role == 'Scout') {
             roleScout.run(creep);

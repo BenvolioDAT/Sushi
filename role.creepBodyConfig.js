@@ -129,6 +129,28 @@ var BODY_PLANS = {
         [[WORK, 1], [CARRY, 1], [MOVE, 1]]
     ],
 
+    Pioneer: [
+        [[WORK, 8], [CARRY, 8], [MOVE, 16]],
+        [[WORK, 6], [CARRY, 6], [MOVE, 12]],
+        [[WORK, 5], [CARRY, 5], [MOVE, 10]],
+        [[WORK, 4], [CARRY, 4], [MOVE, 8]],
+        [[WORK, 3], [CARRY, 3], [MOVE, 6]],
+        [[WORK, 2], [CARRY, 2], [MOVE, 4]],
+        [[WORK, 1], [CARRY, 1], [MOVE, 2]]
+    ],
+
+    SupplyRunner: [
+        [[CARRY, 25], [MOVE, 25]],
+        [[CARRY, 20], [MOVE, 20]],
+        [[CARRY, 16], [MOVE, 16]],
+        [[CARRY, 12], [MOVE, 12]],
+        [[CARRY, 10], [MOVE, 10]],
+        [[CARRY, 8], [MOVE, 8]],
+        [[CARRY, 6], [MOVE, 6]],
+        [[CARRY, 4], [MOVE, 4]],
+        [[CARRY, 2], [MOVE, 2]]
+    ],
+
     Scout: [
         [[MOVE, 1]]
     ],
@@ -391,6 +413,14 @@ function getArtificerBody(room) {
     return getBody('Artificer', room);
 }
 
+function getPioneerBody(room) {
+    return getBody('Pioneer', room);
+}
+
+function getSupplyRunnerBody(room) {
+    return getBody('SupplyRunner', room);
+}
+
 function getArtificerBodyForWork(room, desiredWork) {
     return getArtificerBodyForEnergyAndWork(
         getRoomEnergyCapacity(room),
@@ -447,6 +477,8 @@ module.exports = {
     getAnnexBody: getAnnexBody,
     getTechBody: getTechBody,
     getArtificerBody: getArtificerBody,
+    getPioneerBody: getPioneerBody,
+    getSupplyRunnerBody: getSupplyRunnerBody,
     getRoninBody: getRoninBody,
     getVolleyBody: getVolleyBody,
     getClericBody: getClericBody,

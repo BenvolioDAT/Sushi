@@ -1,146 +1,318 @@
 /*
  * role.Pioneer.js
  *
- * Pioneer is a controller worker for remote rooms.
- *
- * Depending on creep.memory.mode / creep.memory.claimerMode, it either claims
- * a room controller or reserves it. The same movement pattern is used for both:
- * first enter the target room, then act on the visible controller.
+ * Expansion worker sent from the origin room to the target room. Pioneers build
+ * the first spawn, then continue with basic construction or controller upgrade.
  */
-var utilityTravelCreep = require('utility.Travel.Creep');
+var travel = require('utility.Travel.Creep');
+
+var PIONEER_PATH_STYLE = {
+    stroke: '#66d9ff'
+};
 
 var rolePioneer = {
-
     /** @param {Creep} creep **/
     run: function(creep) {
-        /*
-         * A Pioneer/claimer only acts after spawning is complete. The !creep
-         * check is defensive in case run is called with a bad value.
-         */
-        if(!creep || creep.spawning) {
+        if (!creep || creep.spawning) {
             return;
         }
 
-        /*
-         * targetRoom is required because claim/reserve creeps are only useful
-         * when they know which room controller to work on.
-         */
-        var targetRoom = creep.memory.targetRoom;
-        if(!targetRoom) {
+        var targetRoomName = creep.memory.targetRoom;
+
+        if (!targetRoomName) {
+            creep.memory.pioneerState = 'idleNoTarget';
             return;
         }
 
-        /*
-         * If the creep is not in the target room yet, move toward that room and
-         * stop. The controller action must wait until the room is visible.
-         */
-        if(creep.room.name !== targetRoom) {
-            moveToRoom(creep, targetRoom);
+        if (creep.room.name !== targetRoomName) {
+            creep.memory.pioneerState = 'movingToTargetRoom';
+            travel.moveToRoom(creep, targetRoomName, {
+                range: 22,
+                visualizePathStyle: PIONEER_PATH_STYLE
+            });
             return;
         }
 
-        /*
-         * Some rooms do not have controllers. This guard prevents calling claim
-         * or reserve methods with an undefined target.
-         */
-        if(!creep.room.controller) {
+        if (creep.store[RESOURCE_ENERGY] === 0) {
+            creep.memory.pioneerWorking = false;
+        }
+
+        if (creep.store.getFreeCapacity(RESOURCE_ENERGY) === 0) {
+            creep.memory.pioneerWorking = true;
+        }
+
+        if (!creep.memory.pioneerWorking) {
+            collectEnergy(creep);
             return;
         }
 
-        runControllerAction(creep, creep.room.controller);
+        if (buildSpawnSite(creep)) {
+            return;
+        }
+
+        if (buildBootstrapConstruction(creep)) {
+            return;
+        }
+
+        upgradeController(creep);
     }
 };
 
-function runControllerAction(creep, controller) {
-    /*
-     * This role can either reserve a neutral controller or claim it. The mode is
-     * chosen from creep memory so the same code can support both jobs.
-     */
-    var mode = getClaimerMode(creep);
+function collectEnergy(creep) {
+    creep.memory.needsExpansionEnergy = true;
 
-    if(mode === 'reserve') {
-        reserveController(creep, controller);
-        return;
+    if (pickupDroppedEnergy(creep)) {
+        return true;
     }
 
-    claimController(creep, controller);
+    if (withdrawNearbyStoredEnergy(creep)) {
+        return true;
+    }
+
+    if (moveTowardSupplyRunner(creep)) {
+        return true;
+    }
+
+    return harvestLocalSource(creep);
 }
 
-function getClaimerMode(creep) {
-    /*
-     * Support both memory names. String(...).toLowerCase() makes "Reserve" and
-     * "reserve" behave the same.
-     */
-    if(creep.memory.claimerMode) {
-        return String(creep.memory.claimerMode).toLowerCase();
-    }
-    if(creep.memory.mode) {
-        return String(creep.memory.mode).toLowerCase();
-    }
-
-    // A Claimer claims by default. Set memory.mode = 'reserve' to reserve instead.
-    return 'claim';
-}
-
-function claimController(creep, controller) {
-    /*
-     * If another player owns the controller, attackController is the Screeps API
-     * used to weaken that ownership before claiming can happen.
-     */
-    if(controller.owner && !controller.my) {
-        if(creep.attackController(controller) === ERR_NOT_IN_RANGE) {
-            utilityTravelCreep.move(creep, controller, {visualizePathStyle: {stroke: '#ff0000'}});
+function pickupDroppedEnergy(creep) {
+    var dropped = creep.pos.findClosestByPath(FIND_DROPPED_RESOURCES, {
+        filter: function(resource) {
+            return resource.resourceType === RESOURCE_ENERGY && resource.amount > 0;
         }
-        return;
-    }
+    });
 
-    /*
-     * claimController attempts to make the room yours. ERR_GCL_NOT_ENOUGH means
-     * your account cannot own another room yet, so the code reserves instead.
-     */
-    var result = creep.claimController(controller);
-    if(result === ERR_NOT_IN_RANGE) {
-        utilityTravelCreep.move(creep, controller, {visualizePathStyle: {stroke: '#ffffff'}});
-    } else if(result === ERR_GCL_NOT_ENOUGH) {
-        reserveController(creep, controller);
-    }
-}
-
-function reserveController(creep, controller) {
-    /*
-     * If another player has the reservation, attackController reduces or removes
-     * that reservation before this creep tries to reserve it for you.
-     */
-    if(controller.reservation && controller.reservation.username !== creep.owner.username) {
-        if(creep.attackController(controller) === ERR_NOT_IN_RANGE) {
-            utilityTravelCreep.move(creep, controller, {visualizePathStyle: {stroke: '#ff0000'}});
-        }
-        return;
-    }
-
-    /*
-     * reserveController extends your reservation timer on a neutral controller.
-     * ERR_NOT_IN_RANGE means the creep must move closer to the controller.
-     */
-    if(creep.reserveController(controller) === ERR_NOT_IN_RANGE) {
-        utilityTravelCreep.move(creep, controller, {visualizePathStyle: {stroke: '#ffffff'}});
-    }
-}
-
-function moveToRoom(creep, roomName) {
-    /*
-     * Game.map.findExit chooses which room edge leads toward the requested room.
-     */
-    var exitDir = Game.map.findExit(creep.room, roomName);
-    if(exitDir < 0) {
+    if (!dropped) {
         return false;
     }
 
-    var exit = creep.pos.findClosestByRange(exitDir);
-    if(exit) {
-        utilityTravelCreep.move(creep, exit, {visualizePathStyle: {stroke: '#ffffff'}});
+    var result = creep.pickup(dropped);
+
+    if (result === OK) {
+        return true;
     }
+
+    if (result === ERR_NOT_IN_RANGE) {
+        travel.move(creep, dropped, {
+            range: 1,
+            visualizePathStyle: PIONEER_PATH_STYLE
+        });
+        return true;
+    }
+
+    return false;
+}
+
+function withdrawNearbyStoredEnergy(creep) {
+    var target = creep.pos.findClosestByPath(FIND_STRUCTURES, {
+        filter: function(structure) {
+            return (
+                structure.structureType === STRUCTURE_CONTAINER ||
+                structure.structureType === STRUCTURE_STORAGE
+            ) &&
+                structure.store &&
+                structure.store.getUsedCapacity(RESOURCE_ENERGY) > 0;
+        }
+    });
+
+    if (!target) {
+        return false;
+    }
+
+    var result = creep.withdraw(target, RESOURCE_ENERGY);
+
+    if (result === OK) {
+        return true;
+    }
+
+    if (result === ERR_NOT_IN_RANGE) {
+        travel.move(creep, target, {
+            range: 1,
+            visualizePathStyle: PIONEER_PATH_STYLE
+        });
+        return true;
+    }
+
+    return false;
+}
+
+function moveTowardSupplyRunner(creep) {
+    var runner = findEnergySupplyRunner(creep);
+
+    if (!runner) {
+        return false;
+    }
+
+    creep.memory.requestedSupplyRunner = runner.name;
+
+    if (creep.pos.inRangeTo(runner, 1)) {
+        return true;
+    }
+
+    travel.move(creep, runner, {
+        range: 1,
+        visualizePathStyle: PIONEER_PATH_STYLE
+    });
+
     return true;
+}
+
+function findEnergySupplyRunner(creep) {
+    var best = null;
+    var bestRange = Infinity;
+    var targetRoomName = creep.memory.targetRoom;
+
+    for (var creepName in Game.creeps) {
+        if (!Game.creeps.hasOwnProperty(creepName)) {
+            continue;
+        }
+
+        var runner = Game.creeps[creepName];
+
+        if (
+            !runner ||
+            !runner.memory ||
+            runner.memory.role !== 'SupplyRunner' ||
+            runner.memory.targetRoom !== targetRoomName ||
+            runner.store[RESOURCE_ENERGY] <= 0 ||
+            runner.room.name !== creep.room.name
+        ) {
+            continue;
+        }
+
+        var range = creep.pos.getRangeTo(runner);
+
+        if (range < bestRange) {
+            best = runner;
+            bestRange = range;
+        }
+    }
+
+    return best;
+}
+
+function harvestLocalSource(creep) {
+    var source = creep.pos.findClosestByPath(FIND_SOURCES);
+
+    if (!source) {
+        return false;
+    }
+
+    var result = creep.harvest(source);
+
+    if (result === OK) {
+        return true;
+    }
+
+    if (result === ERR_NOT_IN_RANGE) {
+        travel.move(creep, source, {
+            range: 1,
+            visualizePathStyle: PIONEER_PATH_STYLE
+        });
+        return true;
+    }
+
+    return false;
+}
+
+function buildSpawnSite(creep) {
+    var site = getSpawnConstructionSite(creep.room);
+
+    if (!site) {
+        return false;
+    }
+
+    creep.memory.needsExpansionEnergy = false;
+    creep.memory.pioneerState = 'buildingSpawn';
+    return buildSite(creep, site);
+}
+
+function buildBootstrapConstruction(creep) {
+    var site = creep.pos.findClosestByPath(FIND_MY_CONSTRUCTION_SITES, {
+        filter: function(constructionSite) {
+            return constructionSite.structureType === STRUCTURE_EXTENSION ||
+                constructionSite.structureType === STRUCTURE_CONTAINER ||
+                constructionSite.structureType === STRUCTURE_ROAD;
+        }
+    });
+
+    if (!site) {
+        site = creep.pos.findClosestByPath(FIND_MY_CONSTRUCTION_SITES);
+    }
+
+    if (!site) {
+        return false;
+    }
+
+    creep.memory.needsExpansionEnergy = false;
+    creep.memory.pioneerState = 'buildingBootstrap';
+    return buildSite(creep, site);
+}
+
+function buildSite(creep, site) {
+    var result = creep.build(site);
+
+    if (result === OK) {
+        return true;
+    }
+
+    if (result === ERR_NOT_IN_RANGE) {
+        travel.move(creep, site, {
+            range: 3,
+            visualizePathStyle: PIONEER_PATH_STYLE
+        });
+        return true;
+    }
+
+    return false;
+}
+
+function upgradeController(creep) {
+    if (!creep.room.controller || !creep.room.controller.my) {
+        return false;
+    }
+
+    creep.memory.needsExpansionEnergy = false;
+    creep.memory.pioneerState = 'upgrading';
+
+    var result = creep.upgradeController(creep.room.controller);
+
+    if (result === ERR_NOT_IN_RANGE) {
+        travel.move(creep, creep.room.controller, {
+            range: 3,
+            visualizePathStyle: PIONEER_PATH_STYLE
+        });
+        return true;
+    }
+
+    return result === OK;
+}
+
+function getSpawnConstructionSite(room) {
+    if (!room) {
+        return null;
+    }
+
+    var expansionSite = Memory.expansion && Memory.expansion.spawnSiteId ?
+        Game.getObjectById(Memory.expansion.spawnSiteId) : null;
+
+    if (
+        expansionSite &&
+        expansionSite.pos &&
+        expansionSite.pos.roomName === room.name &&
+        expansionSite.structureType === STRUCTURE_SPAWN
+    ) {
+        return expansionSite;
+    }
+
+    var sites = room.find(FIND_MY_CONSTRUCTION_SITES, {
+        filter: function(site) {
+            return site.structureType === STRUCTURE_SPAWN;
+        }
+    });
+
+    return sites.length > 0 ? sites[0] : null;
 }
 
 module.exports = rolePioneer;
