@@ -7,8 +7,8 @@
  * It asks spawn.manager.js to queue the creeps.
  *
  * Current setup:
- * - Uses Spawn1's room as the room to manage.
- * - Later we can make this loop all owned rooms.
+ * - Loops every visible owned room that has at least one owned spawn.
+ * - Rooms without an owned spawn are not managed as mature spawn rooms yet.
  */
 
 var spawnManager = require('spawn.manager');
@@ -98,55 +98,72 @@ var REPLACEMENT_BUFFER_TICKS = {
  * separate from spawning makes it easier to reason about duplicate requests.
  */
 
-/**
- * Get the first spawn we own.
- *
- * For now, this lets us avoid hard-coding:
- *
- * Game.spawns['Spawn1']
- *
- * If you only have Spawn1, this returns Spawn1.
- *
- * Later, we can replace this with room manager logic.
- *
- * @returns {StructureSpawn|null}
- */
-function getFirstSpawn() {
-    /*
-     * Game.spawns is an object keyed by spawn name. This loop returns the first
-     * owned spawn it finds, which is enough while Sushi manages one main room.
-     */
+function roomHasOwnedSpawn(room) {
+    if (!room) {
+        return false;
+    }
+
     for (var spawnName in Game.spawns) {
         if (!Game.spawns.hasOwnProperty(spawnName)) {
             continue;
         }
 
-        return Game.spawns[spawnName];
+        var spawn = Game.spawns[spawnName];
+
+        if (!spawn || !spawn.room) {
+            continue;
+        }
+
+        if (spawn.my === false) {
+            continue;
+        }
+
+        if (spawn.room.name === room.name) {
+            return true;
+        }
     }
 
-    return null;
+    return false;
 }
 
 /**
- * Get the room we are managing for now.
+ * Get every visible owned room that has at least one owned spawn.
  *
- * Current simple rule:
- * - use the first spawn's room
+ * This intentionally excludes owned rooms without spawns so expansion/bootstrap
+ * code can be added later without treating those rooms as normal mature rooms.
  *
- * @returns {Room|null}
+ * @returns {Room[]}
  */
-function getManagedRoom() {
-    var spawn = getFirstSpawn();
+function getOwnedSpawnRooms() {
+    var rooms = [];
+    var seenRooms = {};
 
-    /*
-     * If there are no spawns, there is no owned room anchor for this simple
-     * manager yet, so return null and let run() exit quietly.
-     */
-    if (!spawn || !spawn.room) {
-        return null;
+    for (var spawnName in Game.spawns) {
+        if (!Game.spawns.hasOwnProperty(spawnName)) {
+            continue;
+        }
+
+        var spawn = Game.spawns[spawnName];
+
+        if (!spawn || !spawn.room || spawn.my === false) {
+            continue;
+        }
+
+        var room = spawn.room;
+
+        if (!room.controller || !room.controller.my) {
+            continue;
+        }
+
+        if (seenRooms[room.name]) {
+            continue;
+        }
+
+        seenRooms[room.name] = true;
+        rooms.push(room);
     }
 
-    return spawn.room;
+    return rooms;
 }
 
 /**
@@ -2476,33 +2493,36 @@ function requestDynamicFreightersForRoom(room, priorityOverride, demandOverride)
 }
 
 /**
- * Run spawn requests for the current simple managed room.
+ * Run spawn requests for one visible owned spawn room.
  *
- * For now:
- * - get first spawn
- * - use that spawn's room
- * - request source-driven mining and hauling capacity
- *
- * Later:
- * - room.manager.js can call requestRoleForRoom(room, ...)
- * - or this file can loop all owned rooms
- *
- * @returns {object|null}
+ * @param {Room} room
+ * @returns {object}
  */
-function run() {
-    var room = getManagedRoom();
-    /*
-     * No managed room is not an error during startup or after losing all spawns.
-     * Returning null lets main.js skip spawnManager.runRoom safely.
-     */
-    if (!room) {
-        return null;
-    }
-
+function runForRoom(room) {
     var report = {
-        roomName: room.name,
+        roomName: room ? room.name : null,
         requests: []
     };
+
+    if (!room) {
+        report.ok = false;
+        report.reason = 'Missing room';
+        return report;
+    }
+
+    if (!room.controller || !room.controller.my) {
+        report.ok = false;
+        report.reason = 'Room is not owned';
+        return report;
+    }
+
+    if (!roomHasOwnedSpawn(room)) {
+        report.ok = false;
+        report.reason = 'Room has no owned spawn';
+        return report;
+    }
+
+    report.ok = true;
 
     /* Bootstrap Extractors still receive a concrete local source assignment. */
     ensureVisibleLocalSourceMemories(room);
@@ -2548,14 +2568,37 @@ function run() {
     return report;
 }
 
+/**
+ * Run spawn requests for every visible owned room that has an owned spawn.
+ *
+ * @returns {object}
+ */
+function run() {
+    var rooms = getOwnedSpawnRooms();
+    var report = {
+        rooms: {}
+    };
+
+    for (var i = 0; i < rooms.length; i++) {
+        var roomReport = runForRoom(rooms[i]);
+
+        if (roomReport && roomReport.roomName) {
+            report.rooms[roomReport.roomName] = roomReport;
+        }
+    }
+
+    return report;
+}
+
 module.exports = {
     run: run,
+    runForRoom: runForRoom,
+    runRoom: runForRoom,
 
     /*
      * Exporting these helps testing from console later.
      */
-    getFirstSpawn: getFirstSpawn,
-    getManagedRoom: getManagedRoom,
+    getOwnedSpawnRooms: getOwnedSpawnRooms,
     requestRoleForRoom: requestRoleForRoom,
     requestTechWorkForRoom: requestTechWorkForRoom,
     getArtificerBuildDemand: getArtificerBuildDemand,

@@ -399,12 +399,16 @@ module.exports.loop = function () {
 
     /*
      * Step 2:
-     * Actually try to spawn from the queue. Only the room returned by the
-     * request manager is processed here, which matches the current single-main-
-     * room design.
+     * Actually try to spawn from each owned spawn room's queue.
      */
-    if (requestReport && requestReport.roomName) {
-        spawnManager.runRoom(requestReport.roomName);
+    if (requestReport && requestReport.rooms) {
+        for (var spawnRoomName in requestReport.rooms) {
+            if (!requestReport.rooms.hasOwnProperty(spawnRoomName)) {
+                continue;
+            }
+
+            spawnManager.runRoom(spawnRoomName);
+        }
     }
 
 
