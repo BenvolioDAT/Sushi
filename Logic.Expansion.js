@@ -12,6 +12,10 @@
  * - online: target has a completed spawn and normal multi-room spawning takes over.
  * - blocked: target was proven unsafe or impossible; user should inspect Memory.expansion.
  * - idle/complete: no active target; waiting for autoSelect/manual target or room limits.
+ *
+ * Expansion is enabled by default. Console controls:
+ * - disable: Memory.expansion.enabled = false
+ * - re-enable: Memory.expansion.enabled = true
  */
 var spawnManager = require('spawn.manager');
 var creepBodyConfig = require('role.creepBodyConfig');
@@ -42,15 +46,15 @@ var ACTIVE_EXPANSION_STATES = {
 };
 
 function run() {
-    if (!Memory.expansion || Memory.expansion.enabled !== true) {
+    var expansion = ensureExpansionMemory();
+
+    if (expansion.enabled === false) {
         return {
             ok: true,
             enabled: false,
-            reason: 'Memory.expansion.enabled is not true'
+            reason: 'Memory.expansion.enabled is false'
         };
     }
-
-    var expansion = ensureExpansionMemory();
 
     expansion.lastUpdated = Game.time;
 
@@ -129,7 +133,7 @@ function ensureExpansionMemory() {
     var expansion = Memory.expansion;
 
     if (expansion.enabled === undefined) {
-        expansion.enabled = false;
+        expansion.enabled = true;
     }
 
     if (expansion.autoSelect === undefined) {

@@ -434,15 +434,20 @@ function buildRouteCostMatrix(roomName) {
             continue;
         }
 
-        if (structure.structureType === STRUCTURE_RAMPART && structure.my) {
-            continue;
-        }
-
-        if (
-            typeof OBSTACLE_OBJECT_TYPES !== 'undefined' &&
-            OBSTACLE_OBJECT_TYPES.indexOf(structure.structureType) !== -1
-        ) {
+        if (isBlockingStructure(structure)) {
             costs.set(structure.pos.x, structure.pos.y, 255);
+        }
+    }
+
+    /*
+     * Non-road construction sites reserve tiles that can become blocking
+     * structures after any tick. Shared routes planned through those sites go
+     * stale as soon as the site appears, so avoid them while planning too.
+     */
+    var sites = room.find(FIND_CONSTRUCTION_SITES);
+    for (var j = 0; j < sites.length; j++) {
+        if (isBlockingConstructionSite(sites[j])) {
+            costs.set(sites[j].pos.x, sites[j].pos.y, 255);
         }
     }
 
@@ -531,7 +536,38 @@ function positionAtDirection(origin, direction) {
     return new RoomPosition(x, y, origin.roomName);
 }
 
-function hasBlockingStructure(pos) {
+function isBlockingStructure(structure) {
+    if (!structure) {
+        return false;
+    }
+
+    if (structure.structureType === STRUCTURE_ROAD || structure.structureType === STRUCTURE_CONTAINER) {
+        return false;
+    }
+
+    if (structure.structureType === STRUCTURE_RAMPART) {
+        return !structure.my && !structure.isPublic;
+    }
+
+    return (
+        typeof OBSTACLE_OBJECT_TYPES !== 'undefined' &&
+        OBSTACLE_OBJECT_TYPES.indexOf(structure.structureType) !== -1
+    );
+}
+
+function isBlockingConstructionSite(site) {
+    if (!site) {
+        return false;
+    }
+
+    return !(
+        site.structureType === STRUCTURE_ROAD ||
+        site.structureType === STRUCTURE_CONTAINER ||
+        site.structureType === STRUCTURE_RAMPART
+    );
+}
+
+function hasBlockingObstacle(pos) {
     var room = Game.rooms[pos.roomName];
     if (!room) {
         return false;
@@ -539,20 +575,14 @@ function hasBlockingStructure(pos) {
 
     var structures = room.lookForAt(LOOK_STRUCTURES, pos.x, pos.y);
     for (var i = 0; i < structures.length; i++) {
-        var structure = structures[i];
-
-        if (structure.structureType === STRUCTURE_ROAD || structure.structureType === STRUCTURE_CONTAINER) {
-            continue;
+        if (isBlockingStructure(structures[i])) {
+            return true;
         }
+    }
 
-        if (structure.structureType === STRUCTURE_RAMPART && structure.my) {
-            continue;
-        }
-
-        if (
-            typeof OBSTACLE_OBJECT_TYPES !== 'undefined' &&
-            OBSTACLE_OBJECT_TYPES.indexOf(structure.structureType) !== -1
-        ) {
+    var sites = room.lookForAt(LOOK_CONSTRUCTION_SITES, pos.x, pos.y);
+    for (var j = 0; j < sites.length; j++) {
+        if (isBlockingConstructionSite(sites[j])) {
             return true;
         }
     }
@@ -603,7 +633,7 @@ function planSharedRoute(creep, targetPosition, range, routeKey) {
     return route;
 }
 
-function makeRouteFollowResult(code, reason, deleteRoute, clearCreepRoute) {
+function makeRouteFollowResult(code, reason, deleteRoute, clearCreepRoute, invalidatedByObstacle) {
     /*
      * Raw Screeps return codes are not specific enough here. ERR_NOT_FOUND can
      * mean "this creep is not near the lane" or "the saved route is unusable".
@@ -616,8 +646,19 @@ function makeRouteFollowResult(code, reason, deleteRoute, clearCreepRoute) {
         code: code,
         reason: reason,
         deleteRoute: deleteRoute === true,
-        clearCreepRoute: clearCreepRoute === true
+        clearCreepRoute: clearCreepRoute === true,
+        invalidatedByObstacle: invalidatedByObstacle === true
     };
+}
+
+function clearCachedMovementForFreshPath(creep) {
+    if (!creep || !creep.memory) {
+        return;
+    }
+
+    delete creep.memory._sushiRoute;
+    delete creep.memory._trav;
+    delete creep.memory._move;
 }
 
 function followSharedRoute(creep, routeKey, route, targetPosition, range) {
@@ -695,13 +736,15 @@ function followSharedRoute(creep, routeKey, route, targetPosition, range) {
     }
 
     var nextPosition = positions[index + 1];
-    if (hasBlockingStructure(nextPosition)) {
+    if (hasBlockingObstacle(nextPosition)) {
         /*
          * Delete shared routes only when there is strong proof that the route
-         * itself is invalid, such as corrupt path data or a permanent blocking
-         * structure on the next route tile.
+         * itself is invalid. Construction sites count here because a saved lane
+         * through an extension/spawn/etc. site will keep producing stale traffic
+         * intents and may become a blocking structure after any tick.
          */
-        return makeRouteFollowResult(ERR_NO_PATH, ROUTE_FOLLOW_ROUTE_BAD, true, true);
+        clearCachedMovementForFreshPath(creep);
+        return makeRouteFollowResult(ERR_NO_PATH, ROUTE_FOLLOW_ROUTE_BAD, true, true, true);
     }
 
     routeMemory.pathIndex = index;
@@ -715,7 +758,7 @@ function samePackedPosition(a, b) {
     return a && b && a.x === b.x && a.y === b.y && a.roomName === b.roomName;
 }
 
-function applyRouteFollowResult(creep, cache, routeKey, followResult) {
+function applyRouteFollowResult(creep, cache, routeKey, followResult, moveOptions) {
     if (!followResult) {
         return null;
     }
@@ -727,10 +770,24 @@ function applyRouteFollowResult(creep, cache, routeKey, followResult) {
      */
     if (followResult.deleteRoute) {
         delete cache.routes[routeKey];
+
+        if (followResult.invalidatedByObstacle) {
+            cache.invalidatedByObstacle = (cache.invalidatedByObstacle || 0) + 1;
+        }
     }
 
     if (followResult.clearCreepRoute) {
         delete creep.memory._sushiRoute;
+    }
+
+    if (followResult.reason === ROUTE_FOLLOW_ROUTE_BAD) {
+        delete creep.memory._trav;
+        delete creep.memory._move;
+
+        if (moveOptions) {
+            moveOptions.freshMatrix = true;
+            moveOptions.reusePath = 0;
+        }
     }
 
     if (
@@ -777,9 +834,13 @@ function trySharedRoute(creep, target, targetPosition, moveOptions) {
 
         if (isRouteFresh(route)) {
             var activeFollow = followSharedRoute(creep, routeKey, route, targetPosition, range);
-            var activeResult = applyRouteFollowResult(creep, cache, routeKey, activeFollow);
+            var activeResult = applyRouteFollowResult(creep, cache, routeKey, activeFollow, moveOptions);
             if (activeResult !== null) {
                 return activeResult;
+            }
+
+            if (activeFollow && activeFollow.reason === ROUTE_FOLLOW_ROUTE_BAD) {
+                return null;
             }
         } else if (route) {
             /*
@@ -823,7 +884,13 @@ function trySharedRoute(creep, target, targetPosition, moveOptions) {
      * lane. Deletion is reserved for stale, corrupt, or permanently blocked
      * routes; otherwise this creep simply falls back to Traveler.
      */
-    return applyRouteFollowResult(creep, cache, routeKey, followSharedRoute(creep, routeKey, route, targetPosition, range));
+    return applyRouteFollowResult(
+        creep,
+        cache,
+        routeKey,
+        followSharedRoute(creep, routeKey, route, targetPosition, range),
+        moveOptions
+    );
 }
 
 function cleanupRouteCaches() {

@@ -272,12 +272,7 @@ function buildTrafficCostMatrix(room) {
             continue;
         }
 
-        if (
-            typeof OBSTACLE_OBJECT_TYPES !== 'undefined' &&
-            OBSTACLE_OBJECT_TYPES.indexOf(site.structureType) !== -1
-        ) {
-            costs.set(site.pos.x, site.pos.y, 255);
-        }
+        costs.set(site.pos.x, site.pos.y, 255);
     }
 
     return costs;
