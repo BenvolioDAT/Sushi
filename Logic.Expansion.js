@@ -32,6 +32,37 @@ var SUPPLY_RUNNER_PRIORITY = 54;
 var DESIRED_PIONEERS = 2;
 var DESIRED_SUPPLY_RUNNERS = 2;
 
+var DEFAULT_SPAWN_POLICY = {
+    enabled: true,
+    maxQueueLengthPerRoom: 8,
+    maxNewRequestsPerRoomPerTick: 2,
+    roleCaps: {
+        Foreman: 1,
+        Scout: 1,
+        Annex: 4,
+        Ronin: 1,
+        Volley: 1,
+        Cleric: 1,
+        ScoreRunner: 0,
+        Tech: 3,
+        Artificer: 3,
+        Extractor: 6,
+        Freighter: 6,
+        Pioneer: 2,
+        SupplyRunner: 2
+    },
+    maxCreepsPerRoomByRcl: {
+        RCL1: 6,
+        RCL2: 9,
+        RCL3: 12,
+        RCL4: 16,
+        RCL5: 20,
+        RCL6: 24,
+        RCL7: 30,
+        RCL8: 35
+    }
+};
+
 var EXPANSION_REPLACEMENT_BUFFER_TICKS = {
     Annex: 150,
     Pioneer: 150,
@@ -1334,6 +1365,201 @@ function requestBootstrapCreeps(expansion, originRoom) {
     );
 }
 
+function ensureExpansionSpawnPolicyMemory() {
+    if (!Memory.spawnPolicy) {
+        Memory.spawnPolicy = {};
+    }
+
+    var policy = Memory.spawnPolicy;
+
+    if (policy.enabled === undefined) {
+        policy.enabled = DEFAULT_SPAWN_POLICY.enabled;
+    }
+
+    if (typeof policy.maxQueueLengthPerRoom !== 'number') {
+        policy.maxQueueLengthPerRoom = DEFAULT_SPAWN_POLICY.maxQueueLengthPerRoom;
+    }
+
+    if (typeof policy.maxNewRequestsPerRoomPerTick !== 'number') {
+        policy.maxNewRequestsPerRoomPerTick =
+            DEFAULT_SPAWN_POLICY.maxNewRequestsPerRoomPerTick;
+    }
+
+    if (!policy.roleCaps) {
+        policy.roleCaps = {};
+    }
+
+    for (var role in DEFAULT_SPAWN_POLICY.roleCaps) {
+        if (
+            DEFAULT_SPAWN_POLICY.roleCaps.hasOwnProperty(role) &&
+            typeof policy.roleCaps[role] !== 'number'
+        ) {
+            policy.roleCaps[role] = DEFAULT_SPAWN_POLICY.roleCaps[role];
+        }
+    }
+
+    if (!policy.maxCreepsPerRoomByRcl) {
+        policy.maxCreepsPerRoomByRcl = {};
+    }
+
+    for (var rclKey in DEFAULT_SPAWN_POLICY.maxCreepsPerRoomByRcl) {
+        if (
+            DEFAULT_SPAWN_POLICY.maxCreepsPerRoomByRcl.hasOwnProperty(rclKey) &&
+            typeof policy.maxCreepsPerRoomByRcl[rclKey] !== 'number'
+        ) {
+            policy.maxCreepsPerRoomByRcl[rclKey] =
+                DEFAULT_SPAWN_POLICY.maxCreepsPerRoomByRcl[rclKey];
+        }
+    }
+
+    return policy;
+}
+
+function getExpansionHomeCounts(originRoomName, queue) {
+    var counts = {
+        totalLiving: 0,
+        totalQueued: 0,
+        roleLiving: {},
+        roleQueued: {},
+        newRequestsThisTick: 0
+    };
+
+    for (var creepName in Game.creeps) {
+        if (!Game.creeps.hasOwnProperty(creepName)) {
+            continue;
+        }
+
+        var creep = Game.creeps[creepName];
+        var memory = creep && creep.memory;
+        var homeRoom = memory ? (memory.homeRoom || (creep.room && creep.room.name)) : null;
+
+        if (homeRoom !== originRoomName) {
+            continue;
+        }
+
+        counts.totalLiving++;
+
+        if (memory && memory.role) {
+            counts.roleLiving[memory.role] = (counts.roleLiving[memory.role] || 0) + 1;
+        }
+    }
+
+    if (!queue) {
+        return counts;
+    }
+
+    for (var i = 0; i < queue.length; i++) {
+        var request = queue[i];
+        var requestMemory = request && request.memory;
+        var requestHomeRoom = requestMemory ? requestMemory.homeRoom : originRoomName;
+
+        if (requestHomeRoom !== originRoomName) {
+            continue;
+        }
+
+        var role = request.role || (requestMemory && requestMemory.role);
+
+        counts.totalQueued++;
+
+        if (role) {
+            counts.roleQueued[role] = (counts.roleQueued[role] || 0) + 1;
+        }
+
+        if (request.requestedAt === Game.time) {
+            counts.newRequestsThisTick++;
+        }
+    }
+
+    return counts;
+}
+
+function getExpansionMaxCreeps(originRoomName, policy) {
+    var room = Game.rooms[originRoomName];
+    var level = room && room.controller ? (room.controller.level || 1) : 1;
+    var key = 'RCL' + level;
+
+    return policy.maxCreepsPerRoomByRcl[key] ||
+        DEFAULT_SPAWN_POLICY.maxCreepsPerRoomByRcl[key] ||
+        DEFAULT_SPAWN_POLICY.maxCreepsPerRoomByRcl.RCL1;
+}
+
+function canQueueExpansionRequest(originRoomName, role, queue, counts, allowStallBypass) {
+    var policy = ensureExpansionSpawnPolicyMemory();
+
+    if (policy.enabled === false) {
+        return {
+            ok: true
+        };
+    }
+
+    var plannedRole = (counts.roleLiving[role] || 0) +
+        (counts.roleQueued[role] || 0);
+    var plannedTotal = counts.totalLiving + counts.totalQueued;
+    var roleCap = policy.roleCaps ? policy.roleCaps[role] : null;
+
+    if (
+        typeof roleCap === 'number' &&
+        plannedRole >= roleCap &&
+        !allowStallBypass
+    ) {
+        return {
+            ok: false,
+            reason: 'role cap reached'
+        };
+    }
+
+    if (
+        plannedTotal >= getExpansionMaxCreeps(originRoomName, policy) &&
+        !allowStallBypass
+    ) {
+        return {
+            ok: false,
+            reason: 'room creep cap reached'
+        };
+    }
+
+    if (
+        queue &&
+        queue.length >= policy.maxQueueLengthPerRoom &&
+        !allowStallBypass
+    ) {
+        return {
+            ok: false,
+            reason: 'spawn queue full'
+        };
+    }
+
+    if (
+        counts.newRequestsThisTick >= policy.maxNewRequestsPerRoomPerTick &&
+        !allowStallBypass
+    ) {
+        return {
+            ok: false,
+            reason: 'new request cap reached'
+        };
+    }
+
+    return {
+        ok: true
+    };
+}
+
+function rememberExpansionSpawnDenial(originRoomName, role, reason) {
+    if (!Memory.rooms) {
+        Memory.rooms = {};
+    }
+
+    if (!Memory.rooms[originRoomName]) {
+        Memory.rooms[originRoomName] = {};
+    }
+
+    Memory.rooms[originRoomName].expansionSpawnGovernor = {
+        tick: Game.time,
+        role: role,
+        denied: reason
+    };
+}
+
 function ensureExpansionCreepCount(
     originRoomName,
     targetRoomName,
@@ -1362,7 +1588,24 @@ function ensureExpansionCreepCount(
         return true;
     }
 
+    var homeCounts = getExpansionHomeCounts(originRoomName, queue);
+    var added = 0;
+
     for (var i = planned; i < desiredCount; i++) {
+        var allowStallBypass = planned + added <= 0;
+        var allowed = canQueueExpansionRequest(
+            originRoomName,
+            role,
+            queue,
+            homeCounts,
+            allowStallBypass
+        );
+
+        if (!allowed.ok) {
+            rememberExpansionSpawnDenial(originRoomName, role, allowed.reason);
+            break;
+        }
+
         var memory = {
             role: role,
             homeRoom: originRoomName,
@@ -1383,10 +1626,18 @@ function ensureExpansionCreepCount(
             memory: memory,
             requestedAt: Game.time
         });
+
+        added++;
+        homeCounts.totalQueued++;
+        homeCounts.roleQueued[role] = (homeCounts.roleQueued[role] || 0) + 1;
+        homeCounts.newRequestsThisTick++;
     }
 
-    sortSpawnQueue(queue);
-    return true;
+    if (added > 0) {
+        sortSpawnQueue(queue);
+    }
+
+    return planned + added >= desiredCount || added > 0;
 }
 
 function getExpansionReplacementLeadTicks(role, body) {

@@ -29,6 +29,48 @@ var ARTIFICER_HEALTHY_STORAGE_ENERGY = 50000;
 var REMOTE_CONTAINER_REPAIR_START_PERCENT = 0.80;
 var REMOTE_ROAD_REPAIR_START_PERCENT = 0.60;
 
+var DEFAULT_CPU_POLICY = {
+    maxCpu: 20,
+    spawnPlanningCpuBudget: 1.5,
+    roomPlanningInterval: 3,
+    remotePlanningInterval: 10,
+    constructionDemandInterval: 10,
+    repairDemandInterval: 25
+};
+
+var DEFAULT_SPAWN_POLICY = {
+    enabled: true,
+    maxQueueLengthPerRoom: 8,
+    maxNewRequestsPerRoomPerTick: 2,
+    roleCaps: {
+        Foreman: 1,
+        Scout: 1,
+        Annex: 4,
+        Ronin: 1,
+        Volley: 1,
+        Cleric: 1,
+        ScoreRunner: 0,
+        Tech: 3,
+        Artificer: 3,
+        Extractor: 6,
+        Freighter: 6,
+        Pioneer: 2,
+        SupplyRunner: 2
+    },
+    maxCreepsPerRoomByRcl: {
+        RCL1: 6,
+        RCL2: 9,
+        RCL3: 12,
+        RCL4: 16,
+        RCL5: 20,
+        RCL6: 24,
+        RCL7: 30,
+        RCL8: 35
+    }
+};
+
+var activePlanningContext = null;
+
 /*
  * How many creeps we want for now.
  *
@@ -197,6 +239,591 @@ function getReplacementLeadTicks(role, body) {
     return spawnTime + buffer;
 }
 
+function ensureNumberSetting(target, key, defaultValue) {
+    if (typeof target[key] !== 'number') {
+        target[key] = defaultValue;
+    }
+}
+
+function ensureCpuPolicyMemory() {
+    if (!Memory.cpuPolicy) {
+        Memory.cpuPolicy = {};
+    }
+
+    for (var key in DEFAULT_CPU_POLICY) {
+        if (DEFAULT_CPU_POLICY.hasOwnProperty(key)) {
+            ensureNumberSetting(Memory.cpuPolicy, key, DEFAULT_CPU_POLICY[key]);
+        }
+    }
+
+    return Memory.cpuPolicy;
+}
+
+function ensureSpawnPolicyMemory() {
+    if (!Memory.spawnPolicy) {
+        Memory.spawnPolicy = {};
+    }
+
+    var policy = Memory.spawnPolicy;
+
+    if (policy.enabled === undefined) {
+        policy.enabled = DEFAULT_SPAWN_POLICY.enabled;
+    }
+
+    ensureNumberSetting(
+        policy,
+        'maxQueueLengthPerRoom',
+        DEFAULT_SPAWN_POLICY.maxQueueLengthPerRoom
+    );
+    ensureNumberSetting(
+        policy,
+        'maxNewRequestsPerRoomPerTick',
+        DEFAULT_SPAWN_POLICY.maxNewRequestsPerRoomPerTick
+    );
+
+    if (!policy.roleCaps) {
+        policy.roleCaps = {};
+    }
+
+    for (var role in DEFAULT_SPAWN_POLICY.roleCaps) {
+        if (
+            DEFAULT_SPAWN_POLICY.roleCaps.hasOwnProperty(role) &&
+            typeof policy.roleCaps[role] !== 'number'
+        ) {
+            policy.roleCaps[role] = DEFAULT_SPAWN_POLICY.roleCaps[role];
+        }
+    }
+
+    if (!policy.maxCreepsPerRoomByRcl) {
+        policy.maxCreepsPerRoomByRcl = {};
+    }
+
+    for (var rclKey in DEFAULT_SPAWN_POLICY.maxCreepsPerRoomByRcl) {
+        if (
+            DEFAULT_SPAWN_POLICY.maxCreepsPerRoomByRcl.hasOwnProperty(rclKey) &&
+            typeof policy.maxCreepsPerRoomByRcl[rclKey] !== 'number'
+        ) {
+            policy.maxCreepsPerRoomByRcl[rclKey] =
+                DEFAULT_SPAWN_POLICY.maxCreepsPerRoomByRcl[rclKey];
+        }
+    }
+
+    return policy;
+}
+
+function ensureRoomMemory(roomName) {
+    if (!Memory.rooms) {
+        Memory.rooms = {};
+    }
+
+    if (!Memory.rooms[roomName]) {
+        Memory.rooms[roomName] = {};
+    }
+
+    return Memory.rooms[roomName];
+}
+
+function getSpawnDemandCache(roomName) {
+    var roomMemory = ensureRoomMemory(roomName);
+
+    if (!roomMemory.spawnDemandCache) {
+        roomMemory.spawnDemandCache = {};
+    }
+
+    return roomMemory.spawnDemandCache;
+}
+
+function getCpuUsed() {
+    if (!Game.cpu || typeof Game.cpu.getUsed !== 'function') {
+        return 0;
+    }
+
+    return Game.cpu.getUsed();
+}
+
+function getPositiveInterval(value, fallback) {
+    if (typeof value !== 'number' || value < 1) {
+        return fallback;
+    }
+
+    return Math.max(1, Math.floor(value));
+}
+
+function getNextStaggeredFullPlanTick(startTick, interval, roomIndex) {
+    if (interval <= 1) {
+        return startTick;
+    }
+
+    var offset = (interval - ((startTick + roomIndex) % interval)) % interval;
+    return startTick + offset;
+}
+
+function shouldRunFullPlan(cache, cpuPolicy, roomIndex, skipNormalPlanning) {
+    if (skipNormalPlanning) {
+        return false;
+    }
+
+    var interval = getPositiveInterval(
+        cpuPolicy.roomPlanningInterval,
+        DEFAULT_CPU_POLICY.roomPlanningInterval
+    );
+
+    if (interval <= 1) {
+        return true;
+    }
+
+    if (typeof cache.nextFullPlanTick !== 'number') {
+        cache.nextFullPlanTick = getNextStaggeredFullPlanTick(
+            Game.time,
+            interval,
+            roomIndex
+        );
+    }
+
+    return Game.time >= cache.nextFullPlanTick;
+}
+
+function setNextFullPlanTick(cache, cpuPolicy, roomIndex) {
+    var interval = getPositiveInterval(
+        cpuPolicy.roomPlanningInterval,
+        DEFAULT_CPU_POLICY.roomPlanningInterval
+    );
+
+    cache.nextFullPlanTick = getNextStaggeredFullPlanTick(
+        Game.time + 1,
+        interval,
+        roomIndex
+    );
+}
+
+function getActiveContext(roomName) {
+    if (activePlanningContext && activePlanningContext.roomName === roomName) {
+        return activePlanningContext;
+    }
+
+    return null;
+}
+
+function addCount(map, key, amount) {
+    if (!key) {
+        return;
+    }
+
+    map[key] = (map[key] || 0) + (amount || 1);
+}
+
+function addBodyPartCount(map, role, partType, amount) {
+    if (!role || !partType || amount <= 0) {
+        return;
+    }
+
+    if (!map[role]) {
+        map[role] = {};
+    }
+
+    addCount(map[role], partType, amount);
+}
+
+function getBodyPartCount(map, role, partType) {
+    if (!map || !map[role]) {
+        return 0;
+    }
+
+    return map[role][partType] || 0;
+}
+
+function isHealthyForReplacement(creep, role) {
+    if (!creep) {
+        return false;
+    }
+
+    if (creep.ticksToLive === undefined) {
+        return true;
+    }
+
+    return creep.ticksToLive > getReplacementLeadTicks(role, creep.body || []);
+}
+
+function getRequestRole(request) {
+    if (!request) {
+        return null;
+    }
+
+    return request.role || (request.memory && request.memory.role) || null;
+}
+
+function requestBelongsToRoom(request, roomName) {
+    var memory = request && request.memory;
+
+    if (!request || !roomName) {
+        return false;
+    }
+
+    return !memory || !memory.homeRoom || memory.homeRoom === roomName;
+}
+
+function isLocalExtractorMemory(memory, roomName) {
+    if (!memory) {
+        return true;
+    }
+
+    if (memory.remoteMining === true) {
+        return false;
+    }
+
+    if (memory.sourceRoom && memory.sourceRoom !== roomName) {
+        return false;
+    }
+
+    if (memory.targetRoom && memory.targetRoom !== roomName) {
+        return false;
+    }
+
+    return true;
+}
+
+function isQueuedLocalExtractorRequest(request, roomName) {
+    var role = getRequestRole(request);
+
+    return role === 'Extractor' &&
+        requestBelongsToRoom(request, roomName) &&
+        isLocalExtractorMemory(request.memory, roomName);
+}
+
+function countQueueRequestsAtTick(queue, tick) {
+    var count = 0;
+
+    if (!queue) {
+        return count;
+    }
+
+    for (var i = 0; i < queue.length; i++) {
+        if (queue[i] && queue[i].requestedAt === tick) {
+            count++;
+        }
+    }
+
+    return count;
+}
+
+function summarizeQueue(queue, roomName) {
+    var summary = {
+        totalQueued: 0,
+        queuedByRole: {},
+        queuedBodyPartsByRole: {},
+        queuedLocalExtractors: 0
+    };
+
+    if (!queue) {
+        return summary;
+    }
+
+    for (var i = 0; i < queue.length; i++) {
+        var request = queue[i];
+
+        if (!requestBelongsToRoom(request, roomName)) {
+            continue;
+        }
+
+        var role = getRequestRole(request);
+        summary.totalQueued++;
+        addCount(summary.queuedByRole, role, 1);
+
+        if (isQueuedLocalExtractorRequest(request, roomName)) {
+            summary.queuedLocalExtractors++;
+        }
+
+        var body = request.body || [];
+        for (var bodyIndex = 0; bodyIndex < body.length; bodyIndex++) {
+            addBodyPartCount(summary.queuedBodyPartsByRole, role, body[bodyIndex], 1);
+        }
+    }
+
+    return summary;
+}
+
+function buildRoomPlanningContext(room, roomIndex, skipNormalPlanning) {
+    var roomName = room.name;
+    var cpuPolicy = ensureCpuPolicyMemory();
+    var spawnPolicy = ensureSpawnPolicyMemory();
+    var cache = getSpawnDemandCache(roomName);
+    var queue = spawnManager.getSpawnQueue(roomName);
+    var queueSummary = summarizeQueue(queue, roomName);
+    var context = {
+        room: room,
+        roomName: roomName,
+        roomIndex: roomIndex || 0,
+        cpuPolicy: cpuPolicy,
+        spawnPolicy: spawnPolicy,
+        demandCache: cache,
+        queue: queue,
+        cpuStart: getCpuUsed(),
+        skippedForCpu: skipNormalPlanning === true,
+        fullPlan: false,
+        denied: {},
+        newRequests: countQueueRequestsAtTick(queue, Game.time),
+        totalLiving: 0,
+        healthyTotal: 0,
+        totalQueued: queueSummary.totalQueued,
+        livingByRole: {},
+        healthyByRole: {},
+        bodyPartsByRole: {},
+        queuedByRole: queueSummary.queuedByRole,
+        queuedBodyPartsByRole: queueSummary.queuedBodyPartsByRole,
+        livingCreeps: [],
+        idleFreighters: 0,
+        healthyLocalExtractors: 0,
+        queuedLocalExtractors: queueSummary.queuedLocalExtractors
+    };
+
+    for (var creepName in Game.creeps) {
+        if (!Game.creeps.hasOwnProperty(creepName)) {
+            continue;
+        }
+
+        var creep = Game.creeps[creepName];
+
+        if (!creep || !creep.memory) {
+            continue;
+        }
+
+        var homeRoom = creep.memory.homeRoom ||
+            (creep.room ? creep.room.name : null);
+
+        if (homeRoom !== roomName) {
+            continue;
+        }
+
+        var role = creep.memory.role;
+        var healthy = isHealthyForReplacement(creep, role);
+
+        context.totalLiving++;
+        context.livingCreeps.push(creep);
+        addCount(context.livingByRole, role, 1);
+
+        if (!healthy) {
+            continue;
+        }
+
+        context.healthyTotal++;
+        addCount(context.healthyByRole, role, 1);
+
+        if (role === 'Extractor' && isLocalExtractorMemory(creep.memory, roomName)) {
+            context.healthyLocalExtractors++;
+        }
+
+        if (
+            role === 'Freighter' &&
+            !creep.memory.freighterJob &&
+            !creep.memory.FreighterWorking
+        ) {
+            var carriedEnergy = creep.store ? (creep.store[RESOURCE_ENERGY] || 0) : 0;
+
+            if (carriedEnergy === 0) {
+                context.idleFreighters++;
+            }
+        }
+
+        var body = creep.body || [];
+        for (var bodyIndex = 0; bodyIndex < body.length; bodyIndex++) {
+            var part = body[bodyIndex] && body[bodyIndex].type;
+
+            if (part && body[bodyIndex].hits !== 0) {
+                addBodyPartCount(context.bodyPartsByRole, role, part, 1);
+            }
+        }
+    }
+
+    context.fullPlan = shouldRunFullPlan(
+        cache,
+        cpuPolicy,
+        context.roomIndex,
+        context.skippedForCpu
+    );
+
+    return context;
+}
+
+function getMaxCreepsForRoom(room, policy) {
+    var level = room && room.controller ? (room.controller.level || 1) : 1;
+    var key = 'RCL' + level;
+    var maxByRcl = policy.maxCreepsPerRoomByRcl || {};
+
+    return maxByRcl[key] ||
+        DEFAULT_SPAWN_POLICY.maxCreepsPerRoomByRcl[key] ||
+        DEFAULT_SPAWN_POLICY.maxCreepsPerRoomByRcl.RCL1;
+}
+
+function getPlannedRoleCount(context, role) {
+    return (context.healthyByRole[role] || 0) +
+        (context.queuedByRole[role] || 0);
+}
+
+function getPlannedTotal(context) {
+    return context.healthyTotal + context.totalQueued;
+}
+
+function getHomeLivingCreeps(roomName) {
+    var context = getActiveContext(roomName);
+
+    if (context) {
+        return context.livingCreeps;
+    }
+
+    var creeps = [];
+
+    for (var creepName in Game.creeps) {
+        if (!Game.creeps.hasOwnProperty(creepName)) {
+            continue;
+        }
+
+        var creep = Game.creeps[creepName];
+        var homeRoom = creep && creep.memory ?
+            (creep.memory.homeRoom || (creep.room && creep.room.name)) : null;
+
+        if (homeRoom === roomName) {
+            creeps.push(creep);
+        }
+    }
+
+    return creeps;
+}
+
+function recordDenied(context, role, reason) {
+    if (!context) {
+        return;
+    }
+
+    context.denied[role || 'unknown'] = reason;
+}
+
+function canAddSpawnRequest(context, request, options) {
+    if (!context || !request) {
+        return {
+            ok: true
+        };
+    }
+
+    var policy = context.spawnPolicy;
+
+    if (!policy || policy.enabled === false) {
+        return {
+            ok: true
+        };
+    }
+
+    var role = getRequestRole(request);
+    var emergency = options && options.emergency === true;
+    var plannedRole = getPlannedRoleCount(context, role);
+    var roleCap = policy.roleCaps ? policy.roleCaps[role] : null;
+    var maxCreeps = getMaxCreepsForRoom(context.room, policy);
+    var maxQueueLength = policy.maxQueueLengthPerRoom;
+    var maxNewRequests = policy.maxNewRequestsPerRoomPerTick;
+    var emergencyMissingRole = emergency && plannedRole === 0;
+
+    if (typeof roleCap === 'number' && plannedRole >= roleCap) {
+        return {
+            ok: false,
+            reason: 'role cap reached'
+        };
+    }
+
+    if (getPlannedTotal(context) >= maxCreeps && !emergencyMissingRole) {
+        return {
+            ok: false,
+            reason: 'room creep cap reached'
+        };
+    }
+
+    if (
+        context.queue &&
+        context.queue.length >= maxQueueLength &&
+        !emergencyMissingRole
+    ) {
+        return {
+            ok: false,
+            reason: 'spawn queue full'
+        };
+    }
+
+    if (!emergency && context.newRequests >= maxNewRequests) {
+        return {
+            ok: false,
+            reason: 'new request cap reached'
+        };
+    }
+
+    return {
+        ok: true
+    };
+}
+
+function updateContextForQueuedRequest(context, request) {
+    if (!context || !request) {
+        return;
+    }
+
+    var role = getRequestRole(request);
+    context.totalQueued++;
+    context.newRequests++;
+    addCount(context.queuedByRole, role, 1);
+
+    if (isQueuedLocalExtractorRequest(request, context.roomName)) {
+        context.queuedLocalExtractors++;
+    }
+
+    var body = request.body || [];
+    for (var i = 0; i < body.length; i++) {
+        addBodyPartCount(context.queuedBodyPartsByRole, role, body[i], 1);
+    }
+}
+
+function addSpawnRequest(roomName, request, options) {
+    var queue = spawnManager.getSpawnQueue(roomName);
+    var context = getActiveContext(roomName);
+    var role = getRequestRole(request);
+
+    if (!queue || !request || !role) {
+        return {
+            ok: false,
+            role: role,
+            requested: 0,
+            reason: 'Missing spawn queue or request'
+        };
+    }
+
+    var allowed = canAddSpawnRequest(context, request, options);
+
+    if (!allowed.ok) {
+        recordDenied(context, role, allowed.reason);
+
+        return {
+            ok: false,
+            role: role,
+            requested: 0,
+            reason: allowed.reason
+        };
+    }
+
+    if (request.requestedAt === undefined) {
+        request.requestedAt = Game.time;
+    }
+
+    if (options && options.emergency === true) {
+        request.emergency = true;
+    }
+
+    queue.push(request);
+    updateContextForQueuedRequest(context, request);
+    sortSpawnQueue(queue);
+
+    return {
+        ok: true,
+        role: role,
+        requested: 1
+    };
+}
+
 /**
  * Count creeps that are alive and still healthy enough to count.
  *
@@ -209,6 +836,12 @@ function getReplacementLeadTicks(role, body) {
  * @returns {number}
  */
 function countHealthyCreeps(roomName, role, replacementLeadTicks) {
+    var context = getActiveContext(roomName);
+
+    if (context) {
+        return context.healthyByRole[role] || 0;
+    }
+
     var count = 0;
 
     /*
@@ -274,6 +907,12 @@ function countHealthyCreeps(roomName, role, replacementLeadTicks) {
  * @returns {number}
  */
 function countQueuedRequests(roomName, role) {
+    var context = getActiveContext(roomName);
+
+    if (context) {
+        return context.queuedByRole[role] || 0;
+    }
+
     /*
      * This reads Memory.rooms[roomName].spawnQueue through spawn.manager.js.
      */
@@ -350,13 +989,125 @@ function getActiveRemoteNetIncome(roomName) {
     return income;
 }
 
+function isFreshCacheEntry(entry, interval) {
+    return !!(
+        entry &&
+        typeof entry.tick === 'number' &&
+        Game.time - entry.tick < interval
+    );
+}
+
+function getCachedLocalConstructionDemand(room) {
+    if (!room) {
+        return {
+            tick: Game.time,
+            totalSites: 0,
+            localBuildProgressRemaining: 0,
+            criticalSites: 0,
+            criticalProgress: 0,
+            regularSites: 0,
+            regularProgress: 0,
+            lowPrioritySites: 0,
+            lowPriorityProgress: 0
+        };
+    }
+
+    var cpuPolicy = ensureCpuPolicyMemory();
+    var interval = getPositiveInterval(
+        cpuPolicy.constructionDemandInterval,
+        DEFAULT_CPU_POLICY.constructionDemandInterval
+    );
+    var cache = getSpawnDemandCache(room.name);
+
+    if (isFreshCacheEntry(cache.constructionDemand, interval)) {
+        return cache.constructionDemand;
+    }
+
+    var sites = room.find(FIND_MY_CONSTRUCTION_SITES);
+    var demand = {
+        tick: Game.time,
+        totalSites: sites.length,
+        localBuildProgressRemaining: 0,
+        criticalSites: 0,
+        criticalProgress: 0,
+        regularSites: 0,
+        regularProgress: 0,
+        lowPrioritySites: 0,
+        lowPriorityProgress: 0
+    };
+
+    for (var i = 0; i < sites.length; i++) {
+        var remaining = getProgressRemaining(sites[i]);
+        demand.localBuildProgressRemaining += remaining;
+
+        if (isCriticalArtificerStructureType(sites[i].structureType)) {
+            demand.criticalSites++;
+            demand.criticalProgress += remaining;
+        }
+        else if (isLowPriorityArtificerStructureType(sites[i].structureType)) {
+            demand.lowPrioritySites++;
+            demand.lowPriorityProgress += remaining;
+        }
+        else {
+            demand.regularSites++;
+            demand.regularProgress += remaining;
+        }
+    }
+
+    cache.constructionDemand = demand;
+    return demand;
+}
+
+function getCachedLocalRepairDemand(room) {
+    if (!room) {
+        return {
+            tick: Game.time,
+            targets: 0,
+            emergencyTargets: 0
+        };
+    }
+
+    var cpuPolicy = ensureCpuPolicyMemory();
+    var interval = getPositiveInterval(
+        cpuPolicy.repairDemandInterval,
+        DEFAULT_CPU_POLICY.repairDemandInterval
+    );
+    var cache = getSpawnDemandCache(room.name);
+
+    if (isFreshCacheEntry(cache.repairDemand, interval)) {
+        return cache.repairDemand;
+    }
+
+    var demand = getValidLocalRepairDemand(room);
+    demand.tick = Game.time;
+    cache.repairDemand = demand;
+    return demand;
+}
+
+function getCachedRemoteArtificerDemand(roomName) {
+    var cpuPolicy = ensureCpuPolicyMemory();
+    var interval = getPositiveInterval(
+        cpuPolicy.remotePlanningInterval,
+        DEFAULT_CPU_POLICY.remotePlanningInterval
+    );
+    var cache = getSpawnDemandCache(roomName);
+
+    if (isFreshCacheEntry(cache.remoteArtificerDemand, interval)) {
+        return cache.remoteArtificerDemand;
+    }
+
+    var demand = getVisibleRemoteArtificerDemand(roomName);
+    demand.tick = Game.time;
+    cache.remoteArtificerDemand = demand;
+    return demand;
+}
+
 function getConstructionSiteCount(room) {
     if (!room) {
         return 0;
     }
 
-    var sites = room.find(FIND_CONSTRUCTION_SITES);
-    return sites ? sites.length : 0;
+    return getCachedLocalConstructionDemand(room).totalSites || 0;
 }
 
 /**
@@ -475,6 +1226,12 @@ function getCreepActiveBodyParts(creep, partType) {
 }
 
 function countLivingRoleBodyParts(roomName, role, partType) {
+    var context = getActiveContext(roomName);
+
+    if (context) {
+        return getBodyPartCount(context.bodyPartsByRole, role, partType);
+    }
+
     var partCount = 0;
 
     for (var creepName in Game.creeps) {
@@ -513,6 +1270,12 @@ function countLivingRoleBodyParts(roomName, role, partType) {
 }
 
 function countQueuedRoleBodyParts(roomName, role, partType) {
+    var context = getActiveContext(roomName);
+
+    if (context) {
+        return getBodyPartCount(context.queuedBodyPartsByRole, role, partType);
+    }
+
     var queue = spawnManager.getSpawnQueue(roomName);
     var partCount = 0;
 
@@ -555,7 +1318,29 @@ function saveTechWorkDebug(roomName, desiredWork, livingWork, queuedWork) {
     Memory.rooms[roomName].techQueuedWork = queuedWork;
 }
 
-function requestTechWorkForRoom(room) {
+function getTechWorkDemand(room) {
+    if (!room) {
+        return {
+            desiredWork: 0,
+            livingWork: 0,
+            queuedWork: 0,
+            missingWork: 0
+        };
+    }
+
+    var desiredWork = getDesiredTechWork(room);
+    var livingWork = countLivingRoleWork(room.name, 'Tech');
+    var queuedWork = countQueuedRoleWork(room.name, 'Tech');
+
+    return {
+        desiredWork: desiredWork,
+        livingWork: livingWork,
+        queuedWork: queuedWork,
+        missingWork: Math.max(0, desiredWork - livingWork - queuedWork)
+    };
+}
+
+function requestTechWorkForRoom(room, demandOverride, options) {
     if (!room) {
         return {
             ok: false,
@@ -565,21 +1350,24 @@ function requestTechWorkForRoom(room) {
         };
     }
 
-    var desiredWork = getDesiredTechWork(room);
-    var livingWork = countLivingRoleWork(room.name, 'Tech');
-    var queuedWork = countQueuedRoleWork(room.name, 'Tech');
-    var missingWork = desiredWork - livingWork - queuedWork;
+    var demand = demandOverride || getTechWorkDemand(room);
+    var missingWork = demand.missingWork;
     var result = {
         ok: true,
         role: 'Tech',
         requested: 0,
-        desiredWork: desiredWork,
-        livingWork: livingWork,
-        queuedWork: queuedWork,
+        desiredWork: demand.desiredWork,
+        livingWork: demand.livingWork,
+        queuedWork: demand.queuedWork,
         missingWork: Math.max(0, missingWork)
     };
 
-    saveTechWorkDebug(room.name, desiredWork, livingWork, queuedWork);
+    saveTechWorkDebug(
+        room.name,
+        demand.desiredWork,
+        demand.livingWork,
+        demand.queuedWork
+    );
 
     if (missingWork <= 0) {
         return result;
@@ -587,16 +1375,15 @@ function requestTechWorkForRoom(room) {
 
     var body = creepBodyConfig.getTechBodyForWork(room, missingWork);
     var requestedWork = countBodyParts(body, WORK);
-    var queue = spawnManager.getSpawnQueue(room.name);
 
-    if (!body || requestedWork <= 0 || !queue) {
+    if (!body || requestedWork <= 0) {
         result.ok = false;
         result.reason = 'No Tech body or spawn queue available';
         return result;
     }
 
     /* Add exactly one Tech request per tick. Later ticks can fill more WORK. */
-    queue.push({
+    var addResult = addSpawnRequest(room.name, {
         role: 'Tech',
         body: body,
         maxWorkParts: requestedWork,
@@ -606,13 +1393,28 @@ function requestTechWorkForRoom(room) {
             homeRoom: room.name
         },
         requestedAt: Game.time
-    });
-    sortSpawnQueue(queue);
+    }, options);
+
+    if (!addResult.ok) {
+        result.ok = false;
+        result.reason = addResult.reason;
+        return result;
+    }
 
     result.requested = 1;
     result.requestedWork = requestedWork;
     result.queuedWork += requestedWork;
-    saveTechWorkDebug(room.name, desiredWork, livingWork, result.queuedWork);
+    demand.queuedWork = result.queuedWork;
+    demand.missingWork = Math.max(
+        0,
+        demand.desiredWork - demand.livingWork - demand.queuedWork
+    );
+    saveTechWorkDebug(
+        room.name,
+        demand.desiredWork,
+        demand.livingWork,
+        result.queuedWork
+    );
 
     return result;
 }
@@ -827,35 +1629,17 @@ function getArtificerBuildDemand(room) {
         };
     }
 
-    var sites = room.find(FIND_MY_CONSTRUCTION_SITES);
-    var localBuildProgressRemaining = 0;
-    var criticalSites = 0;
-    var criticalProgress = 0;
-    var regularSites = 0;
-    var regularProgress = 0;
-    var lowPrioritySites = 0;
-    var lowPriorityProgress = 0;
-
-    for (var i = 0; i < sites.length; i++) {
-        var remaining = getProgressRemaining(sites[i]);
-        localBuildProgressRemaining += remaining;
-
-        if (isCriticalArtificerStructureType(sites[i].structureType)) {
-            criticalSites++;
-            criticalProgress += remaining;
-        }
-        else if (isLowPriorityArtificerStructureType(sites[i].structureType)) {
-            lowPrioritySites++;
-            lowPriorityProgress += remaining;
-        }
-        else {
-            regularSites++;
-            regularProgress += remaining;
-        }
-    }
-
-    var repairDemand = getValidLocalRepairDemand(room);
-    var remoteDemand = getVisibleRemoteArtificerDemand(room.name);
+    var constructionDemand = getCachedLocalConstructionDemand(room);
+    var localBuildProgressRemaining =
+        constructionDemand.localBuildProgressRemaining || 0;
+    var criticalSites = constructionDemand.criticalSites || 0;
+    var criticalProgress = constructionDemand.criticalProgress || 0;
+    var regularSites = constructionDemand.regularSites || 0;
+    var regularProgress = constructionDemand.regularProgress || 0;
+    var lowPrioritySites = constructionDemand.lowPrioritySites || 0;
+    var lowPriorityProgress = constructionDemand.lowPriorityProgress || 0;
+    var repairDemand = getCachedLocalRepairDemand(room);
+    var remoteDemand = getCachedRemoteArtificerDemand(room.name);
     var energyCapacity = room.energyCapacityAvailable || 300;
     var storageEnergy = getStoredEnergy(room.storage);
     var criticalBuildWork = 0;
@@ -1023,7 +1807,7 @@ function getArtificerBuildDemand(room) {
         queuedWork: queuedWork,
         missingWork: Math.max(0, desiredWork - livingWork - queuedWork),
         localBuildProgressRemaining: localBuildProgressRemaining,
-        localConstructionSites: sites.length,
+        localConstructionSites: constructionDemand.totalSites || 0,
         repairTargets: repairDemand.targets,
         remoteConstructionSites: remoteDemand.constructionSites,
         remoteRepairTargets: remoteDemand.repairTargets,
@@ -1051,7 +1835,7 @@ function saveArtificerDemandDebug(roomName, demand) {
     roomMemory.artificerMode = demand.mode;
 }
 
-function requestDynamicArtificersForRoom(room) {
+function requestDynamicArtificersForRoom(room, demandOverride, options) {
     if (!room) {
         return {
             ok: false,
@@ -1061,7 +1845,7 @@ function requestDynamicArtificersForRoom(room) {
         };
     }
 
-    var demand = getArtificerBuildDemand(room);
+    var demand = demandOverride || getArtificerBuildDemand(room);
     var result = {
         ok: true,
         role: 'Artificer',
@@ -1085,16 +1869,15 @@ function requestDynamicArtificersForRoom(room) {
         demand.missingWork
     );
     var requestedWork = countBodyParts(body, WORK);
-    var queue = spawnManager.getSpawnQueue(room.name);
 
-    if (!body || requestedWork <= 0 || !queue) {
+    if (!body || requestedWork <= 0) {
         result.ok = false;
         result.reason = 'No Artificer body or spawn queue available';
         return result;
     }
 
     /* Add one request per tick; queued WORK prevents repeated over-requesting. */
-    queue.push({
+    var addResult = addSpawnRequest(room.name, {
         role: 'Artificer',
         body: body,
         requestedWorkParts: requestedWork,
@@ -1105,8 +1888,13 @@ function requestDynamicArtificersForRoom(room) {
             homeRoom: room.name
         },
         requestedAt: Game.time
-    });
-    sortSpawnQueue(queue);
+    }, options);
+
+    if (!addResult.ok) {
+        result.ok = false;
+        result.reason = addResult.reason;
+        return result;
+    }
 
     demand.queuedWork += requestedWork;
     demand.missingWork = Math.max(
@@ -1123,7 +1911,7 @@ function requestDynamicArtificersForRoom(room) {
 }
 
 
-function requestRemoteExtractorsForRoom(room, extractorBody, priority, maxRequests) {
+function requestRemoteExtractorsForRoom(room, extractorBody, priority, maxRequests, options) {
     var queue = spawnManager.getSpawnQueue(room.name);
     var demands = RemotePlanner.getRemoteExtractorDemand(room.name, extractorBody, queue);
     var added = 0;
@@ -1152,7 +1940,7 @@ function requestRemoteExtractorsForRoom(room, extractorBody, priority, maxReques
          * Queue one source-targeted normal Extractor. remoteMining is assignment
          * state only, and Planner.Remote caps each remote source at one Extractor.
          */
-        queue.push({
+        var addResult = addSpawnRequest(room.name, {
             role: 'Extractor',
             body: extractorBody,
             priority: priority,
@@ -1166,12 +1954,15 @@ function requestRemoteExtractorsForRoom(room, extractorBody, priority, maxReques
                 remoteMining: true
             },
             requestedAt: Game.time
-        });
+        }, options);
 
-        added++;
+        if (addResult.ok) {
+            added++;
+        }
+        else {
+            break;
+        }
     }
-
-    sortSpawnQueue(queue);
 
     return {
         ok: true,
@@ -1289,13 +2080,27 @@ function requestAnnexForRoom(room) {
     }
 
     var livingAnnexes = [];
-    for (var creepName in Game.creeps) {
-        if (!Game.creeps.hasOwnProperty(creepName)) {
-            continue;
-        }
+    var context = getActiveContext(room.name);
 
-        if (isLivingAnnexForHome(Game.creeps[creepName], room.name)) {
-            livingAnnexes.push(Game.creeps[creepName]);
+    if (context) {
+        for (var homeCreepIndex = 0;
+            homeCreepIndex < context.livingCreeps.length;
+            homeCreepIndex++
+        ) {
+            if (isLivingAnnexForHome(context.livingCreeps[homeCreepIndex], room.name)) {
+                livingAnnexes.push(context.livingCreeps[homeCreepIndex]);
+            }
+        }
+    }
+    else {
+        for (var creepName in Game.creeps) {
+            if (!Game.creeps.hasOwnProperty(creepName)) {
+                continue;
+            }
+
+            if (isLivingAnnexForHome(Game.creeps[creepName], room.name)) {
+                livingAnnexes.push(Game.creeps[creepName]);
+            }
         }
     }
 
@@ -1368,7 +2173,7 @@ function requestAnnexForRoom(room) {
             continue;
         }
 
-        queue.push({
+        var addResult = addSpawnRequest(room.name, {
             role: 'Annex',
             body: annexBody,
             priority: PRIORITY.Annex,
@@ -1380,7 +2185,12 @@ function requestAnnexForRoom(room) {
             },
             requestedAt: Game.time
         });
-        sortSpawnQueue(queue);
+
+        if (!addResult.ok) {
+            result.ok = false;
+            result.reason = addResult.reason;
+            return result;
+        }
 
         result.requested = 1;
         result.targetRoom = remoteRoomName;
@@ -1407,7 +2217,7 @@ function requestAnnexForRoom(room) {
  * @param {number} priorityOverride
  * @returns {object}
  */
-function requestRoleForRoom(room, role, desiredCount, priorityOverride) {
+function requestRoleForRoom(room, role, desiredCount, priorityOverride, options) {
     /*
      * Validate the request before doing body calculations or writing anything to
      * the spawn queue.
@@ -1448,6 +2258,7 @@ function requestRoleForRoom(room, role, desiredCount, priorityOverride) {
         var sourcesMemory = Memory.rooms[roomName].sources;
         var sourceRequestsAdded = 0;
         var managedSourceCount = 0;
+        var homeLivingCreeps = getHomeLivingCreeps(roomName);
 
         if (!queue) {
             return {
@@ -1593,12 +2404,8 @@ function requestRoleForRoom(room, role, desiredCount, priorityOverride) {
              * This closes the race between "request queued/spawned" and
              * "source memory list updated by the running creep."
              */
-            for (var creepName in Game.creeps) {
-                if (!Game.creeps.hasOwnProperty(creepName)) {
-                    continue;
-                }
-
-                var livingCreep = Game.creeps[creepName];
+            for (var livingIndex = 0; livingIndex < homeLivingCreeps.length; livingIndex++) {
+                var livingCreep = homeLivingCreeps[livingIndex];
 
                 if (!livingCreep || !livingCreep.my || !livingCreep.memory) {
                     continue;
@@ -1754,7 +2561,7 @@ function requestRoleForRoom(room, role, desiredCount, priorityOverride) {
                 continue;
             }
 
-            queue.push({
+            var addSourceResult = addSpawnRequest(roomName, {
                 role: role,
                 body: body,
                 priority: priority,
@@ -1767,7 +2574,11 @@ function requestRoleForRoom(room, role, desiredCount, priorityOverride) {
                     targetSourceId: realSourceId
                 },
                 requestedAt: Game.time
-            });
+            }, options);
+
+            if (!addSourceResult.ok) {
+                break;
+            }
 
             sourceRequestsAdded++;
 
@@ -1776,19 +2587,12 @@ function requestRoleForRoom(room, role, desiredCount, priorityOverride) {
         }
 
         if (managedSourceCount > 0) {
-            queue.sort(function(a, b) {
-                if (b.priority !== a.priority) {
-                    return b.priority - a.priority;
-                }
-
-                return a.requestedAt - b.requestedAt;
-            });
-
             var remoteExtractorReport = requestRemoteExtractorsForRoom(
                 room,
                 body,
                 priority - 1,
-                sourceRequestsAdded > 0 ? 0 : 1
+                sourceRequestsAdded > 0 ? 0 : 1,
+                options
             );
 
             return {
@@ -1812,7 +2616,7 @@ function requestRoleForRoom(room, role, desiredCount, priorityOverride) {
 
         if (freighterQueue && missingFreighters > 0) {
             for (var freighterIndex = 0; freighterIndex < missingFreighters; freighterIndex++) {
-                freighterQueue.push({
+                var addFreighterResult = addSpawnRequest(roomName, {
                     role: 'Freighter',
                     body: body,
                     priority: priority,
@@ -1821,11 +2625,14 @@ function requestRoleForRoom(room, role, desiredCount, priorityOverride) {
                         homeRoom: roomName
                     },
                     requestedAt: Game.time
-                });
+                }, options);
+
+                if (!addFreighterResult.ok) {
+                    break;
+                }
+
                 freightersAdded++;
             }
-
-            sortSpawnQueue(freighterQueue);
         }
 
         return {
@@ -1861,32 +2668,33 @@ function requestRoleForRoom(room, role, desiredCount, priorityOverride) {
         };
     }
 
-    /*
-     * Ask spawn.manager.js to maintain enough creeps.
-     *
-     * Important:
-     * We pass healthyCount + missingCount as the target instead of desiredCount.
-     *
-     * Why?
-     * spawn.manager.js may count dying creeps as alive.
-     * This request manager is the smarter layer that knows dying creeps
-     * should stop counting when they are close to death.
-     */
-    var requestResult = spawnManager.requestRoleCount(
-        roomName,
-        role,
-        healthyCount + missingCount,
-        body,
-        priority,
-        {
+    var added = 0;
+
+    for (var missingIndex = 0; missingIndex < missingCount; missingIndex++) {
+        var memory = {
+            role: role,
             homeRoom: roomName
+        };
+
+        var addResult = addSpawnRequest(roomName, {
+            role: role,
+            body: body,
+            priority: priority,
+            memory: memory,
+            requestedAt: Game.time
+        }, options);
+
+        if (!addResult.ok) {
+            break;
         }
-    );
+
+        added++;
+    }
 
     return {
-        ok: requestResult.ok,
+        ok: true,
         role: role,
-        requested: requestResult.added || 0,
+        requested: added,
         healthy: healthyCount,
         queued: queuedCount,
         desired: desiredCount,
@@ -2184,6 +2992,12 @@ function getSourceMiningDemand(room) {
 }
 
 function countIdleFreighters(roomName) {
+    var context = getActiveContext(roomName);
+
+    if (context) {
+        return context.idleFreighters;
+    }
+
     var idle = 0;
 
     for (var creepName in Game.creeps) {
@@ -2377,7 +3191,7 @@ function getEconomyRequestPriorities(miningDemand, freightDemand) {
     };
 }
 
-function requestDynamicExtractorsForRoom(room, priorityOverride, demandOverride) {
+function requestDynamicExtractorsForRoom(room, priorityOverride, demandOverride, options) {
     var demand = demandOverride || getSourceMiningDemand(room);
     var requestPriority = priorityOverride;
 
@@ -2408,7 +3222,8 @@ function requestDynamicExtractorsForRoom(room, priorityOverride, demandOverride)
             room,
             'Extractor',
             nextCount,
-            requestPriority
+            requestPriority,
+            options
         );
     }
 
@@ -2432,7 +3247,7 @@ function requestDynamicExtractorsForRoom(room, priorityOverride, demandOverride)
     };
 }
 
-function requestDynamicFreightersForRoom(room, priorityOverride, demandOverride) {
+function requestDynamicFreightersForRoom(room, priorityOverride, demandOverride, options) {
     var demand = demandOverride || getFreighterCarryDemand(room);
     var requestPriority = priorityOverride;
 
@@ -2460,14 +3275,13 @@ function requestDynamicFreightersForRoom(room, priorityOverride, demandOverride)
             demand.missingCarryParts
         );
         var requestedCarry = countBodyParts(body, CARRY);
-        var queue = spawnManager.getSpawnQueue(room.name);
 
-        if (!body || requestedCarry <= 0 || !queue) {
+        if (!body || requestedCarry <= 0) {
             result.ok = false;
             result.reason = 'No Freighter body or spawn queue available';
         }
         else {
-            queue.push({
+            var addResult = addSpawnRequest(room.name, {
                 role: 'Freighter',
                 body: body,
                 requestedCarryParts: requestedCarry,
@@ -2478,8 +3292,15 @@ function requestDynamicFreightersForRoom(room, priorityOverride, demandOverride)
                     homeRoom: room.name
                 },
                 requestedAt: Game.time
-            });
-            sortSpawnQueue(queue);
+            }, options);
+
+            if (!addResult.ok) {
+                result.ok = false;
+                result.reason = addResult.reason;
+                saveFreighterDemandDebug(room.name, demand);
+                return result;
+            }
+
             result.requested = 1;
             result.requestedCarryParts = requestedCarry;
             demand.queuedCarryParts += requestedCarry;
@@ -2496,13 +3317,144 @@ function requestDynamicFreightersForRoom(room, priorityOverride, demandOverride)
     return result;
 }
 
+function refreshSpawnDemandCache(room, context) {
+    var cache = context.demandCache;
+
+    cache.tick = Game.time;
+    cache.miningDemand = getSourceMiningDemand(room);
+    cache.freightDemand = getFreighterCarryDemand(room);
+    cache.techDemand = getTechWorkDemand(room);
+    cache.artificerDemand = getArtificerBuildDemand(room);
+
+    /*
+     * These totals are built from one Game.creeps pass in the room context.
+     * Keeping a Memory copy makes console inspection cheap.
+     */
+    cache.roleBodyPartTotals = context.bodyPartsByRole;
+    cache.queuedRoleBodyPartTotals = context.queuedBodyPartsByRole;
+
+    setNextFullPlanTick(cache, context.cpuPolicy, context.roomIndex);
+    return cache;
+}
+
+function getCachedSpawnDemand(roomName) {
+    return getSpawnDemandCache(roomName);
+}
+
+function requestEmergencyTechForRoom(room) {
+    var result = {
+        ok: true,
+        role: 'Tech',
+        requested: 0,
+        emergency: true
+    };
+
+    if (
+        !room ||
+        !room.controller ||
+        room.controller.ticksToDowngrade >= TECH_DOWNGRADE_DANGER_TICKS
+    ) {
+        result.reason = 'Controller is not in downgrade danger';
+        return result;
+    }
+
+    var emergencyMinimum = (room.energyCapacityAvailable || 300) >= 550 ? 5 : 2;
+    var livingWork = countLivingRoleWork(room.name, 'Tech');
+    var queuedWork = countQueuedRoleWork(room.name, 'Tech');
+    var demand = {
+        desiredWork: emergencyMinimum,
+        livingWork: livingWork,
+        queuedWork: queuedWork,
+        missingWork: Math.max(0, emergencyMinimum - livingWork - queuedWork)
+    };
+
+    if (demand.missingWork <= 0) {
+        result.reason = 'Emergency Tech WORK is already planned';
+        return result;
+    }
+
+    return requestTechWorkForRoom(room, demand, {
+        emergency: true
+    });
+}
+
+function runEmergencyPlanning(room, report, context) {
+    var emergencyOptions = {
+        emergency: true
+    };
+
+    if (getPlannedRoleCount(context, 'Foreman') < 1) {
+        report.requests.push(requestRoleForRoom(
+            room,
+            'Foreman',
+            1,
+            PRIORITY.Foreman,
+            emergencyOptions
+        ));
+    }
+
+    if (context.healthyLocalExtractors + context.queuedLocalExtractors < 1) {
+        /* Missing local income is one of the few light-pass cases allowed to
+         * scan visible sources so the queued miner gets a concrete source id.
+         */
+        ensureVisibleLocalSourceMemories(room);
+        report.requests.push(requestRoleForRoom(
+            room,
+            'Extractor',
+            1,
+            PRIORITY.Extractor + 10,
+            emergencyOptions
+        ));
+    }
+
+    if (getPlannedRoleCount(context, 'Freighter') < 1) {
+        report.requests.push(requestRoleForRoom(
+            room,
+            'Freighter',
+            1,
+            PRIORITY.Freighter + 10,
+            emergencyOptions
+        ));
+    }
+
+    if (
+        room.controller &&
+        room.controller.ticksToDowngrade < TECH_DOWNGRADE_DANGER_TICKS
+    ) {
+        report.requests.push(requestEmergencyTechForRoom(room));
+    }
+}
+
+function saveSpawnGovernorDebug(context) {
+    var roomMemory = ensureRoomMemory(context.roomName);
+    var policy = context.spawnPolicy;
+    var cpuUsed = getCpuUsed() - context.cpuStart;
+
+    context.demandCache.roleSummaryTick = Game.time;
+    context.demandCache.roleBodyPartTotals = context.bodyPartsByRole;
+    context.demandCache.queuedRoleBodyPartTotals = context.queuedBodyPartsByRole;
+
+    roomMemory.spawnGovernor = {
+        tick: Game.time,
+        fullPlan: context.fullPlan,
+        skippedForCpu: context.skippedForCpu,
+        cpuUsed: Math.round(cpuUsed * 1000) / 1000,
+        totalLiving: context.totalLiving,
+        totalQueued: context.totalQueued,
+        maxCreeps: getMaxCreepsForRoom(context.room, policy),
+        queueLength: context.queue ? context.queue.length : 0,
+        maxQueueLength: policy.maxQueueLengthPerRoom,
+        denied: context.denied
+    };
+}
+
 /**
  * Run spawn requests for one visible owned spawn room.
  *
  * @param {Room} room
  * @returns {object}
  */
-function runForRoom(room) {
+function runForRoom(room, options) {
     var report = {
         roomName: room ? room.name : null,
         requests: []
@@ -2527,49 +3479,102 @@ function runForRoom(room) {
     }
 
     report.ok = true;
+    options = options || {};
 
-    /* Bootstrap Extractors still receive a concrete local source assignment. */
-    ensureVisibleLocalSourceMemories(room);
+    var context = buildRoomPlanningContext(
+        room,
+        options.roomIndex || 0,
+        options.skipNormalPlanning === true
+    );
+    var previousContext = activePlanningContext;
+    activePlanningContext = context;
 
-    if (runStartupBootstrap(room, report)) {
+    try {
+        report.fullPlan = context.fullPlan;
+        report.skippedForCpu = context.skippedForCpu;
+        report.nextFullPlanTick = context.demandCache.nextFullPlanTick || null;
+
+        runEmergencyPlanning(room, report, context);
+
+        if (context.skippedForCpu) {
+            report.reason = 'Normal spawn planning skipped by CPU budget';
+
+            if (
+                typeof context.demandCache.nextFullPlanTick === 'number' &&
+                Game.time >= context.demandCache.nextFullPlanTick
+            ) {
+                setNextFullPlanTick(
+                    context.demandCache,
+                    context.cpuPolicy,
+                    context.roomIndex
+                );
+                report.nextFullPlanTick = context.demandCache.nextFullPlanTick;
+            }
+
+            return report;
+        }
+
+        if (!context.fullPlan) {
+            var cachedDemand = getCachedSpawnDemand(room.name);
+            report.reason = 'Light spawn planning pass';
+            report.cachedDemandTick = cachedDemand.tick || null;
+            return report;
+        }
+
+        /*
+         * A full pass refreshes dynamic demand, then normal request systems may
+         * queue work through the governor. Light passes use this cached demand
+         * only for debug and emergency context.
+         */
+        var demandCache = refreshSpawnDemandCache(room, context);
+
+        if (runStartupBootstrap(room, report)) {
+            return report;
+        }
+
+        /*
+         * Foreman first.
+         *
+         * This matters because Foreman has the highest priority and should always
+         * be considered before the other roles.
+         */
+        report.requests.push(requestRoleForRoom(room, 'Foreman', DESIRED_COUNTS.Foreman));
+
+        var miningDemand = demandCache.miningDemand;
+        var freightDemand = demandCache.freightDemand;
+        var economyPriorities = getEconomyRequestPriorities(
+            miningDemand,
+            freightDemand
+        );
+
+        report.requests.push(requestDynamicExtractorsForRoom(
+            room,
+            economyPriorities.extractor,
+            miningDemand
+        ));
+        report.requests.push(requestDynamicFreightersForRoom(
+            room,
+            economyPriorities.freighter,
+            freightDemand
+        ));
+        report.requests.push(requestAnnexForRoom(room));
+        report.requests.push(requestRoleForRoom(room, 'ScoreRunner', DESIRED_COUNTS.ScoreRunner));
+        report.requests.push(requestTechWorkForRoom(room, demandCache.techDemand));
+        report.requests.push(requestDynamicArtificersForRoom(
+            room,
+            demandCache.artificerDemand
+        ));
+        report.requests.push(requestRoleForRoom(room, 'Scout', DESIRED_COUNTS.Scout));
+        report.requests.push(requestRoleForRoom(room, 'Ronin', DESIRED_COUNTS.Ronin));
+        report.requests.push(requestRoleForRoom(room, 'Volley', DESIRED_COUNTS.Volley));
+        report.requests.push(requestRoleForRoom(room, 'Cleric', DESIRED_COUNTS.Cleric));
+
         return report;
     }
-
-    /*
-     * Foreman first.
-     *
-     * This matters because Foreman has the highest priority and should always
-     * be considered before the other roles.
-     */
-    report.requests.push(requestRoleForRoom(room, 'Foreman', DESIRED_COUNTS.Foreman));
-
-    var miningDemand = getSourceMiningDemand(room);
-    var freightDemand = getFreighterCarryDemand(room);
-    var economyPriorities = getEconomyRequestPriorities(
-        miningDemand,
-        freightDemand
-    );
-
-    report.requests.push(requestDynamicExtractorsForRoom(
-        room,
-        economyPriorities.extractor,
-        miningDemand
-    ));
-    report.requests.push(requestDynamicFreightersForRoom(
-        room,
-        economyPriorities.freighter,
-        freightDemand
-    ));
-    report.requests.push(requestAnnexForRoom(room));
-    report.requests.push(requestRoleForRoom(room, 'ScoreRunner', DESIRED_COUNTS.ScoreRunner));
-    report.requests.push(requestTechWorkForRoom(room));
-    report.requests.push(requestDynamicArtificersForRoom(room));
-    report.requests.push(requestRoleForRoom(room, 'Scout', DESIRED_COUNTS.Scout));
-    report.requests.push(requestRoleForRoom(room, 'Ronin', DESIRED_COUNTS.Ronin));
-    report.requests.push(requestRoleForRoom(room, 'Volley', DESIRED_COUNTS.Volley));
-    report.requests.push(requestRoleForRoom(room, 'Cleric', DESIRED_COUNTS.Cleric));
-
-    return report;
+    finally {
+        saveSpawnGovernorDebug(context);
+        activePlanningContext = previousContext;
+    }
 }
 
 /**
@@ -2579,18 +3584,44 @@ function runForRoom(room) {
  */
 function run() {
     var rooms = getOwnedSpawnRooms();
+    var cpuPolicy = ensureCpuPolicyMemory();
+    var spawnPolicy = ensureSpawnPolicyMemory();
+    var startCpu = getCpuUsed();
+    var budget = Math.min(
+        cpuPolicy.maxCpu,
+        cpuPolicy.spawnPlanningCpuBudget
+    );
+    var skipNormalPlanning = false;
     var report = {
-        rooms: {}
+        rooms: {},
+        cpuBudget: budget,
+        spawnPolicyEnabled: spawnPolicy.enabled !== false
     };
 
+    rooms.sort(function(a, b) {
+        return a.name < b.name ? -1 : a.name > b.name ? 1 : 0;
+    });
+
     for (var i = 0; i < rooms.length; i++) {
-        var roomReport = runForRoom(rooms[i]);
+        if (getCpuUsed() - startCpu > budget) {
+            skipNormalPlanning = true;
+        }
+
+        var roomReport = runForRoom(rooms[i], {
+            roomIndex: i,
+            skipNormalPlanning: skipNormalPlanning
+        });
 
         if (roomReport && roomReport.roomName) {
             report.rooms[roomReport.roomName] = roomReport;
         }
+
+        if (getCpuUsed() - startCpu > budget) {
+            skipNormalPlanning = true;
+        }
     }
 
+    report.cpuUsed = Math.round((getCpuUsed() - startCpu) * 1000) / 1000;
     return report;
 }
 
@@ -2605,6 +3636,7 @@ module.exports = {
     getOwnedSpawnRooms: getOwnedSpawnRooms,
     requestRoleForRoom: requestRoleForRoom,
     requestTechWorkForRoom: requestTechWorkForRoom,
+    getTechWorkDemand: getTechWorkDemand,
     getArtificerBuildDemand: getArtificerBuildDemand,
     saveArtificerDemandDebug: saveArtificerDemandDebug,
     requestDynamicArtificersForRoom: requestDynamicArtificersForRoom,
