@@ -204,6 +204,9 @@ function planRoom(room) {
          * No safe storage anchor means this room is not ready for structure
          * planning this tick. Do not fall back to the spawn tile.
          */
+        planner.lastPlanned = Game.time;
+        planner.lastPlanFailed = Game.time;
+        planner.lastPlanFailReason = 'no storage anchor';
         return null;
     }
 
@@ -220,15 +223,14 @@ function planRoom(room) {
     planControllerLink(room, plan, reserved, anchor);
     planSourceLinks(room, plan, reserved, anchor);
 
+    planTowers(room, plan, reserved, candidates);
+    planExtensions(room, plan, reserved, candidates);
     planSingleNearAnchor(room, plan, reserved, candidates, STRUCTURE_TERMINAL, 6);
+    planLabs(room, plan, reserved, candidates);
     planSingleNearAnchor(room, plan, reserved, candidates, STRUCTURE_FACTORY, 7);
     planSingleNearAnchor(room, plan, reserved, candidates, STRUCTURE_OBSERVER, 8);
     planSingleNearAnchor(room, plan, reserved, candidates, STRUCTURE_POWER_SPAWN, 8);
     planSingleNearAnchor(room, plan, reserved, candidates, STRUCTURE_NUKER, 8);
-
-    planLabs(room, plan, reserved, candidates);
-    planTowers(room, plan, reserved, candidates);
-    planExtensions(room, plan, reserved, candidates);
     planExtraSpawns(room, plan, reserved, candidates, spawns.length);
 
     /*
@@ -428,11 +430,28 @@ function makeEmptyPositions() {
 }
 
 function shouldReplan(room, planner) {
-    if (!planner || !planner.plan || !planner.plan.anchor) {
+    if (!planner) {
         return true;
     }
 
     if (planner.forceReplan === true) {
+        return true;
+    }
+
+    if (!planner.plan || !planner.plan.anchor) {
+        /*
+         * If anchor selection recently failed, wait for the normal replan
+         * interval. This prevents a low-CPU room from retrying the same full
+         * anchor search every time its room is selected.
+         */
+        if (
+            planner.lastPlanFailed &&
+            planner.lastPlanFailReason === 'no storage anchor' &&
+            Game.time - planner.lastPlanFailed < STRUCTURE_REPLAN_INTERVAL
+        ) {
+            return false;
+        }
+
         return true;
     }
 
@@ -654,7 +673,7 @@ function ensureSourceMemory(room, sources) {
 
         sourceMemory.id = source.id;
         sourceMemory.pos = plainPosition(source.pos);
-        sourceMemory.lastScanned = sourceMemory.lastScanned || Game.time;
+        sourceMemory.lastScanned = Game.time;
 
         Memory.rooms[room.name].sources[source.id] = sourceMemory;
     }
@@ -886,8 +905,20 @@ function findOpenPositionsAroundAnchor(room, anchor, reserved) {
     var maxRange = 46;
 
     for (var range = 1; range <= maxRange; range++) {
+        if (!canSpendCpu()) {
+            return sortBuildCandidates(candidates);
+        }
+
         for (var x = anchor.x - range; x <= anchor.x + range; x++) {
+            if (!canSpendCpu()) {
+                return sortBuildCandidates(candidates);
+            }
+
             for (var y = anchor.y - range; y <= anchor.y + range; y++) {
+                if (!canSpendCpu()) {
+                    return sortBuildCandidates(candidates);
+                }
+
                 if (Math.max(Math.abs(anchor.x - x), Math.abs(anchor.y - y)) !== range) {
                     continue;
                 }
@@ -915,6 +946,10 @@ function findOpenPositionsAroundAnchor(room, anchor, reserved) {
         }
     }
 
+    return sortBuildCandidates(candidates);
+}
+
+function sortBuildCandidates(candidates) {
     candidates.sort(function(a, b) {
         if (a.score !== b.score) {
             return a.score - b.score;
@@ -1530,7 +1565,10 @@ function drawVisuals(room) {
         return;
     }
 
-    room.visual.text('StructurePlanner v' + STRUCTURE_PLANNER_VERSION + ' RCL ' + room.controller.level, 1, 1, {
+    var currentRcl = room.controller ? room.controller.level || 0 : 0;
+    var currentEntries = plan.byRcl[currentRcl] || [];
+
+    room.visual.text('StructurePlanner v' + STRUCTURE_PLANNER_VERSION + ' RCL ' + currentRcl + ' sites ' + currentEntries.length, 1, 1, {
         align: 'left',
         color: '#ffffff',
         font: 0.7,
