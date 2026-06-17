@@ -207,6 +207,7 @@ function planRoom(room) {
         planner.lastPlanned = Game.time;
         planner.lastPlanFailed = Game.time;
         planner.lastPlanFailReason = 'no storage anchor';
+        planner.forceReplan = false;
         return null;
     }
 
