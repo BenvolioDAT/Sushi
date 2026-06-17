@@ -324,6 +324,11 @@ function getHubAnchor(room) {
         return room.storage.pos;
     }
 
+    var structurePlannerAnchor = getStructurePlannerAnchor(room);
+    if (structurePlannerAnchor) {
+        return structurePlannerAnchor;
+    }
+
     var spawns = room.find(FIND_MY_SPAWNS);
     if (spawns.length > 0) {
         var plannedStorage = makeRoomPositionSafe(spawns[0].pos.x + 1, spawns[0].pos.y, room.name);
@@ -335,6 +340,28 @@ function getHubAnchor(room) {
     }
 
     return null;
+}
+
+function getStructurePlannerAnchor(room) {
+    var roomMemory = Memory.rooms && Memory.rooms[room.name];
+    var planner = roomMemory ? roomMemory.structurePlanner : null;
+    var anchor = planner && planner.plan ? planner.plan.anchor : null;
+
+    if (!anchor) {
+        return null;
+    }
+
+    var pos = makeRoomPositionSafe(anchor.x, anchor.y, anchor.roomName || room.name);
+    if (!pos || pos.roomName !== room.name) {
+        return null;
+    }
+
+    var terrain = Game.map.getRoomTerrain(room.name);
+    if (terrain.get(pos.x, pos.y) === TERRAIN_MASK_WALL) {
+        return null;
+    }
+
+    return pos;
 }
 
 function addHubAreaRoads(room, hub, planSets, prioritySets) {
@@ -770,6 +797,10 @@ function isWalkableRoadTile(room, pos, allowEdge) {
         return false;
     }
 
+    if (isPlannedStructureBlockingRoad(room, pos)) {
+        return false;
+    }
+
     if (hasBlockingStructure(room, pos)) {
         return false;
     }
@@ -796,6 +827,47 @@ function hasPermanentNaturalObject(room, pos) {
     }
 
     return room.controller && room.controller.pos.x === pos.x && room.controller.pos.y === pos.y;
+}
+
+function isPlannedStructureBlockingRoad(room, pos) {
+    var roomMemory = Memory.rooms && Memory.rooms[room.name];
+    var planner = roomMemory ? roomMemory.structurePlanner : null;
+    var plan = planner ? planner.plan : null;
+
+    if (!plan || !plan.positions) {
+        return false;
+    }
+
+    var blockingTypes = [
+        STRUCTURE_SPAWN,
+        STRUCTURE_EXTENSION,
+        STRUCTURE_TOWER,
+        STRUCTURE_STORAGE,
+        STRUCTURE_LINK,
+        STRUCTURE_TERMINAL,
+        STRUCTURE_LAB,
+        STRUCTURE_FACTORY,
+        STRUCTURE_OBSERVER,
+        STRUCTURE_POWER_SPAWN,
+        STRUCTURE_NUKER,
+        STRUCTURE_EXTRACTOR
+    ];
+
+    for (var t = 0; t < blockingTypes.length; t++) {
+        var positions = plan.positions[blockingTypes[t]] || [];
+
+        for (var i = 0; i < positions.length; i++) {
+            if (
+                positions[i].x === pos.x &&
+                positions[i].y === pos.y &&
+                (positions[i].roomName || room.name) === room.name
+            ) {
+                return true;
+            }
+        }
+    }
+
+    return false;
 }
 
 function hasRoad(room, pos) {

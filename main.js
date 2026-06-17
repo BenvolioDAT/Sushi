@@ -25,6 +25,7 @@ var spawnRequestManager = require('spawn.request.manager');
 var trafficManager = require('traffic_manager');
 var travelUtility = require('utility.Travel.Creep');
 var RemotePlanner = require('Planner.Remote');
+var StructurePlanner = require('Planner.Structures');
 var RoadPlanner = require('Planner.Roads');
 var Dashboard = require('Visual.Dashboard');
 
@@ -330,6 +331,7 @@ module.exports.loop = function () {
      * occasionally rescoring active candidates per owned room.
      */
     RemotePlanner.run();
+    StructurePlanner.run();
     RoadPlanner.run();
 
     for (var towerRoomName in Game.rooms) {
