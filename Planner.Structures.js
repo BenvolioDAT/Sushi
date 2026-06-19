@@ -16,9 +16,11 @@
 var STRUCTURE_PLANNER_VERSION = 1;
 var STRUCTURE_REPLAN_INTERVAL = 5000;
 var STRUCTURE_BUILD_INTERVAL = 25;
-var STRUCTURE_PLANNER_CPU_BUDGET = 1.0;
 var STRUCTURE_PLANNER_REPLAN_BUCKET = 5000;
 var STRUCTURE_PLANNER_BUILD_BUCKET = 2000;
+var STRUCTURE_PLANNER_CPU_BUDGET = 0.8;
+var STRUCTURE_PLANNER_MAX_TILES_PER_TICK = 120;
+var STRUCTURE_PLANNER_MAX_CANDIDATES = 250;
 var CPU_BUFFER = 5;
 var MAX_SITES_PER_RUN = 3;
 var MAX_TOTAL_CONSTRUCTION_SITES = 90;
@@ -143,7 +145,9 @@ FALLBACK_CONTROLLER_STRUCTURES[STRUCTURE_LAB] = [0, 0, 0, 0, 0, 0, 3, 6, 10];
 FALLBACK_CONTROLLER_STRUCTURES[STRUCTURE_RAMPART] = [0, 0, 300, 300, 300, 300, 300, 300, 300];
 
 function run() {
-    structurePlannerRunCpuStart = Game.cpu && Game.cpu.getUsed ? Game.cpu.getUsed() : 0;
+    structurePlannerRunCpuStart = Game.cpu && typeof Game.cpu.getUsed === 'function' ?
+        Game.cpu.getUsed() :
+        0;
 
     if (!canSpendCpu()) {
         return;
@@ -170,8 +174,19 @@ function runRoom(room) {
         planner = ensurePlannerMemory(room.name);
     }
 
-    if (shouldReplan(room, planner) && hasBucketForStructureReplan() && canContinueStructurePlanning()) {
-        planRoom(room);
+    if (planner.planJob && hasBucketForStructureReplan() && canContinueStructurePlanning()) {
+        continuePlanJob(room, planner);
+        planner = ensurePlannerMemory(room.name);
+    }
+
+    if (
+        !planner.planJob &&
+        shouldReplan(room, planner) &&
+        hasBucketForStructureReplan() &&
+        canContinueStructurePlanning()
+    ) {
+        startStructurePlanJob(room, planner);
+        continuePlanJob(room, planner);
         planner = ensurePlannerMemory(room.name);
     }
 
@@ -193,150 +208,356 @@ function runRoom(room) {
         tick: Game.time,
         cpuUsed: Math.round(getStructurePlannerCpuUsed() * 100) / 100,
         bucket: Game.cpu && Game.cpu.bucket,
-        phase: planner.currentPhase || null,
+        hasJob: !!planner.planJob,
+        phase: planner.planJob ? planner.planJob.phase : null,
+        candidates: planner.planJob && planner.planJob.candidates ? planner.planJob.candidates.length : 0,
         lastPlanned: planner.lastPlanned || 0,
         lastBuilt: planner.lastBuilt || 0,
-        buildIndex: planner.buildIndex || 0
+        lastPlanFailed: planner.lastPlanFailed || 0,
+        lastPlanFailReason: planner.lastPlanFailReason || null
     };
 }
 
 function planRoom(room) {
-    if (!room || !room.controller || !room.controller.my || !hasBucketForStructureReplan() || !canContinueStructurePlanning()) {
+    if (!room || !room.controller || !room.controller.my) {
         return null;
     }
 
     var planner = ensurePlannerMemory(room.name);
-    var oldPlan = planner.plan;
-    var plan = makeEmptyPlan();
-    var reserved = {};
-    var spawns = getSortedOwnedSpawns(room);
 
-    planner.currentPhase = 'existing spawns';
-
-    /*
-     * Existing spawns are fixed known structures. We record them for visuals
-     * and ramparts, but do not create an RCL 1 spawn construction site.
-     */
-    for (var s = 0; s < spawns.length; s++) {
-        if (!canContinueStructurePlanning()) {
-            return abortStructurePlan(planner);
-        }
-
-        recordExistingStructure(plan, reserved, STRUCTURE_SPAWN, spawns[s].pos, 1);
+    if (planner.version !== STRUCTURE_PLANNER_VERSION) {
+        resetRoom(room.name);
+        planner = ensurePlannerMemory(room.name);
     }
 
-    planner.currentPhase = 'anchor';
+    if (!planner.planJob && hasBucketForStructureReplan() && canContinueStructurePlanning()) {
+        startStructurePlanJob(room, planner);
+    }
 
-    var anchor = pickStorageAnchor(room, oldPlan, spawns);
+    if (planner.planJob && hasBucketForStructureReplan() && canContinueStructurePlanning()) {
+        continuePlanJob(room, planner);
+    }
+
+    return planner.plan || null;
+}
+
+function startStructurePlanJob(room, planner) {
+    planner.planJob = {
+        version: STRUCTURE_PLANNER_VERSION,
+        roomName: room.name,
+        started: Game.time,
+        updated: Game.time,
+        phase: 'init',
+        rcl: room.controller.level || 0,
+        draftPlan: makeEmptyPlan(),
+        reserved: {},
+        anchor: null,
+        candidates: [],
+        candidateScan: {
+            range: 1,
+            x: 0,
+            y: 0,
+            done: false,
+            started: false
+        },
+        fill: null,
+        failed: false,
+        failReason: null
+    };
+}
+
+function continuePlanJob(room, planner) {
+    var job = planner.planJob;
+    if (!job) {
+        return planner.plan || null;
+    }
+
+    if (job.version !== STRUCTURE_PLANNER_VERSION || job.roomName !== room.name) {
+        failPlanJob(planner, 'stale plan job');
+        return planner.plan || null;
+    }
+
+    ensurePlanJobMemory(job);
+
+    while (planner.planJob && canContinueStructurePlanning()) {
+        job = planner.planJob;
+        job.updated = Game.time;
+
+        if (job.failed) {
+            failPlanJob(planner, job.failReason || 'plan job failed');
+            break;
+        } else if (job.phase === 'init') {
+            if (!runPlanJobInit(room, job)) {
+                break;
+            }
+        } else if (job.phase === 'anchor') {
+            if (!runPlanJobAnchor(room, planner, job)) {
+                break;
+            }
+        } else if (job.phase === 'fixed') {
+            if (!runPlanJobFixed(room, job)) {
+                break;
+            }
+        } else if (job.phase === 'scanCandidates') {
+            if (!runPlanJobCandidateScan(room, job)) {
+                break;
+            }
+        } else if (job.phase === 'towers') {
+            if (!runPlanJobFill(room, job, STRUCTURE_TOWER, 'extensions')) {
+                break;
+            }
+        } else if (job.phase === 'extensions') {
+            if (!runPlanJobFill(room, job, STRUCTURE_EXTENSION, 'labs')) {
+                break;
+            }
+        } else if (job.phase === 'labs') {
+            if (!runPlanJobLabs(room, job)) {
+                break;
+            }
+        } else if (job.phase === 'singletons') {
+            if (!runPlanJobSingletons(room, job)) {
+                break;
+            }
+        } else if (job.phase === 'ramparts') {
+            if (!runPlanJobRamparts(room, job)) {
+                break;
+            }
+        } else if (job.phase === 'commit') {
+            commitPlanJob(room, planner, job);
+        } else {
+            failPlanJob(planner, 'unknown phase');
+        }
+
+        if (planner.planJob && planner.planJob.failed) {
+            failPlanJob(planner, planner.planJob.failReason || 'plan job failed');
+            break;
+        }
+    }
+
+    if (planner.planJob) {
+        if (planner.planJob.failed) {
+            failPlanJob(planner, planner.planJob.failReason || 'plan job failed');
+            return planner.plan || null;
+        }
+
+        planner.planJob.updated = Game.time;
+    }
+
+    return planner.plan || null;
+}
+
+function ensurePlanJobMemory(job) {
+    job.draftPlan = ensurePlanShape(job.draftPlan);
+    job.reserved = job.reserved || {};
+    job.candidates = job.candidates || [];
+    job.candidateScan = job.candidateScan || {
+        range: 1,
+        x: 0,
+        y: 0,
+        done: false,
+        started: false
+    };
+
+    if (job.rcl === undefined) {
+        job.rcl = 0;
+    }
+}
+
+function ensurePlanShape(plan) {
+    var shaped = plan || makeEmptyPlan();
+
+    if (!shaped.byRcl) {
+        shaped.byRcl = makeEmptyByRcl();
+    }
+    if (!shaped.positions) {
+        shaped.positions = makeEmptyPositions();
+    }
+    if (!shaped.links) {
+        shaped.links = {
+            storage: null,
+            controller: null,
+            sources: {}
+        };
+    }
+    if (!shaped.containers) {
+        shaped.containers = {
+            controller: null,
+            mineral: null,
+            sources: {}
+        };
+    }
+
+    return shaped;
+}
+
+function runPlanJobInit(room, job) {
+    var spawns = getSortedOwnedSpawns(room);
+    var index = job.initSpawnIndex || 0;
+
+    job.existingSpawnCount = spawns.length;
+
+    for (; index < spawns.length; index++) {
+        if (!canContinueStructurePlanning()) {
+            job.initSpawnIndex = index;
+            return false;
+        }
+
+        recordExistingStructure(job.draftPlan, job.reserved, STRUCTURE_SPAWN, spawns[index].pos, 1);
+    }
+
+    delete job.initSpawnIndex;
+    job.phase = 'anchor';
+    return true;
+}
+
+function runPlanJobAnchor(room, planner, job) {
+    var anchor = pickStorageAnchor(room, planner.plan, getSortedOwnedSpawns(room));
     if (!anchor) {
-        /*
-         * No safe storage anchor means this room is not ready for structure
-         * planning this tick. Do not fall back to the spawn tile.
-         */
-        planner.lastPlanned = Game.time;
         planner.lastPlanFailed = Game.time;
         planner.lastPlanFailReason = 'no storage anchor';
         planner.forceReplan = false;
-        planner.currentPhase = null;
-        return null;
+        delete planner.planJob;
+        return false;
     }
 
-    if (!canContinueStructurePlanning()) {
-        return abortStructurePlan(planner);
+    job.anchor = packCoord(anchor);
+    job.draftPlan.anchor = plainPosition(anchor);
+    addPlannedStructure(room, job.draftPlan, job.reserved, STRUCTURE_STORAGE, anchor, 4);
+    job.fixedStep = 0;
+    job.phase = 'fixed';
+    return true;
+}
+
+function runPlanJobFixed(room, job) {
+    var anchor = unpackCoord(job.anchor, room.name);
+    if (!anchor) {
+        job.failed = true;
+        job.failReason = 'missing anchor';
+        return false;
     }
 
-    planner.currentPhase = 'core structures';
-    plan.anchor = plainPosition(anchor);
-    addPlannedStructure(room, plan, reserved, STRUCTURE_STORAGE, anchor, 4);
+    var step = job.fixedStep || 0;
 
-    planSourceContainers(room, plan, reserved, anchor);
-    planControllerContainer(room, plan, reserved, anchor);
-    planMineral(room, plan, reserved, anchor);
-
-    if (!canContinueStructurePlanning()) {
-        return abortStructurePlan(planner);
+    if (step <= 0) {
+        if (!canContinueStructurePlanning()) {
+            return false;
+        }
+        planSourceContainers(room, job.draftPlan, job.reserved, anchor);
+        job.fixedStep = 1;
+        step = 1;
     }
 
-    planner.currentPhase = 'candidate scan';
-    var candidates = findOpenPositionsAroundAnchor(room, anchor, reserved);
-
-    if (!canContinueStructurePlanning()) {
-        return abortStructurePlan(planner);
+    if (step <= 1) {
+        if (!canContinueStructurePlanning()) {
+            return false;
+        }
+        planControllerContainer(room, job.draftPlan, job.reserved, anchor);
+        job.fixedStep = 2;
+        step = 2;
     }
 
-    planner.currentPhase = 'links';
-    planStorageLink(room, plan, reserved, anchor);
-    planControllerLink(room, plan, reserved, anchor);
-    planSourceLinks(room, plan, reserved, anchor);
-
-    if (!canContinueStructurePlanning()) {
-        return abortStructurePlan(planner);
+    if (step <= 2) {
+        if (!canContinueStructurePlanning()) {
+            return false;
+        }
+        planMineral(room, job.draftPlan, job.reserved, anchor);
+        job.fixedStep = 3;
+        step = 3;
     }
 
-    planner.currentPhase = 'towers';
-    planTowers(room, plan, reserved, candidates);
-    if (!canContinueStructurePlanning()) {
-        return abortStructurePlan(planner);
+    if (step <= 3) {
+        if (!canContinueStructurePlanning()) {
+            return false;
+        }
+        planStorageLink(room, job.draftPlan, job.reserved, anchor);
+        planControllerLink(room, job.draftPlan, job.reserved, anchor);
+        planSourceLinks(room, job.draftPlan, job.reserved, anchor);
+        job.fixedStep = 4;
     }
 
-    planner.currentPhase = 'extensions';
-    planExtensions(room, plan, reserved, candidates);
-    if (!canContinueStructurePlanning()) {
-        return abortStructurePlan(planner);
+    delete job.fixedStep;
+    job.candidateScan = {
+        range: 1,
+        x: 0,
+        y: 0,
+        done: false,
+        started: false
+    };
+    job.phase = 'scanCandidates';
+    return true;
+}
+
+function runPlanJobCandidateScan(room, job) {
+    if (!continueCandidateScan(room, job)) {
+        return false;
     }
 
-    planner.currentPhase = 'terminal';
-    planSingleNearAnchor(room, plan, reserved, candidates, STRUCTURE_TERMINAL, 6);
-    if (!canContinueStructurePlanning()) {
-        return abortStructurePlan(planner);
+    if (job.failed) {
+        return false;
     }
 
-    planner.currentPhase = 'labs';
-    planLabs(room, plan, reserved, candidates);
-    if (!canContinueStructurePlanning()) {
-        return abortStructurePlan(planner);
+    sortPlanJobCandidates(job);
+    beginFillJob(job, STRUCTURE_TOWER, 'extensions');
+    job.phase = 'towers';
+    return true;
+}
+
+function runPlanJobFill(room, job, structureType, nextPhase) {
+    if (!job.fill) {
+        beginFillJob(job, structureType, nextPhase);
     }
 
-    planner.currentPhase = 'advanced structures';
-    planSingleNearAnchor(room, plan, reserved, candidates, STRUCTURE_FACTORY, 7);
-    planSingleNearAnchor(room, plan, reserved, candidates, STRUCTURE_OBSERVER, 8);
-    planSingleNearAnchor(room, plan, reserved, candidates, STRUCTURE_POWER_SPAWN, 8);
-    planSingleNearAnchor(room, plan, reserved, candidates, STRUCTURE_NUKER, 8);
-    if (!canContinueStructurePlanning()) {
-        return abortStructurePlan(planner);
+    if (!continueFillFromCandidates(room, job)) {
+        return false;
     }
 
-    planner.currentPhase = 'extra spawns';
-    planExtraSpawns(room, plan, reserved, candidates, spawns.length);
-    if (!canContinueStructurePlanning()) {
-        return abortStructurePlan(planner);
+    job.phase = nextPhase;
+    return true;
+}
+
+function runPlanJobLabs(room, job) {
+    if (!continueLabsFromCandidates(room, job)) {
+        return false;
     }
 
-    /*
-     * TODO: Replace these key-structure ramparts with full mincut ramparts.
-     */
-    planner.currentPhase = 'ramparts';
-    planKeyRamparts(room, plan, reserved);
+    job.phase = 'singletons';
+    return true;
+}
 
-    if (!canContinueStructurePlanning()) {
-        return abortStructurePlan(planner);
+function runPlanJobSingletons(room, job) {
+    if (!continueSingletonsFromCandidates(room, job)) {
+        return false;
     }
 
-    /*
-     * TODO: Replace full-plan retries with planner.planJob chunking:
-     * phase, candidateScanRange, candidateIndex, candidates, then commit only
-     * after the stored job completes.
-     */
-    planner.currentPhase = 'commit';
-    planner.plan = plan;
+    job.phase = 'ramparts';
+    return true;
+}
+
+function runPlanJobRamparts(room, job) {
+    if (!continueKeyRamparts(room, job)) {
+        return false;
+    }
+
+    job.phase = 'commit';
+    return true;
+}
+
+function commitPlanJob(room, planner, job) {
+    planner.plan = ensurePlanShape(job.draftPlan);
     planner.lastPlanned = Game.time;
     planner.lastRcl = room.controller.level || 0;
     planner.forceReplan = false;
     planner.lastPlanFailed = 0;
     planner.lastPlanFailReason = null;
     planner.currentPhase = null;
+    delete planner.planJob;
+}
 
-    return plan;
+function failPlanJob(planner, reason) {
+    planner.lastPlanFailed = Game.time;
+    planner.lastPlanFailReason = reason;
+    planner.forceReplan = false;
+    delete planner.planJob;
 }
 
 function buildSites(room) {
@@ -362,6 +583,7 @@ function buildSites(room) {
     var built = 0;
     var checked = 0;
     var index = planner.buildIndex || 0;
+    var counts = getExistingAndSiteCounts(room);
 
     if (index >= entries.length) {
         index = 0;
@@ -381,7 +603,7 @@ function buildSites(room) {
             index = 0;
         }
 
-        var result = tryCreateSite(room, entry);
+        var result = tryCreateSite(room, entry, counts);
         if (result === OK) {
             built++;
         } else if (result === ERR_FULL) {
@@ -626,13 +848,6 @@ function canBuildSites() {
     }
 
     return getTotalConstructionSites() < MAX_TOTAL_CONSTRUCTION_SITES;
-}
-
-function abortStructurePlan(planner) {
-    planner.lastPlanFailed = Game.time;
-    planner.lastPlanFailReason = 'cpu budget';
-    planner.forceReplan = false;
-    return null;
 }
 
 function getTotalConstructionSites() {
@@ -1153,6 +1368,365 @@ function scoreBuildPosition(room, pos, anchor) {
     return score;
 }
 
+function continueCandidateScan(room, job) {
+    var anchor = unpackCoord(job.anchor, room.name);
+    if (!anchor) {
+        job.failed = true;
+        job.failReason = 'missing anchor';
+        return true;
+    }
+
+    var scan = job.candidateScan || {
+        range: 1,
+        x: 0,
+        y: 0,
+        done: false,
+        started: false
+    };
+    var processed = 0;
+    var maxRange = 46;
+
+    while (scan.range <= maxRange && job.candidates.length < STRUCTURE_PLANNER_MAX_CANDIDATES) {
+        if (!scan.started) {
+            scan.x = anchor.x - scan.range;
+            scan.y = anchor.y - scan.range;
+            scan.started = true;
+        }
+
+        var endX = anchor.x + scan.range;
+        var endY = anchor.y + scan.range;
+
+        while (scan.x <= endX) {
+            while (scan.y <= endY) {
+                if (processed >= STRUCTURE_PLANNER_MAX_TILES_PER_TICK || !canContinueStructurePlanning()) {
+                    job.candidateScan = scan;
+                    return false;
+                }
+
+                var x = scan.x;
+                var y = scan.y;
+                scan.y++;
+                processed++;
+
+                if (Math.max(Math.abs(anchor.x - x), Math.abs(anchor.y - y)) !== scan.range) {
+                    continue;
+                }
+
+                var pos = makeRoomPositionSafe(x, y, room.name);
+                if (!pos) {
+                    continue;
+                }
+
+                if (!isOpenBuildPosition(room, pos, job.reserved)) {
+                    continue;
+                }
+
+                addPlanJobCandidate(room, job, pos, anchor);
+                if (job.candidates.length >= STRUCTURE_PLANNER_MAX_CANDIDATES) {
+                    scan.done = true;
+                    job.candidateScan = scan;
+                    return true;
+                }
+            }
+
+            scan.x++;
+            scan.y = anchor.y - scan.range;
+        }
+
+        scan.range++;
+        scan.started = false;
+    }
+
+    scan.done = true;
+    job.candidateScan = scan;
+    return true;
+}
+
+function addPlanJobCandidate(room, job, pos, anchor) {
+    var packed = packCoord(pos);
+    var candidates = job.candidates || [];
+
+    for (var i = 0; i < candidates.length; i++) {
+        if (getCandidatePacked(candidates[i]) === packed) {
+            return;
+        }
+    }
+
+    candidates.push({
+        p: packed,
+        s: scoreBuildPosition(room, pos, anchor)
+    });
+
+    if (candidates.length > STRUCTURE_PLANNER_MAX_CANDIDATES) {
+        candidates.sort(comparePackedCandidates);
+        candidates.length = STRUCTURE_PLANNER_MAX_CANDIDATES;
+    }
+
+    job.candidates = candidates;
+}
+
+function sortPlanJobCandidates(job) {
+    job.candidates = job.candidates || [];
+    job.candidates.sort(comparePackedCandidates);
+
+    if (job.candidates.length > STRUCTURE_PLANNER_MAX_CANDIDATES) {
+        job.candidates.length = STRUCTURE_PLANNER_MAX_CANDIDATES;
+    }
+}
+
+function comparePackedCandidates(a, b) {
+    var aScore = 0;
+    var bScore = 0;
+
+    if (a) {
+        aScore = a.s !== undefined ? a.s : a.score || 0;
+    }
+    if (b) {
+        bScore = b.s !== undefined ? b.s : b.score || 0;
+    }
+
+    if (aScore !== bScore) {
+        return aScore - bScore;
+    }
+
+    return (getCandidatePacked(a) || 0) - (getCandidatePacked(b) || 0);
+}
+
+function getCandidatePacked(candidate) {
+    if (candidate && candidate.p !== undefined) {
+        return candidate.p;
+    }
+
+    if (typeof candidate === 'number') {
+        return candidate;
+    }
+
+    if (candidate && candidate.pos) {
+        return packCoord(candidate.pos);
+    }
+
+    return null;
+}
+
+function getCandidatePosition(candidate, roomName) {
+    if (candidate && candidate.pos) {
+        return candidate.pos;
+    }
+
+    var packed = getCandidatePacked(candidate);
+    if (packed === null) {
+        return null;
+    }
+
+    return unpackCoord(packed, roomName);
+}
+
+function beginFillJob(job, structureType, nextPhase) {
+    job.fill = {
+        structureType: structureType,
+        candidateIndex: 0,
+        nextPhase: nextPhase
+    };
+}
+
+function continueFillFromCandidates(room, job) {
+    if (!job || !job.fill) {
+        return true;
+    }
+
+    var plan = job.draftPlan;
+    var reserved = job.reserved;
+    var structureType = job.fill.structureType;
+    var finalAllowed = getAllowedAtRcl(structureType, 8);
+    var candidates = job.candidates || [];
+    var i = job.fill.candidateIndex || 0;
+
+    while (
+        i < candidates.length &&
+        getPlannedCount(plan, structureType) < finalAllowed
+    ) {
+        if (!canContinueStructurePlanning()) {
+            job.fill.candidateIndex = i;
+            return false;
+        }
+
+        var candidate = candidates[i];
+        i++;
+
+        var pos = getCandidatePosition(candidate, room.name);
+        if (!pos) {
+            continue;
+        }
+
+        var ordinal = getPlannedCount(plan, structureType) + 1;
+        var rcl = getFirstRclForOrdinal(structureType, ordinal);
+
+        addPlannedStructure(room, plan, reserved, structureType, pos, rcl);
+    }
+
+    job.fill = null;
+    return true;
+}
+
+function continueLabsFromCandidates(room, job) {
+    var maxLabs = Math.min(3, getAllowedAtRcl(STRUCTURE_LAB, 8));
+    var candidates = job.candidates || [];
+    var i = job.labCandidateIndex || 0;
+
+    while (i < candidates.length && getPlannedCount(job.draftPlan, STRUCTURE_LAB) < maxLabs) {
+        if (!canContinueStructurePlanning()) {
+            job.labCandidateIndex = i;
+            return false;
+        }
+
+        var pos = getCandidatePosition(candidates[i], room.name);
+        i++;
+
+        if (!pos) {
+            continue;
+        }
+
+        var ordinal = getPlannedCount(job.draftPlan, STRUCTURE_LAB) + 1;
+        var rcl = getFirstRclForOrdinal(STRUCTURE_LAB, ordinal);
+
+        addPlannedStructure(room, job.draftPlan, job.reserved, STRUCTURE_LAB, pos, rcl);
+    }
+
+    delete job.labCandidateIndex;
+    return true;
+}
+
+function continueSingletonsFromCandidates(room, job) {
+    var singletons = [
+        { type: STRUCTURE_TERMINAL, rcl: 6 },
+        { type: STRUCTURE_FACTORY, rcl: 7 },
+        { type: STRUCTURE_OBSERVER, rcl: 8 },
+        { type: STRUCTURE_POWER_SPAWN, rcl: 8 },
+        { type: STRUCTURE_NUKER, rcl: 8 }
+    ];
+    var step = job.singletonStep || 0;
+    var candidateIndex = job.singletonCandidateIndex || 0;
+    var candidates = job.candidates || [];
+
+    while (step < singletons.length) {
+        var target = singletons[step];
+
+        if (getAllowedAtRcl(target.type, 8) <= 0 || getPlannedCount(job.draftPlan, target.type) > 0) {
+            step++;
+            candidateIndex = 0;
+            continue;
+        }
+
+        while (candidateIndex < candidates.length) {
+            if (!canContinueStructurePlanning()) {
+                job.singletonStep = step;
+                job.singletonCandidateIndex = candidateIndex;
+                return false;
+            }
+
+            var pos = getCandidatePosition(candidates[candidateIndex], room.name);
+            candidateIndex++;
+
+            if (pos && addPlannedStructure(room, job.draftPlan, job.reserved, target.type, pos, target.rcl)) {
+                step++;
+                candidateIndex = 0;
+                break;
+            }
+        }
+
+        if (candidateIndex >= candidates.length) {
+            step++;
+            candidateIndex = 0;
+        }
+    }
+
+    job.singletonStep = step;
+    job.singletonCandidateIndex = candidateIndex;
+
+    if (!continueExtraSpawnsFromCandidates(room, job)) {
+        return false;
+    }
+
+    delete job.singletonStep;
+    delete job.singletonCandidateIndex;
+    return true;
+}
+
+function continueExtraSpawnsFromCandidates(room, job) {
+    if (job.extraSpawnsDone) {
+        return true;
+    }
+
+    var finalAllowed = getAllowedAtRcl(STRUCTURE_SPAWN, 8);
+    var candidates = job.candidates || [];
+    var i = job.extraSpawnCandidateIndex || 0;
+    var existingSpawnCount = job.existingSpawnCount || 0;
+
+    while (getPlannedCount(job.draftPlan, STRUCTURE_SPAWN) < finalAllowed) {
+        var ordinal = getPlannedCount(job.draftPlan, STRUCTURE_SPAWN) + 1;
+        var rcl = getFirstRclForOrdinal(STRUCTURE_SPAWN, ordinal);
+
+        if (rcl < 7 || ordinal <= existingSpawnCount) {
+            job.extraSpawnsDone = true;
+            delete job.extraSpawnCandidateIndex;
+            return true;
+        }
+
+        if (i >= candidates.length) {
+            job.extraSpawnsDone = true;
+            delete job.extraSpawnCandidateIndex;
+            return true;
+        }
+
+        if (!canContinueStructurePlanning()) {
+            job.extraSpawnCandidateIndex = i;
+            return false;
+        }
+
+        var pos = getCandidatePosition(candidates[i], room.name);
+        i++;
+
+        if (pos) {
+            addPlannedStructure(room, job.draftPlan, job.reserved, STRUCTURE_SPAWN, pos, rcl);
+        }
+    }
+
+    job.extraSpawnsDone = true;
+    delete job.extraSpawnCandidateIndex;
+    return true;
+}
+
+function continueKeyRamparts(room, job) {
+    var targetIndex = job.rampartTargetIndex || 0;
+    var positionIndex = job.rampartPositionIndex || 0;
+
+    while (targetIndex < RAMPART_TARGETS.length) {
+        var structureType = RAMPART_TARGETS[targetIndex];
+        var positions = job.draftPlan.positions[structureType] || [];
+
+        while (positionIndex < positions.length) {
+            if (!canContinueStructurePlanning()) {
+                job.rampartTargetIndex = targetIndex;
+                job.rampartPositionIndex = positionIndex;
+                return false;
+            }
+
+            var plain = positions[positionIndex];
+            positionIndex++;
+
+            var pos = makeRoomPositionSafe(plain.x, plain.y, plain.roomName || room.name);
+            addPlannedStructure(room, job.draftPlan, job.reserved, STRUCTURE_RAMPART, pos, 5);
+        }
+
+        targetIndex++;
+        positionIndex = 0;
+    }
+
+    delete job.rampartTargetIndex;
+    delete job.rampartPositionIndex;
+    return true;
+}
+
 function planSingleNearAnchor(room, plan, reserved, candidates, structureType, rcl) {
     if (getAllowedAtRcl(structureType, 8) <= 0 || getPlannedCount(plan, structureType) > 0) {
         return;
@@ -1163,7 +1737,7 @@ function planSingleNearAnchor(room, plan, reserved, candidates, structureType, r
             return;
         }
 
-        var pos = candidates[i].pos;
+        var pos = getCandidatePosition(candidates[i], room.name);
 
         if (addPlannedStructure(room, plan, reserved, structureType, pos, rcl)) {
             return;
@@ -1186,7 +1760,8 @@ function planLabs(room, plan, reserved, candidates) {
         var ordinal = getPlannedCount(plan, STRUCTURE_LAB) + 1;
         var rcl = getFirstRclForOrdinal(STRUCTURE_LAB, ordinal);
 
-        addPlannedStructure(room, plan, reserved, STRUCTURE_LAB, candidates[i].pos, rcl);
+        var pos = getCandidatePosition(candidates[i], room.name);
+        addPlannedStructure(room, plan, reserved, STRUCTURE_LAB, pos, rcl);
     }
 }
 
@@ -1201,7 +1776,7 @@ function planExtensions(room, plan, reserved, candidates) {
 function planExtraSpawns(room, plan, reserved, candidates, existingSpawnCount) {
     var finalAllowed = getAllowedAtRcl(STRUCTURE_SPAWN, 8);
 
-    while (getPlannedCount(plan, STRUCTURE_SPAWN) < finalAllowed) {
+    for (var i = 0; i < candidates.length && getPlannedCount(plan, STRUCTURE_SPAWN) < finalAllowed; i++) {
         if (!canContinueStructurePlanning()) {
             return;
         }
@@ -1217,8 +1792,9 @@ function planExtraSpawns(room, plan, reserved, candidates, existingSpawnCount) {
             break;
         }
 
-        if (!addFirstCandidate(room, plan, reserved, candidates, STRUCTURE_SPAWN, rcl)) {
-            break;
+        var pos = getCandidatePosition(candidates[i], room.name);
+        if (pos) {
+            addPlannedStructure(room, plan, reserved, STRUCTURE_SPAWN, pos, rcl);
         }
     }
 }
@@ -1238,7 +1814,8 @@ function fillFromCandidates(room, plan, reserved, candidates, structureType) {
         var ordinal = getPlannedCount(plan, structureType) + 1;
         var rcl = getFirstRclForOrdinal(structureType, ordinal);
 
-        addPlannedStructure(room, plan, reserved, structureType, candidates[i].pos, rcl);
+        var pos = getCandidatePosition(candidates[i], room.name);
+        addPlannedStructure(room, plan, reserved, structureType, pos, rcl);
     }
 }
 
@@ -1248,7 +1825,8 @@ function addFirstCandidate(room, plan, reserved, candidates, structureType, rcl)
             return false;
         }
 
-        if (addPlannedStructure(room, plan, reserved, structureType, candidates[i].pos, rcl)) {
+        var pos = getCandidatePosition(candidates[i], room.name);
+        if (addPlannedStructure(room, plan, reserved, structureType, pos, rcl)) {
             return true;
         }
     }
@@ -1310,7 +1888,7 @@ function getBuildEntries(room, plan) {
     return entries;
 }
 
-function tryCreateSite(room, entry) {
+function tryCreateSite(room, entry, counts) {
     var structureType = entry.type || entry.structureType;
     var pos = makeRoomPositionSafe(entry.x, entry.y, entry.roomName || room.name);
 
@@ -1318,17 +1896,24 @@ function tryCreateSite(room, entry) {
         return ERR_INVALID_TARGET;
     }
 
-    if (!canCreateSite(room, pos, structureType)) {
+    if (!canCreateSite(room, pos, structureType, counts)) {
         return ERR_INVALID_TARGET;
     }
 
+    var spawnCount = counts && counts[STRUCTURE_SPAWN] !== undefined ?
+        counts[STRUCTURE_SPAWN] :
+        countExistingAndSites(room, STRUCTURE_SPAWN);
     var name = structureType === STRUCTURE_SPAWN ?
-        'Sushi-' + room.name + '-' + (countExistingAndSites(room, STRUCTURE_SPAWN) + 1) :
+        'Sushi-' + room.name + '-' + (spawnCount + 1) :
         undefined;
 
     var result = name ?
         room.createConstructionSite(pos.x, pos.y, structureType, name) :
         room.createConstructionSite(pos.x, pos.y, structureType);
+
+    if (result === OK && counts) {
+        counts[structureType] = (counts[structureType] || 0) + 1;
+    }
 
     if (
         result !== OK &&
@@ -1343,7 +1928,7 @@ function tryCreateSite(room, entry) {
     return result;
 }
 
-function canCreateSite(room, pos, structureType) {
+function canCreateSite(room, pos, structureType, counts) {
     if (getTotalConstructionSites() >= MAX_TOTAL_CONSTRUCTION_SITES) {
         return false;
     }
@@ -1353,7 +1938,11 @@ function canCreateSite(room, pos, structureType) {
         return false;
     }
 
-    if (countExistingAndSites(room, structureType) >= allowed) {
+    var existingCount = counts && counts[structureType] !== undefined ?
+        counts[structureType] :
+        countExistingAndSites(room, structureType);
+
+    if (existingCount >= allowed) {
         return false;
     }
 
@@ -1382,6 +1971,27 @@ function canCreateSite(room, pos, structureType) {
     }
 
     return !hasBlockingStructure(room, pos, structureType);
+}
+
+function getExistingAndSiteCounts(room) {
+    var counts = {};
+    var structures = room.find(FIND_STRUCTURES);
+
+    for (var i = 0; i < structures.length; i++) {
+        var structureType = structures[i].structureType;
+        counts[structureType] = (counts[structureType] || 0) + 1;
+    }
+
+    var sites = room.find(FIND_CONSTRUCTION_SITES);
+    for (var j = 0; j < sites.length; j++) {
+        if (sites[j].my === false) {
+            continue;
+        }
+
+        counts[sites[j].structureType] = (counts[sites[j].structureType] || 0) + 1;
+    }
+
+    return counts;
 }
 
 function countExistingAndSites(room, structureType) {
