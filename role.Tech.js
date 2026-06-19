@@ -38,10 +38,11 @@ var roleTech = {
          *
          * 1. Controller container
          * 2. Storage
-         * 3. Dropped energy near sources
-         * 4. Ruins
-         * 5. Source containers
-         * 6. Mine its own energy
+         * 3. Local dropped energy stockpiles, but not source drops
+         * 4. Tombstones
+         * 5. Ruins
+         * 6. Source containers
+         * 7. Mine its own energy
          */
         getEnergyForTech(creep);
     }
@@ -93,11 +94,13 @@ function getEnergyForTech(creep) {
 
     /*
      * Priority 3:
-     * Pick up dropped energy near sources.
+     * Pick up local dropped energy stockpiles, but not source drops.
      *
-     * This is useful when miners overflow, die, or drop extra energy.
+     * Freighters may drop energy near spawn as a shared stockpile for worker
+     * creeps. Tech should use that pile, but should not steal dropped energy
+     * beside sources because source logistics and Freighters own that flow.
      */
-    if (pickupDroppedEnergyNearSource(creep)) {
+    if (pickupDroppedEnergyForTech(creep)) {
         return true;
     }
 
@@ -178,8 +181,8 @@ function findControllerContainerWithEnergy(creep) {
     });
 }
 
-function pickupDroppedEnergyNearSource(creep) {
-    var droppedEnergy = findDroppedEnergyNearSource(creep);
+function pickupDroppedEnergyForTech(creep) {
+    var droppedEnergy = findDroppedEnergyForTech(creep);
 
     if (!droppedEnergy) {
         return false;
@@ -188,23 +191,24 @@ function pickupDroppedEnergyNearSource(creep) {
     return creepUtility.pickupEnergy(creep, droppedEnergy);
 }
 
-function findDroppedEnergyNearSource(creep) {
+function findDroppedEnergyForTech(creep) {
     if (!creep || !creep.room) {
         return null;
     }
 
     /*
-     * Only pick dropped energy that is close to a source.
+     * Freighters can create useful dropped-energy stockpiles near spawn.
+     * Choose the closest usable pile by path, like Artificers do.
      *
-     * This avoids the Tech chasing random tiny crumbs across the room when it
-     * should mostly live near the controller.
+     * Drops close to sources are intentionally ignored. Those piles belong to
+     * source logistics, where Freighters or source workers should handle them.
      */
     return creep.pos.findClosestByPath(FIND_DROPPED_RESOURCES, {
         filter: function(resource) {
             return (
                 resource.resourceType === RESOURCE_ENERGY &&
                 resource.amount > 0 &&
-                resource.pos.findInRange(FIND_SOURCES, 2).length > 0
+                resource.pos.findInRange(FIND_SOURCES, 3).length === 0
             );
         }
     });

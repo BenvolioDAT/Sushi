@@ -24,7 +24,6 @@ var STRUCTURE_PLANNER_MAX_CANDIDATES = 250;
 var CPU_BUFFER = 5;
 var MAX_SITES_PER_RUN = 3;
 var MAX_TOTAL_CONSTRUCTION_SITES = 90;
-var MAX_VISUAL_DOTS = 120;
 
 var structurePlannerRunCpuStart = 0;
 
@@ -69,38 +68,6 @@ var RAMPART_TARGETS = [
     STRUCTURE_LINK,
     STRUCTURE_SPAWN
 ];
-
-var VISUAL_LETTERS = {};
-VISUAL_LETTERS[STRUCTURE_SPAWN] = 'S';
-VISUAL_LETTERS[STRUCTURE_EXTENSION] = 'E';
-VISUAL_LETTERS[STRUCTURE_TOWER] = 'T';
-VISUAL_LETTERS[STRUCTURE_CONTAINER] = 'C';
-VISUAL_LETTERS[STRUCTURE_LINK] = 'K';
-VISUAL_LETTERS[STRUCTURE_STORAGE] = 'G';
-VISUAL_LETTERS[STRUCTURE_TERMINAL] = 'M';
-VISUAL_LETTERS[STRUCTURE_EXTRACTOR] = 'X';
-VISUAL_LETTERS[STRUCTURE_FACTORY] = 'F';
-VISUAL_LETTERS[STRUCTURE_OBSERVER] = 'O';
-VISUAL_LETTERS[STRUCTURE_POWER_SPAWN] = 'P';
-VISUAL_LETTERS[STRUCTURE_NUKER] = 'N';
-VISUAL_LETTERS[STRUCTURE_LAB] = 'L';
-VISUAL_LETTERS[STRUCTURE_RAMPART] = 'R';
-
-var VISUAL_COLORS = {};
-VISUAL_COLORS[STRUCTURE_SPAWN] = '#ffffff';
-VISUAL_COLORS[STRUCTURE_EXTENSION] = '#7fd1ff';
-VISUAL_COLORS[STRUCTURE_TOWER] = '#ffcc66';
-VISUAL_COLORS[STRUCTURE_CONTAINER] = '#c49a6c';
-VISUAL_COLORS[STRUCTURE_LINK] = '#78f0c4';
-VISUAL_COLORS[STRUCTURE_STORAGE] = '#f7f06d';
-VISUAL_COLORS[STRUCTURE_TERMINAL] = '#ff9ad5';
-VISUAL_COLORS[STRUCTURE_EXTRACTOR] = '#ffaa44';
-VISUAL_COLORS[STRUCTURE_FACTORY] = '#b8b8b8';
-VISUAL_COLORS[STRUCTURE_OBSERVER] = '#8fc7ff';
-VISUAL_COLORS[STRUCTURE_POWER_SPAWN] = '#ff7070';
-VISUAL_COLORS[STRUCTURE_NUKER] = '#d9ff5c';
-VISUAL_COLORS[STRUCTURE_LAB] = '#b58cff';
-VISUAL_COLORS[STRUCTURE_RAMPART] = '#62e36f';
 
 var AROUND = [
     { x: -1, y: -1 },
@@ -197,10 +164,6 @@ function runRoom(room) {
     ) {
         buildSites(room);
         planner.lastBuilt = Game.time;
-    }
-
-    if (Memory.settings && Memory.settings.showStructurePlanner === true) {
-        drawVisuals(room);
     }
 
     planner = ensurePlannerMemory(room.name);
@@ -2355,53 +2318,6 @@ function plainPosition(pos) {
         y: pos.y,
         roomName: pos.roomName
     };
-}
-
-function drawVisuals(room) {
-    var planner = ensurePlannerMemory(room.name);
-    var plan = planner.plan;
-
-    if (!plan || !plan.byRcl) {
-        return;
-    }
-
-    var currentRcl = room.controller ? room.controller.level || 0 : 0;
-    var currentEntries = plan.byRcl[currentRcl] || [];
-
-    room.visual.text('StructurePlanner v' + STRUCTURE_PLANNER_VERSION + ' RCL ' + currentRcl + ' sites ' + currentEntries.length, 1, 1, {
-        align: 'left',
-        color: '#ffffff',
-        font: 0.7,
-        opacity: 0.85
-    });
-
-    var drawn = 0;
-    var seen = {};
-
-    for (var rcl = 1; rcl <= 8 && drawn < MAX_VISUAL_DOTS; rcl++) {
-        var entries = plan.byRcl[rcl] || [];
-
-        for (var i = 0; i < entries.length && drawn < MAX_VISUAL_DOTS; i++) {
-            var entry = entries[i];
-            var structureType = entry.type || entry.structureType;
-            var key = structureType + ':' + entry.x + ':' + entry.y;
-
-            if (seen[key]) {
-                continue;
-            }
-            seen[key] = true;
-
-            room.visual.text(VISUAL_LETTERS[structureType] || '?', entry.x, entry.y + 0.15, {
-                color: VISUAL_COLORS[structureType] || '#ffffff',
-                font: 0.45,
-                opacity: 0.9,
-                stroke: '#000000',
-                strokeWidth: 0.15
-            });
-
-            drawn++;
-        }
-    }
 }
 
 module.exports = {

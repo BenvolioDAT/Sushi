@@ -28,6 +28,7 @@ var RemotePlanner = require('Planner.Remote');
 var StructurePlanner = require('Planner.Structures');
 var RoadPlanner = require('Planner.Roads');
 var Dashboard = require('Visual.Dashboard');
+var StructurePlannerVisual = require('Visual.Planner.Structures');
 
 /*
  * Harabi-style traffic movement is initialized once when this global is loaded.
@@ -473,5 +474,6 @@ module.exports.loop = function () {
     }
 
     runTrafficManagerForVisibleRooms();
+    StructurePlannerVisual.run();
     Dashboard.run();
 }
