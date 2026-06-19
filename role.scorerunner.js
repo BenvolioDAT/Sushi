@@ -9,6 +9,9 @@ var LOOK_FALLBACK_CPU_BUFFER = 5;
 var RECENT_ROOM_TTL = 150;
 var RECENT_ROOM_LIMIT = 8;
 var INTENT_ROOM_PENALTY = 100000;
+var SCORE_STUCK_HOME_TICKS = 2;
+var SCORE_STUCK_REMOTE_TICKS = 4;
+var SCORE_STUCK_AVOID_TTL = 25;
 /*
  * A room intent means a live ScoreRunner already picked that room.
  * Keeping this at 1 makes runners spread out before they share a room.
@@ -37,6 +40,7 @@ function run(creep) {
     maintainScoreSeasonMemory();
     clearOldCreepScoreMemory(creep);
     maintainCreepRoomHistory(creep);
+    updateScoreRunnerStuckState(creep);
 
     var hostileReason = getHostileRoomReason(creep.room);
 
@@ -213,6 +217,11 @@ function clearOldCreepScoreMemory(creep) {
     delete creep.memory.scoreExploreUntil;
     delete creep.memory.scoreExploreSource;
     delete creep.memory.scoreExploreHome;
+
+    if(creep.memory.scoreAvoidUntil && creep.memory.scoreAvoidUntil <= Game.time) {
+        delete creep.memory.scoreAvoidRoom;
+        delete creep.memory.scoreAvoidUntil;
+    }
 }
 
 function pruneRecentScoreRooms(creep) {
@@ -750,6 +759,119 @@ function isInHomeRoom(creep) {
         getHomeRoomName(creep) === creep.room.name;
 }
 
+function clearScoreRunnerMovement(creep) {
+    if(!creep || !creep.memory) {
+        return;
+    }
+
+    if(travel.clearTravelMemory) {
+        travel.clearTravelMemory(creep);
+        return;
+    }
+
+    delete creep.memory._trav;
+    delete creep.memory._move;
+    delete creep.memory._sushiRoute;
+    delete creep.memory._sushiMoveTick;
+}
+
+function rememberFailedScoreRoom(creep, roomName) {
+    if(!creep || !creep.memory || !roomName) {
+        return;
+    }
+
+    creep.memory.scoreAvoidRoom = roomName;
+    creep.memory.scoreAvoidUntil = Game.time + SCORE_STUCK_AVOID_TTL;
+}
+
+function isTemporarilyAvoidedScoreRoom(creep, roomName) {
+    if(!creep || !creep.memory || !roomName) {
+        return false;
+    }
+
+    if(
+        creep.memory.scoreAvoidRoom === roomName &&
+        creep.memory.scoreAvoidUntil &&
+        creep.memory.scoreAvoidUntil > Game.time
+    ) {
+        return true;
+    }
+
+    if(creep.memory.scoreAvoidUntil && creep.memory.scoreAvoidUntil <= Game.time) {
+        delete creep.memory.scoreAvoidRoom;
+        delete creep.memory.scoreAvoidUntil;
+    }
+
+    return false;
+}
+
+function isStandingOnVisibleScore(creep) {
+    var target = getBestScoreTarget(creep);
+
+    return !!(
+        target &&
+        target.pos &&
+        creep.pos &&
+        creep.pos.isEqualTo(target.pos)
+    );
+}
+
+function updateScoreRunnerStuckState(creep) {
+    if(!creep || !creep.memory || !creep.pos) {
+        return false;
+    }
+
+    var memory = creep.memory;
+    var samePosition =
+        memory.scoreLastX === creep.pos.x &&
+        memory.scoreLastY === creep.pos.y &&
+        memory.scoreLastPosRoom === creep.pos.roomName;
+
+    memory.scoreLastX = creep.pos.x;
+    memory.scoreLastY = creep.pos.y;
+    memory.scoreLastPosRoom = creep.pos.roomName;
+
+    if(creep.fatigue > 0) {
+        memory.scoreStillTicks = 0;
+        return false;
+    }
+
+    if(isStandingOnVisibleScore(creep)) {
+        memory.scoreStillTicks = 0;
+        return false;
+    }
+
+    if(!samePosition) {
+        memory.scoreStillTicks = 0;
+        return false;
+    }
+
+    memory.scoreStillTicks = (memory.scoreStillTicks || 0) + 1;
+
+    var limit = isInHomeRoom(creep) ?
+        SCORE_STUCK_HOME_TICKS :
+        SCORE_STUCK_REMOTE_TICKS;
+
+    if(memory.scoreStillTicks < limit) {
+        return false;
+    }
+
+    var failedRoom = memory.scoreTargetRoom || null;
+
+    if(failedRoom && failedRoom !== creep.room.name) {
+        rememberFailedScoreRoom(creep, failedRoom);
+    }
+
+    clearScoreRunnerMovement(creep);
+    clearCreepScoreTarget(creep);
+
+    memory.scoreStillTicks = 0;
+
+    setScoreRunnerDebug(creep, 'stuckReset', failedRoom || 'samePosition');
+
+    return true;
+}
+
 function getStoredTargetRoom(creep) {
     if(!creep || !creep.memory) {
         return null;
@@ -896,7 +1018,7 @@ function getRecentRoomTick(creep, roomName) {
     return 0;
 }
 
-function chooseRoomFromPass(creep, rooms, excludeLastRoom, excludeRecentRooms, avoidRunnerCap) {
+function chooseRoomFromPass(creep, rooms, excludeLastRoom, excludeRecentRooms, avoidRunnerCap, avoidFailedRoom) {
     if(!creep || !creep.memory) {
         return null;
     }
@@ -916,6 +1038,10 @@ function chooseRoomFromPass(creep, rooms, excludeLastRoom, excludeRecentRooms, a
         }
 
         if(excludeRecentRooms && getRecentRoomTick(creep, roomName)) {
+            continue;
+        }
+
+        if(avoidFailedRoom && isTemporarilyAvoidedScoreRoom(creep, roomName)) {
             continue;
         }
 
@@ -940,24 +1066,24 @@ function chooseNearbyRoom(creep) {
     var bestRoom = null;
 
     if(isInHomeRoom(creep)) {
-        bestRoom = chooseRoomFromPass(creep, rooms, true, true, false);
+        bestRoom = chooseRoomFromPass(creep, rooms, true, true, false, true);
 
         if(!bestRoom) {
-            bestRoom = chooseRoomFromPass(creep, rooms, true, false, false);
+            bestRoom = chooseRoomFromPass(creep, rooms, true, false, false, true);
         }
 
         if(!bestRoom) {
-            bestRoom = chooseRoomFromPass(creep, rooms, false, false, false);
+            bestRoom = chooseRoomFromPass(creep, rooms, false, false, false, true);
         }
     } else {
-        bestRoom = chooseRoomFromPass(creep, rooms, true, true, true);
+        bestRoom = chooseRoomFromPass(creep, rooms, true, true, true, true);
 
         if(!bestRoom) {
-            bestRoom = chooseRoomFromPass(creep, rooms, true, false, true);
+            bestRoom = chooseRoomFromPass(creep, rooms, true, false, true, true);
         }
 
         if(!bestRoom) {
-            bestRoom = chooseRoomFromPass(creep, rooms, false, false, true);
+            bestRoom = chooseRoomFromPass(creep, rooms, false, false, true, true);
         }
     }
 
@@ -970,7 +1096,7 @@ function chooseNearbyRoom(creep) {
 
 function chooseUnrestrictedNearbyRoom(creep) {
     var rooms = getNearbyRooms(creep);
-    var bestRoom = chooseRoomFromPass(creep, rooms, false, false, false);
+    var bestRoom = chooseRoomFromPass(creep, rooms, false, false, false, false);
 
     if(bestRoom) {
         rememberTargetRoom(creep, bestRoom);
