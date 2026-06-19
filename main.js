@@ -214,6 +214,21 @@ function isWarRoomEnabled() {
     return Memory.settings.useWarRoom === true;
 }
 
+function ensureStructurePlannerSetting() {
+    /*
+     * Structure planner visuals default off, but keep the setting in Memory so
+     * it can be toggled from the console without first creating Memory.settings:
+     * Memory.settings.showStructurePlanner = true
+     */
+    if (!Memory.settings) {
+        Memory.settings = {};
+    }
+
+    if (Memory.settings.showStructurePlanner === undefined) {
+        Memory.settings.showStructurePlanner = false;
+    }
+}
+
 function runTrafficManagerForVisibleRooms() {
     if (!isTrafficManagerEnabled()) {
         return;
@@ -313,7 +328,8 @@ module.exports.loop = function () {
      */
     travelUtility.cleanupRouteCaches();
 
-        maybeGeneratePixel();
+    ensureStructurePlannerSetting();
+    maybeGeneratePixel();
     /*
      * Automatic WarRoom radar only scans visible spawn rooms and their directly
      * adjacent rooms. This prevents far-away scouts or remote rooms from

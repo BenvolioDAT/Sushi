@@ -13,7 +13,7 @@
  * planner, mincut ramparts, or container-destroy upgrade flow.
  */
 
-var STRUCTURE_PLANNER_VERSION = 1;
+var STRUCTURE_PLANNER_VERSION = 2;
 var STRUCTURE_REPLAN_INTERVAL = 5000;
 var STRUCTURE_BUILD_INTERVAL = 25;
 var STRUCTURE_PLANNER_REPLAN_BUCKET = 5000;
@@ -78,6 +78,13 @@ var AROUND = [
     { x: -1, y: 1 },
     { x: 0, y: 1 },
     { x: 1, y: 1 }
+];
+
+var CARDINAL_AROUND = [
+    { x: 0, y: -1 },
+    { x: 1, y: 0 },
+    { x: 0, y: 1 },
+    { x: -1, y: 0 }
 ];
 
 var NEAR_STORAGE_OFFSETS = [
@@ -349,6 +356,9 @@ function ensurePlanShape(plan) {
             sources: {}
         };
     }
+    if (!shaped.extensionServiceTiles) {
+        shaped.extensionServiceTiles = [];
+    }
 
     return shaped;
 }
@@ -547,6 +557,7 @@ function buildSites(room) {
     var checked = 0;
     var index = planner.buildIndex || 0;
     var counts = getExistingAndSiteCounts(room);
+    var planReserved = makePlanReservationLookup(planner.plan);
 
     if (index >= entries.length) {
         index = 0;
@@ -566,7 +577,7 @@ function buildSites(room) {
             index = 0;
         }
 
-        var result = tryCreateSite(room, entry, counts);
+        var result = tryCreateSite(room, entry, counts, planner.plan, planReserved);
         if (result === OK) {
             built++;
         } else if (result === ERR_FULL) {
@@ -638,6 +649,9 @@ function ensurePlannerMemory(roomName) {
             sources: {}
         };
     }
+    if (!planner.plan.extensionServiceTiles) {
+        planner.plan.extensionServiceTiles = [];
+    }
     if (planner.forceReplan === undefined) {
         planner.forceReplan = false;
     }
@@ -683,7 +697,8 @@ function makeEmptyPlan() {
             controller: null,
             mineral: null,
             sources: {}
-        }
+        },
+        extensionServiceTiles: []
     };
 }
 
@@ -1851,7 +1866,7 @@ function getBuildEntries(room, plan) {
     return entries;
 }
 
-function tryCreateSite(room, entry, counts) {
+function tryCreateSite(room, entry, counts, plan, planReserved) {
     var structureType = entry.type || entry.structureType;
     var pos = makeRoomPositionSafe(entry.x, entry.y, entry.roomName || room.name);
 
@@ -1859,7 +1874,7 @@ function tryCreateSite(room, entry, counts) {
         return ERR_INVALID_TARGET;
     }
 
-    if (!canCreateSite(room, pos, structureType, counts)) {
+    if (!canCreateSite(room, pos, structureType, counts, plan, planReserved)) {
         return ERR_INVALID_TARGET;
     }
 
@@ -1891,7 +1906,7 @@ function tryCreateSite(room, entry, counts) {
     return result;
 }
 
-function canCreateSite(room, pos, structureType, counts) {
+function canCreateSite(room, pos, structureType, counts, plan, planReserved) {
     if (getTotalConstructionSites() >= MAX_TOTAL_CONSTRUCTION_SITES) {
         return false;
     }
@@ -1933,6 +1948,13 @@ function canCreateSite(room, pos, structureType, counts) {
         return canBuildRampartAt(room, pos);
     }
 
+    if (
+        structureType === STRUCTURE_EXTENSION &&
+        !hasExtensionBuildAccess(room, pos, plan, planReserved)
+    ) {
+        return false;
+    }
+
     return !hasBlockingStructure(room, pos, structureType);
 }
 
@@ -1955,6 +1977,46 @@ function getExistingAndSiteCounts(room) {
     }
 
     return counts;
+}
+
+function makePlanReservationLookup(plan) {
+    var reserved = {};
+
+    if (!plan) {
+        return reserved;
+    }
+
+    if (plan.positions) {
+        for (var structureType in plan.positions) {
+            if (!plan.positions.hasOwnProperty(structureType)) {
+                continue;
+            }
+
+            var positions = plan.positions[structureType] || [];
+            for (var i = 0; i < positions.length; i++) {
+                reservePosition(reserved, structureType, positions[i]);
+            }
+        }
+    }
+
+    var serviceTiles = plan.extensionServiceTiles || [];
+    for (var j = 0; j < serviceTiles.length; j++) {
+        var pos = serviceTiles[j];
+        var packed = packCoord(pos);
+
+        if (!reserved[packed]) {
+            reserved[packed] = {
+                types: {}
+            };
+        }
+        if (!reserved[packed].types) {
+            reserved[packed].types = {};
+        }
+
+        reserved[packed].extensionService = true;
+    }
+
+    return reserved;
 }
 
 function countExistingAndSites(room, structureType) {
@@ -1980,6 +2042,20 @@ function countExistingAndSites(room, structureType) {
 function addPlannedStructure(room, plan, reserved, structureType, pos, rcl) {
     if (!pos || !canPlanAt(room, structureType, pos) || hasPlannedConflict(reserved, structureType, pos)) {
         return false;
+    }
+
+    if (structureType === STRUCTURE_EXTENSION) {
+        var servicePos = findExtensionServiceTile(room, plan, reserved, pos);
+        if (!servicePos) {
+            return false;
+        }
+
+        if (!recordPlannedStructure(plan, reserved, structureType, pos, rcl)) {
+            return false;
+        }
+
+        reserveExtensionServiceTile(plan, reserved, servicePos);
+        return true;
     }
 
     return recordPlannedStructure(plan, reserved, structureType, pos, rcl);
@@ -2044,9 +2120,229 @@ function reservePosition(reserved, structureType, pos) {
     reserved[packed].types[structureType] = true;
 }
 
+function reserveExtensionServiceTile(plan, reserved, pos) {
+    var packed = packCoord(pos);
+
+    if (!reserved[packed]) {
+        reserved[packed] = {
+            types: {}
+        };
+    }
+    if (!reserved[packed].types) {
+        reserved[packed].types = {};
+    }
+
+    reserved[packed].extensionService = true;
+
+    if (!plan.extensionServiceTiles) {
+        plan.extensionServiceTiles = [];
+    }
+
+    if (!hasPosition(plan.extensionServiceTiles, pos)) {
+        plan.extensionServiceTiles.push(plainPosition(pos));
+    }
+}
+
+function isReservedExtensionServiceTile(reserved, pos) {
+    var tile = reserved && reserved[packCoord(pos)];
+    return !!(tile && tile.extensionService === true);
+}
+
+function findExtensionServiceTile(room, plan, reserved, extensionPos) {
+    if (!isExtensionBuildTile(room, plan, extensionPos)) {
+        return null;
+    }
+
+    var anchor = getPlanAnchorPosition(plan, room.name);
+    var best = null;
+
+    for (var i = 0; i < CARDINAL_AROUND.length; i++) {
+        var offset = CARDINAL_AROUND[i];
+        var servicePos = makeRoomPositionSafe(extensionPos.x + offset.x, extensionPos.y + offset.y, room.name);
+
+        if (!isValidExtensionServiceTile(room, servicePos, reserved)) {
+            continue;
+        }
+
+        var score = scoreExtensionServiceTile(room, servicePos, reserved, anchor);
+        if (!best || score < best.score) {
+            best = {
+                pos: servicePos,
+                score: score
+            };
+        }
+    }
+
+    return best ? best.pos : null;
+}
+
+function hasExtensionBuildAccess(room, pos, plan, planReserved) {
+    if (!isExtensionBuildTile(room, plan, pos)) {
+        return false;
+    }
+
+    return !!findExtensionServiceTile(room, plan, planReserved || makePlanReservationLookup(plan), pos);
+}
+
+function isExtensionBuildTile(room, plan, pos) {
+    if (!pos) {
+        return false;
+    }
+
+    if (hasStructureTypeAt(room, pos, STRUCTURE_EXTENSION)) {
+        return true;
+    }
+
+    var anchor = getPlanAnchorPosition(plan, pos.roomName);
+    if (!anchor) {
+        return true;
+    }
+
+    return ((pos.x + pos.y) % 2) === ((anchor.x + anchor.y) % 2);
+}
+
+function isValidExtensionServiceTile(room, pos, reserved) {
+    if (!pos || pos.roomName !== room.name || isEdge(pos)) {
+        return false;
+    }
+
+    if (room.getTerrain().get(pos.x, pos.y) === TERRAIN_MASK_WALL) {
+        return false;
+    }
+
+    if (hasNaturalObject(room, pos, null)) {
+        return false;
+    }
+
+    if (hasBlockingServiceStructure(room, pos)) {
+        return false;
+    }
+
+    if (hasBlockingServiceConstructionSite(room, pos)) {
+        return false;
+    }
+
+    return !hasBlockingPlannedServiceReservation(reserved, pos);
+}
+
+function scoreExtensionServiceTile(room, pos, reserved, anchor) {
+    var score = anchor ? pos.getRangeTo(anchor) * 3 : 0;
+
+    if (isReservedExtensionServiceTile(reserved, pos)) {
+        score -= 100;
+    }
+
+    score -= countAdjacentExtensionServiceTiles(reserved, pos) * 8;
+
+    if (room.getTerrain().get(pos.x, pos.y) === TERRAIN_MASK_SWAMP) {
+        score += 2;
+    }
+
+    return score;
+}
+
+function countAdjacentExtensionServiceTiles(reserved, pos) {
+    var count = 0;
+
+    for (var i = 0; i < AROUND.length; i++) {
+        var near = makeRoomPositionSafe(pos.x + AROUND[i].x, pos.y + AROUND[i].y, pos.roomName);
+        if (near && isReservedExtensionServiceTile(reserved, near)) {
+            count++;
+        }
+    }
+
+    return count;
+}
+
+function hasBlockingServiceStructure(room, pos) {
+    var structures = room.lookForAt(LOOK_STRUCTURES, pos.x, pos.y);
+
+    for (var i = 0; i < structures.length; i++) {
+        var structure = structures[i];
+
+        if (
+            structure.structureType === STRUCTURE_ROAD ||
+            structure.structureType === STRUCTURE_CONTAINER
+        ) {
+            continue;
+        }
+
+        if (structure.structureType === STRUCTURE_RAMPART) {
+            if (structure.my || structure.isPublic) {
+                continue;
+            }
+        }
+
+        return true;
+    }
+
+    return false;
+}
+
+function hasBlockingServiceConstructionSite(room, pos) {
+    var sites = room.lookForAt(LOOK_CONSTRUCTION_SITES, pos.x, pos.y);
+
+    for (var i = 0; i < sites.length; i++) {
+        if (
+            sites[i].structureType === STRUCTURE_ROAD ||
+            sites[i].structureType === STRUCTURE_CONTAINER ||
+            sites[i].structureType === STRUCTURE_RAMPART
+        ) {
+            continue;
+        }
+
+        return true;
+    }
+
+    return false;
+}
+
+function hasBlockingPlannedServiceReservation(reserved, pos) {
+    var tile = reserved && reserved[packCoord(pos)];
+    if (!tile || !tile.types) {
+        return false;
+    }
+
+    for (var structureType in tile.types) {
+        if (!tile.types.hasOwnProperty(structureType)) {
+            continue;
+        }
+
+        if (isBlockingPlannedStructureType(structureType)) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+function isBlockingPlannedStructureType(structureType) {
+    return (
+        structureType !== STRUCTURE_ROAD &&
+        structureType !== STRUCTURE_CONTAINER &&
+        structureType !== STRUCTURE_RAMPART
+    );
+}
+
+function getPlanAnchorPosition(plan, roomName) {
+    if (!plan || !plan.anchor) {
+        return null;
+    }
+
+    return makeRoomPositionSafe(plan.anchor.x, plan.anchor.y, plan.anchor.roomName || roomName);
+}
+
 function hasPlannedConflict(reserved, structureType, pos) {
     var tile = reserved[packCoord(pos)];
-    if (!tile || !tile.types) {
+    if (!tile) {
+        return false;
+    }
+
+    if (tile.extensionService && isBlockingPlannedStructureType(structureType)) {
+        return true;
+    }
+
+    if (!tile.types) {
         return false;
     }
 

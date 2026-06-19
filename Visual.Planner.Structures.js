@@ -16,6 +16,8 @@
 
 var MAX_MARKERS_PER_ROOM = 250;
 var MARKER_FONT = 0.4;
+var SERVICE_MARKER_FONT = 0.28;
+var SERVICE_MARKER_COLOR = '#b6f7b0';
 
 var LABELS = {};
 LABELS[STRUCTURE_SPAWN] = 'SP';
@@ -82,6 +84,7 @@ function drawRoom(room) {
     }
 
     var seen = {};
+    var occupied = {};
     var drawn = 0;
 
     for (var rcl = 1; rcl <= 8 && drawn < MAX_MARKERS_PER_ROOM; rcl++) {
@@ -107,12 +110,14 @@ function drawRoom(room) {
                 continue;
             }
             seen[key] = true;
+            occupied[entry.x + ':' + entry.y] = true;
 
             drawMarker(room.visual, structureType, entry.x, entry.y);
             drawn++;
         }
     }
 
+    drawn = drawExtensionServiceTiles(room, plan, occupied, drawn);
     drawHeader(room, drawn);
     return drawn;
 }
@@ -152,6 +157,40 @@ function drawMarker(visual, structureType, x, y) {
         stroke: '#000000',
         strokeWidth: 0.16
     });
+}
+
+function drawExtensionServiceTiles(room, plan, occupied, drawn) {
+    var tiles = plan.extensionServiceTiles || [];
+
+    for (var i = 0; i < tiles.length && drawn < MAX_MARKERS_PER_ROOM; i++) {
+        var tile = tiles[i];
+
+        if (!tile || !isValidCoord(tile.x) || !isValidCoord(tile.y)) {
+            continue;
+        }
+
+        if (tile.roomName && tile.roomName !== room.name) {
+            continue;
+        }
+
+        var key = tile.x + ':' + tile.y;
+        if (occupied[key]) {
+            continue;
+        }
+        occupied[key] = true;
+
+        room.visual.text('..', tile.x, tile.y + 0.1, {
+            color: SERVICE_MARKER_COLOR,
+            font: SERVICE_MARKER_FONT,
+            opacity: 0.62,
+            stroke: '#000000',
+            strokeWidth: 0.12
+        });
+
+        drawn++;
+    }
+
+    return drawn;
 }
 
 function drawHeader(room, drawn) {
