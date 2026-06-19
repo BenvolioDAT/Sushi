@@ -58,14 +58,14 @@ var DEFAULT_SPAWN_POLICY = {
         SupplyRunner: 2
     },
     maxCreepsPerRoomByRcl: {
-        RCL1: 6,
-        RCL2: 9,
-        RCL3: 12,
-        RCL4: 16,
-        RCL5: 20,
-        RCL6: 24,
-        RCL7: 30,
-        RCL8: 35
+        RCL1: 10,
+        RCL2: 16,
+        RCL3: 20,
+        RCL4: 26,
+        RCL5: 30,
+        RCL6: 36,
+        RCL7: 40,
+        RCL8: 46
     }
 };
 

@@ -15,6 +15,9 @@ var RemotePlanner = require('Planner.Remote');
 var MIN_DROPPED_ENERGY = 50;
 var MIN_CONTAINER_ENERGY = 50;
 var REMOTE_HAUL_MEMORY_STALE_TICKS = 25;
+var SPAWN_STOCKPILE_IGNORE_RANGE = 3;
+var SPAWN_STOCKPILE_MIN_RANGE = 1;
+var SPAWN_STOCKPILE_MAX_RANGE = 3;
 
 var roleFreighter = {
 
@@ -208,7 +211,7 @@ function getRememberedPickupTarget(creep) {
 
     var target = Game.getObjectById(creep.memory.pickupTargetId);
 
-    if(!isValidEnergyPickupTarget(target)) {
+    if(!isValidEnergyPickupTarget(target) || isProtectedSpawnStockpileDrop(creep, target)) {
         clearPickupMemory(creep);
         return null;
     }
@@ -275,7 +278,8 @@ function getLocalDroppedEnergyCandidates(creep, reservations) {
         filter: function(resource) {
             return (
                 resource.resourceType === RESOURCE_ENERGY &&
-                resource.amount >= MIN_DROPPED_ENERGY
+                resource.amount >= MIN_DROPPED_ENERGY &&
+                !isProtectedSpawnStockpileDrop(creep, resource)
             );
         }
     });
@@ -737,6 +741,15 @@ function collectFromTarget(creep, target) {
     var result;
 
     /*
+     * The spawn-side pile is reserved for Foreman, Artificer, and Tech.
+     * Freighters create it as overflow, but must not collect it again.
+     */
+    if(isProtectedSpawnStockpileDrop(creep, target)) {
+        clearPickupMemory(creep);
+        return;
+    }
+
+    /*
      * Dropped energy uses pickup().
      */
     if(target.resourceType) {
@@ -1112,6 +1125,281 @@ function isRemoteRoomDangerous(room) {
     return dangerousCreeps.length > 0;
 }
 
+function getFreighterHomeRoomName(creep) {
+    if(!creep || !creep.memory) {
+        return null;
+    }
+
+    return creep.memory.homeRoom || creep.room.name;
+}
+
+function getRoomMemory(roomName, createIfMissing) {
+    if(!roomName) {
+        return null;
+    }
+
+    if(!Memory.rooms) {
+        if(!createIfMissing) {
+            return null;
+        }
+
+        Memory.rooms = {};
+    }
+
+    if(!Memory.rooms[roomName]) {
+        if(!createIfMissing) {
+            return null;
+        }
+
+        Memory.rooms[roomName] = {};
+    }
+
+    return Memory.rooms[roomName];
+}
+
+function getMainSpawnInRoom(room) {
+    if(!room) {
+        return null;
+    }
+
+    var spawns = room.find(FIND_MY_STRUCTURES, {
+        filter: function(structure) {
+            return structure.structureType === STRUCTURE_SPAWN;
+        }
+    });
+
+    if(!spawns || spawns.length === 0) {
+        return null;
+    }
+
+    var mainSpawn = spawns[0];
+
+    for(var i = 1; i < spawns.length; i++) {
+        if(spawns[i].name < mainSpawn.name) {
+            mainSpawn = spawns[i];
+        }
+    }
+
+    return mainSpawn;
+}
+
+function getSpawnStockpilePosition(creep) {
+    var roomName = getFreighterHomeRoomName(creep);
+    var room = roomName ? Game.rooms[roomName] : null;
+
+    if(!room) {
+        return null;
+    }
+
+    var spawn = getMainSpawnInRoom(room);
+
+    if(!spawn) {
+        return null;
+    }
+
+    var roomMemory = getRoomMemory(roomName, false);
+    var cached = roomMemory ? roomMemory.freighterSpawnStockpilePos : null;
+
+    if(
+        cached &&
+        cached.roomName === roomName &&
+        typeof cached.x === 'number' &&
+        typeof cached.y === 'number' &&
+        isValidSpawnStockpilePosition(room, spawn, cached.x, cached.y)
+    ) {
+        return new RoomPosition(cached.x, cached.y, cached.roomName);
+    }
+
+    if(cached && roomMemory) {
+        delete roomMemory.freighterSpawnStockpilePos;
+    }
+
+    var position = calculateSpawnStockpilePosition(room, spawn);
+
+    if(!position) {
+        return null;
+    }
+
+    roomMemory = getRoomMemory(roomName, true);
+
+    if(roomMemory) {
+        roomMemory.freighterSpawnStockpilePos = {
+            x: position.x,
+            y: position.y,
+            roomName: position.roomName
+        };
+    }
+
+    return position;
+}
+
+function calculateSpawnStockpilePosition(room, spawn) {
+    var bestPosition = null;
+    var bestScore = 999999;
+
+    for(var x = spawn.pos.x - SPAWN_STOCKPILE_MAX_RANGE; x <= spawn.pos.x + SPAWN_STOCKPILE_MAX_RANGE; x++) {
+        for(var y = spawn.pos.y - SPAWN_STOCKPILE_MAX_RANGE; y <= spawn.pos.y + SPAWN_STOCKPILE_MAX_RANGE; y++) {
+            if(!isValidSpawnStockpilePosition(room, spawn, x, y)) {
+                continue;
+            }
+
+            var score = getSpawnStockpilePositionScore(room, spawn, x, y);
+
+            if(score < bestScore) {
+                bestScore = score;
+                bestPosition = new RoomPosition(x, y, room.name);
+            }
+        }
+    }
+
+    return bestPosition;
+}
+
+function isValidSpawnStockpilePosition(room, spawn, x, y) {
+    if(!room || !spawn || x <= 0 || x >= 49 || y <= 0 || y >= 49) {
+        return false;
+    }
+
+    if(spawn.pos.x === x && spawn.pos.y === y) {
+        return false;
+    }
+
+    var position = new RoomPosition(x, y, room.name);
+    var range = position.getRangeTo(spawn);
+
+    if(range < SPAWN_STOCKPILE_MIN_RANGE || range > SPAWN_STOCKPILE_MAX_RANGE) {
+        return false;
+    }
+
+    var terrain = room.lookForAt(LOOK_TERRAIN, x, y);
+
+    if(terrain && terrain[0] === 'wall') {
+        return false;
+    }
+
+    var structures = room.lookForAt(LOOK_STRUCTURES, x, y);
+
+    for(var i = 0; i < structures.length; i++) {
+        if(!isWalkableStockpileStructure(structures[i])) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+function isWalkableStockpileStructure(structure) {
+    return (
+        structure.structureType === STRUCTURE_ROAD ||
+        structure.structureType === STRUCTURE_CONTAINER ||
+        (
+            structure.structureType === STRUCTURE_RAMPART &&
+            (structure.my || structure.isPublic)
+        )
+    );
+}
+
+function getSpawnStockpilePositionScore(room, spawn, x, y) {
+    var position = new RoomPosition(x, y, room.name);
+    var score = position.getRangeTo(spawn);
+    var terrain = room.lookForAt(LOOK_TERRAIN, x, y);
+    var structures = room.lookForAt(LOOK_STRUCTURES, x, y);
+    var constructionSites = room.lookForAt(LOOK_CONSTRUCTION_SITES, x, y);
+
+    if(terrain && terrain[0] === 'swamp') {
+        score += 1;
+    }
+
+    if(structures && structures.length > 0) {
+        score += 20;
+    }
+
+    if(constructionSites && constructionSites.length > 0) {
+        score += 25;
+    }
+
+    return score;
+}
+
+function isProtectedSpawnStockpileDrop(creep, resource) {
+    if(
+        !creep ||
+        !resource ||
+        !resource.pos ||
+        !resource.resourceType ||
+        resource.resourceType !== RESOURCE_ENERGY
+    ) {
+        return false;
+    }
+
+    var homeRoomName = getFreighterHomeRoomName(creep);
+
+    if(!homeRoomName || resource.pos.roomName !== homeRoomName) {
+        return false;
+    }
+
+    var stockpilePosition = getSpawnStockpilePosition(creep);
+
+    if(
+        stockpilePosition &&
+        resource.pos.roomName === stockpilePosition.roomName &&
+        resource.pos.getRangeTo(stockpilePosition) <= SPAWN_STOCKPILE_IGNORE_RANGE
+    ) {
+        return true;
+    }
+
+    var homeRoom = Game.rooms[homeRoomName];
+    var spawn = getMainSpawnInRoom(homeRoom);
+
+    return !!(spawn && resource.pos.getRangeTo(spawn) <= SPAWN_STOCKPILE_IGNORE_RANGE);
+}
+
+function deliverToSpawnStockpile(creep) {
+    if(!creep || !creep.store || (creep.store[RESOURCE_ENERGY] || 0) <= 0) {
+        return false;
+    }
+
+    var homeRoomName = getFreighterHomeRoomName(creep);
+
+    if(homeRoomName && creep.room.name !== homeRoomName) {
+        travel.moveToRoom(creep, homeRoomName, {
+            range: 22,
+            reusePath: 20,
+            visualizePathStyle: {
+                stroke: '#ffffff'
+            }
+        });
+        return true;
+    }
+
+    var stockpilePosition = getSpawnStockpilePosition(creep);
+
+    if(!stockpilePosition) {
+        return false;
+    }
+
+    if(creep.pos.isEqualTo(stockpilePosition)) {
+        /*
+         * Intentional controlled overflow: Freighters drop here so Foreman,
+         * Artificer, and Tech can consume the spawn-side stockpile later.
+         */
+        if(creep.drop(RESOURCE_ENERGY) === OK) {
+            clearPickupMemory(creep);
+        }
+
+        return true;
+    }
+
+    travel.move(creep, stockpilePosition, {
+        range: 0,
+        visualizePathStyle: {
+            stroke: '#ffffff'
+        }
+    });
+
+    return true;
+}
+
 function deliverEnergy(creep) {
     var target = null;
 
@@ -1146,6 +1434,7 @@ function deliverEnergy(creep) {
     }
 
     if(!target) {
+        deliverToSpawnStockpile(creep);
         return;
     }
 
