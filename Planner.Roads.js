@@ -36,6 +36,20 @@ var ROAD_PRIORITY_SOURCE = 2;
 var ROAD_PRIORITY_CONTROLLER = 3;
 var ROAD_PRIORITY_REMOTE = 4;
 
+var STRUCTURE_PLAN_BLOCKING_TYPES = {};
+STRUCTURE_PLAN_BLOCKING_TYPES[STRUCTURE_SPAWN] = true;
+STRUCTURE_PLAN_BLOCKING_TYPES[STRUCTURE_EXTENSION] = true;
+STRUCTURE_PLAN_BLOCKING_TYPES[STRUCTURE_TOWER] = true;
+STRUCTURE_PLAN_BLOCKING_TYPES[STRUCTURE_STORAGE] = true;
+STRUCTURE_PLAN_BLOCKING_TYPES[STRUCTURE_LINK] = true;
+STRUCTURE_PLAN_BLOCKING_TYPES[STRUCTURE_TERMINAL] = true;
+STRUCTURE_PLAN_BLOCKING_TYPES[STRUCTURE_FACTORY] = true;
+STRUCTURE_PLAN_BLOCKING_TYPES[STRUCTURE_POWER_SPAWN] = true;
+STRUCTURE_PLAN_BLOCKING_TYPES[STRUCTURE_NUKER] = true;
+STRUCTURE_PLAN_BLOCKING_TYPES[STRUCTURE_LAB] = true;
+STRUCTURE_PLAN_BLOCKING_TYPES[STRUCTURE_EXTRACTOR] = true;
+STRUCTURE_PLAN_BLOCKING_TYPES[STRUCTURE_OBSERVER] = true;
+
 function run() {
     if (!canSpendCpu()) {
         return;
@@ -638,6 +652,18 @@ function buildRoadCostMatrix(roomName) {
     }
 
     var costs = new PathFinder.CostMatrix();
+    var structurePlannerBlocked = getStructurePlannerBlockedTiles(roomName);
+    var structurePlannerRoads = getStructurePlannerRoadTiles(roomName);
+
+    for (var roadPacked in structurePlannerRoads) {
+        if (!structurePlannerRoads.hasOwnProperty(roadPacked) || structurePlannerBlocked[roadPacked]) {
+            continue;
+        }
+
+        var roadPos = unpackCoord(roadPacked, roomName);
+        costs.set(roadPos.x, roadPos.y, 1);
+    }
+
     var structures = room.find(FIND_STRUCTURES);
 
     for (var i = 0; i < structures.length; i++) {
@@ -674,11 +700,24 @@ function buildRoadCostMatrix(roomName) {
         }
     }
 
+    for (var blockedPacked in structurePlannerBlocked) {
+        if (!structurePlannerBlocked.hasOwnProperty(blockedPacked)) {
+            continue;
+        }
+
+        var blockedPos = unpackCoord(blockedPacked, roomName);
+        costs.set(blockedPos.x, blockedPos.y, 255);
+    }
+
     return costs;
 }
 
 function addRoadCoord(pos, priority, planSets, prioritySets) {
     if (!pos || pos.x < 0 || pos.x > 49 || pos.y < 0 || pos.y > 49) {
+        return;
+    }
+
+    if (isBlockedByStructurePlanner(pos.roomName, pos)) {
         return;
     }
 
@@ -776,6 +815,10 @@ function canPlaceRoadSite(room, pos, allowEdge) {
         return false;
     }
 
+    if (isBlockedByStructurePlanner(room.name, pos)) {
+        return false;
+    }
+
     return isWalkableRoadTile(room, pos, allowEdge === true) && !hasConstructionSite(room, pos) && !hasRoad(room, pos);
 }
 
@@ -785,6 +828,10 @@ function isWalkableRoadTile(room, pos, allowEdge) {
     }
 
     if (!allowEdge && (pos.x === 0 || pos.x === 49 || pos.y === 0 || pos.y === 49)) {
+        return false;
+    }
+
+    if (isBlockedByStructurePlanner(room.name, pos)) {
         return false;
     }
 
@@ -867,6 +914,84 @@ function isBlockingStructureType(structureType) {
     return typeof OBSTACLE_OBJECT_TYPES !== 'undefined' && OBSTACLE_OBJECT_TYPES.indexOf(structureType) !== -1;
 }
 
+function getStructurePlannerBlockedTiles(roomName) {
+    return getStructurePlannerPlanLookups(roomName).blocked;
+}
+
+function getStructurePlannerRoadTiles(roomName) {
+    return getStructurePlannerPlanLookups(roomName).roads;
+}
+
+function isBlockedByStructurePlanner(roomName, pos) {
+    if (!roomName || !pos || pos.roomName !== roomName) {
+        return false;
+    }
+
+    return getStructurePlannerBlockedTiles(roomName)[packCoord(pos)] === true;
+}
+
+function getStructurePlannerPlanLookups(roomName) {
+    if (!global.__sushiRoadPlannerStructurePlanCache || global.__sushiRoadPlannerStructurePlanCache.time !== Game.time) {
+        global.__sushiRoadPlannerStructurePlanCache = {
+            time: Game.time,
+            rooms: {}
+        };
+    }
+
+    var cache = global.__sushiRoadPlannerStructurePlanCache.rooms;
+    if (!cache[roomName]) {
+        cache[roomName] = buildStructurePlannerPlanLookups(roomName);
+    }
+
+    return cache[roomName];
+}
+
+function buildStructurePlannerPlanLookups(roomName) {
+    var lookups = {
+        blocked: {},
+        roads: {}
+    };
+    var roomMemory = Memory.rooms && Memory.rooms[roomName];
+    var planner = roomMemory ? roomMemory.structurePlanner : null;
+    var plan = planner ? planner.plan : null;
+    var positions = plan ? plan.positions : null;
+
+    if (!positions) {
+        return lookups;
+    }
+
+    for (var structureType in positions) {
+        if (!positions.hasOwnProperty(structureType)) {
+            continue;
+        }
+
+        var list = positions[structureType] || [];
+        for (var i = 0; i < list.length; i++) {
+            var plain = list[i];
+            if (!plain || plain.x === undefined || plain.y === undefined) {
+                continue;
+            }
+
+            var posRoomName = plain.roomName || roomName;
+            if (posRoomName !== roomName) {
+                continue;
+            }
+
+            var packed = plain.x + (plain.y * 50);
+            if (structureType === STRUCTURE_ROAD) {
+                lookups.roads[packed] = true;
+                continue;
+            }
+
+            if (STRUCTURE_PLAN_BLOCKING_TYPES[structureType]) {
+                lookups.blocked[packed] = true;
+            }
+        }
+    }
+
+    return lookups;
+}
+
 function drawRoadPlannerVisuals(homeRoomName) {
     if (!Memory.settings || Memory.settings.showRoadPlanner !== true) {
         return;
@@ -907,6 +1032,8 @@ module.exports = {
     runRoom: runRoom,
     planOwnedRoomRoads: planOwnedRoomRoads,
     buildRoadSites: buildRoadSites,
+    getStructurePlannerBlockedTiles: getStructurePlannerBlockedTiles,
+    isBlockedByStructurePlanner: isBlockedByStructurePlanner,
     packCoord: packCoord,
     unpackCoord: unpackCoord
 };
