@@ -1,7 +1,7 @@
 /*
  * Visual.Planner.Structures.js
  *
- * Room visual preview for Planner.Structures.js saved structure plans.
+ * Room visual preview for Planner.Brain.js saved structure plans.
  *
  * This module only reads Memory.rooms[roomName].structurePlanner.plan and draws
  * temporary RoomVisual labels. It never creates construction sites and never
@@ -22,6 +22,7 @@ var SERVICE_MARKER_COLOR = '#b6f7b0';
 var LABELS = {};
 LABELS[STRUCTURE_SPAWN] = 'SP';
 LABELS[STRUCTURE_EXTENSION] = 'EX';
+LABELS[STRUCTURE_ROAD] = 'RD';
 LABELS[STRUCTURE_TOWER] = 'TW';
 LABELS[STRUCTURE_STORAGE] = 'ST';
 LABELS[STRUCTURE_CONTAINER] = 'CN';
@@ -38,6 +39,7 @@ LABELS[STRUCTURE_RAMPART] = 'RP';
 var COLORS = {};
 COLORS[STRUCTURE_SPAWN] = '#ffffff';
 COLORS[STRUCTURE_EXTENSION] = '#7fd1ff';
+COLORS[STRUCTURE_ROAD] = '#b8b8b8';
 COLORS[STRUCTURE_TOWER] = '#ffcc66';
 COLORS[STRUCTURE_STORAGE] = '#f7f06d';
 COLORS[STRUCTURE_CONTAINER] = '#c49a6c';

@@ -1,7 +1,7 @@
 /*
- * Planner.Structures.js
+ * Planner.Brain.js
  *
- * Phase 1 CPU-safe structure planner for Sushi.
+ * CPU-safe structure planner conductor for Sushi.
  *
  * The planner borrows Harabi-style ideas:
  * - choose a stable base anchor
@@ -13,7 +13,24 @@
  * planner, mincut ramparts, or container-destroy upgrade flow.
  */
 
-var STRUCTURE_PLANNER_VERSION = 2;
+var PlannerUtil = require('Planner.Util');
+var PlannerExtension = require('Planner.Extension');
+var PlannerRoad = require('Planner.Road');
+var PlannerTower = require('Planner.Tower');
+var PlannerLab = require('Planner.Lab');
+var PlannerSpawn = require('Planner.Spawn');
+var PlannerStorage = require('Planner.Storage');
+var PlannerLink = require('Planner.Link');
+var PlannerContainer = require('Planner.Container');
+var PlannerExtractor = require('Planner.Extractor');
+var PlannerRampart = require('Planner.Rampart');
+var PlannerTerminal = require('Planner.Terminal');
+var PlannerFactory = require('Planner.Factory');
+var PlannerPowerSpawn = require('Planner.PowerSpawn');
+var PlannerNuker = require('Planner.Nuker');
+var PlannerObserver = require('Planner.Observer');
+
+var STRUCTURE_PLANNER_VERSION = 4;
 var STRUCTURE_REPLAN_INTERVAL = 5000;
 var STRUCTURE_BUILD_INTERVAL = 25;
 var STRUCTURE_PLANNER_REPLAN_BUCKET = 5000;
@@ -30,6 +47,8 @@ var structurePlannerRunCpuStart = 0;
 var BUILD_PRIORITY = [
     STRUCTURE_CONTAINER,
     STRUCTURE_STORAGE,
+    STRUCTURE_ROAD,
+    STRUCTURE_SPAWN,
     STRUCTURE_EXTENSION,
     STRUCTURE_TOWER,
     STRUCTURE_LINK,
@@ -40,13 +59,13 @@ var BUILD_PRIORITY = [
     STRUCTURE_POWER_SPAWN,
     STRUCTURE_NUKER,
     STRUCTURE_LAB,
-    STRUCTURE_RAMPART,
-    STRUCTURE_SPAWN
+    STRUCTURE_RAMPART
 ];
 
 var POSITION_KEYS = [
     STRUCTURE_SPAWN,
     STRUCTURE_EXTENSION,
+    STRUCTURE_ROAD,
     STRUCTURE_TOWER,
     STRUCTURE_STORAGE,
     STRUCTURE_CONTAINER,
@@ -108,6 +127,7 @@ FALLBACK_CONTROLLER_STRUCTURES[STRUCTURE_EXTENSION] = [0, 0, 5, 10, 20, 30, 40, 
 FALLBACK_CONTROLLER_STRUCTURES[STRUCTURE_TOWER] = [0, 0, 0, 1, 1, 2, 2, 3, 6];
 FALLBACK_CONTROLLER_STRUCTURES[STRUCTURE_STORAGE] = [0, 0, 0, 0, 1, 1, 1, 1, 1];
 FALLBACK_CONTROLLER_STRUCTURES[STRUCTURE_CONTAINER] = [5, 5, 5, 5, 5, 5, 5, 5, 5];
+FALLBACK_CONTROLLER_STRUCTURES[STRUCTURE_ROAD] = [0, 0, 2500, 2500, 2500, 2500, 2500, 2500, 2500];
 FALLBACK_CONTROLLER_STRUCTURES[STRUCTURE_LINK] = [0, 0, 0, 0, 0, 2, 3, 4, 6];
 FALLBACK_CONTROLLER_STRUCTURES[STRUCTURE_TERMINAL] = [0, 0, 0, 0, 0, 0, 1, 1, 1];
 FALLBACK_CONTROLLER_STRUCTURES[STRUCTURE_EXTRACTOR] = [0, 0, 0, 0, 0, 0, 1, 1, 1];
@@ -117,6 +137,37 @@ FALLBACK_CONTROLLER_STRUCTURES[STRUCTURE_POWER_SPAWN] = [0, 0, 0, 0, 0, 0, 0, 0,
 FALLBACK_CONTROLLER_STRUCTURES[STRUCTURE_NUKER] = [0, 0, 0, 0, 0, 0, 0, 0, 1];
 FALLBACK_CONTROLLER_STRUCTURES[STRUCTURE_LAB] = [0, 0, 0, 0, 0, 0, 3, 6, 10];
 FALLBACK_CONTROLLER_STRUCTURES[STRUCTURE_RAMPART] = [0, 0, 300, 300, 300, 300, 300, 300, 300];
+
+function createPlannerContext() {
+    return {
+        addPlannedStructure: addPlannedStructure,
+        canContinueStructurePlanning: canContinueStructurePlanning,
+        canPlanAt: canPlanAt,
+        continueFillFromCandidates: continueFillFromCandidates,
+        countOpenNeighbors: countOpenNeighbors,
+        findOpenNear: findOpenNear,
+        getAllowedAtRcl: getAllowedAtRcl,
+        getCandidatePosition: getCandidatePosition,
+        getFirstRclForOrdinal: getFirstRclForOrdinal,
+        getPlanAnchorPosition: getPlanAnchorPosition,
+        getPlannedCount: getPlannedCount,
+        hasNaturalObject: hasNaturalObject,
+        hasPlannedConflict: hasPlannedConflict,
+        hasStructureTypeAt: hasStructureTypeAt,
+        makePlanReservationLookup: makePlanReservationLookup,
+        makeRoomPositionSafe: makeRoomPositionSafe,
+        pickStorageAnchor: pickStorageAnchor,
+        planControllerContainer: planControllerContainer,
+        planControllerLink: planControllerLink,
+        planMineral: planMineral,
+        planMineralContainer: planMineralContainer,
+        planSourceContainers: planSourceContainers,
+        planSourceLinks: planSourceLinks,
+        planStorageLink: planStorageLink,
+        recordPlannedStructure: recordPlannedStructure,
+        ensureRoadAccessForStructure: ensureRoadAccessForStructure
+    };
+}
 
 function run() {
     structurePlannerRunCpuStart = Game.cpu && typeof Game.cpu.getUsed === 'function' ?
@@ -342,6 +393,7 @@ function ensurePlanShape(plan) {
     if (!shaped.positions) {
         shaped.positions = makeEmptyPositions();
     }
+    ensurePositionKeys(shaped.positions);
     if (!shaped.links) {
         shaped.links = {
             storage: null,
@@ -384,7 +436,7 @@ function runPlanJobInit(room, job) {
 }
 
 function runPlanJobAnchor(room, planner, job) {
-    var anchor = pickStorageAnchor(room, planner.plan, getSortedOwnedSpawns(room));
+    var anchor = PlannerStorage.pickAnchor(createPlannerContext(), room, planner.plan, getSortedOwnedSpawns(room));
     if (!anchor) {
         planner.lastPlanFailed = Game.time;
         planner.lastPlanFailReason = 'no storage anchor';
@@ -395,7 +447,13 @@ function runPlanJobAnchor(room, planner, job) {
 
     job.anchor = packCoord(anchor);
     job.draftPlan.anchor = plainPosition(anchor);
-    addPlannedStructure(room, job.draftPlan, job.reserved, STRUCTURE_STORAGE, anchor, 4);
+    if (!addPlannedStructure(room, job.draftPlan, job.reserved, STRUCTURE_STORAGE, anchor, 4)) {
+        planner.lastPlanFailed = Game.time;
+        planner.lastPlanFailReason = 'no storage anchor';
+        planner.forceReplan = false;
+        delete planner.planJob;
+        return false;
+    }
     job.fixedStep = 0;
     job.phase = 'fixed';
     return true;
@@ -415,7 +473,8 @@ function runPlanJobFixed(room, job) {
         if (!canContinueStructurePlanning()) {
             return false;
         }
-        planSourceContainers(room, job.draftPlan, job.reserved, anchor);
+        PlannerSpawn.planExistingRoadAccess(createPlannerContext(), room, job.draftPlan, job.reserved);
+        PlannerContainer.planSources(createPlannerContext(), room, job.draftPlan, job.reserved, anchor);
         job.fixedStep = 1;
         step = 1;
     }
@@ -424,7 +483,7 @@ function runPlanJobFixed(room, job) {
         if (!canContinueStructurePlanning()) {
             return false;
         }
-        planControllerContainer(room, job.draftPlan, job.reserved, anchor);
+        PlannerContainer.planController(createPlannerContext(), room, job.draftPlan, job.reserved, anchor);
         job.fixedStep = 2;
         step = 2;
     }
@@ -433,7 +492,7 @@ function runPlanJobFixed(room, job) {
         if (!canContinueStructurePlanning()) {
             return false;
         }
-        planMineral(room, job.draftPlan, job.reserved, anchor);
+        PlannerExtractor.planMineral(createPlannerContext(), room, job.draftPlan, job.reserved, anchor);
         job.fixedStep = 3;
         step = 3;
     }
@@ -442,9 +501,9 @@ function runPlanJobFixed(room, job) {
         if (!canContinueStructurePlanning()) {
             return false;
         }
-        planStorageLink(room, job.draftPlan, job.reserved, anchor);
-        planControllerLink(room, job.draftPlan, job.reserved, anchor);
-        planSourceLinks(room, job.draftPlan, job.reserved, anchor);
+        PlannerLink.planStorage(createPlannerContext(), room, job.draftPlan, job.reserved, anchor);
+        PlannerLink.planController(createPlannerContext(), room, job.draftPlan, job.reserved, anchor);
+        PlannerLink.planSources(createPlannerContext(), room, job.draftPlan, job.reserved, anchor);
         job.fixedStep = 4;
     }
 
@@ -470,17 +529,13 @@ function runPlanJobCandidateScan(room, job) {
     }
 
     sortPlanJobCandidates(job);
-    beginFillJob(job, STRUCTURE_TOWER, 'extensions');
+    PlannerTower.beginFill(job);
     job.phase = 'towers';
     return true;
 }
 
 function runPlanJobFill(room, job, structureType, nextPhase) {
-    if (!job.fill) {
-        beginFillJob(job, structureType, nextPhase);
-    }
-
-    if (!continueFillFromCandidates(room, job)) {
+    if (!continueStructureModuleFill(room, job, structureType, nextPhase)) {
         return false;
     }
 
@@ -488,8 +543,28 @@ function runPlanJobFill(room, job, structureType, nextPhase) {
     return true;
 }
 
+function continueStructureModuleFill(room, job, structureType, nextPhase) {
+    if (structureType === STRUCTURE_TOWER) {
+        return PlannerTower.continueFromCandidates(createPlannerContext(), room, job);
+    }
+
+    if (structureType === STRUCTURE_EXTENSION) {
+        if (!job.fill) {
+            beginFillJob(job, STRUCTURE_EXTENSION, nextPhase);
+        }
+
+        return PlannerExtension.continueFromCandidates(createPlannerContext(), room, job);
+    }
+
+    if (!job.fill) {
+        beginFillJob(job, structureType, nextPhase);
+    }
+
+    return continueFillFromCandidates(room, job);
+}
+
 function runPlanJobLabs(room, job) {
-    if (!continueLabsFromCandidates(room, job)) {
+    if (!PlannerLab.continueFromCandidates(createPlannerContext(), room, job)) {
         return false;
     }
 
@@ -507,7 +582,7 @@ function runPlanJobSingletons(room, job) {
 }
 
 function runPlanJobRamparts(room, job) {
-    if (!continueKeyRamparts(room, job)) {
+    if (!PlannerRampart.continueKeyRamparts(createPlannerContext(), room, job, RAMPART_TARGETS)) {
         return false;
     }
 
@@ -635,6 +710,7 @@ function ensurePlannerMemory(roomName) {
     if (!planner.plan.positions) {
         planner.plan.positions = makeEmptyPositions();
     }
+    ensurePositionKeys(planner.plan.positions);
     if (!planner.plan.links) {
         planner.plan.links = {
             storage: null,
@@ -720,6 +796,18 @@ function makeEmptyPositions() {
     }
 
     return positions;
+}
+
+function ensurePositionKeys(positions) {
+    if (!positions) {
+        return;
+    }
+
+    for (var i = 0; i < POSITION_KEYS.length; i++) {
+        if (!positions[POSITION_KEYS[i]]) {
+            positions[POSITION_KEYS[i]] = [];
+        }
+    }
 }
 
 function shouldReplan(room, planner) {
@@ -997,6 +1085,21 @@ function planSourceContainers(room, plan, reserved, anchor) {
     }
 }
 
+function planExistingSpawnRoadAccess(room, plan, reserved) {
+    var spawns = plan && plan.positions ? plan.positions[STRUCTURE_SPAWN] || [] : [];
+
+    for (var i = 0; i < spawns.length; i++) {
+        var plain = spawns[i];
+        var pos = makeRoomPositionSafe(plain.x, plain.y, plain.roomName || room.name);
+
+        if (!pos || pos.roomName !== room.name) {
+            continue;
+        }
+
+        ensureRoadAccessForStructure(room, plan, reserved, STRUCTURE_SPAWN, pos, 2);
+    }
+}
+
 function ensureSourceMemory(room, sources) {
     if (!Memory.rooms) {
         Memory.rooms = {};
@@ -1234,6 +1337,23 @@ function planMineral(room, plan, reserved, anchor) {
     var mineral = minerals[0];
     addPlannedStructure(room, plan, reserved, STRUCTURE_EXTRACTOR, mineral.pos, 6);
 
+    var containerPos = findOpenNear(room, mineral.pos, anchor, reserved, STRUCTURE_CONTAINER, null);
+    if (containerPos && addPlannedStructure(room, plan, reserved, STRUCTURE_CONTAINER, containerPos, 6)) {
+        plan.containers.mineral = plainPosition(containerPos);
+    }
+}
+
+function planMineralContainer(room, plan, reserved, anchor) {
+    var minerals = room.find(FIND_MINERALS);
+    if (minerals.length === 0) {
+        return;
+    }
+
+    minerals.sort(function(a, b) {
+        return a.id < b.id ? -1 : 1;
+    });
+
+    var mineral = minerals[0];
     var containerPos = findOpenNear(room, mineral.pos, anchor, reserved, STRUCTURE_CONTAINER, null);
     if (containerPos && addPlannedStructure(room, plan, reserved, STRUCTURE_CONTAINER, containerPos, 6)) {
         plan.containers.mineral = plainPosition(containerPos);
@@ -1575,13 +1695,7 @@ function continueLabsFromCandidates(room, job) {
 }
 
 function continueSingletonsFromCandidates(room, job) {
-    var singletons = [
-        { type: STRUCTURE_TERMINAL, rcl: 6 },
-        { type: STRUCTURE_FACTORY, rcl: 7 },
-        { type: STRUCTURE_OBSERVER, rcl: 8 },
-        { type: STRUCTURE_POWER_SPAWN, rcl: 8 },
-        { type: STRUCTURE_NUKER, rcl: 8 }
-    ];
+    var singletons = getSingletonPlannerTargets();
     var step = job.singletonStep || 0;
     var candidateIndex = job.singletonCandidateIndex || 0;
     var candidates = job.candidates || [];
@@ -1621,13 +1735,23 @@ function continueSingletonsFromCandidates(room, job) {
     job.singletonStep = step;
     job.singletonCandidateIndex = candidateIndex;
 
-    if (!continueExtraSpawnsFromCandidates(room, job)) {
+    if (!PlannerSpawn.continueExtraFromCandidates(createPlannerContext(), room, job)) {
         return false;
     }
 
     delete job.singletonStep;
     delete job.singletonCandidateIndex;
     return true;
+}
+
+function getSingletonPlannerTargets() {
+    return [
+        PlannerTerminal.target(),
+        PlannerFactory.target(),
+        PlannerObserver.target(),
+        PlannerPowerSpawn.target(),
+        PlannerNuker.target()
+    ];
 }
 
 function continueExtraSpawnsFromCandidates(room, job) {
@@ -1948,9 +2072,13 @@ function canCreateSite(room, pos, structureType, counts, plan, planReserved) {
         return canBuildRampartAt(room, pos);
     }
 
+    if (structureType === STRUCTURE_ROAD) {
+        return PlannerRoad.isValidRoadTile(createPlannerContext(), room, pos, planReserved || {});
+    }
+
     if (
         structureType === STRUCTURE_EXTENSION &&
-        !hasExtensionBuildAccess(room, pos, plan, planReserved)
+        !PlannerExtension.hasBuildAccess(createPlannerContext(), room, pos, plan, planReserved)
     ) {
         return false;
     }
@@ -2040,25 +2168,35 @@ function countExistingAndSites(room, structureType) {
 }
 
 function addPlannedStructure(room, plan, reserved, structureType, pos, rcl) {
+    if (structureType === STRUCTURE_ROAD) {
+        return PlannerRoad.planRoadAt(createPlannerContext(), room, plan, reserved, pos, rcl);
+    }
+
     if (!pos || !canPlanAt(room, structureType, pos) || hasPlannedConflict(reserved, structureType, pos)) {
         return false;
     }
 
     if (structureType === STRUCTURE_EXTENSION) {
-        var servicePos = findExtensionServiceTile(room, plan, reserved, pos);
-        if (!servicePos) {
-            return false;
-        }
-
-        if (!recordPlannedStructure(plan, reserved, structureType, pos, rcl)) {
-            return false;
-        }
-
-        reserveExtensionServiceTile(plan, reserved, servicePos);
-        return true;
+        return PlannerExtension.addPlannedStructure(createPlannerContext(), room, plan, reserved, pos, rcl);
     }
 
-    return recordPlannedStructure(plan, reserved, structureType, pos, rcl);
+    var accessPos = null;
+    if (PlannerRoad.structureNeedsRoadAccess(structureType)) {
+        accessPos = PlannerRoad.findRoadAccessTile(createPlannerContext(), room, plan, reserved, structureType, pos);
+        if (!accessPos) {
+            return false;
+        }
+    }
+
+    if (!recordPlannedStructure(plan, reserved, structureType, pos, rcl)) {
+        return false;
+    }
+
+    if (accessPos) {
+        PlannerRoad.planRoadAt(createPlannerContext(), room, plan, reserved, accessPos, PlannerRoad.getRoadRclForStructure(rcl));
+    }
+
+    return true;
 }
 
 function recordExistingStructure(plan, reserved, structureType, pos, rcl) {
@@ -2073,13 +2211,27 @@ function recordExistingStructure(plan, reserved, structureType, pos, rcl) {
 
 function recordPlannedStructure(plan, reserved, structureType, pos, rcl) {
     var targetRcl = Math.max(1, Math.min(8, rcl || 1));
+    var positions = plan.positions[structureType] || [];
+    var existing = getPositionEntry(positions, pos);
 
-    addPosition(plan, structureType, pos, targetRcl);
+    if (existing) {
+        var existingRcl = Math.max(1, Math.min(8, existing.rcl || targetRcl));
+
+        if (targetRcl < existingRcl) {
+            existing.rcl = targetRcl;
+        } else {
+            targetRcl = existingRcl;
+            existing.rcl = targetRcl;
+        }
+
+        removeByRclEntries(plan, structureType, pos);
+    } else {
+        addPosition(plan, structureType, pos, targetRcl);
+    }
 
     if (!plan.byRcl[targetRcl]) {
         plan.byRcl[targetRcl] = [];
     }
-
     if (!hasByRclEntry(plan.byRcl[targetRcl], structureType, pos)) {
         plan.byRcl[targetRcl].push({
             type: structureType,
@@ -2091,6 +2243,30 @@ function recordPlannedStructure(plan, reserved, structureType, pos, rcl) {
 
     reservePosition(reserved, structureType, pos);
     return true;
+}
+
+function removeByRclEntries(plan, structureType, pos) {
+    if (!plan || !plan.byRcl) {
+        return;
+    }
+
+    for (var rcl = 1; rcl <= 8; rcl++) {
+        var entries = plan.byRcl[rcl];
+        if (!entries || entries.length === 0) {
+            continue;
+        }
+
+        for (var i = entries.length - 1; i >= 0; i--) {
+            if (
+                (entries[i].type || entries[i].structureType) === structureType &&
+                entries[i].x === pos.x &&
+                entries[i].y === pos.y &&
+                entries[i].roomName === pos.roomName
+            ) {
+                entries.splice(i, 1);
+            }
+        }
+    }
 }
 
 function addPosition(plan, structureType, pos, rcl) {
@@ -2120,200 +2296,16 @@ function reservePosition(reserved, structureType, pos) {
     reserved[packed].types[structureType] = true;
 }
 
-function reserveExtensionServiceTile(plan, reserved, pos) {
-    var packed = packCoord(pos);
-
-    if (!reserved[packed]) {
-        reserved[packed] = {
-            types: {}
-        };
-    }
-    if (!reserved[packed].types) {
-        reserved[packed].types = {};
-    }
-
-    reserved[packed].extensionService = true;
-
-    if (!plan.extensionServiceTiles) {
-        plan.extensionServiceTiles = [];
-    }
-
-    if (!hasPosition(plan.extensionServiceTiles, pos)) {
-        plan.extensionServiceTiles.push(plainPosition(pos));
-    }
-}
-
-function isReservedExtensionServiceTile(reserved, pos) {
-    var tile = reserved && reserved[packCoord(pos)];
-    return !!(tile && tile.extensionService === true);
-}
-
-function findExtensionServiceTile(room, plan, reserved, extensionPos) {
-    if (!isExtensionBuildTile(room, plan, extensionPos)) {
-        return null;
-    }
-
-    var anchor = getPlanAnchorPosition(plan, room.name);
-    var best = null;
-
-    for (var i = 0; i < CARDINAL_AROUND.length; i++) {
-        var offset = CARDINAL_AROUND[i];
-        var servicePos = makeRoomPositionSafe(extensionPos.x + offset.x, extensionPos.y + offset.y, room.name);
-
-        if (!isValidExtensionServiceTile(room, servicePos, reserved)) {
-            continue;
-        }
-
-        var score = scoreExtensionServiceTile(room, servicePos, reserved, anchor);
-        if (!best || score < best.score) {
-            best = {
-                pos: servicePos,
-                score: score
-            };
-        }
-    }
-
-    return best ? best.pos : null;
-}
-
-function hasExtensionBuildAccess(room, pos, plan, planReserved) {
-    if (!isExtensionBuildTile(room, plan, pos)) {
-        return false;
-    }
-
-    return !!findExtensionServiceTile(room, plan, planReserved || makePlanReservationLookup(plan), pos);
-}
-
-function isExtensionBuildTile(room, plan, pos) {
-    if (!pos) {
-        return false;
-    }
-
-    if (hasStructureTypeAt(room, pos, STRUCTURE_EXTENSION)) {
-        return true;
-    }
-
-    var anchor = getPlanAnchorPosition(plan, pos.roomName);
-    if (!anchor) {
-        return true;
-    }
-
-    return ((pos.x + pos.y) % 2) === ((anchor.x + anchor.y) % 2);
-}
-
-function isValidExtensionServiceTile(room, pos, reserved) {
-    if (!pos || pos.roomName !== room.name || isEdge(pos)) {
-        return false;
-    }
-
-    if (room.getTerrain().get(pos.x, pos.y) === TERRAIN_MASK_WALL) {
-        return false;
-    }
-
-    if (hasNaturalObject(room, pos, null)) {
-        return false;
-    }
-
-    if (hasBlockingServiceStructure(room, pos)) {
-        return false;
-    }
-
-    if (hasBlockingServiceConstructionSite(room, pos)) {
-        return false;
-    }
-
-    return !hasBlockingPlannedServiceReservation(reserved, pos);
-}
-
-function scoreExtensionServiceTile(room, pos, reserved, anchor) {
-    var score = anchor ? pos.getRangeTo(anchor) * 3 : 0;
-
-    if (isReservedExtensionServiceTile(reserved, pos)) {
-        score -= 100;
-    }
-
-    score -= countAdjacentExtensionServiceTiles(reserved, pos) * 8;
-
-    if (room.getTerrain().get(pos.x, pos.y) === TERRAIN_MASK_SWAMP) {
-        score += 2;
-    }
-
-    return score;
-}
-
-function countAdjacentExtensionServiceTiles(reserved, pos) {
-    var count = 0;
-
-    for (var i = 0; i < AROUND.length; i++) {
-        var near = makeRoomPositionSafe(pos.x + AROUND[i].x, pos.y + AROUND[i].y, pos.roomName);
-        if (near && isReservedExtensionServiceTile(reserved, near)) {
-            count++;
-        }
-    }
-
-    return count;
-}
-
-function hasBlockingServiceStructure(room, pos) {
-    var structures = room.lookForAt(LOOK_STRUCTURES, pos.x, pos.y);
-
-    for (var i = 0; i < structures.length; i++) {
-        var structure = structures[i];
-
-        if (
-            structure.structureType === STRUCTURE_ROAD ||
-            structure.structureType === STRUCTURE_CONTAINER
-        ) {
-            continue;
-        }
-
-        if (structure.structureType === STRUCTURE_RAMPART) {
-            if (structure.my || structure.isPublic) {
-                continue;
-            }
-        }
-
-        return true;
-    }
-
-    return false;
-}
-
-function hasBlockingServiceConstructionSite(room, pos) {
-    var sites = room.lookForAt(LOOK_CONSTRUCTION_SITES, pos.x, pos.y);
-
-    for (var i = 0; i < sites.length; i++) {
-        if (
-            sites[i].structureType === STRUCTURE_ROAD ||
-            sites[i].structureType === STRUCTURE_CONTAINER ||
-            sites[i].structureType === STRUCTURE_RAMPART
-        ) {
-            continue;
-        }
-
-        return true;
-    }
-
-    return false;
-}
-
-function hasBlockingPlannedServiceReservation(reserved, pos) {
-    var tile = reserved && reserved[packCoord(pos)];
-    if (!tile || !tile.types) {
-        return false;
-    }
-
-    for (var structureType in tile.types) {
-        if (!tile.types.hasOwnProperty(structureType)) {
-            continue;
-        }
-
-        if (isBlockingPlannedStructureType(structureType)) {
-            return true;
-        }
-    }
-
-    return false;
+function ensureRoadAccessForStructure(room, plan, reserved, structureType, pos, rcl) {
+    return PlannerRoad.ensureRoadAccessForStructure(
+        createPlannerContext(),
+        room,
+        plan,
+        reserved,
+        structureType,
+        pos,
+        rcl
+    );
 }
 
 function isBlockingPlannedStructureType(structureType) {
@@ -2366,13 +2358,21 @@ function hasPlannedConflict(reserved, structureType, pos) {
 }
 
 function hasPosition(positions, pos) {
+    return !!getPositionEntry(positions, pos);
+}
+
+function getPositionEntry(positions, pos) {
+    if (!positions || !pos) {
+        return null;
+    }
+
     for (var i = 0; i < positions.length; i++) {
         if (positions[i].x === pos.x && positions[i].y === pos.y && positions[i].roomName === pos.roomName) {
-            return true;
+            return positions[i];
         }
     }
 
-    return false;
+    return null;
 }
 
 function hasByRclEntry(entries, structureType, pos) {
@@ -2450,7 +2450,10 @@ function hasBlockingStructure(room, pos, plannedType) {
             continue;
         }
 
-        if (plannedType === STRUCTURE_CONTAINER && structure.structureType === STRUCTURE_ROAD) {
+        if (
+            (plannedType === STRUCTURE_CONTAINER && structure.structureType === STRUCTURE_ROAD) ||
+            (plannedType === STRUCTURE_ROAD && structure.structureType === STRUCTURE_CONTAINER)
+        ) {
             continue;
         }
 
