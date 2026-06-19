@@ -3,6 +3,9 @@ var travel = require('utility.Travel.Creep');
 var SCORE_SCAN_MEMORY_KEY = 'scoreSeason';
 var RUNNER_INTENT_TTL = 75;
 var HOSTILE_ROOM_TTL = 2000;
+var HOSTILE_CONTROLLER_TTL = 2000;
+var HOSTILE_INVADER_CORE_TTL = 2000;
+var HOSTILE_ARMED_CREEP_TTL = 400;
 var TARGET_MIN_TTL = 50;
 var TARGET_MAX_TTL = 150;
 var LOOK_FALLBACK_CPU_BUFFER = 5;
@@ -42,12 +45,12 @@ function run(creep) {
     maintainCreepRoomHistory(creep);
     updateScoreRunnerStuckState(creep);
 
-    var hostileReason = getHostileRoomReason(creep.room);
+    var hostileThreat = getHostileRoomThreat(creep.room);
 
-    if(hostileReason) {
-        markHostileRoom(creep.room.name, hostileReason);
+    if(hostileThreat) {
+        markHostileRoom(creep.room.name, hostileThreat.reason, hostileThreat.ttl);
         clearCreepScoreTarget(creep);
-        setScoreRunnerDebug(creep, 'hostileFlee', hostileReason);
+        setScoreRunnerDebug(creep, 'hostileFlee', hostileThreat.reason);
         moveOutOfHostileRoom(creep);
         return;
     }
@@ -179,6 +182,11 @@ function cleanExpiredHostileRooms() {
         }
 
         var record = hostileRooms[roomName];
+
+        if(record && record.reason === 'enemyCreeps') {
+            delete hostileRooms[roomName];
+            continue;
+        }
 
         if(!record || !record.until || record.until <= Game.time) {
             delete hostileRooms[roomName];
@@ -318,7 +326,7 @@ function tryRoomFind(room, findConstant, options) {
     }
 }
 
-function getHostileRoomReason(room) {
+function getHostileRoomThreat(room) {
     if(!room) {
         return null;
     }
@@ -328,26 +336,53 @@ function getHostileRoomReason(room) {
         room.controller.owner &&
         !room.controller.my
     ) {
-        return 'enemyController';
-    }
-
-    if(hasEnemyCreeps(room)) {
-        return 'enemyCreeps';
+        return {
+            reason: 'enemyController',
+            ttl: HOSTILE_CONTROLLER_TTL
+        };
     }
 
     if(roomHasInvaderCore(room)) {
-        return 'invaderCore';
+        return {
+            reason: 'invaderCore',
+            ttl: HOSTILE_INVADER_CORE_TTL
+        };
+    }
+
+    if(hasArmedHostileCreeps(room)) {
+        return {
+            reason: 'armedHostileCreeps',
+            ttl: HOSTILE_ARMED_CREEP_TTL
+        };
     }
 
     return null;
 }
 
-function hasEnemyCreeps(room) {
+function creepHasActiveDangerPart(creep) {
+    if(!creep || typeof creep.getActiveBodyparts !== 'function') {
+        return false;
+    }
+
+    return creep.getActiveBodyparts(ATTACK) > 0 ||
+        creep.getActiveBodyparts(RANGED_ATTACK) > 0 ||
+        creep.getActiveBodyparts(HEAL) > 0;
+}
+
+function hasArmedHostileCreeps(room) {
     if(typeof FIND_HOSTILE_CREEPS === 'undefined') {
         return false;
     }
 
-    return tryRoomFind(room, FIND_HOSTILE_CREEPS).length > 0;
+    var hostiles = tryRoomFind(room, FIND_HOSTILE_CREEPS);
+
+    for(var i = 0; i < hostiles.length; i++) {
+        if(creepHasActiveDangerPart(hostiles[i])) {
+            return true;
+        }
+    }
+
+    return false;
 }
 
 function roomHasInvaderCore(room) {
@@ -368,16 +403,17 @@ function roomHasInvaderCore(room) {
     return invaderCores.length > 0;
 }
 
-function markHostileRoom(roomName, reason) {
+function markHostileRoom(roomName, reason, ttl) {
     if(!roomName) {
         return;
     }
 
     var scoreMemory = ensureScoreMemory();
+    var duration = typeof ttl === 'number' && ttl > 0 ? ttl : HOSTILE_CONTROLLER_TTL;
 
     scoreMemory.hostileRooms[roomName] = {
         reason: reason || 'hostile',
-        until: Game.time + HOSTILE_ROOM_TTL
+        until: Game.time + duration
     };
 }
 
@@ -570,10 +606,10 @@ function findScoreObjectsUncached(room) {
 }
 
 function rememberVisibleScores(room, scanner) {
-    var hostileReason = room ? getHostileRoomReason(room) : null;
+    var hostileThreat = room ? getHostileRoomThreat(room) : null;
 
-    if(room && hostileReason) {
-        markHostileRoom(room.name, hostileReason);
+    if(room && hostileThreat) {
+        markHostileRoom(room.name, hostileThreat.reason, hostileThreat.ttl);
     }
 
     return findScoreObjects(room);
