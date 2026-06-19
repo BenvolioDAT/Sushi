@@ -1054,6 +1054,13 @@ function deliverRemoteEnergy(creep) {
     var target = RemotePlanner.getHomeDeliveryTarget(creep);
 
     if(!target) {
+        /*
+         * Remote Freighters use the same spawn overflow pile as local
+         * Freighters when normal home delivery targets cannot receive energy.
+         */
+        if(deliverToSpawnStockpile(creep) && creep.store[RESOURCE_ENERGY] === 0) {
+            RemotePlanner.clearRemoteFreighterMemory(creep);
+        }
         return;
     }
 
@@ -1378,10 +1385,11 @@ function deliverToSpawnStockpile(creep) {
         return false;
     }
 
-    if(creep.pos.isEqualTo(stockpilePosition)) {
+    if(creep.pos.getRangeTo(stockpilePosition) <= 1) {
         /*
          * Intentional controlled overflow: Freighters drop here so Foreman,
          * Artificer, and Tech can consume the spawn-side stockpile later.
+         * Dropping within range 1 prevents exact-tile traffic jams.
          */
         if(creep.drop(RESOURCE_ENERGY) === OK) {
             clearPickupMemory(creep);
@@ -1391,7 +1399,7 @@ function deliverToSpawnStockpile(creep) {
     }
 
     travel.move(creep, stockpilePosition, {
-        range: 0,
+        range: 1,
         visualizePathStyle: {
             stroke: '#ffffff'
         }
