@@ -1,3 +1,6 @@
+var cpuStatusUtility = require('CPU.Status');
+var scoreSeason = require('Season.Score');
+
 var COLORS = {
     background: '#111111',
     border: '#00ffaa',
@@ -803,10 +806,11 @@ function drawGlobalPanel(visual, ownedRoomCount, totalCreeps) {
     var y = 1;
     var width = 48;
     var height = 2;
-    var cpuUsed = Game.cpu && Game.cpu.getUsed ? Game.cpu.getUsed() : 0;
-    var cpuLimit = Game.cpu ? safeNumber(Game.cpu.limit) : 0;
-    var tickLimit = Game.cpu ? safeNumber(Game.cpu.tickLimit) : 0;
-    var bucket = Game.cpu ? safeNumber(Game.cpu.bucket) : 0;
+    var cpuStatus = cpuStatusUtility.getCpuStatus();
+    var scoreStats = scoreSeason.getStats();
+    var cpuUsed = cpuStatus.used;
+    var cpuLimit = cpuStatus.runtimeLimit;
+    var bucket = cpuStatus.bucket;
     var cpuColor = cpuLimit > 0 && cpuUsed > cpuLimit ? COLORS.danger :
         cpuLimit > 0 && cpuUsed > cpuLimit * 0.75 ? COLORS.warning : COLORS.good;
     var bucketColor = bucket < 3000 ? COLORS.danger : bucket < 8000 ? COLORS.warning : COLORS.good;
@@ -815,9 +819,10 @@ function drawGlobalPanel(visual, ownedRoomCount, totalCreeps) {
     drawText(visual, 'SUSHI', x, y + 0.35, COLORS.title, 0.72);
     drawText(visual, 'Tick ' + Game.time, x + 4.2, y + 0.35, COLORS.text, 0.6);
     drawText(visual, 'CPU ' + round(cpuUsed, 1) + '/' + compactNumber(cpuLimit), x + 10.1, y + 0.35, cpuColor, 0.6);
-    drawText(visual, 'TickLimit ' + compactNumber(tickLimit), x + 18.2, y + 0.35, COLORS.text, 0.6);
-    drawText(visual, 'Bucket ' + compactNumber(bucket), x + 28.2, y + 0.35, bucketColor, 0.6);
-    drawText(visual, 'Rooms ' + ownedRoomCount, x + 37.2, y + 0.35, COLORS.text, 0.6);
+    drawText(visual, cpuStatus.mode.toUpperCase(), x + 19, y + 0.35, cpuColor, 0.6);
+    drawText(visual, 'Bucket ' + compactNumber(bucket), x + 24.2, y + 0.35, bucketColor, 0.6);
+    drawText(visual, 'Scores ' + scoreStats.liveTargets, x + 33, y + 0.35, scoreStats.liveTargets > 0 ? COLORS.good : COLORS.muted, 0.6);
+    drawText(visual, 'Rooms ' + ownedRoomCount, x + 38.2, y + 0.35, COLORS.text, 0.6);
     drawText(visual, 'Creeps ' + totalCreeps, x + 43, y + 0.35, COLORS.text, 0.6);
 }
 
@@ -826,7 +831,7 @@ function drawRoomPanel(visual, room, sourceStats, remoteStats, roomCreeps) {
     var y = 3.7;
     var width = 18;
     var showRoleCounts = Memory.settings && Memory.settings.dashboardShowRoleCounts === true;
-    var height = showRoleCounts ? 15.7 : 13.6;
+    var height = showRoleCounts ? 17.1 : 15;
     var controller = room.controller;
     var roomMemory = Memory.rooms && Memory.rooms[room.name];
     var queue = getSpawnQueueInfo(room.name);
@@ -847,6 +852,12 @@ function drawRoomPanel(visual, room, sourceStats, remoteStats, roomCreeps) {
         safeNumber(roomMemory.techLivingWork) + '/' + safeNumber(roomMemory.techDesiredWork) :
         '-/-';
     var techQueuedWork = hasTechWork ? safeNumber(roomMemory.techQueuedWork) : 0;
+    var techCpuMultiplier = roomMemory ?
+        safeNumber(roomMemory.techCpuMultiplier) : 1;
+    var scoreRunnerLiving = roomMemory ?
+        safeNumber(roomMemory.scoreRunnerLiving) : roles.ScoreRunner;
+    var scoreRunnerDesired = roomMemory ?
+        safeNumber(roomMemory.scoreRunnerDesired) : 0;
     var hasArtificerWork = roomMemory &&
         typeof roomMemory.artificerDesiredWork === 'number';
     var artificerWorkText = hasArtificerWork ?
@@ -918,10 +929,20 @@ function drawRoomPanel(visual, room, sourceStats, remoteStats, roomCreeps) {
     rowY += LINE_HEIGHT;
     drawText(
         visual,
-        'Tech W ' + techWorkText + (techQueuedWork > 0 ? ' +' + techQueuedWork + 'q' : ''),
+        'Tech W ' + techWorkText + (techQueuedWork > 0 ? ' +' + techQueuedWork + 'q' : '') +
+            ' x' + round(techCpuMultiplier || 1, 2),
         x,
         rowY,
         hasTechWork ? COLORS.text : COLORS.muted
+    );
+    rowY += LINE_HEIGHT;
+    drawText(
+        visual,
+        'ScoreRunner ' + scoreRunnerLiving + '/' + scoreRunnerDesired +
+            ' targets ' + safeNumber(roomMemory && roomMemory.scoreRunnerKnownTargets),
+        x,
+        rowY,
+        scoreRunnerDesired > 0 ? COLORS.good : COLORS.muted
     );
     rowY += LINE_HEIGHT;
     drawText(

@@ -29,6 +29,7 @@ var PlannerBrain = require('Planner.Brain');
 var RoadPlanner = require('Planner.Roads');
 var Dashboard = require('Visual.Dashboard');
 var StructurePlannerVisual = require('Visual.Planner.Structures');
+var scoreSeason = require('Season.Score');
 
 /*
  * Harabi-style traffic movement is initialized once when this global is loaded.
@@ -327,6 +328,7 @@ module.exports.loop = function () {
      * reused by roles later in this same tick.
      */
     travelUtility.cleanupRouteCaches();
+    scoreSeason.maintain();
 
     ensureStructurePlannerSetting();
     maybeGeneratePixel();
@@ -487,6 +489,19 @@ module.exports.loop = function () {
         if(creep.memory.role == 'Cleric') {
             roleCleric.run(creep);
         }
+    }
+
+    /*
+     * Owned rooms, visible remotes, Scouts, and ScoreRunners all use the same
+     * per-tick scan cache. This loop makes incidental vision useful without
+     * multiplying room.find(FIND_SCORES) calls by the number of creeps.
+     */
+    for (var scoreRoomName in Game.rooms) {
+        scoreSeason.reportVisibleRoom(
+            Game.rooms[scoreRoomName],
+            'main',
+            false
+        );
     }
 
     runTrafficManagerForVisibleRooms();

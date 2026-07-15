@@ -1,1478 +1,407 @@
-var travel = require('utility.Travel.Creep');
-
-var SCORE_SCAN_MEMORY_KEY = 'scoreSeason';
-var RUNNER_INTENT_TTL = 75;
-var HOSTILE_ROOM_TTL = 2000;
-var HOSTILE_CONTROLLER_TTL = 2000;
-var HOSTILE_INVADER_CORE_TTL = 2000;
-var HOSTILE_ARMED_CREEP_TTL = 400;
-var TARGET_MIN_TTL = 50;
-var TARGET_MAX_TTL = 150;
-var LOOK_FALLBACK_CPU_BUFFER = 5;
-var RECENT_ROOM_TTL = 150;
-var RECENT_ROOM_LIMIT = 8;
-var INTENT_ROOM_PENALTY = 100000;
-var SCORE_STUCK_HOME_TICKS = 2;
-var SCORE_STUCK_REMOTE_TICKS = 4;
-var SCORE_STUCK_AVOID_TTL = 25;
 /*
- * A room intent means a live ScoreRunner already picked that room.
- * Keeping this at 1 makes runners spread out before they share a room.
- */
-var MAX_RUNNERS_PER_SCORE_ROOM = 1;
-
-var lastMaintenanceTick = -1;
-var scoreScanCacheTick = -1;
-var scoreScanCache = {};
-
-cleanHeavyScoreSeasonMemory();
-
-/*
- * Low-memory Season 10 ScoreRunner.
+ * Dedicated Season score collector.
  *
- * Until Sushi has Observer support, a runner only knows about Scores in the
- * room it can currently see. It does not remember remote Score objects and it
- * does not build a large exploration plan.
+ * Score objects are collected by occupying their exact tile. This role never
+ * calls pickup, harvest, withdraw, or transfer; its MOVE-only body and range-0
+ * Traveler request are intentional.
  */
-function run(creep) {
-    if(!creep || creep.spawning || !creep.room) {
+
+var travel = require('utility.Travel.Creep');
+var scoreSeason = require('Season.Score');
+
+var LOCAL_STUCK_TICKS = 6;
+var REMOTE_STUCK_TICKS = 10;
+var FRIENDLY_BLOCK_STUCK_TICKS = 12;
+var FAILED_TARGET_TTL = 25;
+var EXPLORE_ROOM_TTL = 150;
+
+function clearTravelState(creep) {
+    if (!creep || !creep.memory) {
+        return;
+    }
+    if (typeof travel.clearTravelMemory === 'function') {
+        travel.clearTravelMemory(creep);
+    }
+    delete creep.memory._trav;
+    delete creep.memory._move;
+    delete creep.memory._sushiRoute;
+}
+
+function clearTarget(creep, releaseClaim, removeTarget) {
+    if (!creep || !creep.memory) {
         return;
     }
 
-    ensureScoreMemory();
-    maintainScoreSeasonMemory();
-    clearOldCreepScoreMemory(creep);
-    maintainCreepRoomHistory(creep);
-    updateScoreRunnerStuckState(creep);
-
-    var hostileThreat = getHostileRoomThreat(creep.room);
-
-    if(hostileThreat) {
-        markHostileRoom(creep.room.name, hostileThreat.reason, hostileThreat.ttl);
-        clearCreepScoreTarget(creep);
-        setScoreRunnerDebug(creep, 'hostileFlee', hostileThreat.reason);
-        moveOutOfHostileRoom(creep);
-        return;
-    }
-
-    if(isHostileRoomBlacklisted(creep.room.name)) {
-        clearCreepScoreTarget(creep);
-        setScoreRunnerDebug(creep, 'hostileFlee', 'blacklisted');
-        moveOutOfHostileRoom(creep);
-        return;
-    }
-
-    if(!isRoomUsableForScore(creep.room.name)) {
-        clearCreepScoreTarget(creep);
-        setScoreRunnerDebug(creep, 'hostileFlee', 'unusableRoom');
-        moveOutOfHostileRoom(creep);
-        return;
-    }
-
-    var target = getBestScoreTarget(creep);
-
-    if(target) {
-        moveToScore(creep, target);
-        return;
-    }
-
-    idleScoreRunner(creep, true);
-}
-
-function isPlainObject(value) {
-    return !!value && typeof value === 'object' && !Array.isArray(value);
-}
-
-function cleanHeavyScoreSeasonMemory() {
-    if(typeof Memory === 'undefined') {
-        return;
-    }
-
-    if(!isPlainObject(Memory[SCORE_SCAN_MEMORY_KEY])) {
-        return;
-    }
-
-    var scoreMemory = Memory[SCORE_SCAN_MEMORY_KEY];
-
-    delete scoreMemory.knownScores;
-    delete scoreMemory.rooms;
-    delete scoreMemory.exploreRooms;
-    delete scoreMemory.lastVisibleScanTick;
-    delete scoreMemory.lastMaintenanceTick;
-
-    for(var key in scoreMemory) {
-        if(!scoreMemory.hasOwnProperty(key)) {
-            continue;
-        }
-
-        if(key !== 'hostileRooms' && key !== 'runnerIntents' && key !== 'observer') {
-            delete scoreMemory[key];
-        }
-    }
-}
-
-function ensureScoreMemory() {
-    if(!isPlainObject(Memory[SCORE_SCAN_MEMORY_KEY])) {
-        Memory[SCORE_SCAN_MEMORY_KEY] = {};
-    }
-
-    cleanHeavyScoreSeasonMemory();
-
-    var scoreMemory = Memory[SCORE_SCAN_MEMORY_KEY];
-
-    if(!isPlainObject(scoreMemory.hostileRooms)) {
-        scoreMemory.hostileRooms = {};
-    }
-
-    if(!isPlainObject(scoreMemory.runnerIntents)) {
-        scoreMemory.runnerIntents = {};
-    }
-
-    if(!isPlainObject(scoreMemory.observer)) {
-        scoreMemory.observer = {};
-    }
-
-    /*
-     * Future Observer mode can write short-lived records to:
-     * Memory.scoreSeason.observer.liveScores
-     *
-     * This role intentionally does not create or consume that data yet.
-     */
-
-    return scoreMemory;
-}
-
-function maintainScoreSeasonMemory() {
-    if(lastMaintenanceTick === Game.time) {
-        return;
-    }
-
-    ensureScoreMemory();
-    cleanRunnerIntents();
-    cleanExpiredHostileRooms();
-    cleanObserverLiveScores();
-
-    lastMaintenanceTick = Game.time;
-}
-
-function cleanRunnerIntents() {
-    var scoreMemory = ensureScoreMemory();
-    var intents = scoreMemory.runnerIntents;
-
-    for(var creepName in intents) {
-        if(!intents.hasOwnProperty(creepName)) {
-            continue;
-        }
-
-        var intent = intents[creepName];
-
-        if(!intent || !Game.creeps[creepName] || !intent.until || intent.until <= Game.time) {
-            delete intents[creepName];
-        }
-    }
-}
-
-function cleanExpiredHostileRooms() {
-    var scoreMemory = ensureScoreMemory();
-    var hostileRooms = scoreMemory.hostileRooms;
-
-    for(var roomName in hostileRooms) {
-        if(!hostileRooms.hasOwnProperty(roomName)) {
-            continue;
-        }
-
-        var record = hostileRooms[roomName];
-
-        if(record && record.reason === 'enemyCreeps') {
-            delete hostileRooms[roomName];
-            continue;
-        }
-
-        if(!record || !record.until || record.until <= Game.time) {
-            delete hostileRooms[roomName];
-        }
-    }
-}
-
-function cleanObserverLiveScores() {
-    var scoreMemory = ensureScoreMemory();
-    var observer = scoreMemory.observer;
-
-    if(!isPlainObject(observer.liveScores)) {
-        return;
-    }
-
-    for(var scoreId in observer.liveScores) {
-        if(!observer.liveScores.hasOwnProperty(scoreId)) {
-            continue;
-        }
-
-        var record = observer.liveScores[scoreId];
-        var until = record && (record.until || record.expires || record.expire);
-
-        if(!record || !until || until <= Game.time) {
-            delete observer.liveScores[scoreId];
-        }
-    }
-}
-
-function clearOldCreepScoreMemory(creep) {
-    if(!creep || !creep.memory) {
-        return;
-    }
-
-    delete creep.memory.scoreExploreRoom;
-    delete creep.memory.scoreExploreUntil;
-    delete creep.memory.scoreExploreSource;
-    delete creep.memory.scoreExploreHome;
-
-    if(creep.memory.scoreAvoidUntil && creep.memory.scoreAvoidUntil <= Game.time) {
-        delete creep.memory.scoreAvoidRoom;
-        delete creep.memory.scoreAvoidUntil;
-    }
-}
-
-function pruneRecentScoreRooms(creep) {
-    if(!creep || !creep.memory) {
-        return;
-    }
-
-    if(!Array.isArray(creep.memory.scoreRecentRooms)) {
-        creep.memory.scoreRecentRooms = [];
-        return;
-    }
-
-    var pruned = [];
-
-    for(var i = creep.memory.scoreRecentRooms.length - 1; i >= 0; i--) {
-        var record = creep.memory.scoreRecentRooms[i];
-
-        if(!record || !record.roomName || !record.tick) {
-            continue;
-        }
-
-        if(record.tick < Game.time - RECENT_ROOM_TTL) {
-            continue;
-        }
-
-        pruned.unshift({
-            roomName: record.roomName,
-            tick: record.tick
-        });
-    }
-
-    while(pruned.length > RECENT_ROOM_LIMIT) {
-        pruned.shift();
-    }
-
-    creep.memory.scoreRecentRooms = pruned;
-}
-
-function rememberRecentScoreRoom(creep, roomName) {
-    if(!creep || !creep.memory || !roomName) {
-        return;
-    }
-
-    pruneRecentScoreRooms(creep);
-
-    var recentRooms = creep.memory.scoreRecentRooms;
-
-    for(var i = recentRooms.length - 1; i >= 0; i--) {
-        if(recentRooms[i].roomName === roomName) {
-            recentRooms.splice(i, 1);
-        }
-    }
-
-    recentRooms.push({
-        roomName: roomName,
-        tick: Game.time
-    });
-
-    while(recentRooms.length > RECENT_ROOM_LIMIT) {
-        recentRooms.shift();
-    }
-}
-
-function maintainCreepRoomHistory(creep) {
-    if(!creep || !creep.memory || !creep.room) {
-        return;
-    }
-
-    pruneRecentScoreRooms(creep);
-
-    if(!creep.memory.scoreCurrentRoom) {
-        creep.memory.scoreCurrentRoom = creep.room.name;
-        return;
-    }
-
-    if(creep.memory.scoreCurrentRoom === creep.room.name) {
-        return;
-    }
-
-    rememberRecentScoreRoom(creep, creep.memory.scoreCurrentRoom);
-    creep.memory.scoreLastRoom = creep.memory.scoreCurrentRoom;
-    creep.memory.scoreCurrentRoom = creep.room.name;
-}
-
-function tryRoomFind(room, findConstant, options) {
-    if(!room || typeof room.find !== 'function' || findConstant === undefined) {
-        return [];
-    }
-
-    try {
-        return room.find(findConstant, options);
-    } catch(error) {
-        return [];
-    }
-}
-
-function getHostileRoomThreat(room) {
-    if(!room) {
-        return null;
-    }
-
-    if(
-        room.controller &&
-        room.controller.owner &&
-        !room.controller.my
-    ) {
-        return {
-            reason: 'enemyController',
-            ttl: HOSTILE_CONTROLLER_TTL
-        };
-    }
-
-    if(roomHasInvaderCore(room)) {
-        return {
-            reason: 'invaderCore',
-            ttl: HOSTILE_INVADER_CORE_TTL
-        };
-    }
-
-    if(hasArmedHostileCreeps(room)) {
-        return {
-            reason: 'armedHostileCreeps',
-            ttl: HOSTILE_ARMED_CREEP_TTL
-        };
-    }
-
-    return null;
-}
-
-function creepHasActiveDangerPart(creep) {
-    if(!creep || typeof creep.getActiveBodyparts !== 'function') {
-        return false;
-    }
-
-    return creep.getActiveBodyparts(ATTACK) > 0 ||
-        creep.getActiveBodyparts(RANGED_ATTACK) > 0 ||
-        creep.getActiveBodyparts(HEAL) > 0;
-}
-
-function hasArmedHostileCreeps(room) {
-    if(typeof FIND_HOSTILE_CREEPS === 'undefined') {
-        return false;
-    }
-
-    var hostiles = tryRoomFind(room, FIND_HOSTILE_CREEPS);
-
-    for(var i = 0; i < hostiles.length; i++) {
-        if(creepHasActiveDangerPart(hostiles[i])) {
-            return true;
-        }
-    }
-
-    return false;
-}
-
-function roomHasInvaderCore(room) {
-    if(
-        !room ||
-        typeof FIND_HOSTILE_STRUCTURES === 'undefined' ||
-        typeof STRUCTURE_INVADER_CORE === 'undefined'
-    ) {
-        return false;
-    }
-
-    var invaderCores = tryRoomFind(room, FIND_HOSTILE_STRUCTURES, {
-        filter: function(structure) {
-            return structure.structureType === STRUCTURE_INVADER_CORE;
-        }
-    });
-
-    return invaderCores.length > 0;
-}
-
-function markHostileRoom(roomName, reason, ttl) {
-    if(!roomName) {
-        return;
-    }
-
-    var scoreMemory = ensureScoreMemory();
-    var duration = typeof ttl === 'number' && ttl > 0 ? ttl : HOSTILE_CONTROLLER_TTL;
-
-    scoreMemory.hostileRooms[roomName] = {
-        reason: reason || 'hostile',
-        until: Game.time + duration
-    };
-}
-
-function isHostileRoomBlacklisted(roomName) {
-    if(!roomName) {
-        return false;
-    }
-
-    var scoreMemory = ensureScoreMemory();
-    var record = scoreMemory.hostileRooms[roomName];
-
-    if(record && record.until > Game.time) {
-        return true;
-    }
-
-    if(record) {
-        delete scoreMemory.hostileRooms[roomName];
-    }
-
-    return false;
-}
-
-function isRoomUsableForScore(roomName) {
-    if(!roomName || isHostileRoomBlacklisted(roomName)) {
-        return false;
-    }
-
-    if(Game.map && typeof Game.map.getRoomStatus === 'function') {
-        var status = Game.map.getRoomStatus(roomName);
-
-        if(status && status.status && status.status !== 'normal') {
-            return false;
-        }
-    }
-
-    return true;
-}
-
-function isScoreLikeObject(target) {
-    if(!target || !target.id || !target.pos) {
-        return false;
-    }
-
-    return typeof target.pos.x === 'number' &&
-        typeof target.pos.y === 'number' &&
-        typeof target.pos.roomName === 'string';
-}
-
-function addUniqueScore(scores, seenIds, target) {
-    if(!isScoreLikeObject(target)) {
-        return;
-    }
-
-    if(seenIds[target.id]) {
-        return;
-    }
-
-    seenIds[target.id] = true;
-    scores.push(target);
-}
-
-function addScoreList(scores, seenIds, list) {
-    if(!list || list.length === 0) {
-        return;
-    }
-
-    for(var i = 0; i < list.length; i++) {
-        addUniqueScore(scores, seenIds, list[i]);
-    }
-}
-
-function getScoreFromLookEntry(lookEntry) {
-    if(!lookEntry) {
-        return null;
-    }
-
-    if(typeof LOOK_SCORE !== 'undefined' && lookEntry.type === LOOK_SCORE) {
-        return lookEntry[LOOK_SCORE] || lookEntry.score || null;
-    }
-
-    if(lookEntry.score && isScoreLikeObject(lookEntry.score)) {
-        return lookEntry.score;
-    }
-
-    return null;
-}
-
-function findScoresByLook(room) {
-    var scores = [];
-
-    if(
-        !room ||
-        typeof LOOK_SCORE === 'undefined' ||
-        typeof room.lookAtArea !== 'function'
-    ) {
-        return scores;
-    }
-
-    var seenIds = {};
-    var lookEntries;
-
-    try {
-        lookEntries = room.lookAtArea(0, 0, 49, 49, true);
-    } catch(error) {
-        return scores;
-    }
-
-    if(!lookEntries) {
-        return scores;
-    }
-
-    for(var i = 0; i < lookEntries.length; i++) {
-        addUniqueScore(scores, seenIds, getScoreFromLookEntry(lookEntries[i]));
-    }
-
-    return scores;
-}
-
-function shouldSkipLookFallback() {
-    if(
-        !Game.cpu ||
-        typeof Game.cpu.getUsed !== 'function'
-    ) {
-        return false;
-    }
-
-    var cpuCeiling = null;
-
-    if(typeof Game.cpu.limit === 'number' && Game.cpu.limit > 0) {
-        cpuCeiling = Game.cpu.limit;
-    }
-
-    if(typeof Game.cpu.tickLimit === 'number' && Game.cpu.tickLimit > 0) {
-        cpuCeiling = cpuCeiling === null ?
-            Game.cpu.tickLimit :
-            Math.min(cpuCeiling, Game.cpu.tickLimit);
-    }
-
-    if(cpuCeiling === null) {
-        return false;
-    }
-
-    return Game.cpu.getUsed() >= cpuCeiling - LOOK_FALLBACK_CPU_BUFFER;
-}
-
-function getCachedRoomScores(room) {
-    if(!room) {
-        return [];
-    }
-
-    if(scoreScanCacheTick !== Game.time) {
-        scoreScanCache = {};
-        scoreScanCacheTick = Game.time;
-    }
-
-    if(scoreScanCache[room.name]) {
-        return scoreScanCache[room.name];
-    }
-
-    scoreScanCache[room.name] = findScoreObjectsUncached(room);
-
-    return scoreScanCache[room.name];
-}
-
-function findScoreObjects(room) {
-    return getCachedRoomScores(room);
-}
-
-function findScoreObjectsUncached(room) {
-    var scores = [];
-    var seenIds = {};
-
-    if(!room) {
-        return scores;
-    }
-
-    if(typeof FIND_SCORES !== 'undefined') {
-        addScoreList(scores, seenIds, tryRoomFind(room, FIND_SCORES));
-    }
-
-    if(typeof FIND_SCORE !== 'undefined') {
-        addScoreList(scores, seenIds, tryRoomFind(room, FIND_SCORE));
-    }
-
-    if(scores.length === 0 && !shouldSkipLookFallback()) {
-        addScoreList(scores, seenIds, findScoresByLook(room));
-    }
-
-    return scores;
-}
-
-function rememberVisibleScores(room, scanner) {
-    var hostileThreat = room ? getHostileRoomThreat(room) : null;
-
-    if(room && hostileThreat) {
-        markHostileRoom(room.name, hostileThreat.reason, hostileThreat.ttl);
-    }
-
-    return findScoreObjects(room);
-}
-
-function getScoreObjectValue(target) {
-    if(target && typeof target.score === 'number') {
-        return target.score;
-    }
-
-    return 0;
-}
-
-function getBestScoreTarget(creep) {
-    if(!creep || !creep.room) {
-        return null;
-    }
-
-    var scores = findScoreObjects(creep.room);
-    var best = null;
-    var bestRank = 999999;
-
-    for(var i = 0; i < scores.length; i++) {
-        var target = scores[i];
-
-        if(!isScoreLikeObject(target) || target.pos.roomName !== creep.room.name) {
-            continue;
-        }
-
-        var range = creep.pos.getRangeTo(target.pos);
-        var value = getScoreObjectValue(target);
-        var rank = range - Math.min(value, 100) / 100;
-
-        if(rank < bestRank) {
-            best = target;
-            bestRank = rank;
-        }
-    }
-
-    return best;
-}
-
-function clearCreepScoreTarget(creep) {
-    if(!creep || !creep.memory) {
-        return;
+    var targetId = creep.memory.scoreTargetId;
+    if (targetId && releaseClaim) {
+        scoreSeason.releaseTarget(targetId, creep.name, removeTarget === true);
     }
 
     delete creep.memory.scoreTargetId;
     delete creep.memory.scoreTargetRoom;
-    delete creep.memory.scoreTargetUntil;
+    delete creep.memory.scoreTargetDecayTime;
 }
 
-function clearCreepScoreId(creep) {
-    if(!creep || !creep.memory) {
-        return;
-    }
-
-    delete creep.memory.scoreTargetId;
-}
-
-function setScoreRunnerDebug(creep, reason, detail) {
-    if(!creep || !creep.memory) {
-        return;
-    }
-
+function setDebug(creep, state, detail) {
     creep.memory.scoreDebug = {
         tick: Game.time,
-        room: creep.room ? creep.room.name : null,
-        reason: reason,
+        state: state,
         detail: detail || null,
-        targetRoom: creep.memory.scoreTargetRoom || null,
-        targetUntil: creep.memory.scoreTargetUntil || null
+        targetId: creep.memory.scoreTargetId || null,
+        targetRoom: creep.memory.scoreTargetRoom || null
     };
 }
 
-function rememberCreepScoreTarget(creep, target) {
-    if(!creep || !creep.memory || !target || !target.id || !target.pos) {
-        return;
-    }
-
-    creep.memory.scoreTargetId = target.id;
-    creep.memory.scoreTargetRoom = target.pos.roomName;
-    creep.memory.scoreTargetUntil = Game.time + RUNNER_INTENT_TTL;
+function isOnExit(pos) {
+    return pos && (pos.x === 0 || pos.x === 49 || pos.y === 0 || pos.y === 49);
 }
 
-function writeRunnerIntent(creep, purpose, targetRoom) {
-    if(!creep || !creep.name) {
-        return;
-    }
-
-    var scoreMemory = ensureScoreMemory();
-
-    scoreMemory.runnerIntents[creep.name] = {
-        purpose: purpose || 'room',
-        roomName: targetRoom || (creep.room && creep.room.name) || null,
-        until: Game.time + RUNNER_INTENT_TTL
-    };
-}
-
-function countRoomIntents(roomName, ignoreCreepName) {
-    var count = 0;
-    var scoreMemory = ensureScoreMemory();
-    var intents = scoreMemory.runnerIntents;
-
-    for(var creepName in intents) {
-        if(!intents.hasOwnProperty(creepName)) {
-            continue;
-        }
-
-        if(ignoreCreepName && creepName === ignoreCreepName) {
-            continue;
-        }
-
-        var intent = intents[creepName];
-
-        if(intent && intent.until > Game.time && intent.roomName === roomName) {
-            count++;
-        }
-    }
-
-    return count;
-}
-
-function isRoomAtRunnerIntentCap(roomName, ignoreCreepName) {
-    if(MAX_RUNNERS_PER_SCORE_ROOM <= 0) {
-        return false;
-    }
-
-    return countRoomIntents(roomName, ignoreCreepName) >= MAX_RUNNERS_PER_SCORE_ROOM;
-}
-
-function moveToScore(creep, target) {
-    if(!creep || !target || !target.pos) {
-        setScoreRunnerDebug(creep, 'invalidScoreTarget', 'missingTarget');
-        clearCreepScoreTarget(creep);
-        return ERR_INVALID_TARGET;
-    }
-
-    if(target.pos.roomName !== creep.room.name || !isRoomUsableForScore(target.pos.roomName)) {
-        setScoreRunnerDebug(creep, 'invalidScoreTarget', target.pos.roomName);
-        clearCreepScoreTarget(creep);
-        return ERR_INVALID_TARGET;
-    }
-
-    rememberCreepScoreTarget(creep, target);
-    writeRunnerIntent(creep, 'score', target.pos.roomName);
-    setScoreRunnerDebug(creep, 'moveToScore', target.id);
-    drawScoreVisual(creep, target);
-
-    if(creep.pos.isEqualTo(target.pos)) {
-        clearCreepScoreTarget(creep);
-        return OK;
-    }
-
-    var result = travel.move(creep, target.pos, {
-        range: 0,
-        maxRooms: 1,
-        reusePath: 10,
-        visualizePathStyle: {
-            stroke: '#55ddff'
-        }
-    });
-
-    if(result === ERR_NO_PATH || result === ERR_INVALID_TARGET || result === ERR_INVALID_ARGS) {
-        setScoreRunnerDebug(creep, 'scoreMoveFailed', result);
-        clearCreepScoreTarget(creep);
-    }
-
-    return result;
-}
-
-function getHomeRoomName(creep) {
-    if(!creep || !creep.memory) {
-        return creep && creep.room ? creep.room.name : null;
-    }
-
-    return creep.memory.homeRoom || creep.memory.spawnRoom || (creep.room && creep.room.name) || null;
-}
-
-function isInHomeRoom(creep) {
-    return creep &&
-        creep.room &&
-        getHomeRoomName(creep) === creep.room.name;
-}
-
-function clearScoreRunnerMovement(creep) {
-    if(!creep || !creep.memory) {
-        return;
-    }
-
-    if(travel.clearTravelMemory) {
-        travel.clearTravelMemory(creep);
-        return;
-    }
-
-    delete creep.memory._trav;
-    delete creep.memory._move;
-    delete creep.memory._sushiRoute;
-    delete creep.memory._sushiMoveTick;
-}
-
-function rememberFailedScoreRoom(creep, roomName) {
-    if(!creep || !creep.memory || !roomName) {
-        return;
-    }
-
-    creep.memory.scoreAvoidRoom = roomName;
-    creep.memory.scoreAvoidUntil = Game.time + SCORE_STUCK_AVOID_TTL;
-}
-
-function isTemporarilyAvoidedScoreRoom(creep, roomName) {
-    if(!creep || !creep.memory || !roomName) {
-        return false;
-    }
-
-    if(
-        creep.memory.scoreAvoidRoom === roomName &&
-        creep.memory.scoreAvoidUntil &&
-        creep.memory.scoreAvoidUntil > Game.time
-    ) {
-        return true;
-    }
-
-    if(creep.memory.scoreAvoidUntil && creep.memory.scoreAvoidUntil <= Game.time) {
-        delete creep.memory.scoreAvoidRoom;
-        delete creep.memory.scoreAvoidUntil;
-    }
-
-    return false;
-}
-
-function isStandingOnVisibleScore(creep) {
-    var target = getBestScoreTarget(creep);
-
-    return !!(
-        target &&
-        target.pos &&
-        creep.pos &&
-        creep.pos.isEqualTo(target.pos)
-    );
-}
-
-function updateScoreRunnerStuckState(creep) {
-    if(!creep || !creep.memory || !creep.pos) {
-        return false;
-    }
-
-    var memory = creep.memory;
-    var samePosition =
-        memory.scoreLastX === creep.pos.x &&
-        memory.scoreLastY === creep.pos.y &&
-        memory.scoreLastPosRoom === creep.pos.roomName;
-
-    memory.scoreLastX = creep.pos.x;
-    memory.scoreLastY = creep.pos.y;
-    memory.scoreLastPosRoom = creep.pos.roomName;
-
-    if(creep.fatigue > 0) {
-        memory.scoreStillTicks = 0;
-        return false;
-    }
-
-    if(isStandingOnVisibleScore(creep)) {
-        memory.scoreStillTicks = 0;
-        return false;
-    }
-
-    if(!samePosition) {
-        memory.scoreStillTicks = 0;
-        return false;
-    }
-
-    memory.scoreStillTicks = (memory.scoreStillTicks || 0) + 1;
-
-    var limit = isInHomeRoom(creep) ?
-        SCORE_STUCK_HOME_TICKS :
-        SCORE_STUCK_REMOTE_TICKS;
-
-    if(memory.scoreStillTicks < limit) {
-        return false;
-    }
-
-    var failedRoom = memory.scoreTargetRoom || null;
-
-    if(failedRoom && failedRoom !== creep.room.name) {
-        rememberFailedScoreRoom(creep, failedRoom);
-    }
-
-    clearScoreRunnerMovement(creep);
-    clearCreepScoreTarget(creep);
-
-    memory.scoreStillTicks = 0;
-
-    setScoreRunnerDebug(creep, 'stuckReset', failedRoom || 'samePosition');
-
-    return true;
-}
-
-function getStoredTargetRoom(creep) {
-    if(!creep || !creep.memory) {
-        return null;
-    }
-
-    var roomName = creep.memory.scoreTargetRoom;
-
-    if(!roomName || !creep.memory.scoreTargetUntil || creep.memory.scoreTargetUntil <= Game.time) {
-        clearCreepScoreTarget(creep);
-        writeRunnerIntent(creep, 'move', creep.room && creep.room.name);
-        return null;
-    }
-
-    if(!isRoomUsableForScore(roomName)) {
-        clearCreepScoreTarget(creep);
-        writeRunnerIntent(creep, 'move', creep.room && creep.room.name);
-        return null;
-    }
-
-    if(creep.room && !isExitRoom(creep.room.name, roomName)) {
-        clearCreepScoreTarget(creep);
-        writeRunnerIntent(creep, 'move', creep.room.name);
-        return null;
-    }
-
-    if(roomName === creep.room.name) {
-        clearCreepScoreTarget(creep);
-        writeRunnerIntent(creep, 'move', creep.room.name);
-        return null;
-    }
-
-    return roomName;
-}
-
-function rememberTargetRoom(creep, roomName) {
-    if(!creep || !creep.memory || !roomName) {
-        return;
-    }
-
-    clearCreepScoreId(creep);
-
-    creep.memory.scoreTargetRoom = roomName;
-    creep.memory.scoreTargetUntil = Game.time + getTargetRoomTtl(creep, roomName);
-
-    writeRunnerIntent(creep, 'room', roomName);
-}
-
-function getTargetRoomTtl(creep, roomName) {
-    var range = TARGET_MAX_TTL - TARGET_MIN_TTL + 1;
-    var hash = hashString((creep ? creep.name : '') + roomName + Game.time);
-
-    return TARGET_MIN_TTL + hash % range;
-}
-
-function hashString(value) {
-    var text = String(value || '');
-    var hash = 0;
-
-    for(var i = 0; i < text.length; i++) {
-        hash = (hash * 31 + text.charCodeAt(i)) % 100000;
-    }
-
-    return hash;
-}
-
-function addExitRooms(sourceRoom, rooms, seen) {
-    if(!sourceRoom || !Game.map || typeof Game.map.describeExits !== 'function') {
-        return;
-    }
-
-    var exits = Game.map.describeExits(sourceRoom);
-
-    if(!exits) {
-        return;
-    }
-
-    for(var direction in exits) {
-        if(!exits.hasOwnProperty(direction)) {
-            continue;
-        }
-
-        var roomName = exits[direction];
-
-        if(!roomName || seen[roomName]) {
-            continue;
-        }
-
-        seen[roomName] = true;
-        rooms.push(roomName);
-    }
-}
-
-function getExitRooms(sourceRoom) {
-    var rooms = [];
-    var seen = {};
-
-    addExitRooms(sourceRoom, rooms, seen);
-
-    return rooms;
-}
-
-function isExitRoom(sourceRoom, targetRoom) {
-    var rooms = getExitRooms(sourceRoom);
-
-    for(var i = 0; i < rooms.length; i++) {
-        if(rooms[i] === targetRoom) {
+function isStandingOnScore(creep) {
+    var scores = scoreSeason.getVisibleScores(creep.room, true);
+
+    for (var i = 0; i < scores.length; i++) {
+        var score = scores[i] && scores[i].pos ? scores[i] :
+            scores[i] && scores[i].score && scores[i].score.pos ? scores[i].score : null;
+        if (
+            score && score.pos &&
+            score.pos.x === creep.pos.x && score.pos.y === creep.pos.y
+        ) {
             return true;
         }
     }
-
     return false;
 }
 
-function getNearbyRooms(creep) {
-    var rooms = [];
-    var seen = {};
-
-    if(!creep || !creep.room) {
-        return rooms;
+function hasAdjacentFriendlyCreep(creep) {
+    if (typeof FIND_MY_CREEPS === 'undefined') {
+        return false;
     }
-
-    addExitRooms(creep.room.name, rooms, seen);
-
-    return rooms;
+    var nearby = creep.pos.findInRange(FIND_MY_CREEPS, 1);
+    return nearby && nearby.length > 1;
 }
 
-function getRoomChoiceRank(creep, roomName) {
-    return hashString(creep.name + ':' + roomName + ':' + Math.floor(Game.time / RUNNER_INTENT_TTL));
-}
+function updateStuckState(creep) {
+    var memory = creep.memory;
+    var samePosition = memory.scoreLastX === creep.pos.x &&
+        memory.scoreLastY === creep.pos.y &&
+        memory.scoreLastRoom === creep.pos.roomName;
 
-function getRecentRoomTick(creep, roomName) {
-    if(!creep || !creep.memory || !Array.isArray(creep.memory.scoreRecentRooms)) {
-        return 0;
+    memory.scoreLastX = creep.pos.x;
+    memory.scoreLastY = creep.pos.y;
+    memory.scoreLastRoom = creep.pos.roomName;
+
+    if (
+        !samePosition ||
+        creep.fatigue > 0 ||
+        isOnExit(creep.pos) ||
+        isStandingOnScore(creep)
+    ) {
+        memory.scoreStillTicks = 0;
+        return;
     }
 
-    for(var i = creep.memory.scoreRecentRooms.length - 1; i >= 0; i--) {
-        var record = creep.memory.scoreRecentRooms[i];
+    memory.scoreStillTicks = (memory.scoreStillTicks || 0) + 1;
+    var remote = memory.scoreTargetRoom &&
+        memory.scoreTargetRoom !== creep.room.name;
+    var limit = hasAdjacentFriendlyCreep(creep) ? FRIENDLY_BLOCK_STUCK_TICKS :
+        remote ? REMOTE_STUCK_TICKS : LOCAL_STUCK_TICKS;
 
-        if(record && record.roomName === roomName) {
-            return record.tick || 0;
-        }
+    if (memory.scoreStillTicks < limit) {
+        return;
     }
 
-    return 0;
+    if (memory.scoreTargetId) {
+        memory.scoreAvoidTargetId = memory.scoreTargetId;
+        memory.scoreAvoidTargetUntil = Game.time + FAILED_TARGET_TTL;
+    }
+    clearTarget(creep, true, false);
+    clearTravelState(creep);
+    memory.scoreStillTicks = 0;
+    setDebug(creep, 'stuckReset', remote ? 'remote travel' : 'local traffic');
 }
 
-function chooseRoomFromPass(creep, rooms, excludeLastRoom, excludeRecentRooms, avoidRunnerCap, avoidFailedRoom) {
-    if(!creep || !creep.memory) {
+function getRememberedTarget(creep) {
+    var targetId = creep.memory.scoreTargetId;
+    if (!targetId) {
         return null;
     }
 
-    var bestRoom = null;
-    var bestRank = null;
-
-    for(var i = 0; i < rooms.length; i++) {
-        var roomName = rooms[i];
-
-        if(roomName === creep.room.name || !isRoomUsableForScore(roomName)) {
-            continue;
-        }
-
-        if(excludeLastRoom && creep.memory.scoreLastRoom === roomName) {
-            continue;
-        }
-
-        if(excludeRecentRooms && getRecentRoomTick(creep, roomName)) {
-            continue;
-        }
-
-        if(avoidFailedRoom && isTemporarilyAvoidedScoreRoom(creep, roomName)) {
-            continue;
-        }
-
-        if(avoidRunnerCap && isRoomAtRunnerIntentCap(roomName)) {
-            continue;
-        }
-
-        var intentCount = countRoomIntents(roomName);
-        var rank = intentCount * INTENT_ROOM_PENALTY + getRoomChoiceRank(creep, roomName);
-
-        if(bestRank === null || rank < bestRank) {
-            bestRoom = roomName;
-            bestRank = rank;
-        }
+    var target = scoreSeason.getTarget(targetId);
+    if (
+        !target ||
+        target.decayTime <= Game.time ||
+        scoreSeason.isRoomUnsafe(target.roomName)
+    ) {
+        clearTarget(creep, true, !target || target.decayTime <= Game.time);
+        clearTravelState(creep);
+        return null;
     }
 
-    return bestRoom;
+    if (!scoreSeason.claimTarget(target.id, creep.name)) {
+        clearTarget(creep, false, false);
+        clearTravelState(creep);
+        return null;
+    }
+
+    return target;
 }
 
-function chooseNearbyRoom(creep) {
-    var rooms = getNearbyRooms(creep);
-    var bestRoom = null;
-
-    if(isInHomeRoom(creep)) {
-        bestRoom = chooseRoomFromPass(creep, rooms, true, true, false, true);
-
-        if(!bestRoom) {
-            bestRoom = chooseRoomFromPass(creep, rooms, true, false, false, true);
-        }
-
-        if(!bestRoom) {
-            bestRoom = chooseRoomFromPass(creep, rooms, false, false, false, true);
-        }
-    } else {
-        bestRoom = chooseRoomFromPass(creep, rooms, true, true, true, true);
-
-        if(!bestRoom) {
-            bestRoom = chooseRoomFromPass(creep, rooms, true, false, true, true);
-        }
-
-        if(!bestRoom) {
-            bestRoom = chooseRoomFromPass(creep, rooms, false, false, true, true);
-        }
+function chooseTarget(creep) {
+    if (
+        creep.memory.scoreAvoidTargetUntil &&
+        creep.memory.scoreAvoidTargetUntil <= Game.time
+    ) {
+        delete creep.memory.scoreAvoidTargetId;
+        delete creep.memory.scoreAvoidTargetUntil;
     }
 
-    if(bestRoom) {
-        rememberTargetRoom(creep, bestRoom);
+    var ranked = scoreSeason.getBestTarget(creep, {
+        excludedTargetId: creep.memory.scoreAvoidTargetId || null
+    });
+
+    if (!ranked || !ranked.target) {
+        return null;
     }
 
-    return bestRoom;
+    var target = ranked.target;
+    if (!scoreSeason.claimTarget(target.id, creep.name)) {
+        return null;
+    }
+
+    creep.memory.scoreTargetId = target.id;
+    creep.memory.scoreTargetRoom = target.roomName;
+    creep.memory.scoreTargetDecayTime = target.decayTime;
+    delete creep.memory.scoreExploreRoom;
+    delete creep.memory.scoreExploreUntil;
+    return target;
 }
 
-function chooseUnrestrictedNearbyRoom(creep) {
-    var rooms = getNearbyRooms(creep);
-    var bestRoom = chooseRoomFromPass(creep, rooms, false, false, false, false);
-
-    if(bestRoom) {
-        rememberTargetRoom(creep, bestRoom);
-    }
-
-    return bestRoom;
+function makeTargetPosition(target) {
+    return new RoomPosition(target.x, target.y, target.roomName);
 }
 
-function moveToExploreRoom(creep, roomName) {
-    if(!creep || !roomName) {
-        return ERR_INVALID_ARGS;
+function moveToScore(creep, target) {
+    if (!target) {
+        return ERR_INVALID_TARGET;
     }
 
-    if(roomName === creep.room.name) {
-        clearCreepScoreTarget(creep);
-        writeRunnerIntent(creep, 'move', creep.room.name);
+    if (
+        creep.pos.roomName === target.roomName &&
+        creep.pos.x === target.x &&
+        creep.pos.y === target.y
+    ) {
+        setDebug(creep, 'onScore', target.id);
         return OK;
     }
 
-    writeRunnerIntent(creep, 'room', roomName);
-    setScoreRunnerDebug(creep, 'moveToTargetRoom', roomName);
-
-    var result = travel.moveToRoom(creep, roomName, {
-        range: 22,
-        reusePath: 15,
+    var maximumRoomRange = scoreSeason.ensureSettings().scoreRunnerMaximumRoomRange;
+    var result = travel.move(creep, makeTargetPosition(target), {
+        range: 0,
+        maxRooms: Math.max(1, maximumRoomRange + 2),
+        reusePath: 20,
+        allowHostile: false,
+        disableSharedRouteCache: target.roomName !== creep.room.name,
+        routeCallback: function(roomName) {
+            return scoreSeason.isRoomUnsafe(roomName) ? Infinity : 1;
+        },
         visualizePathStyle: {
-            stroke: '#bbbbbb'
+            stroke: '#ffd700'
         }
     });
 
-    if(result === ERR_NO_PATH || result === ERR_INVALID_TARGET || result === ERR_INVALID_ARGS) {
-        setScoreRunnerDebug(creep, 'targetRoomMoveFailed', result);
-        clearCreepScoreTarget(creep);
-        writeRunnerIntent(creep, 'move', creep.room && creep.room.name);
+    setDebug(creep, 'moveToScore', target.id);
+
+    if (
+        result === ERR_NO_PATH ||
+        result === ERR_INVALID_TARGET ||
+        result === ERR_INVALID_ARGS
+    ) {
+        creep.memory.scoreAvoidTargetId = target.id;
+        creep.memory.scoreAvoidTargetUntil = Game.time + FAILED_TARGET_TTL;
+        clearTarget(creep, true, false);
+        clearTravelState(creep);
+        setDebug(creep, 'scoreMoveFailed', result);
     }
 
     return result;
 }
 
-function moveOutOfHostileRoom(creep) {
-    if(!creep || !creep.room) {
-        return ERR_INVALID_ARGS;
+function getAdjacentRooms(roomName) {
+    if (!Game.map || typeof Game.map.describeExits !== 'function') {
+        return [];
     }
-
-    var rooms = getExitRooms(creep.room.name);
-
-    for(var i = 0; i < rooms.length; i++) {
-        if(isRoomUsableForScore(rooms[i])) {
-            writeRunnerIntent(creep, 'flee', rooms[i]);
-            setScoreRunnerDebug(creep, 'hostileFlee', rooms[i]);
-            return travel.moveToRoom(creep, rooms[i], {
-                range: 22,
-                reusePath: 5,
-                visualizePathStyle: {
-                    stroke: '#ff7777'
-                }
-            });
+    var exits = Game.map.describeExits(roomName) || {};
+    var rooms = [];
+    for (var direction in exits) {
+        if (exits.hasOwnProperty(direction)) {
+            rooms.push(exits[direction]);
         }
     }
-
-    var homeRoom = getHomeRoomName(creep);
-
-    if(homeRoom && homeRoom !== creep.room.name && isRoomUsableForScore(homeRoom)) {
-        writeRunnerIntent(creep, 'flee', homeRoom);
-        setScoreRunnerDebug(creep, 'hostileFlee', homeRoom);
-        return travel.moveToRoom(creep, homeRoom, {
-            range: 22,
-            reusePath: 5,
-            visualizePathStyle: {
-                stroke: '#ff7777'
-            }
-        });
-    }
-
-    writeRunnerIntent(creep, 'flee', creep.room.name);
-    setScoreRunnerDebug(creep, 'hostileFleeFailed', 'noUsableExitRoom');
-    return ERR_NO_PATH;
+    rooms.sort();
+    return rooms;
 }
 
-function getDirectionOffset(direction) {
-    if(direction === 1) {
-        return { x: 0, y: -1 };
+function hashName(name) {
+    var hash = 0;
+    for (var i = 0; i < name.length; i++) {
+        hash = ((hash * 31) + name.charCodeAt(i)) & 2147483647;
     }
-
-    if(direction === 2) {
-        return { x: 1, y: -1 };
-    }
-
-    if(direction === 3) {
-        return { x: 1, y: 0 };
-    }
-
-    if(direction === 4) {
-        return { x: 1, y: 1 };
-    }
-
-    if(direction === 5) {
-        return { x: 0, y: 1 };
-    }
-
-    if(direction === 6) {
-        return { x: -1, y: 1 };
-    }
-
-    if(direction === 7) {
-        return { x: -1, y: 0 };
-    }
-
-    if(direction === 8) {
-        return { x: -1, y: -1 };
-    }
-
-    return null;
+    return hash;
 }
 
-function isExitTilePosition(x, y) {
-    return x <= 0 || x >= 49 || y <= 0 || y >= 49;
-}
-
-function isWallPosition(room, x, y) {
-    if(x < 0 || x > 49 || y < 0 || y > 49) {
-        return true;
+function chooseExploreRoom(creep) {
+    if (
+        creep.memory.scoreExploreRoom &&
+        creep.memory.scoreExploreUntil > Game.time &&
+        !scoreSeason.isRoomUnsafe(creep.memory.scoreExploreRoom)
+    ) {
+        return creep.memory.scoreExploreRoom;
     }
 
-    if(typeof TERRAIN_MASK_WALL === 'undefined') {
-        return false;
-    }
-
-    try {
-        if(room && typeof room.getTerrain === 'function') {
-            return room.getTerrain().get(x, y) === TERRAIN_MASK_WALL;
-        }
-
-        if(Game.map && typeof Game.map.getRoomTerrain === 'function') {
-            return Game.map.getRoomTerrain(room.name).get(x, y) === TERRAIN_MASK_WALL;
-        }
-    } catch(error) {
-        return false;
-    }
-
-    return false;
-}
-
-function getSafeFallbackDirection(creep) {
-    if(!creep || !creep.room || !creep.pos) {
+    var rooms = getAdjacentRooms(creep.room.name);
+    if (rooms.length === 0) {
         return null;
     }
 
-    var directions = [1, 2, 3, 4, 5, 6, 7, 8];
-    var start = hashString(creep.name + ':' + Game.time) % directions.length;
-
-    for(var i = 0; i < directions.length; i++) {
-        var direction = directions[(start + i) % directions.length];
-        var offset = getDirectionOffset(direction);
-
-        if(!offset) {
-            continue;
-        }
-
-        var x = creep.pos.x + offset.x;
-        var y = creep.pos.y + offset.y;
-
-        if(isExitTilePosition(x, y)) {
-            continue;
-        }
-
-        if(isWallPosition(creep.room, x, y)) {
-            continue;
-        }
-
-        return direction;
-    }
-
-    return null;
-}
-
-function findFallbackMovePosition(creep) {
-    if(!creep || !creep.room) {
-        return null;
-    }
-
-    for(var radius = 0; radius <= 5; radius++) {
-        for(var dx = -radius; dx <= radius; dx++) {
-            for(var dy = -radius; dy <= radius; dy++) {
-                if(Math.max(Math.abs(dx), Math.abs(dy)) !== radius) {
-                    continue;
-                }
-
-                var x = 25 + dx;
-                var y = 25 + dy;
-
-                if(isExitTilePosition(x, y) || isWallPosition(creep.room, x, y)) {
-                    continue;
-                }
-
-                return new RoomPosition(x, y, creep.room.name);
-            }
+    var start = (hashName(creep.name) + Game.time) % rooms.length;
+    for (var i = 0; i < rooms.length; i++) {
+        var roomName = rooms[(start + i) % rooms.length];
+        if (
+            roomName !== creep.memory.scoreLastExploreRoom &&
+            !scoreSeason.isRoomUnsafe(roomName)
+        ) {
+            creep.memory.scoreExploreRoom = roomName;
+            creep.memory.scoreExploreUntil = Game.time + EXPLORE_ROOM_TTL;
+            return roomName;
         }
     }
 
     return null;
 }
 
-function keepScoreRunnerMoving(creep) {
-    if(!creep || !creep.room) {
-        return ERR_INVALID_ARGS;
+function explore(creep) {
+    var roomName = chooseExploreRoom(creep);
+    if (!roomName) {
+        setDebug(creep, 'idle', 'no safe adjacent room');
+        return ERR_NO_PATH;
     }
 
-    writeRunnerIntent(creep, 'move', creep.room.name);
-
-    if(travel.moveOffExit && travel.moveOffExit(creep)) {
-        return OK;
+    if (creep.room.name === roomName) {
+        creep.memory.scoreLastExploreRoom = roomName;
+        delete creep.memory.scoreExploreRoom;
+        delete creep.memory.scoreExploreUntil;
+        roomName = chooseExploreRoom(creep);
     }
 
-    var direction = getSafeFallbackDirection(creep);
-
-    if(direction) {
-        return travel.moveDirection(creep, direction);
+    if (!roomName) {
+        return ERR_NO_PATH;
     }
 
-    var fallbackPosition = findFallbackMovePosition(creep);
-
-    if(fallbackPosition && !creep.pos.isEqualTo(fallbackPosition)) {
-        var result = travel.move(creep, fallbackPosition, {
-            range: 0,
-            maxRooms: 1,
-            reusePath: 5,
-            visualizePathStyle: {
-                stroke: '#999999'
-            }
-        });
-
-        if(result === ERR_NO_PATH || result === ERR_INVALID_TARGET || result === ERR_INVALID_ARGS) {
-            setScoreRunnerDebug(creep, 'fallbackMoveFailed', result);
+    setDebug(creep, 'explore', roomName);
+    return travel.moveToRoom(creep, roomName, {
+        range: 22,
+        reusePath: 20,
+        allowHostile: false,
+        routeCallback: function(routeRoomName) {
+            return scoreSeason.isRoomUnsafe(routeRoomName) ? Infinity : 1;
+        },
+        visualizePathStyle: {
+            stroke: '#c8a800'
         }
-
-        return result;
-    }
-
-    setScoreRunnerDebug(creep, 'fallbackMoveFailed', 'noFallbackPosition');
-    return ERR_NO_PATH;
-}
-
-function idleScoreRunner(creep, skipScoreSearch) {
-    if(!creep || !creep.room) {
-        return;
-    }
-
-    if(!skipScoreSearch) {
-        var target = getBestScoreTarget(creep);
-
-        if(target) {
-            moveToScore(creep, target);
-            return;
-        }
-    }
-
-    clearCreepScoreId(creep);
-
-    var targetRoom = getStoredTargetRoom(creep);
-
-    if(!targetRoom) {
-        targetRoom = chooseNearbyRoom(creep);
-    }
-
-    if(!targetRoom) {
-        targetRoom = chooseUnrestrictedNearbyRoom(creep);
-    }
-
-    if(targetRoom) {
-        moveToExploreRoom(creep, targetRoom);
-        return;
-    }
-
-    setScoreRunnerDebug(creep, 'noTargetRoomFallback', 'noUsableExitRoom');
-    keepScoreRunnerMoving(creep);
-}
-
-function drawScoreVisual(creep, target) {
-    if(!creep || !creep.room || !target || !target.pos || !creep.room.visual) {
-        return;
-    }
-
-    creep.room.visual.circle(target.pos.x, target.pos.y, {
-        radius: 0.45,
-        fill: 'transparent',
-        stroke: '#55ddff',
-        strokeWidth: 0.12,
-        opacity: 0.5
     });
 }
 
-function countObjectKeys(object) {
-    var count = 0;
-
-    if(!isPlainObject(object)) {
-        return count;
+function fleeHostileRoom(creep) {
+    var homeRoom = creep.memory.homeRoom;
+    if (homeRoom && homeRoom !== creep.room.name && !scoreSeason.isRoomUnsafe(homeRoom)) {
+        return travel.moveToRoom(creep, homeRoom, {
+            range: 22,
+            reusePath: 5,
+            allowHostile: false
+        });
     }
 
-    for(var key in object) {
-        if(object.hasOwnProperty(key)) {
-            count++;
+    var rooms = getAdjacentRooms(creep.room.name);
+    for (var i = 0; i < rooms.length; i++) {
+        if (!scoreSeason.isRoomUnsafe(rooms[i])) {
+            return travel.moveToRoom(creep, rooms[i], {
+                range: 22,
+                reusePath: 5,
+                allowHostile: false
+            });
         }
     }
-
-    return count;
+    return ERR_NO_PATH;
 }
 
-function getRawMemorySize() {
-    if(typeof RawMemory === 'undefined' || typeof RawMemory.get !== 'function') {
-        return null;
+function run(creep) {
+    if (!creep || creep.spawning || !creep.room) {
+        return;
     }
 
-    try {
-        return RawMemory.get().length;
-    } catch(error) {
-        return null;
+    scoreSeason.maintain();
+    scoreSeason.reportVisibleRoom(creep.room, creep.name, true);
+
+    var threat = scoreSeason.getVisibleThreat(creep.room);
+    if (threat) {
+        scoreSeason.markHostileRoom(creep.room.name, threat.reason, threat.ttl);
+        clearTarget(creep, true, false);
+        clearTravelState(creep);
+        setDebug(creep, 'hostileFlee', threat.reason);
+        fleeHostileRoom(creep);
+        return;
     }
+
+    if (scoreSeason.isRoomUnsafe(creep.room.name)) {
+        clearTarget(creep, true, false);
+        clearTravelState(creep);
+        setDebug(creep, 'hostileFlee', 'temporary room avoidance');
+        fleeHostileRoom(creep);
+        return;
+    }
+
+    updateStuckState(creep);
+
+    var target = getRememberedTarget(creep) || chooseTarget(creep);
+    if (target) {
+        moveToScore(creep, target);
+        return;
+    }
+
+    clearTarget(creep, false, false);
+    explore(creep);
+}
+
+function findScoreObjects(room) {
+    return scoreSeason.getVisibleScores(room, true);
+}
+
+function rememberVisibleScores(room, scannerName) {
+    return scoreSeason.reportVisibleRoom(room, scannerName || 'console', true);
+}
+
+function getBestScoreTarget(creep) {
+    var ranked = scoreSeason.getBestTarget(creep, {});
+    return ranked ? ranked.target : null;
+}
+
+function idleScoreRunner(creep) {
+    return explore(creep);
 }
 
 function getScoreMemoryStats() {
-    /*
-     * Console helper only; nothing calls this every tick. Example:
-     * require('role.scorerunner').getScoreMemoryStats()
-     */
-    var scoreMemory = ensureScoreMemory();
-    var stats = {
-        hostileRooms: countObjectKeys(scoreMemory.hostileRooms),
-        runnerIntents: countObjectKeys(scoreMemory.runnerIntents)
-    };
-    var rawMemorySize = getRawMemorySize();
-
-    if(isPlainObject(scoreMemory.observer) && isPlainObject(scoreMemory.observer.liveScores)) {
-        stats.observerLiveScores = countObjectKeys(scoreMemory.observer.liveScores);
+    var stats = scoreSeason.getStats();
+    var runners = 0;
+    for (var creepName in Game.creeps) {
+        if (
+            Game.creeps.hasOwnProperty(creepName) &&
+            Game.creeps[creepName].memory &&
+            Game.creeps[creepName].memory.role === 'ScoreRunner'
+        ) {
+            runners++;
+        }
     }
-
-    if(rawMemorySize !== null) {
-        stats.rawMemorySize = rawMemorySize;
-    }
-
+    stats.runners = runners;
     return stats;
 }
 

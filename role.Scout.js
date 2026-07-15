@@ -1,6 +1,7 @@
 var utility = require('utility');
 var utilityTravelCreep = require('utility.Travel.Creep');
 var RemotePlanner = require('Planner.Remote');
+var scoreSeason = require('Season.Score');
 
 var SCOUT_RADIUS = 3;
 var SCOUT_RESCAN_AFTER_TICKS = 3000;
@@ -49,6 +50,9 @@ var roleScout = {
          * score remote sources after Sushi has saved room/source/controller intel.
          */
         RemotePlanner.onScoutRoom(creep);
+
+        /* Report Scores, but leave collection to the dedicated ScoreRunner. */
+        scoreSeason.reportVisibleRoom(creep.room, creep.name, false);
 
         /*
          * If the Scout just arrived, clear targetRoom so the next choice comes
