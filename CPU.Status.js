@@ -10,6 +10,8 @@ var FALLBACK_CPU_LIMIT = 20;
 var FULL_BUCKET = 10000;
 var cachedTick = -1;
 var cachedStatus = null;
+var lastDebugSaveTick = -1;
+var overrideMigrationChecked = false;
 
 function safeNumber(value, fallback) {
     return typeof value === 'number' && isFinite(value) ? value : fallback;
@@ -74,8 +76,26 @@ function chooseMode(limit, bucket, usageRatio, previousMode) {
     return 'normal';
 }
 
+function removeStaleCpuOverride() {
+    if (overrideMigrationChecked || typeof Memory === 'undefined') {
+        return;
+    }
+
+    overrideMigrationChecked = true;
+
+    if (
+        Memory.cpuPolicy &&
+        Memory.cpuPolicy.maxCpuOverride !== undefined
+    ) {
+        delete Memory.cpuPolicy.maxCpuOverride;
+    }
+}
+
 function saveDebug(status, previousMode) {
-    if (typeof Memory === 'undefined') {
+    if (
+        typeof Memory === 'undefined' ||
+        lastDebugSaveTick === status.tick
+    ) {
         return;
     }
 
@@ -90,16 +110,20 @@ function saveDebug(status, previousMode) {
         runtimeLimit: status.runtimeLimit,
         tickLimit: status.tickLimit,
         bucket: status.bucket,
+        strategicUsed: Math.round(status.strategicUsed * 100) / 100,
         used: Math.round(status.used * 100) / 100,
         remaining: Math.round(status.remaining * 100) / 100
     };
+    lastDebugSaveTick = status.tick;
 }
 
-function getCpuStatus(forceRefresh) {
+function getCpuStatus() {
     var tick = typeof Game !== 'undefined' && typeof Game.time === 'number' ?
         Game.time : 0;
 
-    if (!forceRefresh && cachedStatus && cachedTick === tick) {
+    removeStaleCpuOverride();
+
+    if (cachedStatus && cachedTick === tick) {
         var currentUsed = cachedStatus.used;
         if (
             typeof Game !== 'undefined' &&
@@ -112,22 +136,19 @@ function getCpuStatus(forceRefresh) {
         cachedStatus.remaining = Math.max(0, cachedStatus.limit - currentUsed);
         cachedStatus.usageRatio = cachedStatus.limit > 0 ?
             currentUsed / cachedStatus.limit : 1;
-        cachedStatus.mode = chooseMode(
-            cachedStatus.limit,
-            cachedStatus.bucket,
-            cachedStatus.usageRatio,
-            cachedStatus.mode
-        );
-        saveDebug(cachedStatus, getPreviousMode());
+        cachedStatus.currentUsageRatio = cachedStatus.usageRatio;
+
+        /*
+         * Strategic mode is intentionally frozen at the first sample of the
+         * tick. Later callers see fresh used/remaining values without making
+         * strategy look progressively worse merely because more code ran.
+         */
         return cachedStatus;
     }
 
     var cpu = typeof Game !== 'undefined' && Game.cpu ? Game.cpu : {};
     var runtimeLimit = Math.max(0.1, safeNumber(cpu.limit, FALLBACK_CPU_LIMIT));
-    var override = typeof Memory !== 'undefined' && Memory.cpuPolicy ?
-        Memory.cpuPolicy.maxCpuOverride : null;
-    var sustainableLimit = typeof override === 'number' && override > 0 ?
-        Math.min(runtimeLimit, override) : runtimeLimit;
+    var sustainableLimit = runtimeLimit;
     var tickLimit = Math.max(
         sustainableLimit,
         safeNumber(cpu.tickLimit, sustainableLimit)
@@ -151,9 +172,12 @@ function getCpuStatus(forceRefresh) {
         used: used,
         remaining: Math.max(0, sustainableLimit - used),
         usageRatio: usageRatio,
+        currentUsageRatio: usageRatio,
+        strategicUsed: used,
+        strategicUsageRatio: usageRatio,
         bucketRatio: bucket / FULL_BUCKET,
         mode: mode,
-        override: typeof override === 'number' && override > 0 ? override : null
+        tick: tick
     };
     cachedTick = tick;
     saveDebug(cachedStatus, previousMode);

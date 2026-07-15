@@ -30,6 +30,7 @@ var RoadPlanner = require('Planner.Roads');
 var Dashboard = require('Visual.Dashboard');
 var StructurePlannerVisual = require('Visual.Planner.Structures');
 var scoreSeason = require('Season.Score');
+var cpuStatusUtility = require('CPU.Status');
 
 /*
  * Harabi-style traffic movement is initialized once when this global is loaded.
@@ -328,6 +329,8 @@ module.exports.loop = function () {
      * reused by roles later in this same tick.
      */
     travelUtility.cleanupRouteCaches();
+    /* Freeze this tick's strategic CPU mode before optional planners run. */
+    cpuStatusUtility.getCpuStatus();
     scoreSeason.maintain();
 
     ensureStructurePlannerSetting();

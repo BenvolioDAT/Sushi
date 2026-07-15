@@ -14,13 +14,30 @@ var CLAIM_TICKS = 75;
 var CLEANUP_INTERVAL = 17;
 var HOSTILE_CREEP_TTL = 400;
 var HOSTILE_ROOM_TTL = 2000;
-var ROUTE_CANDIDATE_LIMIT = 3;
+/*
+ * Route checks are more expensive than linear-distance ranking. Check at most
+ * eight candidates, but stop once three viable results are available to rank.
+ * Failed routes therefore do not consume the viable-result allowance.
+ */
+var ROUTE_VIABLE_CANDIDATE_LIMIT = 3;
+var ROUTE_CHECK_LIMIT = 8;
 var ESTIMATED_TICKS_PER_ROOM = 50;
 var scanCacheTick = -1;
 var scanCache = {};
 var routeCacheTick = -1;
 var routeCache = {};
 var maintenanceTick = -1;
+var lastScanDebugTick = -1;
+var unsafeCacheTick = -1;
+var unsafeRoomCache = {};
+var summaryCacheTick = -1;
+var summaryCache = {};
+var summaryVersion = 0;
+var statsCacheTick = -1;
+var statsCacheVersion = -1;
+var statsCache = null;
+var usernameCacheTick = -1;
+var usernameCache = null;
 
 function isObject(value) {
     return !!value && typeof value === 'object' && !Array.isArray(value);
@@ -32,7 +49,9 @@ function ensureSettings() {
     }
 
     if (Memory.settings.scoreSeasonEnabled === undefined) {
-        Memory.settings.scoreSeasonEnabled = typeof FIND_SCORES !== 'undefined';
+        Memory.settings.scoreSeasonEnabled =
+            typeof FIND_SCORES !== 'undefined' ||
+            typeof LOOK_SCORE !== 'undefined';
     }
     if (typeof Memory.settings.scoreRunnerMinimum !== 'number') {
         Memory.settings.scoreRunnerMinimum = 1;
@@ -98,7 +117,7 @@ function safeFind(room, findType) {
     }
 }
 
-function getScoresUncached(room) {
+function getScoresUncached(room, forceEssentialScan) {
     if (!room || !isEnabled()) {
         return [];
     }
@@ -115,7 +134,10 @@ function getScoresUncached(room) {
     if (
         typeof LOOK_SCORE !== 'undefined' &&
         typeof room.lookForAtArea === 'function' &&
-        cpuStatusUtility.getCpuStatus().mode !== 'critical'
+        (
+            forceEssentialScan ||
+            cpuStatusUtility.getCpuStatus().mode !== 'critical'
+        )
     ) {
         try {
             return room.lookForAtArea(LOOK_SCORE, 0, 0, 49, 49, true) || [];
@@ -140,20 +162,41 @@ function getVisibleScores(room, forceEssentialScan) {
         scanCache = {};
     }
 
-    if (scanCache.hasOwnProperty(room.name)) {
-        return scanCache[room.name];
+    var cacheRecord = scanCache[room.name];
+
+    if (cacheRecord && cacheRecord.scanned) {
+        return cacheRecord.scores;
     }
 
     if (
         !forceEssentialScan &&
         cpuStatusUtility.getCpuStatus().mode === 'critical'
     ) {
-        scanCache[room.name] = [];
-        return scanCache[room.name];
+        scanCache[room.name] = {
+            scanned: false,
+            skipped: true,
+            scores: []
+        };
+        return scanCache[room.name].scores;
     }
 
-    scanCache[room.name] = getScoresUncached(room);
-    return scanCache[room.name];
+    /* An essential request may replace a skipped optional cache record. */
+    scanCache[room.name] = {
+        scanned: true,
+        skipped: false,
+        processed: false,
+        scores: getScoresUncached(room, forceEssentialScan === true),
+        records: []
+    };
+    return scanCache[room.name].scores;
+}
+
+function getRoomScanCacheRecord(roomName) {
+    if (scanCacheTick !== Game.time) {
+        return null;
+    }
+
+    return scanCache[roomName] || null;
 }
 
 function unwrapScore(entry) {
@@ -211,16 +254,18 @@ function reportVisibleRoom(room, scannerName, forceEssentialScan) {
         return [];
     }
 
-    /* A skipped optional scan must not turn "not observed" into "missing". */
-    if (
-        !forceEssentialScan &&
-        cpuStatusUtility.getCpuStatus().mode === 'critical'
-    ) {
-        return [];
-    }
-
     var scoreMemory = ensureMemory();
     var rawScores = getVisibleScores(room, forceEssentialScan === true);
+    var cacheRecord = getRoomScanCacheRecord(room.name);
+
+    /* A skipped scan is not visibility evidence and cannot remove targets. */
+    if (!cacheRecord || !cacheRecord.scanned) {
+        return [];
+    }
+    if (cacheRecord.processed) {
+        return cacheRecord.records;
+    }
+
     var visibleIds = {};
     var records = [];
 
@@ -257,6 +302,7 @@ function reportVisibleRoom(room, scannerName, forceEssentialScan) {
         }
         else {
             scoreMemory.targets[score.id] = record;
+            summaryVersion++;
         }
         records.push(record);
     }
@@ -269,15 +315,22 @@ function reportVisibleRoom(room, scannerName, forceEssentialScan) {
         var target = scoreMemory.targets[targetId];
         if (target && target.roomName === room.name && !visibleIds[targetId]) {
             delete scoreMemory.targets[targetId];
+            summaryVersion++;
         }
     }
 
-    scoreMemory.lastScan = {
-        roomName: room.name,
-        tick: Game.time,
-        scanner: scannerName || 'unknown',
-        count: records.length
-    };
+    if (lastScanDebugTick !== Game.time) {
+        scoreMemory.lastScan = {
+            roomName: room.name,
+            tick: Game.time,
+            scanner: scannerName || 'unknown',
+            count: records.length
+        };
+        lastScanDebugTick = Game.time;
+    }
+
+    cacheRecord.processed = true;
+    cacheRecord.records = records;
 
     return records;
 }
@@ -293,6 +346,7 @@ function cleanClaimsAndTargets() {
         var target = targets[targetId];
         if (!target || !target.decayTime || target.decayTime <= Game.time) {
             delete targets[targetId];
+            summaryVersion++;
             continue;
         }
 
@@ -306,6 +360,7 @@ function cleanClaimsAndTargets() {
         ) {
             delete target.claimedBy;
             delete target.claimUntil;
+            summaryVersion++;
         }
     }
 }
@@ -319,6 +374,8 @@ function cleanHostileRooms() {
             (!hostileRooms[roomName] || hostileRooms[roomName].until <= Game.time)
         ) {
             delete hostileRooms[roomName];
+            summaryVersion++;
+            routeCache = {};
         }
     }
 }
@@ -344,10 +401,29 @@ function markHostileRoom(roomName, reason, ttl) {
         return;
     }
 
-    ensureMemory().hostileRooms[roomName] = {
+    var hostileRooms = ensureMemory().hostileRooms;
+    var oldRecord = hostileRooms[roomName];
+    var hostileTtl = ttl || HOSTILE_CREEP_TTL;
+    var newUntil = Game.time + hostileTtl;
+
+    if (
+        oldRecord &&
+        oldRecord.reason === (reason || 'threat') &&
+        oldRecord.until > Game.time + Math.floor(hostileTtl / 2)
+    ) {
+        return;
+    }
+
+    hostileRooms[roomName] = {
         reason: reason || 'threat',
-        until: Game.time + (ttl || HOSTILE_CREEP_TTL)
+        until: newUntil
     };
+    summaryVersion++;
+    routeCache = {};
+
+    if (unsafeCacheTick === Game.time) {
+        unsafeRoomCache[roomName] = true;
+    }
 }
 
 function getVisibleThreat(room) {
@@ -399,56 +475,90 @@ function isSourceKeeperRoom(roomName) {
     return x >= 4 && x <= 6 && y >= 4 && y <= 6 && !(x === 5 && y === 5);
 }
 
-function isRoomUnsafe(roomName) {
+function getMyUsername() {
+    if (usernameCacheTick === Game.time) {
+        return usernameCache;
+    }
+
+    usernameCacheTick = Game.time;
+    usernameCache = Memory.username || null;
+
+    if (!usernameCache) {
+        for (var spawnName in Game.spawns) {
+            if (
+                Game.spawns.hasOwnProperty(spawnName) &&
+                Game.spawns[spawnName].owner
+            ) {
+                usernameCache = Game.spawns[spawnName].owner.username;
+                break;
+            }
+        }
+    }
+
+    return usernameCache;
+}
+
+function isRoomUnsafe(roomName, knownVisibleThreat) {
     maintain();
+
+    if (unsafeCacheTick !== Game.time) {
+        unsafeCacheTick = Game.time;
+        unsafeRoomCache = {};
+    }
+    if (unsafeRoomCache.hasOwnProperty(roomName)) {
+        return unsafeRoomCache[roomName];
+    }
+
     var settings = ensureSettings();
     if (!settings.scoreRunnerAllowSourceKeeperRooms && isSourceKeeperRoom(roomName)) {
+        unsafeRoomCache[roomName] = true;
         return true;
     }
 
     var visibleRoom = Game.rooms[roomName];
-    var threat = getVisibleThreat(visibleRoom);
+    var threat = arguments.length >= 2 ?
+        knownVisibleThreat : getVisibleThreat(visibleRoom);
     if (threat) {
         markHostileRoom(roomName, threat.reason, threat.ttl);
+        unsafeRoomCache[roomName] = true;
         return true;
     }
     if (visibleRoom) {
         /* Fresh safe vision clears an old temporary threat immediately. */
-        delete ensureMemory().hostileRooms[roomName];
+        var visibleHostileRooms = ensureMemory().hostileRooms;
+        if (visibleHostileRooms[roomName]) {
+            delete visibleHostileRooms[roomName];
+            summaryVersion++;
+            routeCache = {};
+        }
+        unsafeRoomCache[roomName] = false;
         return false;
     }
 
     var hostile = ensureMemory().hostileRooms[roomName];
     if (hostile && hostile.until > Game.time) {
+        unsafeRoomCache[roomName] = true;
         return true;
     }
 
     var roomMemory = Memory.rooms && Memory.rooms[roomName];
     if (roomMemory && roomMemory.scoutIntel) {
         var intel = roomMemory.scoutIntel;
-        var myUsername = Memory.username || null;
-        if (!myUsername) {
-            for (var spawnName in Game.spawns) {
-                if (
-                    Game.spawns.hasOwnProperty(spawnName) &&
-                    Game.spawns[spawnName].owner
-                ) {
-                    myUsername = Game.spawns[spawnName].owner.username;
-                    break;
-                }
-            }
-        }
+        var myUsername = getMyUsername();
         if (intel.controllerOwner && intel.controllerOwner !== myUsername) {
+            unsafeRoomCache[roomName] = true;
             return true;
         }
         if (
             (intel.invaderCore && intel.lastScanTick >= Game.time - HOSTILE_ROOM_TTL) ||
             (intel.hostileCreepCount > 0 && intel.lastScanTick >= Game.time - HOSTILE_CREEP_TTL)
         ) {
+            unsafeRoomCache[roomName] = true;
             return true;
         }
     }
 
+    unsafeRoomCache[roomName] = false;
     return false;
 }
 
@@ -460,6 +570,76 @@ function getRoomDistance(fromRoom, toRoom) {
         return Game.map.getRoomLinearDistance(fromRoom, toRoom);
     }
     return 99;
+}
+
+/*
+ * Spawn planning needs colony-local target pressure, not the global target
+ * count. This summary uses only cheap linear distance, decay, claims, and the
+ * per-tick room-safety cache; it never calls Game.map.findRoute.
+ */
+function getReachableTargetSummaryForRoom(roomName, maximumRange) {
+    maintain();
+
+    if (summaryCacheTick !== Game.time) {
+        summaryCacheTick = Game.time;
+        summaryCache = {};
+    }
+
+    maximumRange = typeof maximumRange === 'number' ?
+        Math.max(0, Math.floor(maximumRange)) :
+        ensureSettings().scoreRunnerMaximumRoomRange;
+    var cacheKey = roomName + '|' + maximumRange;
+    var cachedSummary = summaryCache[cacheKey];
+
+    if (cachedSummary && cachedSummary.version === summaryVersion) {
+        return cachedSummary.value;
+    }
+
+    var summary = {
+        reachableTargets: 0,
+        unclaimedTargets: 0,
+        highestScore: 0,
+        totalScore: 0
+    };
+    var targets = ensureMemory().targets;
+    var safetyTicks = ensureSettings().scoreRunnerDecaySafetyTicks;
+
+    for (var targetId in targets) {
+        if (!targets.hasOwnProperty(targetId)) {
+            continue;
+        }
+
+        var target = targets[targetId];
+        var roomDistance = getRoomDistance(roomName, target.roomName);
+        var estimatedTravelTicks = roomDistance === 0 ? 25 :
+            (roomDistance * ESTIMATED_TICKS_PER_ROOM) + 25;
+
+        if (
+            roomDistance > maximumRange ||
+            estimatedTravelTicks + safetyTicks >= target.decayTime - Game.time ||
+            isRoomUnsafe(target.roomName)
+        ) {
+            continue;
+        }
+
+        summary.reachableTargets++;
+        summary.totalScore += target.score || 0;
+        summary.highestScore = Math.max(summary.highestScore, target.score || 0);
+
+        if (
+            !target.claimedBy ||
+            target.claimUntil <= Game.time ||
+            !Game.creeps[target.claimedBy]
+        ) {
+            summary.unclaimedTargets++;
+        }
+    }
+
+    summaryCache[cacheKey] = {
+        version: summaryVersion,
+        value: summary
+    };
+    return summary;
 }
 
 function getEstimatedTravelTicks(creep, target, roomDistance) {
@@ -563,9 +743,20 @@ function getBestTarget(creep, options) {
         return b.rank - a.rank;
     });
 
-    /* Only the best few cheap candidates justify a room-route calculation. */
+    /*
+     * Failed routes do not consume the viable-result allowance. A separate
+     * hard check limit keeps worst-case CPU bounded when many targets are bad.
+     */
     var viable = [];
-    for (var i = 0; i < ranked.length && i < ROUTE_CANDIDATE_LIMIT; i++) {
+    var routeChecks = 0;
+    for (
+        var i = 0;
+        i < ranked.length &&
+            routeChecks < ROUTE_CHECK_LIMIT &&
+            viable.length < ROUTE_VIABLE_CANDIDATE_LIMIT;
+        i++
+    ) {
+        routeChecks++;
         var routeLength = getRouteLength(creep.room.name, ranked[i].target.roomName);
         if (routeLength < 0) {
             continue;
@@ -614,6 +805,7 @@ function claimTarget(targetId, creepName, ttl) {
         target.decayTime,
         Game.time + (ttl || CLAIM_TICKS)
     );
+    summaryVersion++;
     return true;
 }
 
@@ -625,11 +817,13 @@ function releaseTarget(targetId, creepName, removeTarget) {
     }
     if (removeTarget) {
         delete targets[targetId];
+        summaryVersion++;
         return;
     }
     if (!creepName || target.claimedBy === creepName) {
         delete target.claimedBy;
         delete target.claimUntil;
+        summaryVersion++;
     }
 }
 
@@ -640,6 +834,15 @@ function getTarget(targetId) {
 
 function getStats() {
     maintain();
+
+    if (
+        statsCache &&
+        statsCacheTick === Game.time &&
+        statsCacheVersion === summaryVersion
+    ) {
+        return statsCache;
+    }
+
     var targets = ensureMemory().targets;
     var live = 0;
     var claimed = 0;
@@ -658,7 +861,7 @@ function getStats() {
         }
     }
 
-    return {
+    statsCache = {
         enabled: isEnabled(),
         liveTargets: live,
         claimedTargets: claimed,
@@ -666,6 +869,9 @@ function getStats() {
         totalKnownScore: totalScore,
         highestScore: highestScore
     };
+    statsCacheTick = Game.time;
+    statsCacheVersion = summaryVersion;
+    return statsCache;
 }
 
 module.exports = {
@@ -682,5 +888,6 @@ module.exports = {
     getVisibleThreat: getVisibleThreat,
     markHostileRoom: markHostileRoom,
     isRoomUnsafe: isRoomUnsafe,
+    getReachableTargetSummaryForRoom: getReachableTargetSummaryForRoom,
     getStats: getStats
 };

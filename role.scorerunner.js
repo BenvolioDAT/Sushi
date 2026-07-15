@@ -195,12 +195,15 @@ function moveToScore(creep, target) {
     }
 
     var maximumRoomRange = scoreSeason.ensureSettings().scoreRunnerMaximumRoomRange;
+    var isCrossRoomTarget = target.roomName !== creep.room.name;
     var result = travel.move(creep, makeTargetPosition(target), {
         range: 0,
         maxRooms: Math.max(1, maximumRoomRange + 2),
         reusePath: 20,
         allowHostile: false,
-        disableSharedRouteCache: target.roomName !== creep.room.name,
+        /* Traveler otherwise skips findRoute for destinations within two rooms. */
+        useFindRoute: isCrossRoomTarget,
+        disableSharedRouteCache: isCrossRoomTarget,
         routeCallback: function(roomName) {
             return scoreSeason.isRoomUnsafe(roomName) ? Infinity : 1;
         },
@@ -352,7 +355,7 @@ function run(creep) {
         return;
     }
 
-    if (scoreSeason.isRoomUnsafe(creep.room.name)) {
+    if (scoreSeason.isRoomUnsafe(creep.room.name, null)) {
         clearTarget(creep, true, false);
         clearTravelState(creep);
         setDebug(creep, 'hostileFlee', 'temporary room avoidance');

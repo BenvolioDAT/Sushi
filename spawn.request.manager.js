@@ -25,6 +25,7 @@ var TECH_DOWNGRADE_DANGER_TICKS = 5000;
 var TECH_BASE_MAX_DESIRED_WORK = 24;
 var TECH_MAX_DESIRED_WORK = 36;
 var TECH_RCL8_MAX_WORK = 15;
+var TECH_ABSOLUTE_CREEP_CAP = 5;
 var ARTIFICER_MAX_DESIRED_WORK = 24;
 var ARTIFICER_LOW_STORAGE_ENERGY = 20000;
 var ARTIFICER_CRITICAL_STORAGE_ENERGY = 5000;
@@ -764,6 +765,19 @@ function canAddSpawnRequest(context, request, options) {
     var emergencyMinimumBypass = emergency &&
         options &&
         options.bypassRoleCap === true;
+    var techWorkRoleCapBypass = role === 'Tech' &&
+        options &&
+        options.allowTechWorkRoleCapBypass === true;
+    var absoluteTechCap = techWorkRoleCapBypass &&
+        typeof options.absoluteTechCreepCap === 'number' ?
+        options.absoluteTechCreepCap : TECH_ABSOLUTE_CREEP_CAP;
+
+    if (techWorkRoleCapBypass && plannedRole >= absoluteTechCap) {
+        return {
+            ok: false,
+            reason: 'absolute Tech creep cap reached'
+        };
+    }
 
     if (
         emergencyMinimumBypass &&
@@ -778,7 +792,8 @@ function canAddSpawnRequest(context, request, options) {
     if (
         typeof roleCap === 'number' &&
         plannedRole >= roleCap &&
-        !emergencyMinimumBypass
+        !emergencyMinimumBypass &&
+        !techWorkRoleCapBypass
     ) {
         return {
             ok: false,
@@ -1340,10 +1355,10 @@ function getDesiredTechWork(room) {
     }
 
     var roomMemory = ensureRoomMemory(room.name);
-    roomMemory.techBaseDesiredWork = baseDesiredWork;
-    roomMemory.techCpuMultiplier = cpuMultiplier;
-    roomMemory.techCpuMode = cpuStatus.mode;
-    roomMemory.techBoostReason = boostReason;
+    setMemoryValueIfChanged(roomMemory, 'techBaseDesiredWork', baseDesiredWork);
+    setMemoryValueIfChanged(roomMemory, 'techCpuMultiplier', cpuMultiplier);
+    setMemoryValueIfChanged(roomMemory, 'techCpuMode', cpuStatus.mode);
+    setMemoryValueIfChanged(roomMemory, 'techBoostReason', boostReason);
 
     return desiredWork;
 }
@@ -1367,7 +1382,6 @@ function countActiveRemoteRooms(roomName) {
 function getScoreRunnerDemand(room, suppliedCpuStatus) {
     var cpuStatus = suppliedCpuStatus || cpuStatusUtility.getCpuStatus();
     var settings = scoreSeason.ensureSettings();
-    var stats = scoreSeason.getStats();
     var demand = {
         desired: 0,
         living: 0,
@@ -1375,7 +1389,9 @@ function getScoreRunnerDemand(room, suppliedCpuStatus) {
         cpuMode: cpuStatus.mode,
         reason: 'Season score API unavailable',
         priority: PRIORITY.ScoreRunner,
-        knownTargets: stats.liveTargets
+        knownTargets: 0,
+        unclaimedTargets: 0,
+        reachableScore: 0
     };
 
     if (!room) {
@@ -1391,6 +1407,14 @@ function getScoreRunnerDemand(room, suppliedCpuStatus) {
     if (!scoreSeason.isEnabled()) {
         return demand;
     }
+
+    var targetSummary = scoreSeason.getReachableTargetSummaryForRoom(
+        room.name,
+        settings.scoreRunnerMaximumRoomRange
+    );
+    demand.knownTargets = targetSummary.reachableTargets;
+    demand.unclaimedTargets = targetSummary.unclaimedTargets;
+    demand.reachableScore = targetSummary.totalScore;
 
     var level = room.controller ? (room.controller.level || 1) : 1;
     var energyCapacity = room.energyCapacityAvailable || 300;
@@ -1422,7 +1446,6 @@ function getScoreRunnerDemand(room, suppliedCpuStatus) {
 
     var desired = level <= 2 ? 1 : level <= 4 ? 1 : level <= 6 ? 2 : 3;
     var activeRemoteRooms = countActiveRemoteRooms(room.name);
-    var ownedRoomCount = Math.max(1, getOwnedSpawnRooms().length);
 
     if (cpuStatus.mode === 'low') {
         desired = Math.min(desired, 1);
@@ -1431,10 +1454,10 @@ function getScoreRunnerDemand(room, suppliedCpuStatus) {
     else {
         demand.reason = 'stable room baseline';
 
-        if (stats.liveTargets > 0) {
+        if (targetSummary.unclaimedTargets > 0) {
             desired = Math.max(desired, Math.min(3,
-                Math.ceil(stats.liveTargets / ownedRoomCount)));
-            demand.reason = 'known live Score targets';
+                demand.living + demand.queued + targetSummary.unclaimedTargets));
+            demand.reason = 'reachable unclaimed Score targets';
         }
 
         if (activeRemoteRooms >= 2 && level >= 5) {
@@ -1460,25 +1483,42 @@ function getScoreRunnerDemand(room, suppliedCpuStatus) {
     );
 
     /* A known valuable object may outrank optional roles, never core economy. */
-    if (stats.liveTargets > 0) {
+    if (targetSummary.unclaimedTargets > 0) {
         demand.priority = Math.min(28, PRIORITY.ScoreRunner + 4 +
-            Math.floor(Math.log(Math.max(1, stats.highestScore)) / Math.log(10)));
+            Math.floor(Math.log(Math.max(1, targetSummary.highestScore)) / Math.log(10)));
     }
 
     demand.desired = desired;
     demand.activeRemoteRooms = activeRemoteRooms;
-    demand.spawnCount = room.find(FIND_MY_SPAWNS).length;
     return demand;
 }
 
 function saveScoreRunnerDemandDebug(roomName, demand) {
     var roomMemory = ensureRoomMemory(roomName);
-    roomMemory.scoreRunnerDesired = demand.desired;
-    roomMemory.scoreRunnerLiving = demand.living;
-    roomMemory.scoreRunnerQueued = demand.queued;
-    roomMemory.scoreRunnerCpuMode = demand.cpuMode;
-    roomMemory.scoreRunnerDemandReason = demand.reason;
-    roomMemory.scoreRunnerKnownTargets = demand.knownTargets;
+    setMemoryValueIfChanged(roomMemory, 'scoreRunnerDesired', demand.desired);
+    setMemoryValueIfChanged(roomMemory, 'scoreRunnerLiving', demand.living);
+    setMemoryValueIfChanged(roomMemory, 'scoreRunnerQueued', demand.queued);
+    setMemoryValueIfChanged(roomMemory, 'scoreRunnerCpuMode', demand.cpuMode);
+    setMemoryValueIfChanged(
+        roomMemory,
+        'scoreRunnerDemandReason',
+        demand.reason
+    );
+    setMemoryValueIfChanged(
+        roomMemory,
+        'scoreRunnerKnownTargets',
+        demand.knownTargets
+    );
+    setMemoryValueIfChanged(
+        roomMemory,
+        'scoreRunnerUnclaimedTargets',
+        demand.unclaimedTargets
+    );
+    setMemoryValueIfChanged(
+        roomMemory,
+        'scoreRunnerReachableScore',
+        demand.reachableScore
+    );
 }
 
 function getDesiredScoreRunnerCount(room, cpuStatus) {
@@ -1612,18 +1652,44 @@ function countQueuedRoleWork(roomName, role) {
     return countQueuedRoleBodyParts(roomName, role, WORK);
 }
 
+function setMemoryValueIfChanged(target, key, value) {
+    if (target[key] !== value) {
+        target[key] = value;
+    }
+}
+
 function saveTechWorkDebug(roomName, desiredWork, livingWork, queuedWork) {
-    if (!Memory.rooms) {
-        Memory.rooms = {};
-    }
+    var roomMemory = ensureRoomMemory(roomName);
+    setMemoryValueIfChanged(roomMemory, 'techDesiredWork', desiredWork);
+    setMemoryValueIfChanged(roomMemory, 'techLivingWork', livingWork);
+    setMemoryValueIfChanged(roomMemory, 'techQueuedWork', queuedWork);
+}
 
-    if (!Memory.rooms[roomName]) {
-        Memory.rooms[roomName] = {};
-    }
+function saveTechRequestDebug(roomName, status, reason, demand, plannedCreeps) {
+    var roomMemory = ensureRoomMemory(roomName);
 
-    Memory.rooms[roomName].techDesiredWork = desiredWork;
-    Memory.rooms[roomName].techLivingWork = livingWork;
-    Memory.rooms[roomName].techQueuedWork = queuedWork;
+    setMemoryValueIfChanged(roomMemory, 'techRequestTick', Game.time);
+    setMemoryValueIfChanged(roomMemory, 'techRequestStatus', status);
+    setMemoryValueIfChanged(roomMemory, 'techRequestBlockReason', reason || null);
+    setMemoryValueIfChanged(roomMemory, 'techPlannedCreeps', plannedCreeps);
+    setMemoryValueIfChanged(
+        roomMemory,
+        'techAbsoluteCreepCap',
+        TECH_ABSOLUTE_CREEP_CAP
+    );
+    setMemoryValueIfChanged(
+        roomMemory,
+        'techRequestEconomyReason',
+        roomMemory.techBoostReason || null
+    );
+
+    if (demand) {
+        setMemoryValueIfChanged(
+            roomMemory,
+            'techRequestMissingWork',
+            Math.max(0, demand.missingWork || 0)
+        );
+    }
 }
 
 function getTechWorkDemand(room) {
@@ -1660,6 +1726,12 @@ function requestTechWorkForRoom(room, demandOverride, options) {
 
     var demand = demandOverride || getTechWorkDemand(room);
     var missingWork = demand.missingWork;
+    var context = getActiveContext(room.name);
+    var techBody = creepBodyConfig.getTechBody(room);
+    var techReplacementLead = getReplacementLeadTicks('Tech', techBody);
+    var plannedTechCreeps = context ? getPlannedRoleCount(context, 'Tech') :
+        countHealthyCreeps(room.name, 'Tech', techReplacementLead) +
+            countQueuedRequests(room.name, 'Tech');
     var result = {
         ok: true,
         role: 'Tech',
@@ -1678,6 +1750,27 @@ function requestTechWorkForRoom(room, demandOverride, options) {
     );
 
     if (missingWork <= 0) {
+        result.reason = 'Enough Tech WORK already planned';
+        saveTechRequestDebug(
+            room.name,
+            'satisfied',
+            'enough WORK already planned',
+            demand,
+            plannedTechCreeps
+        );
+        return result;
+    }
+
+    if (plannedTechCreeps >= TECH_ABSOLUTE_CREEP_CAP) {
+        result.ok = false;
+        result.reason = 'Absolute Tech creep cap reached';
+        saveTechRequestDebug(
+            room.name,
+            'blocked',
+            'absolute Tech creep cap reached',
+            demand,
+            plannedTechCreeps
+        );
         return result;
     }
 
@@ -1686,9 +1779,27 @@ function requestTechWorkForRoom(room, demandOverride, options) {
 
     if (!body || requestedWork <= 0) {
         result.ok = false;
-        result.reason = 'No Tech body or spawn queue available';
+        result.reason = 'No affordable Tech body for missing WORK';
+        saveTechRequestDebug(
+            room.name,
+            'blocked',
+            'insufficient body',
+            demand,
+            plannedTechCreeps
+        );
         return result;
     }
+
+    var requestOptions = {};
+    if (options) {
+        for (var optionKey in options) {
+            if (options.hasOwnProperty(optionKey)) {
+                requestOptions[optionKey] = options[optionKey];
+            }
+        }
+    }
+    requestOptions.allowTechWorkRoleCapBypass = true;
+    requestOptions.absoluteTechCreepCap = TECH_ABSOLUTE_CREEP_CAP;
 
     /* Add exactly one Tech request per tick. Later ticks can fill more WORK. */
     var addResult = addSpawnRequest(room.name, {
@@ -1701,11 +1812,18 @@ function requestTechWorkForRoom(room, demandOverride, options) {
             homeRoom: room.name
         },
         requestedAt: Game.time
-    }, options);
+    }, requestOptions);
 
     if (!addResult.ok) {
         result.ok = false;
         result.reason = addResult.reason;
+        saveTechRequestDebug(
+            room.name,
+            'blocked',
+            addResult.reason,
+            demand,
+            plannedTechCreeps
+        );
         return result;
     }
 
@@ -1722,6 +1840,13 @@ function requestTechWorkForRoom(room, demandOverride, options) {
         demand.desiredWork,
         demand.livingWork,
         result.queuedWork
+    );
+    saveTechRequestDebug(
+        room.name,
+        'queued',
+        null,
+        demand,
+        plannedTechCreeps + 1
     );
 
     return result;
@@ -3019,16 +3144,6 @@ function getHealthyRoleCount(room, role) {
     return countHealthyCreeps(room.name, role, replacementLeadTicks);
 }
 
-
-function getPlannedRoleCount(room, role) {
-    var body = creepBodyConfig.getBody(role, room);
-    var replacementLeadTicks = getReplacementLeadTicks(role, body);
-
-    var healthyCount = countHealthyCreeps(room.name, role, replacementLeadTicks);
-    var queuedCount = countQueuedRequests(room.name, role);
-
-    return healthyCount + queuedCount;
-}
 
 function runStartupBootstrap(room, report) {
     /*
