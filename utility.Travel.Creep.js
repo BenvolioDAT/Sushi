@@ -401,7 +401,7 @@ function canPlanSharedRoute() {
         return false;
     }
 
-    if (Game.cpu.tickLimit !== undefined && Game.cpu.getUsed() > Game.cpu.tickLimit - ROUTE_CACHE_MAX_CPU_BUFFER) {
+    if (Game.cpu.limit !== undefined && Game.cpu.getUsed() > Game.cpu.limit - ROUTE_CACHE_MAX_CPU_BUFFER) {
         return false;
     }
 

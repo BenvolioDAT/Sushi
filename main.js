@@ -510,4 +510,6 @@ module.exports.loop = function () {
     runTrafficManagerForVisibleRooms();
     StructurePlannerVisual.run();
     Dashboard.run();
+    /* Save completed usage for the next tick without changing this tick's mode. */
+    cpuStatusUtility.finalizeCpuStatus();
 }

@@ -34,6 +34,40 @@ function getPreviousMode() {
 }
 
 /*
+ * main.js samples CPU near the start of a tick so every subsystem sees one
+ * stable strategic mode. The current tick has barely used any CPU at that
+ * point, so use the last completed tick as the usage signal. A finalized flag
+ * prevents a tick that crashed before the end-of-tick sample from looking like
+ * a healthy completed tick.
+ */
+function getPreviousCpuSample(tick, fallbackLimit, fallbackUsed) {
+    var previous = typeof Memory !== 'undefined' ? Memory.cpuStatus : null;
+
+    if (
+        previous &&
+        previous.finalized === true &&
+        previous.tick === tick - 1 &&
+        typeof previous.used === 'number' &&
+        typeof previous.limit === 'number' &&
+        previous.limit > 0
+    ) {
+        return {
+            used: Math.max(0, previous.used),
+            limit: previous.limit,
+            usageRatio: Math.max(0, previous.used / previous.limit),
+            tick: previous.tick
+        };
+    }
+
+    return {
+        used: fallbackUsed,
+        limit: fallbackLimit,
+        usageRatio: fallbackLimit > 0 ? fallbackUsed / fallbackLimit : 1,
+        tick: tick
+    };
+}
+
+/*
  * Mild hysteresis keeps mode changes meaningful. Each pressured mode needs a
  * healthier bucket/usage value to leave than it needed to enter, and high mode
  * similarly gets a small buffer before falling back to normal.
@@ -111,8 +145,12 @@ function saveDebug(status, previousMode) {
         tickLimit: status.tickLimit,
         bucket: status.bucket,
         strategicUsed: Math.round(status.strategicUsed * 100) / 100,
+        strategicUsageRatio: Math.round(status.strategicUsageRatio * 1000) / 1000,
+        strategicSampleTick: status.strategicSampleTick,
         used: Math.round(status.used * 100) / 100,
-        remaining: Math.round(status.remaining * 100) / 100
+        remaining: Math.round(status.remaining * 100) / 100,
+        usageRatio: Math.round(status.currentUsageRatio * 1000) / 1000,
+        finalized: false
     };
     lastDebugSaveTick = status.tick;
 }
@@ -160,7 +198,12 @@ function getCpuStatus() {
         used = Math.max(0, safeNumber(cpu.getUsed(), 0));
     }
 
-    var usageRatio = sustainableLimit > 0 ? used / sustainableLimit : 1;
+    var previousSample = getPreviousCpuSample(
+        tick,
+        sustainableLimit,
+        used
+    );
+    var usageRatio = previousSample.usageRatio;
     var previousMode = getPreviousMode();
     var mode = chooseMode(sustainableLimit, bucket, usageRatio, previousMode);
 
@@ -171,10 +214,11 @@ function getCpuStatus() {
         bucket: bucket,
         used: used,
         remaining: Math.max(0, sustainableLimit - used),
-        usageRatio: usageRatio,
-        currentUsageRatio: usageRatio,
-        strategicUsed: used,
+        usageRatio: sustainableLimit > 0 ? used / sustainableLimit : 1,
+        currentUsageRatio: sustainableLimit > 0 ? used / sustainableLimit : 1,
+        strategicUsed: previousSample.used,
         strategicUsageRatio: usageRatio,
+        strategicSampleTick: previousSample.tick,
         bucketRatio: bucket / FULL_BUCKET,
         mode: mode,
         tick: tick
@@ -185,7 +229,33 @@ function getCpuStatus() {
     return cachedStatus;
 }
 
+/*
+ * Capture completed usage once, after normal tick work. This does not change
+ * the already-frozen mode; it only provides the next tick with a trustworthy
+ * sustainable-usage sample and keeps Memory.cpuStatus useful in the console.
+ */
+function finalizeCpuStatus() {
+    var status = getCpuStatus();
+
+    if (typeof Memory === 'undefined') {
+        return status;
+    }
+
+    if (!Memory.cpuStatus || Memory.cpuStatus.tick !== status.tick) {
+        saveDebug(status, getPreviousMode());
+    }
+
+    Memory.cpuStatus.used = Math.round(status.used * 100) / 100;
+    Memory.cpuStatus.remaining = Math.round(status.remaining * 100) / 100;
+    Memory.cpuStatus.usageRatio =
+        Math.round(status.currentUsageRatio * 1000) / 1000;
+    Memory.cpuStatus.finalized = true;
+
+    return status;
+}
+
 module.exports = {
     getCpuStatus: getCpuStatus,
+    finalizeCpuStatus: finalizeCpuStatus,
     chooseMode: chooseMode
 };

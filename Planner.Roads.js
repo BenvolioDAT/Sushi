@@ -308,8 +308,8 @@ function canSpendCpu() {
     if (
         Game.cpu &&
         typeof Game.cpu.getUsed === 'function' &&
-        Game.cpu.tickLimit !== undefined &&
-        Game.cpu.getUsed() > Game.cpu.tickLimit - CPU_BUFFER
+        Game.cpu.limit !== undefined &&
+        Game.cpu.getUsed() > Game.cpu.limit - CPU_BUFFER
     ) {
         return false;
     }

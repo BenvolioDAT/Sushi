@@ -977,7 +977,7 @@ function canSpendPlanningCpu() {
         return false;
     }
 
-    if (Game.cpu && Game.cpu.tickLimit !== undefined && Game.cpu.getUsed && Game.cpu.getUsed() > Game.cpu.tickLimit - CPU_BUFFER) {
+    if (Game.cpu && Game.cpu.limit !== undefined && Game.cpu.getUsed && Game.cpu.getUsed() > Game.cpu.limit - CPU_BUFFER) {
         return false;
     }
 
