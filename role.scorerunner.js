@@ -15,6 +15,10 @@ var FRIENDLY_BLOCK_STUCK_TICKS = 12;
 var FAILED_TARGET_TTL = 25;
 var EXPLORE_ROOM_TTL = 150;
 
+function seasonRouteCallback(roomName) {
+    return scoreSeason.isRoomUnsafe(roomName) ? Infinity : 1;
+}
+
 function clearTravelState(creep) {
     if (!creep || !creep.memory) {
         return;
@@ -204,9 +208,7 @@ function moveToScore(creep, target) {
         /* Traveler otherwise skips findRoute for destinations within two rooms. */
         useFindRoute: isCrossRoomTarget,
         disableSharedRouteCache: isCrossRoomTarget,
-        routeCallback: function(roomName) {
-            return scoreSeason.isRoomUnsafe(roomName) ? Infinity : 1;
-        },
+        routeCallback: seasonRouteCallback,
         visualizePathStyle: {
             stroke: '#ffd700'
         }
@@ -305,9 +307,7 @@ function explore(creep) {
         range: 22,
         reusePath: 20,
         allowHostile: false,
-        routeCallback: function(routeRoomName) {
-            return scoreSeason.isRoomUnsafe(routeRoomName) ? Infinity : 1;
-        },
+        routeCallback: seasonRouteCallback,
         visualizePathStyle: {
             stroke: '#c8a800'
         }
@@ -320,7 +320,8 @@ function fleeHostileRoom(creep) {
         return travel.moveToRoom(creep, homeRoom, {
             range: 22,
             reusePath: 5,
-            allowHostile: false
+            allowHostile: false,
+            routeCallback: seasonRouteCallback
         });
     }
 
@@ -330,7 +331,8 @@ function fleeHostileRoom(creep) {
             return travel.moveToRoom(creep, rooms[i], {
                 range: 22,
                 reusePath: 5,
-                allowHostile: false
+                allowHostile: false,
+                routeCallback: seasonRouteCallback
             });
         }
     }
@@ -415,5 +417,7 @@ module.exports = {
     getBestScoreTarget: getBestScoreTarget,
     moveToScore: moveToScore,
     idleScoreRunner: idleScoreRunner,
-    getScoreMemoryStats: getScoreMemoryStats
+    getScoreMemoryStats: getScoreMemoryStats,
+    fleeHostileRoom: fleeHostileRoom,
+    seasonRouteCallback: seasonRouteCallback
 };

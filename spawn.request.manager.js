@@ -1350,6 +1350,14 @@ function getScoreRunnerDemand(room, suppliedCpuStatus) {
     demand.unclaimedTargets = targetSummary.unclaimedTargets;
     demand.reachableScore = targetSummary.totalScore;
 
+    /* CPU surplus is not a reason to create explorers with no known work.
+     * Existing runners may keep exploring, but new spawn demand requires at
+     * least one safe, unexpired target within the configured colony range. */
+    if (targetSummary.reachableTargets <= 0) {
+        demand.reason = 'no reachable Score targets';
+        return demand;
+    }
+
     var level = room.controller ? (room.controller.level || 1) : 1;
     var energyCapacity = room.energyCapacityAvailable || 300;
     var storageEnergy = getStoredEnergy(room.storage);

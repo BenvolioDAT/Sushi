@@ -16,8 +16,8 @@ var HOSTILE_CREEP_TTL = 400;
 var HOSTILE_ROOM_TTL = 2000;
 /*
  * Route checks are more expensive than linear-distance ranking. Check at most
- * eight candidates, but stop once three viable results are available to rank.
- * Failed routes therefore do not consume the viable-result allowance.
+ * eight unique destination rooms, but stop once three viable results are
+ * available to rank. Multiple Scores in one failed room share one decision.
  */
 var ROUTE_VIABLE_CANDIDATE_LIMIT = 3;
 var ROUTE_CHECK_LIMIT = 8;
@@ -749,15 +749,27 @@ function getBestTarget(creep, options) {
      */
     var viable = [];
     var routeChecks = 0;
+    var routeLengthByDestinationRoom = {};
     for (
         var i = 0;
-        i < ranked.length &&
-            routeChecks < ROUTE_CHECK_LIMIT &&
-            viable.length < ROUTE_VIABLE_CANDIDATE_LIMIT;
+        i < ranked.length && viable.length < ROUTE_VIABLE_CANDIDATE_LIMIT;
         i++
     ) {
-        routeChecks++;
-        var routeLength = getRouteLength(creep.room.name, ranked[i].target.roomName);
+        var destinationRoom = ranked[i].target.roomName;
+        var routeLength;
+
+        if (routeLengthByDestinationRoom.hasOwnProperty(destinationRoom)) {
+            routeLength = routeLengthByDestinationRoom[destinationRoom];
+        }
+        else {
+            if (routeChecks >= ROUTE_CHECK_LIMIT) {
+                continue;
+            }
+            routeChecks++;
+            routeLength = getRouteLength(creep.room.name, destinationRoom);
+            routeLengthByDestinationRoom[destinationRoom] = routeLength;
+        }
+
         if (routeLength < 0) {
             continue;
         }

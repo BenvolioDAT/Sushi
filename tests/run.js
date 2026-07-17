@@ -58,6 +58,8 @@ function defineScreepsBodyGlobals() {
     global.ERR_BUSY = -4;
     global.ERR_NAME_EXISTS = -3;
     global.ERR_INVALID_ARGS = -10;
+    global.ERR_NO_PATH = -2;
+    global.ERR_INVALID_TARGET = -7;
     global.TOP = 1;
     global.TOP_RIGHT = 2;
     global.RIGHT = 3;
@@ -356,6 +358,163 @@ test('disabled profiler does not sample Game.cpu', function() {
     profiler.flush();
     assertEqual(start, null, 'disabled profiler returns no token');
     assertEqual(cpuCalls, 0, 'disabled profiler does not call getUsed');
+});
+
+test('Score route budget counts unique destination rooms', function() {
+    global.FIND_SCORES = 99;
+    global.Memory = {
+        settings: {
+            scoreSeasonEnabled: true,
+            scoreRunnerMaximumRoomRange: 5,
+            scoreRunnerDecaySafetyTicks: 25,
+            scoreRunnerAllowSourceKeeperRooms: true
+        },
+        scoreSeason: { targets: {}, hostileRooms: {} },
+        rooms: {}
+    };
+    for (var i = 0; i < 8; i++) {
+        Memory.scoreSeason.targets['bad' + i] = {
+            id: 'bad' + i,
+            roomName: 'W9N9',
+            x: 20,
+            y: 20,
+            score: 1000 - i,
+            decayTime: 2000,
+            seenAt: 700
+        };
+    }
+    Memory.scoreSeason.targets.good = {
+        id: 'good',
+        roomName: 'W2N1',
+        x: 20,
+        y: 20,
+        score: 10,
+        decayTime: 2000,
+        seenAt: 700
+    };
+
+    var routeCalls = 0;
+    global.Game = {
+        time: 700,
+        rooms: {},
+        creeps: {},
+        spawns: {},
+        map: {
+            getRoomLinearDistance: function() { return 1; },
+            findRoute: function(fromRoom, toRoom) {
+                routeCalls++;
+                return toRoom === 'W9N9' ? ERR_NO_PATH : [{ room: toRoom }];
+            }
+        }
+    };
+    var creep = {
+        name: 'Runner',
+        room: { name: 'W1N1' },
+        pos: { getRangeTo: function() { return 10; } }
+    };
+
+    var scoreSeason = loadFreshModule('Season.Score.js');
+    var ranked = scoreSeason.getBestTarget(creep, {});
+    assertEqual(routeCalls, 2, 'one failed room and one valid room are checked');
+    assertEqual(ranked.target.id, 'good', 'later valid room remains selectable');
+});
+
+test('high CPU without Score targets requests no new runners', function() {
+    global.FIND_SCORES = 99;
+    global.Creep = function() {};
+    global.RoomPosition = function(x, y, roomName) {
+        this.x = x;
+        this.y = y;
+        this.roomName = roomName;
+    };
+    global.Memory = {
+        settings: {
+            scoreSeasonEnabled: true,
+            scoreRunnerMinimum: 1,
+            scoreRunnerMaximumPerRoom: 5,
+            scoreRunnerCpuScaling: true,
+            scoreRunnerMaximumRoomRange: 5,
+            scoreRunnerDecaySafetyTicks: 25,
+            scoreRunnerAllowSourceKeeperRooms: true
+        },
+        scoreSeason: { targets: {}, hostileRooms: {} },
+        rooms: { W1N1: { spawnQueue: [] } }
+    };
+    var room = {
+        name: 'W1N1',
+        controller: { my: true, level: 8, ticksToDowngrade: 100000 },
+        energyCapacityAvailable: 3000,
+        storage: { store: { energy: 100000 } }
+    };
+    global.Game = {
+        time: 710,
+        rooms: { W1N1: room },
+        creeps: {},
+        spawns: {},
+        map: { getRoomLinearDistance: function() { return 1; } }
+    };
+
+    var requestManager = loadFreshModule('spawn.request.manager.js');
+    var demand = requestManager.getScoreRunnerDemand(room, {
+        mode: 'high',
+        limit: 100,
+        remaining: 90
+    });
+    assertEqual(demand.desired, 0, 'no target means no new runner demand');
+    assertEqual(demand.reason, 'no reachable Score targets', 'reason is explicit');
+});
+
+test('ScoreRunner fleeing uses the Season route safety callback', function() {
+    global.FIND_SCORES = 99;
+    global.Memory = {
+        settings: {
+            scoreSeasonEnabled: true,
+            scoreRunnerAllowSourceKeeperRooms: true
+        },
+        scoreSeason: {
+            targets: {},
+            hostileRooms: {
+                W3N3: { until: 900, reason: 'test' }
+            }
+        },
+        rooms: {}
+    };
+    global.Game = {
+        time: 720,
+        rooms: {},
+        creeps: {},
+        spawns: {},
+        map: { describeExits: function() { return {}; } }
+    };
+
+    var travel = require(path.resolve(__dirname, '..', 'utility.Travel.Creep.js'));
+    var originalMoveToRoom = travel.moveToRoom;
+    var capturedOptions = null;
+    travel.moveToRoom = function(creep, roomName, options) {
+        capturedOptions = options;
+        return OK;
+    };
+
+    try {
+        var scoreRunner = loadFreshModule('role.scorerunner.js');
+        scoreRunner.fleeHostileRoom({
+            memory: { homeRoom: 'W2N2' },
+            room: { name: 'W1N1' }
+        });
+        assertEqual(
+            typeof capturedOptions.routeCallback,
+            'function',
+            'flee travel receives a route callback'
+        );
+        assertEqual(
+            capturedOptions.routeCallback('W3N3'),
+            Infinity,
+            'Season-marked hostile room is rejected'
+        );
+    }
+    finally {
+        travel.moveToRoom = originalMoveToRoom;
+    }
 });
 
 test('main module loads without Game.rooms or populated Memory', function() {
