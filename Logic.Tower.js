@@ -11,6 +11,10 @@
  * target before starting a new one.
  */
 var TowerLogic = {};
+var tickCache = require('Tick.Cache');
+var combatThreat = require('Combat.Threat');
+var TOWER_TARGET_LOCK_TICKS = 3;
+var lastDefenseStateByRoom = {};
 
 /*
  * Towers should keep energy ready for defense.
@@ -98,12 +102,30 @@ TowerLogic.run = function(room) {
     if (enemies.length > 0) {
         clearRepairTarget(room);
 
-        var target = chooseTowerTarget(towers, enemies);
+        var targetEvaluation = chooseTowerTarget(room, towers, enemies);
+        var endangeredDefender = chooseEndangeredDefender(room, enemies);
 
-        if (target) {
-            attackWithAllTowers(towers, target);
+        if (
+            endangeredDefender &&
+            (!targetEvaluation || targetEvaluation.netDamage <= 0)
+        ) {
+            healWithAllTowers(towers, endangeredDefender);
+            saveDefenseState(room, enemies, targetEvaluation, 'heal', endangeredDefender);
+        }
+        else if (targetEvaluation && targetEvaluation.target) {
+            attackWithAllTowers(towers, targetEvaluation.target);
+            saveDefenseState(room, enemies, targetEvaluation, 'attack', null);
         }
 
+        return;
+    }
+
+    clearTowerTarget(room);
+
+    var peacefulHealTarget = choosePeacefulHealTarget(room);
+    if (peacefulHealTarget) {
+        healWithAllTowers(towers, peacefulHealTarget);
+        saveDefenseState(room, enemies, null, 'heal', peacefulHealTarget);
         return;
     }
 
@@ -117,11 +139,14 @@ TowerLogic.run = function(room) {
  * Find all owned towers in the room.
  */
 function findMyTowers(room) {
-    return room.find(FIND_MY_STRUCTURES, {
-        filter: function(structure) {
-            return structure.structureType === STRUCTURE_TOWER;
+    var structures = tickCache.getMyStructures(room);
+    var towers = [];
+    for (var i = 0; i < structures.length; i++) {
+        if (structures[i].structureType === STRUCTURE_TOWER) {
+            towers.push(structures[i]);
         }
-    });
+    }
+    return towers;
 }
 
 /*
@@ -130,7 +155,7 @@ function findMyTowers(room) {
  * FIND_HOSTILE_CREEPS only finds creeps that are not yours.
  */
 function findEnemyCreeps(room) {
-    return room.find(FIND_HOSTILE_CREEPS);
+    return tickCache.getHostileCreeps(room);
 }
 
 /*
@@ -139,19 +164,116 @@ function findEnemyCreeps(room) {
  * Simple beginner rule:
  * Use the first tower and find the enemy closest to that tower.
  */
-function chooseTowerTarget(towers, enemies) {
-    /*
-     * Using the first tower as the perspective is simple and deterministic.
-     * A later upgrade could score enemies by total tower damage, healing parts,
-     * or distance to important structures.
-     */
-    var firstTower = towers[0];
+function chooseTowerTarget(room, towers, enemies) {
+    var evaluations = [];
+    for (var i = 0; i < enemies.length; i++) {
+        evaluations.push(evaluateTowerTarget(room, towers, enemies[i], enemies));
+    }
+    evaluations.sort(function(a, b) {
+        if (a.score !== b.score) {
+            return b.score - a.score;
+        }
+        return String(a.target.id) < String(b.target.id) ? -1 : 1;
+    });
 
-    if (!firstTower) {
-        return null;
+    var best = evaluations.length > 0 ? evaluations[0] : null;
+    var roomMemory = getTowerRoomMemory(room);
+    var locked = null;
+    for (var evaluationIndex = 0; evaluationIndex < evaluations.length; evaluationIndex++) {
+        if (evaluations[evaluationIndex].target.id === roomMemory.towerTargetId) {
+            locked = evaluations[evaluationIndex];
+            break;
+        }
     }
 
-    return firstTower.pos.findClosestByRange(enemies);
+    var criticalThreatBreak = !!(
+        best && locked && best.target.id !== locked.target.id &&
+        (
+            best.analysis.strategicThreat >=
+                locked.analysis.strategicThreat + 250 ||
+            best.analysis.totalThreat >= locked.analysis.totalThreat * 1.5
+        )
+    );
+
+    if (
+        locked &&
+        locked.analysis.dangerous &&
+        roomMemory.towerTargetUntil > Game.time &&
+        !criticalThreatBreak &&
+        (!best || best.score <= locked.score * 1.35)
+    ) {
+        return locked;
+    }
+
+    if (best) {
+        roomMemory.towerTargetId = best.target.id;
+        roomMemory.towerTargetUntil = Game.time + TOWER_TARGET_LOCK_TICKS;
+        roomMemory.towerTargetScore = Math.round(best.score);
+    }
+    return best;
+}
+
+function getTowerEffectMultiplier(tower) {
+    if (!tower || !tower.effects || typeof PWR_OPERATE_TOWER === 'undefined') {
+        return 1;
+    }
+    for (var i = 0; i < tower.effects.length; i++) {
+        var effect = tower.effects[i];
+        if (effect && effect.effect === PWR_OPERATE_TOWER) {
+            return 1 + Math.max(0, effect.level || 0) * 0.1;
+        }
+    }
+    return 1;
+}
+
+function getTowerPowerAtRange(basePower, range) {
+    if (range <= 5) {
+        return basePower;
+    }
+    if (range >= 20) {
+        return basePower * 0.25;
+    }
+    return basePower * (1 - 0.75 * (range - 5) / 15);
+}
+
+function getTowerAttackDamage(towers, target) {
+    var damage = 0;
+    for (var i = 0; i < towers.length; i++) {
+        var tower = towers[i];
+        if (getTowerEnergy(tower) < 10) {
+            continue;
+        }
+        var range = combatThreat.getRange(tower.pos, target.pos);
+        damage += getTowerPowerAtRange(600, range) *
+            getTowerEffectMultiplier(tower);
+    }
+    return Math.round(damage);
+}
+
+function evaluateTowerTarget(room, towers, target, enemies) {
+    var analysis = combatThreat.analyze(target, room);
+    var rawDamage = getTowerAttackDamage(towers, target);
+    var actualDamage = combatThreat.estimateDamageAfterTough(target, rawDamage);
+    var healing = combatThreat.getHealingSupport(target, enemies);
+    var netDamage = actualDamage - healing;
+    var killable = actualDamage >= (target.hits || 0) + healing;
+    var score = analysis.totalThreat;
+
+    score += killable ? 5000 : 0;
+    score += netDamage > 0 ? 1000 + Math.min(1000, netDamage) : -2000;
+    score += analysis.category === 'healer' ? 350 : 0;
+    score += analysis.strategicThreat;
+
+    return {
+        target: target,
+        analysis: analysis,
+        rawDamage: rawDamage,
+        actualDamage: actualDamage,
+        hostileHealing: healing,
+        netDamage: netDamage,
+        killable: killable,
+        score: score
+    };
 }
 
 /*
@@ -166,7 +288,7 @@ function attackWithAllTowers(towers, target) {
          *
          * Towers need energy to attack.
          */
-        if (tower.store.getUsedCapacity(RESOURCE_ENERGY) <= 0) {
+        if (getTowerEnergy(tower) < 10) {
             continue;
         }
 
@@ -188,6 +310,20 @@ function repairWithAvailableTowers(room, towers) {
         return;
     }
 
+    var targets = [target];
+    if (towers.length > 1) {
+        var candidates = findRepairCandidates(room);
+        for (var candidateIndex = 0; candidateIndex < candidates.length; candidateIndex++) {
+            if (candidates[candidateIndex].id === target.id) {
+                continue;
+            }
+            targets.push(candidates[candidateIndex]);
+            if (targets.length >= towers.length) {
+                break;
+            }
+        }
+    }
+
     for (var i = 0; i < towers.length; i++) {
         var tower = towers[i];
 
@@ -195,7 +331,7 @@ function repairWithAvailableTowers(room, towers) {
          * Keep a defensive energy reserve. A low-energy tower should wait so it
          * can still help if enemies arrive soon.
          */
-        if (tower.store.getUsedCapacity(RESOURCE_ENERGY) < TOWER_REPAIR_MIN_ENERGY) {
+        if (getTowerEnergy(tower) < TOWER_REPAIR_MIN_ENERGY) {
             continue;
         }
 
@@ -203,7 +339,9 @@ function repairWithAvailableTowers(room, towers) {
          * The target came from Game.getObjectById or room.find, so it is a real
          * structure object. Repairing only happens after all hostile checks.
          */
-        tower.repair(target);
+        var repairTarget = targets.length > 1 ?
+            targets[Math.min(i, targets.length - 1)] : target;
+        tower.repair(repairTarget);
     }
 
     /*
@@ -455,6 +593,112 @@ function getRepairPriority(structure) {
     return 999;
 }
 
+function getTowerEnergy(tower) {
+    if (!tower) {
+        return 0;
+    }
+    if (tower.store && typeof tower.store.getUsedCapacity === 'function') {
+        return tower.store.getUsedCapacity(RESOURCE_ENERGY) || 0;
+    }
+    if (tower.store) {
+        return tower.store[RESOURCE_ENERGY] || 0;
+    }
+    return typeof tower.energy === 'number' ? tower.energy : 0;
+}
+
+function healWithAllTowers(towers, target) {
+    for (var i = 0; i < towers.length; i++) {
+        if (getTowerEnergy(towers[i]) >= 10) {
+            towers[i].heal(target);
+        }
+    }
+}
+
+function getIncomingDamage(target, enemies) {
+    var incoming = 0;
+    for (var i = 0; i < enemies.length; i++) {
+        var analysis = combatThreat.analyze(enemies[i], target.room);
+        var range = combatThreat.getRange(enemies[i].pos, target.pos);
+        if (range <= 1) {
+            incoming += analysis.attackPower;
+        }
+        if (range <= 3) {
+            incoming += analysis.rangedPower;
+        }
+    }
+    return incoming;
+}
+
+function chooseEndangeredDefender(room, enemies) {
+    var creeps = tickCache.getMyCreepsInRoom(room);
+    var best = null;
+    var bestScore = 0;
+    for (var i = 0; i < creeps.length; i++) {
+        var creep = creeps[i];
+        if (!creep || creep.hits >= creep.hitsMax) {
+            continue;
+        }
+        var role = creep.memory && creep.memory.role;
+        if (role !== 'Ronin' && role !== 'Volley' && role !== 'Cleric') {
+            continue;
+        }
+        var ratio = creep.hits / Math.max(1, creep.hitsMax);
+        var incoming = getIncomingDamage(creep, enemies);
+        if (ratio > 0.35 && incoming < creep.hits) {
+            continue;
+        }
+        var score = (1 - ratio) * 1000 + incoming;
+        if (!best || score > bestScore) {
+            best = creep;
+            bestScore = score;
+        }
+    }
+    return best;
+}
+
+function choosePeacefulHealTarget(room) {
+    var creeps = tickCache.getMyCreepsInRoom(room);
+    var best = null;
+    var bestRatio = 1;
+    for (var i = 0; i < creeps.length; i++) {
+        if (!creeps[i] || creeps[i].hits >= creeps[i].hitsMax) {
+            continue;
+        }
+        var ratio = creeps[i].hits / Math.max(1, creeps[i].hitsMax);
+        if (!best || ratio < bestRatio) {
+            best = creeps[i];
+            bestRatio = ratio;
+        }
+    }
+    return best;
+}
+
+function clearTowerTarget(room) {
+    var roomMemory = getTowerRoomMemory(room);
+    delete roomMemory.towerTargetId;
+    delete roomMemory.towerTargetUntil;
+    delete roomMemory.towerTargetScore;
+}
+
+function saveDefenseState(room, enemies, evaluation, action, healTarget) {
+    var summary = combatThreat.getRoomSummary(room, enemies);
+    lastDefenseStateByRoom[room.name] = {
+        tick: Game.time,
+        action: action,
+        hostileCount: summary.hostileCount,
+        harmfulHostileCount: summary.harmfulHostileCount,
+        totalThreat: summary.totalThreat,
+        targetId: evaluation && evaluation.target ? evaluation.target.id : null,
+        targetCategory: evaluation ? evaluation.analysis.category : null,
+        rawDamage: evaluation ? evaluation.rawDamage : 0,
+        actualDamage: evaluation ? evaluation.actualDamage : 0,
+        hostileHealing: evaluation ? evaluation.hostileHealing : 0,
+        netDamage: evaluation ? evaluation.netDamage : 0,
+        killable: evaluation ? evaluation.killable : false,
+        healTargetId: healTarget ? healTarget.id : null
+    };
+}
+
 /*
  * Find the best new repair target in the room.
  *
@@ -470,14 +714,21 @@ function getRepairPriority(structure) {
  * Roads are not listed because towers should never repair roads.
  */
 function findBestRepairTarget(room) {
-    var repairableStructures = room.find(FIND_STRUCTURES, {
-        filter: function(structure) {
-            return isWantedRepairStructure(structure) && structureNeedsTowerRepair(room, structure);
-        }
-    });
+    var repairableStructures = findRepairCandidates(room);
 
-    if (repairableStructures.length === 0) {
-        return null;
+    return repairableStructures.length > 0 ? repairableStructures[0] : null;
+}
+
+function findRepairCandidates(room) {
+    var structures = tickCache.getRoomStructures(room);
+    var repairableStructures = [];
+    for (var i = 0; i < structures.length; i++) {
+        if (
+            isWantedRepairStructure(structures[i]) &&
+            structureNeedsTowerRepair(room, structures[i])
+        ) {
+            repairableStructures.push(structures[i]);
+        }
     }
 
     repairableStructures.sort(function(a, b) {
@@ -491,7 +742,7 @@ function findBestRepairTarget(room) {
         return getRepairHitsPercent(room, a) - getRepairHitsPercent(room, b);
     });
 
-    return repairableStructures[0];
+    return repairableStructures;
 }
 
 /*
@@ -521,5 +772,13 @@ function getRepairHitsPercent(room, structure) {
 
     return structure.hits / targetHits;
 }
+
+TowerLogic.chooseTowerTarget = chooseTowerTarget;
+TowerLogic.evaluateTowerTarget = evaluateTowerTarget;
+TowerLogic.getTowerAttackDamage = getTowerAttackDamage;
+TowerLogic.getTowerPowerAtRange = getTowerPowerAtRange;
+TowerLogic.getLastDefenseState = function(roomName) {
+    return lastDefenseStateByRoom[roomName] || null;
+};
 
 module.exports = TowerLogic;

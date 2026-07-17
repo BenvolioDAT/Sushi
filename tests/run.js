@@ -70,6 +70,69 @@ function defineScreepsBodyGlobals() {
     global.TOP_LEFT = 8;
 }
 
+function defineDefenseGlobals() {
+    defineScreepsBodyGlobals();
+    global.RESOURCE_ENERGY = 'energy';
+    global.FIND_STRUCTURES = 1;
+    global.FIND_MY_STRUCTURES = 2;
+    global.FIND_HOSTILE_CREEPS = 3;
+    global.FIND_MY_CREEPS = 4;
+    global.STRUCTURE_SPAWN = 'spawn';
+    global.STRUCTURE_TOWER = 'tower';
+    global.STRUCTURE_STORAGE = 'storage';
+    global.STRUCTURE_TERMINAL = 'terminal';
+    global.STRUCTURE_RAMPART = 'rampart';
+    global.STRUCTURE_WALL = 'constructedWall';
+    global.STRUCTURE_CONTAINER = 'container';
+    global.STRUCTURE_EXTENSION = 'extension';
+    global.BOOSTS = {
+        tough: {
+            XGHO2: { damage: 0.3 }
+        },
+        heal: {},
+        attack: {},
+        ranged_attack: {},
+        work: {}
+    };
+}
+
+function makePos(x, y, roomName) {
+    return {
+        x: x,
+        y: y,
+        roomName: roomName,
+        getRangeTo: function(target) {
+            var pos = target.pos || target;
+            return Math.max(Math.abs(x - pos.x), Math.abs(y - pos.y));
+        }
+    };
+}
+
+function makeBody(parts) {
+    var body = [];
+    for (var i = 0; i < parts.length; i++) {
+        body.push({
+            type: parts[i].type || parts[i],
+            hits: parts[i].hits === undefined ? 100 : parts[i].hits,
+            boost: parts[i].boost || null
+        });
+    }
+    return body;
+}
+
+function makeHostile(id, parts, x, y, hits) {
+    var body = makeBody(parts);
+    return {
+        id: id,
+        name: id,
+        body: body,
+        hits: hits === undefined ? body.length * 100 : hits,
+        hitsMax: body.length * 100,
+        pos: makePos(x, y, 'W1N1'),
+        owner: { username: 'Enemy' }
+    };
+}
+
 function loadFreshSpawnManager() {
     var names = [
         'spawn.manager.js',
@@ -515,6 +578,166 @@ test('ScoreRunner fleeing uses the Season route safety callback', function() {
     finally {
         travel.moveToRoom = originalMoveToRoom;
     }
+});
+
+test('unarmed Scout has low cached threat', function() {
+    defineDefenseGlobals();
+    var spawn = { id: 'spawn1', structureType: STRUCTURE_SPAWN, pos: makePos(25, 25, 'W1N1') };
+    var room = {
+        name: 'W1N1',
+        controller: { my: true, pos: makePos(20, 20, 'W1N1') },
+        find: function(type) { return type === FIND_STRUCTURES ? [spawn] : []; }
+    };
+    global.Game = { time: 800, rooms: { W1N1: room }, creeps: {}, spawns: {} };
+    var threat = loadFreshModule('Combat.Threat.js');
+    var scout = makeHostile('scout', [MOVE], 25, 24);
+    var first = threat.analyze(scout, room);
+    var builds = threat.getDebugStats().analysesBuiltThisGlobal;
+    var second = threat.analyze(scout, room);
+
+    assertEqual(first.category, 'scout', 'unarmed creep is a Scout');
+    assertEqual(first.dangerous, false, 'Scout is not offensive');
+    assertEqual(first.totalThreat < 50, true, 'Scout threat stays low');
+    assertEqual(second, first, 'same hostile returns cached analysis');
+    assertEqual(
+        threat.getDebugStats().analysesBuiltThisGlobal,
+        builds,
+        'hostile analysis builds once per tick'
+    );
+});
+
+test('attackers and dismantlers near critical structures score high', function() {
+    defineDefenseGlobals();
+    var spawn = { id: 'spawn1', structureType: STRUCTURE_SPAWN, pos: makePos(25, 25, 'W1N1') };
+    var rampart = { id: 'ramp1', structureType: STRUCTURE_RAMPART, pos: makePos(24, 25, 'W1N1') };
+    var room = {
+        name: 'W1N1',
+        controller: { my: true, pos: makePos(20, 20, 'W1N1') },
+        find: function(type) { return type === FIND_STRUCTURES ? [spawn, rampart] : []; }
+    };
+    global.Game = { time: 801, rooms: { W1N1: room }, creeps: {}, spawns: {} };
+    var threat = loadFreshModule('Combat.Threat.js');
+    var attacker = threat.analyze(makeHostile('attacker', [ATTACK, MOVE], 25, 24), room);
+    var dismantler = threat.analyze(makeHostile('dismantler', [WORK, WORK, MOVE], 23, 25), room);
+
+    assertEqual(attacker.category, 'attacker', 'ATTACK creep is classified');
+    assertEqual(attacker.totalThreat > 500, true, 'attacker near spawn scores high');
+    assertEqual(dismantler.category, 'dismantler', 'WORK creep is classified');
+    assertEqual(dismantler.strategicThreat >= 500, true, 'nearby dismantler has strategic threat');
+});
+
+test('boosted TOUGH increases effective durability', function() {
+    defineDefenseGlobals();
+    var room = { name: 'W1N1', find: function() { return []; } };
+    global.Game = { time: 802, rooms: { W1N1: room }, creeps: {}, spawns: {} };
+    var threat = loadFreshModule('Combat.Threat.js');
+    var plain = threat.analyze(makeHostile('plain', [TOUGH, MOVE], 10, 10), room);
+    var boosted = threat.analyze(makeHostile(
+        'boosted',
+        [{ type: TOUGH, boost: 'XGHO2' }, MOVE],
+        10,
+        10
+    ), room);
+    assertEqual(boosted.durability > plain.durability, true, 'boosted TOUGH is more durable');
+    assertEqual(boosted.boostedToughParts, 1, 'boost is recorded');
+});
+
+test('tower target selection prefers a killable supported threat', function() {
+    defineDefenseGlobals();
+    global.Memory = { rooms: { W1N1: {} } };
+    var room = { name: 'W1N1', controller: { my: true }, find: function() { return []; } };
+    global.Game = { time: 810, rooms: { W1N1: room }, creeps: {}, spawns: {} };
+    var tower = {
+        id: 'tower1',
+        pos: makePos(20, 20, 'W1N1'),
+        store: { getUsedCapacity: function() { return 1000; } }
+    };
+    var tank = makeHostile('tank', [ATTACK, ATTACK, ATTACK, ATTACK, MOVE], 21, 20, 500);
+    tank.hitsMax = 5000;
+    tank.hits = 5000;
+    var healer = makeHostile('healer', [HEAL, MOVE], 21, 21, 100);
+    var towerLogic = loadFreshModule('Logic.Tower.js');
+    var evaluation = towerLogic.chooseTowerTarget(room, [tower], [tank, healer]);
+
+    assertEqual(evaluation.target.id, 'healer', 'vulnerable healer is focused first');
+    assertEqual(evaluation.killable, true, 'selected target is killable through healing');
+});
+
+test('towers heal a critical defender and never repair during danger', function() {
+    defineDefenseGlobals();
+    global.Memory = { rooms: { W1N1: {} } };
+    var attacks = 0;
+    var heals = 0;
+    var repairs = 0;
+    var tower = {
+        id: 'tower1',
+        structureType: STRUCTURE_TOWER,
+        pos: makePos(20, 20, 'W1N1'),
+        store: { getUsedCapacity: function() { return 1000; } },
+        attack: function() { attacks++; },
+        heal: function() { heals++; },
+        repair: function() { repairs++; }
+    };
+    var healerParts = [];
+    for (var i = 0; i < 50; i++) {
+        healerParts.push(HEAL);
+    }
+    var hostile = makeHostile('healwall', healerParts, 21, 20, 5000);
+    var defender = {
+        id: 'defender',
+        hits: 100,
+        hitsMax: 1000,
+        memory: { role: 'Ronin' },
+        pos: makePos(20, 21, 'W1N1')
+    };
+    var room = {
+        name: 'W1N1',
+        controller: { my: true, level: 8 },
+        find: function(type) {
+            if (type === FIND_MY_STRUCTURES) { return [tower]; }
+            if (type === FIND_HOSTILE_CREEPS) { return [hostile]; }
+            if (type === FIND_MY_CREEPS) { return [defender]; }
+            return [];
+        }
+    };
+    defender.room = room;
+    hostile.room = room;
+    global.Game = {
+        time: 811,
+        rooms: { W1N1: room },
+        creeps: {},
+        spawns: {},
+        getObjectById: function() { return null; }
+    };
+
+    loadFreshModule('Logic.Tower.js').run(room);
+    assertEqual(heals, 1, 'tower heals critical defender in a stalemate');
+    assertEqual(attacks, 0, 'tower does not waste fire into the stalemate');
+    assertEqual(repairs, 0, 'tower never repairs during danger');
+});
+
+test('tower target lock breaks for a critical new threat', function() {
+    defineDefenseGlobals();
+    global.Memory = { rooms: { W1N1: {} } };
+    var spawn = { structureType: STRUCTURE_SPAWN, pos: makePos(25, 25, 'W1N1') };
+    var room = {
+        name: 'W1N1',
+        controller: { my: true },
+        find: function(type) { return type === FIND_STRUCTURES ? [spawn] : []; }
+    };
+    var tower = {
+        pos: makePos(20, 20, 'W1N1'),
+        store: { getUsedCapacity: function() { return 1000; } }
+    };
+    var first = makeHostile('first', [ATTACK, MOVE], 10, 10);
+    global.Game = { time: 812, rooms: { W1N1: room }, creeps: {}, spawns: {} };
+    var towerLogic = loadFreshModule('Logic.Tower.js');
+    towerLogic.chooseTowerTarget(room, [tower], [first]);
+
+    Game.time = 813;
+    var critical = makeHostile('critical', [WORK, WORK, WORK, WORK, MOVE], 25, 24);
+    var selected = towerLogic.chooseTowerTarget(room, [tower], [first, critical]);
+    assertEqual(selected.target.id, 'critical', 'critical dismantler breaks short lock');
 });
 
 test('main module loads without Game.rooms or populated Memory', function() {
