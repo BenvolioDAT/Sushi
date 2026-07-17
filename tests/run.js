@@ -1132,7 +1132,26 @@ test('peaceful towers split repair targets when useful', function() {
     assertEqual(repaired[0] !== repaired[1], true, 'towers avoid duplicate over-repair');
 });
 
-test('main module loads without Game.rooms or populated Memory', function() {
+test('spawn planning safely skips an owned room without a spawn', function() {
+    defineDefenseGlobals();
+    global.Memory = {};
+    var room = {
+        name: 'W7N7',
+        controller: { my: true }
+    };
+    global.Game = {
+        time: 590,
+        rooms: { W7N7: room },
+        creeps: {},
+        spawns: {}
+    };
+
+    var result = loadFreshModule('spawn.request.manager.js').runForRoom(room);
+    assertEqual(result.ok, false, 'room is skipped safely');
+    assertEqual(result.reason, 'Room has no owned spawn', 'skip reason is explicit');
+});
+
+test('main first global-reset tick runs with an empty world', function() {
     defineScreepsBodyGlobals();
     global.RESOURCE_ENERGY = 'energy';
     global.Creep = function() {};
@@ -1144,11 +1163,19 @@ test('main module loads without Game.rooms or populated Memory', function() {
     global.Memory = {};
     global.Game = {
         time: 600,
-        cpu: { getUsed: function() { return 0; } },
+        cpu: {
+            limit: 20,
+            tickLimit: 500,
+            bucket: 10000,
+            getUsed: function() { return 0; }
+        },
+        rooms: {},
         creeps: {},
         spawns: {},
         flags: {},
-        map: {}
+        constructionSites: {},
+        map: {},
+        shard: { name: 'sim' }
     };
 
     var trafficPath = path.resolve(__dirname, '..', 'traffic_manager.js');
@@ -1160,6 +1187,13 @@ test('main module loads without Game.rooms or populated Memory', function() {
     var main = loadFreshModule('main.js');
     assertEqual(typeof main.loop, 'function', 'main exports the tick loop');
     assertEqual(typeof main.getStartupState, 'function', 'startup state is inspectable');
+    main.loop();
+    assertEqual(main.getStartupState().resetTick, 600, 'reset tick is recorded');
+    assertEqual(
+        main.getStartupState().loadedOptionalModules.length,
+        0,
+        'optional planners and visuals stay deferred on the first tick'
+    );
 });
 
 console.log('RESULT ' + passed + ' passed, ' + failed + ' failed');

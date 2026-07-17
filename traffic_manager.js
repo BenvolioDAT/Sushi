@@ -76,7 +76,7 @@ const trafficManager = {
     }
   },
 
-  run(room, costs, threshold) {
+  run(room, costs, threshold, cachedRoomCreeps) {
     /*
      * The algorithm is a bipartite-style matching:
      * - creeps are one side
@@ -90,7 +90,9 @@ const trafficManager = {
     // Start with every creep matched to its current tile. DFS then tries to move
     // intentful creeps into better assignments without losing tile ownership.
     movementMap = new Map()
-    const creepsInRoom = room.find(FIND_MY_CREEPS)
+    // Sushi passes its shared per-tick room index. Keep the find fallback so
+    // direct console callers and upstream-style integrations remain compatible.
+    const creepsInRoom = cachedRoomCreeps || room.find(FIND_MY_CREEPS)
     const creepsWithMovementIntent = []
 
     for (const creep of creepsInRoom) {

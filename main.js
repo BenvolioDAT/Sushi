@@ -329,9 +329,17 @@ function runTrafficManagerForVisibleRooms() {
     var visibleRooms = tickCache.getVisibleRooms();
     for (var roomIndex = 0; roomIndex < visibleRooms.length; roomIndex++) {
         var room = visibleRooms[roomIndex];
+        var roomCreeps = tickCache.getMyCreepsInRoom(room);
+
+        /* An empty room has no movement conflicts to solve. Avoid allocating a
+         * CostMatrix solely because remote vision happens to be present. */
+        if (roomCreeps.length === 0) {
+            continue;
+        }
+
         var costs = buildTrafficCostMatrix(room);
 
-        trafficManager.run(room, costs, TRAFFIC_MANAGER_THRESHOLD);
+        trafficManager.run(room, costs, TRAFFIC_MANAGER_THRESHOLD, roomCreeps);
     }
 }
 
@@ -431,7 +439,9 @@ module.exports.loop = function () {
     profileStart = cpuProfiler.start();
     scoreSeason.maintain();
     cpuProfiler.end('seasonScore', profileStart);
-    maybeGeneratePixel();
+    if (!isResetWarmup(1)) {
+        maybeGeneratePixel();
+    }
 
     /* WarRoom is user-enabled and urgent, so it is not delayed after a reset. */
     if (isWarRoomEnabled()) {
@@ -463,10 +473,12 @@ module.exports.loop = function () {
     cpuProfiler.end('towerDefense', profileStart);
 
     /* Repair-list scans are stable-staggered instead of synchronized by tick. */
-    for (var repairRoomIndex = 0; repairRoomIndex < ownedRooms.length; repairRoomIndex++) {
-        var repairRoom = ownedRooms[repairRoomIndex];
-        if (shouldRunForRoom(repairRoom.name, 10)) {
-            updateRepairStructureMemory(repairRoom);
+    if (!isResetWarmup(1)) {
+        for (var repairRoomIndex = 0; repairRoomIndex < ownedRooms.length; repairRoomIndex++) {
+            var repairRoom = ownedRooms[repairRoomIndex];
+            if (shouldRunForRoom(repairRoom.name, 10)) {
+                updateRepairStructureMemory(repairRoom);
+            }
         }
     }
 
@@ -486,12 +498,14 @@ module.exports.loop = function () {
         }
     }
 
-    if (!Memory.creeps) {
-        Memory.creeps = {};
-    }
-    for (var memoryCreepName in Memory.creeps) {
-        if (!Game.creeps[memoryCreepName]) {
-            delete Memory.creeps[memoryCreepName];
+    if (!isResetWarmup(1)) {
+        if (!Memory.creeps) {
+            Memory.creeps = {};
+        }
+        for (var memoryCreepName in Memory.creeps) {
+            if (!Game.creeps[memoryCreepName]) {
+                delete Memory.creeps[memoryCreepName];
+            }
         }
     }
 

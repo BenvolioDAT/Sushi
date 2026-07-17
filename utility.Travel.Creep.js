@@ -24,6 +24,7 @@
  * creep.travelTo(target, options)
  */
 require('Traveler');
+var tickCache = require('Tick.Cache');
 
 var ROUTE_CACHE_TTL = 10000;
 var ROUTE_CACHE_CLEANUP_INTERVAL = 750;
@@ -311,7 +312,7 @@ function getStableAnchors(room) {
         objects.push(room.controller);
     }
 
-    var structures = room.find(FIND_STRUCTURES);
+    var structures = tickCache.getRoomStructures(room);
     for (var i = 0; i < structures.length; i++) {
         if (
             structures[i].structureType === STRUCTURE_CONTAINER ||
@@ -321,7 +322,7 @@ function getStableAnchors(room) {
         }
     }
 
-    var sources = room.find(FIND_SOURCES);
+    var sources = tickCache.getSources(room);
     for (var j = 0; j < sources.length; j++) {
         objects.push(sources[j]);
     }
@@ -419,7 +420,7 @@ function buildRouteCostMatrix(roomName) {
     }
 
     var costs = new PathFinder.CostMatrix();
-    var structures = room.find(FIND_STRUCTURES);
+    var structures = tickCache.getRoomStructures(room);
 
     for (var i = 0; i < structures.length; i++) {
         var structure = structures[i];
@@ -444,7 +445,7 @@ function buildRouteCostMatrix(roomName) {
      * structures after any tick. Shared routes planned through those sites go
      * stale as soon as the site appears, so avoid them while planning too.
      */
-    var sites = room.find(FIND_CONSTRUCTION_SITES);
+    var sites = tickCache.getRoomConstructionSites(room);
     for (var j = 0; j < sites.length; j++) {
         if (isBlockingConstructionSite(sites[j])) {
             costs.set(sites[j].pos.x, sites[j].pos.y, 255);
