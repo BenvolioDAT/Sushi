@@ -436,7 +436,7 @@ module.exports.loop = function () {
                 continue;
             }
 
-            spawnManager.runRoom(spawnRoomName);
+            spawnManager.runAllIdleSpawns(spawnRoomName);
         }
     }
 

@@ -60,7 +60,46 @@ function selectAffordableQueuedBodyForSpawn(spawn, request) {
     }
 
     var energyAvailable = spawn.room.energyAvailable;
+    var energyCapacity = spawn.room.energyCapacityAvailable || energyAvailable;
+    var plannedBody = request.body;
+    var plannedCost = getBodyCost(plannedBody);
+    var allowAdaptiveBody = request.emergency === true ||
+        request.allowAdaptiveBody === true ||
+        plannedCost > energyCapacity;
     var bestBody;
+
+    /*
+     * Normal requests were deliberately sized from room capacity and demand.
+     * Waiting for that body is materially better than permanently replacing it
+     * with a minimum body merely because extensions are still refilling. Only
+     * emergency requests and stale impossible bodies adapt to current energy.
+     */
+    if (!allowAdaptiveBody) {
+        if (plannedCost > energyAvailable) {
+            return {
+                changed: false,
+                affordable: false,
+                waitingForPlannedEnergy: true,
+                oldCost: plannedCost,
+                newCost: plannedCost,
+                requiredEnergy: plannedCost,
+                energyAvailable: energyAvailable,
+                energyCapacity: energyCapacity,
+                reason: 'waiting for planned body energy'
+            };
+        }
+
+        return {
+            changed: false,
+            affordable: true,
+            oldCost: plannedCost,
+            newCost: plannedCost,
+            requiredEnergy: plannedCost,
+            energyAvailable: energyAvailable,
+            energyCapacity: energyCapacity,
+            reason: 'planned body affordable'
+        };
+    }
 
     if (request.role === 'Tech') {
         /*
@@ -104,6 +143,7 @@ function selectAffordableQueuedBodyForSpawn(spawn, request) {
             changed: false,
             affordable: false,
             energyAvailable: energyAvailable,
+            energyCapacity: energyCapacity,
             reason: 'no affordable body for current energy'
         };
     }
@@ -118,11 +158,52 @@ function selectAffordableQueuedBodyForSpawn(spawn, request) {
         affordable: true,
         oldCost: oldCost,
         newCost: newCost,
+        requiredEnergy: newCost,
         energyAvailable: energyAvailable,
+        energyCapacity: energyCapacity,
         reason: newCost < oldCost ? 'downgraded to affordable body' :
             newCost > oldCost ? 'upgraded to affordable body' :
             'kept affordable body'
     };
+}
+
+function rememberSpawnBlock(roomName, request, bodySelection) {
+    var roomMemory = Memory.rooms && Memory.rooms[roomName];
+    if (!roomMemory || !request) {
+        return;
+    }
+
+    var reason = bodySelection && bodySelection.reason ?
+        bodySelection.reason : 'spawn blocked';
+    var requiredEnergy = bodySelection && bodySelection.requiredEnergy ?
+        bodySelection.requiredEnergy : getBodyCost(request.body);
+    var oldBlock = roomMemory.spawnBlocked;
+
+    /* Keep the original since tick and avoid rewriting identical debug state. */
+    if (
+        oldBlock &&
+        oldBlock.role === request.role &&
+        oldBlock.requestedAt === request.requestedAt &&
+        oldBlock.reason === reason &&
+        oldBlock.requiredEnergy === requiredEnergy
+    ) {
+        return;
+    }
+
+    roomMemory.spawnBlocked = {
+        since: Game.time,
+        role: request.role,
+        requestedAt: request.requestedAt,
+        reason: reason,
+        requiredEnergy: requiredEnergy
+    };
+}
+
+function clearSpawnBlock(roomName) {
+    var roomMemory = Memory.rooms && Memory.rooms[roomName];
+    if (roomMemory && roomMemory.spawnBlocked) {
+        delete roomMemory.spawnBlocked;
+    }
 }
 
 /**
@@ -416,6 +497,7 @@ function runRoom(roomName) {
      * no creep request to process this tick.
      */
     if (!queue || queue.length === 0) {
+        clearSpawnBlock(roomName);
         return {
             ok: true,
             result: null,
@@ -467,11 +549,7 @@ function runRoom(roomName) {
     var bodySelection = selectAffordableQueuedBodyForSpawn(spawn, request);
 
     if (!bodySelection.affordable) {
-        console.log(
-            'Waiting to spawn ' + request.role +
-            ' in ' + roomName +
-            ': no affordable body for current energy'
-        );
+        rememberSpawnBlock(roomName, request, bodySelection);
 
         return {
             ok: false,
@@ -515,6 +593,7 @@ function runRoom(roomName) {
      */
     if (result === OK) {
         queue.shift();
+        clearSpawnBlock(roomName);
 
         console.log(
             'Spawning ' + creepName +
@@ -540,6 +619,10 @@ function runRoom(roomName) {
      * Leave the request in the queue.
      */
     if (result === ERR_NOT_ENOUGH_ENERGY) {
+        rememberSpawnBlock(roomName, request, {
+            reason: 'spawn API reported insufficient energy',
+            requiredEnergy: getBodyCost(request.body)
+        });
         return {
             ok: false,
             result: result,
@@ -588,6 +671,55 @@ function runRoom(roomName) {
     };
 }
 
+/*
+ * A room may own two or three spawns. Service the shared queue once for each
+ * spawn that was idle at the beginning of this pass, stopping on the first
+ * blocked queue head so priority ordering remains authoritative.
+ */
+function runAllIdleSpawns(roomName) {
+    var idleAtStart = 0;
+
+    for (var spawnName in Game.spawns) {
+        if (!Game.spawns.hasOwnProperty(spawnName)) {
+            continue;
+        }
+
+        var spawn = Game.spawns[spawnName];
+        if (
+            spawn &&
+            spawn.room &&
+            spawn.room.name === roomName &&
+            !spawn.spawning
+        ) {
+            idleAtStart++;
+        }
+    }
+
+    var results = [];
+    var spawned = 0;
+
+    for (var i = 0; i < idleAtStart; i++) {
+        var result = runRoom(roomName);
+        results.push(result);
+
+        if (!result || result.result !== OK) {
+            break;
+        }
+
+        spawned++;
+    }
+
+    var lastResult = results.length > 0 ? results[results.length - 1] : null;
+    return {
+        ok: lastResult ? lastResult.ok : true,
+        result: lastResult ? lastResult.result : null,
+        reason: lastResult ? lastResult.reason : 'No idle spawn found',
+        spawned: spawned,
+        attempts: results.length,
+        results: results
+    };
+}
+
 module.exports = {
     getBodyCost: getBodyCost,
     selectAffordableQueuedBodyForSpawn: selectAffordableQueuedBodyForSpawn,
@@ -596,5 +728,6 @@ module.exports = {
     countQueuedRole: countQueuedRole,
     requestRoleCount: requestRoleCount,
     findIdleSpawn: findIdleSpawn,
-    runRoom: runRoom
+    runRoom: runRoom,
+    runAllIdleSpawns: runAllIdleSpawns
 };
