@@ -740,6 +740,106 @@ test('tower target lock breaks for a critical new threat', function() {
     assertEqual(selected.target.id, 'critical', 'critical dismantler breaks short lock');
 });
 
+test('defensive demand is room-local and ignores peaceful rooms', function() {
+    defineDefenseGlobals();
+    global.Memory = { rooms: { W1N1: {}, W2N2: {} } };
+    var hostile = makeHostile(
+        'localThreat',
+        [ATTACK, ATTACK, ATTACK, ATTACK, MOVE, MOVE],
+        24,
+        24
+    );
+    var roomA = {
+        name: 'W1N1',
+        controller: { my: true, safeMode: 1, pos: makePos(25, 25, 'W1N1') },
+        find: function(type) {
+            if (type === FIND_HOSTILE_CREEPS) { return [hostile]; }
+            return [];
+        }
+    };
+    var roomB = {
+        name: 'W2N2',
+        controller: { my: true, pos: makePos(25, 25, 'W2N2') },
+        find: function() { return []; }
+    };
+    hostile.room = roomA;
+    global.Game = {
+        time: 820,
+        rooms: { W1N1: roomA, W2N2: roomB },
+        creeps: {},
+        spawns: {}
+    };
+    var defenseDemand = loadFreshModule('Defense.Demand.js');
+    var threatened = defenseDemand.getDemand(roomA);
+    var peaceful = defenseDemand.getDemand(roomB);
+
+    assertEqual(threatened.harmfulHostileCount, 1, 'local threat is detected');
+    assertEqual(
+        threatened.desiredMelee + threatened.desiredRanged > 0,
+        true,
+        'threatened room asks for a fighter'
+    );
+    assertEqual(peaceful.harmfulHostileCount, 0, 'other room stays peaceful');
+    assertEqual(peaceful.desiredMelee + peaceful.desiredRanged, 0, 'other room asks for no defense');
+});
+
+test('defense requests deduplicate and expire when vision is safe', function() {
+    defineDefenseGlobals();
+    global.Creep = function() {};
+    global.RoomPosition = function(x, y, roomName) {
+        this.x = x;
+        this.y = y;
+        this.roomName = roomName;
+    };
+    var hostile = makeHostile(
+        'queueThreat',
+        [ATTACK, ATTACK, ATTACK, MOVE, MOVE],
+        24,
+        24
+    );
+    var hostiles = [hostile];
+    var room = {
+        name: 'W1N1',
+        energyAvailable: 800,
+        energyCapacityAvailable: 800,
+        controller: { my: true, level: 5, safeMode: 1, pos: makePos(25, 25, 'W1N1') },
+        find: function(type) {
+            if (type === FIND_HOSTILE_CREEPS) { return hostiles; }
+            return [];
+        }
+    };
+    hostile.room = room;
+    global.Memory = {
+        rooms: { W1N1: { spawnQueue: [] } },
+        creeps: {},
+        settings: {}
+    };
+    global.Game = {
+        time: 821,
+        rooms: { W1N1: room },
+        creeps: {},
+        spawns: {}
+    };
+    var requestManager = loadFreshModule('spawn.request.manager.js');
+    requestManager.requestDefendersForRoom(room, null);
+    var firstLength = Memory.rooms.W1N1.spawnQueue.length;
+    requestManager.requestDefendersForRoom(room, null);
+    var secondLength = Memory.rooms.W1N1.spawnQueue.length;
+
+    assertEqual(firstLength > 0, true, 'threat creates a defense request');
+    assertEqual(secondLength, firstLength, 'second plan does not duplicate requests');
+    assertEqual(
+        Memory.rooms.W1N1.spawnQueue[0].memory.defendedRoom,
+        'W1N1',
+        'request is explicitly room-local'
+    );
+
+    hostiles = [];
+    Game.time = 822;
+    requestManager.requestDefendersForRoom(room, null);
+    assertEqual(Memory.rooms.W1N1.spawnQueue.length, 0, 'safe live vision removes stale defense requests');
+});
+
 test('main module loads without Game.rooms or populated Memory', function() {
     defineScreepsBodyGlobals();
     global.RESOURCE_ENERGY = 'energy';
