@@ -28,6 +28,17 @@ var roleRonin = {
             return;
         }
 
+        if(WarRoom.shouldRetreat(creep)) {
+            supportCombatHealing(creep, false);
+            if(WarRoom.retreatDefender(creep)) {
+                creep.say('retreat');
+                return;
+            }
+        }
+        else {
+            WarRoom.clearRetreat(creep);
+        }
+
         /*
          * Local danger always matters more than a remote flag or target room.
          */
@@ -153,6 +164,9 @@ function attackMeleeTarget(creep, target) {
     var result = creep.attack(target);
 
     if(result === ERR_NOT_IN_RANGE) {
+        if(WarRoom.moveToDefensiveRampart(creep, target, 1)) {
+            return;
+        }
         moveNearTarget(creep, target);
         return;
     }

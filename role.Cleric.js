@@ -36,6 +36,11 @@ var roleCleric = {
         if(creep.hits < creep.hitsMax) {
             creep.heal(creep);
 
+            if(WarRoom.shouldRetreat(creep) && WarRoom.retreatDefender(creep)) {
+                creep.say('retreat');
+                return;
+            }
+
             /*
              * Healing and moving are separate actions. A wounded Cleric may
              * still step inward, but it must not march away while hurt.
@@ -126,6 +131,12 @@ function followCombatBuddy(creep) {
          */
         moveNearTarget(creep, buddy);
         creep.say('guard');
+        return;
+    }
+
+    if(WarRoom.findHostileCreeps(creep).length > 0) {
+        WarRoom.retreatDefender(creep);
+        creep.say('alone');
         return;
     }
 

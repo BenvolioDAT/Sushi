@@ -28,6 +28,17 @@ var roleVolley = {
             return;
         }
 
+        if(WarRoom.shouldRetreat(creep)) {
+            supportCombatHealing(creep, false);
+            if(WarRoom.retreatDefender(creep)) {
+                creep.say('retreat');
+                return;
+            }
+        }
+        else {
+            WarRoom.clearRetreat(creep);
+        }
+
         /*
          * Local danger always matters more than a remote flag or target room.
          */
@@ -150,7 +161,8 @@ function attackRangedTarget(creep, target) {
      * Ranged attack works up to range 3.
      */
     if(range <= 3) {
-        var result = creep.rangedAttack(target);
+        var result = WarRoom.shouldUseRangedMassAttack(creep) ?
+            creep.rangedMassAttack() : creep.rangedAttack(target);
 
         if(result === ERR_INVALID_TARGET) {
             WarRoom.clearCombatTarget(creep);
@@ -159,11 +171,13 @@ function attackRangedTarget(creep, target) {
 
         creep.say('pew');
 
-        /*
-         * Simple beginner behavior:
-         * If too close, step away is not added yet.
-         * For now we keep it simple and just shoot.
-         */
+        if(
+            range <= 1 && target.body &&
+            combatTargetHasMelee(target) &&
+            !WarRoom.isOnClaimedRampart(creep)
+        ) {
+            WarRoom.kiteFromTarget(creep, target);
+        }
         return;
     }
 
@@ -172,7 +186,16 @@ function attackRangedTarget(creep, target) {
      * Moving to range 3 keeps the ranged creep useful without forcing it onto
      * the same tile ring as melee creeps.
      */
-    moveNearTarget(creep, target);
+    if(!WarRoom.moveToDefensiveRampart(creep, target, 3)) {
+        moveNearTarget(creep, target);
+    }
+}
+
+function combatTargetHasMelee(target) {
+    if(!target || typeof target.getActiveBodyparts !== 'function') {
+        return false;
+    }
+    return target.getActiveBodyparts(ATTACK) > 0;
 }
 
 function moveToCombatRoom(creep) {

@@ -20,6 +20,8 @@
  */
 
 var travel = require('utility.Travel.Creep');
+var tickCache = require('Tick.Cache');
+var combatThreat = require('Combat.Threat');
 
 var WarRoom = {};
 
@@ -30,6 +32,14 @@ var COMBAT_ROLE_CLERIC = 'Cleric';
 var TARGET_ROOM_MEMORY_KEY = 'targetRoom';
 var TARGET_FLAG_MEMORY_KEY = 'targetFlag';
 var COMBAT_TARGET_MEMORY_KEY = 'combatTargetId';
+var COMBAT_TARGET_UNTIL_MEMORY_KEY = 'combatTargetUntil';
+var COMBAT_TARGET_SCORE_MEMORY_KEY = 'combatTargetScore';
+var COMBAT_TARGET_LOCK_TICKS = 3;
+var HEALER_PARTNER_MEMORY_KEY = 'healerPartnerId';
+var HEALER_PARTNER_UNTIL_MEMORY_KEY = 'healerPartnerUntil';
+var RAMPART_CLAIM_TICKS = 3;
+var rampartClaimTick = null;
+var rampartClaims = {};
 
 /*
  * WarRoom radar settings.
@@ -65,8 +75,10 @@ WarRoom.run = function() {
     var spawnRoomNames = WarRoom.getSpawnRoomNames();
     var bestThreatInfo = null;
 
-    for(var roomName in Game.rooms) {
-        var room = Game.rooms[roomName];
+    var visibleRooms = tickCache.getVisibleRooms();
+    for(var roomIndex = 0; roomIndex < visibleRooms.length; roomIndex++) {
+        var room = visibleRooms[roomIndex];
+        var roomName = room.name;
 
         if(!room) {
             continue;
@@ -123,21 +135,10 @@ WarRoom.ensureMemory = function() {
  */
 WarRoom.getSpawnRoomNames = function() {
     var spawnRoomNames = [];
-    var seenRooms = {};
+    var rooms = tickCache.getOwnedSpawnRooms();
 
-    for(var spawnName in Game.spawns) {
-        var spawn = Game.spawns[spawnName];
-
-        if(!spawn || !spawn.room || !spawn.room.name) {
-            continue;
-        }
-
-        if(seenRooms[spawn.room.name]) {
-            continue;
-        }
-
-        seenRooms[spawn.room.name] = true;
-        spawnRoomNames.push(spawn.room.name);
+    for(var roomIndex = 0; roomIndex < rooms.length; roomIndex++) {
+        spawnRoomNames.push(rooms[roomIndex].name);
     }
 
     return spawnRoomNames;
@@ -233,23 +234,20 @@ WarRoom.isHostileCreepThreat = function(hostile) {
         return false;
     }
 
-    return (
-        hostile.getActiveBodyparts(ATTACK) > 0 ||
-        hostile.getActiveBodyparts(RANGED_ATTACK) > 0 ||
-        hostile.getActiveBodyparts(HEAL) > 0 ||
-        hostile.getActiveBodyparts(WORK) > 0
-    );
+    return combatThreat.analyze(hostile, hostile.room).dangerous;
 };
 
 /*
  * Find the highest-scoring hostile creep in a visible room.
  */
 WarRoom.findBestHostileCreepInRoom = function(room) {
-    var hostiles = room.find(FIND_HOSTILE_CREEPS, {
-        filter: function(hostile) {
-            return WarRoom.isHostileCreepThreat(hostile);
+    var roomHostiles = tickCache.getHostileCreeps(room);
+    var hostiles = [];
+    for(var hostileIndex = 0; hostileIndex < roomHostiles.length; hostileIndex++) {
+        if(WarRoom.isHostileCreepThreat(roomHostiles[hostileIndex])) {
+            hostiles.push(roomHostiles[hostileIndex]);
         }
-    });
+    }
 
     if(hostiles.length === 0) {
         return null;
@@ -260,7 +258,7 @@ WarRoom.findBestHostileCreepInRoom = function(room) {
 
     for(var i = 0; i < hostiles.length; i++) {
         var hostile = hostiles[i];
-        var score = WarRoom.getHostileCreepScore(hostile);
+        var score = WarRoom.getHostileCreepScore(hostile, room);
 
         if(!bestTarget || score > bestScore) {
             bestTarget = hostile;
@@ -279,18 +277,13 @@ WarRoom.findBestHostileCreepInRoom = function(room) {
  * Find the highest-scoring hostile structure in a visible room.
  */
 WarRoom.findBestHostileStructureInRoom = function(room) {
-    var structures = room.find(FIND_HOSTILE_STRUCTURES, {
-        filter: function(structure) {
-            /*
-             * Normal combat creeps cannot attack controllers directly.
-             */
-            if(structure.structureType === STRUCTURE_CONTROLLER) {
-                return false;
-            }
-
-            return true;
+    var roomStructures = tickCache.getHostileStructures(room);
+    var structures = [];
+    for(var structureIndex = 0; structureIndex < roomStructures.length; structureIndex++) {
+        if(roomStructures[structureIndex].structureType !== STRUCTURE_CONTROLLER) {
+            structures.push(roomStructures[structureIndex]);
         }
-    });
+    }
 
     if(structures.length === 0) {
         return null;
@@ -346,14 +339,27 @@ WarRoom.saveActiveThreat = function(threat, type) {
     };
 
     if(type === 'creep' && threat.body) {
+        var analysis = combatThreat.analyze(threat, threat.room);
         activeThreat.threatParts = {
-            attack: threat.getActiveBodyparts(ATTACK),
-            ranged: threat.getActiveBodyparts(RANGED_ATTACK),
-            heal: threat.getActiveBodyparts(HEAL),
-            work: threat.getActiveBodyparts(WORK)
+            attack: analysis.activeParts.attack || 0,
+            ranged: analysis.activeParts.ranged_attack || 0,
+            heal: analysis.activeParts.heal || 0,
+            work: analysis.activeParts.work || 0
         };
+        activeThreat.category = analysis.category;
+        activeThreat.totalThreat = analysis.totalThreat;
     }
 
+    var oldThreat = Memory.WarRoom.activeThreat;
+    if (
+        oldThreat &&
+        oldThreat.id === activeThreat.id &&
+        oldThreat.roomName === activeThreat.roomName &&
+        oldThreat.type === activeThreat.type &&
+        Game.time - (oldThreat.lastSeen || 0) < 5
+    ) {
+        return;
+    }
     Memory.WarRoom.activeThreat = activeThreat;
 };
 
@@ -368,7 +374,14 @@ WarRoom.placeAttackFlag = function(threat) {
     var flag = Game.flags[WAR_ROOM_ATTACK_FLAG_NAME];
 
     if(flag) {
-        flag.setPosition(threat.pos);
+        if (
+            !flag.pos ||
+            flag.pos.roomName !== threat.pos.roomName ||
+            flag.pos.x !== threat.pos.x ||
+            flag.pos.y !== threat.pos.y
+        ) {
+            flag.setPosition(threat.pos);
+        }
         return true;
     }
 
@@ -531,11 +544,14 @@ WarRoom.findHostileCreeps = function(creep) {
         return [];
     }
 
-    return creep.room.find(FIND_HOSTILE_CREEPS, {
-        filter: function(hostile) {
-            return WarRoom.isHostileCreepThreat(hostile);
+    var roomHostiles = tickCache.getHostileCreeps(creep.room);
+    var hostiles = [];
+    for(var i = 0; i < roomHostiles.length; i++) {
+        if(WarRoom.isHostileCreepThreat(roomHostiles[i])) {
+            hostiles.push(roomHostiles[i]);
         }
-    });
+    }
+    return hostiles;
 };
 
 /*
@@ -543,35 +559,16 @@ WarRoom.findHostileCreeps = function(creep) {
  *
  * Bigger score = more important target.
  */
-WarRoom.getHostileCreepScore = function(hostile) {
+WarRoom.getHostileCreepScore = function(hostile, room) {
     if(!hostile) {
         return 0;
     }
 
-    var score = 0;
-
-    /*
-     * Healers are dangerous because they undo our damage.
-     */
-    score += hostile.getActiveBodyparts(HEAL) * 500;
-
-    /*
-     * Ranged and melee attackers hurt our creeps.
-     */
-    score += hostile.getActiveBodyparts(RANGED_ATTACK) * 300;
-    score += hostile.getActiveBodyparts(ATTACK) * 250;
-
-    /*
-     * WORK parts can dismantle structures.
-     */
-    score += hostile.getActiveBodyparts(WORK) * 100;
-
-    /*
-     * Prefer finishing wounded enemies.
-     */
-    score += Math.floor((hostile.hitsMax - hostile.hits) / 10);
-
-    return score;
+    var analysis = combatThreat.analyze(hostile, room || hostile.room);
+    var finishBonus = Math.floor(
+        Math.max(0, (hostile.hitsMax || 0) - (hostile.hits || 0)) / 10
+    );
+    return analysis.totalThreat + finishBonus;
 };
 
 /*
@@ -589,7 +586,11 @@ WarRoom.findBestHostileCreep = function(creep) {
 
     for(var i = 0; i < hostiles.length; i++) {
         var hostile = hostiles[i];
-        var score = WarRoom.getHostileCreepScore(hostile);
+        var score = WarRoom.getHostileCreepScore(hostile, creep.room);
+        var roomMemory = Memory.rooms && Memory.rooms[creep.room.name];
+        if (roomMemory && roomMemory.towerTargetId === hostile.id) {
+            score += 300;
+        }
 
         if(
             !bestTarget ||
@@ -615,18 +616,22 @@ WarRoom.findHostileStructures = function(creep) {
         return [];
     }
 
-    return creep.room.find(FIND_HOSTILE_STRUCTURES, {
-        filter: function(structure) {
-            /*
-             * Normal combat creeps cannot attack controllers directly.
-             */
-            if(structure.structureType === STRUCTURE_CONTROLLER) {
-                return false;
-            }
-
-            return true;
+    var roomStructures = tickCache.getHostileStructures(creep.room);
+    var structures = [];
+    for(var i = 0; i < roomStructures.length; i++) {
+        if(roomStructures[i].structureType === STRUCTURE_CONTROLLER) {
+            continue;
         }
-    });
+        if (
+            roomStructures[i].structureType === STRUCTURE_INVADER_CORE &&
+            typeof creep.getActiveBodyparts === 'function' &&
+            creep.getActiveBodyparts(ATTACK) <= 0
+        ) {
+            continue;
+        }
+        structures.push(roomStructures[i]);
+    }
+    return structures;
 };
 
 /*
@@ -704,33 +709,69 @@ WarRoom.getCombatTarget = function(creep) {
         return null;
     }
 
+    var oldTarget = null;
     if(creep.memory[COMBAT_TARGET_MEMORY_KEY]) {
-        var oldTarget = Game.getObjectById(creep.memory[COMBAT_TARGET_MEMORY_KEY]);
-
-        if(
-            oldTarget &&
-            oldTarget.hits > 0 &&
-            oldTarget.pos &&
-            oldTarget.pos.roomName === creep.room.name &&
-            (!oldTarget.body || WarRoom.isHostileCreepThreat(oldTarget))
-        ) {
-            return oldTarget;
+        oldTarget = Game.getObjectById(creep.memory[COMBAT_TARGET_MEMORY_KEY]);
+        if(!WarRoom.isValidCombatTarget(creep, oldTarget)) {
+            oldTarget = null;
+            WarRoom.clearCombatTarget(creep);
         }
-
-        delete creep.memory[COMBAT_TARGET_MEMORY_KEY];
     }
 
     var target = WarRoom.findBestHostileCreep(creep);
-
     if(!target) {
         target = WarRoom.findBestHostileStructure(creep);
     }
 
+    var targetScore = WarRoom.getCombatTargetScore(target, creep.room);
+    var oldScore = WarRoom.getCombatTargetScore(oldTarget, creep.room);
+    var criticalNewThreat = target && oldTarget && target.id !== oldTarget.id &&
+        targetScore > Math.max(oldScore * 1.35, oldScore + 250);
+
+    if(
+        oldTarget &&
+        creep.memory[COMBAT_TARGET_UNTIL_MEMORY_KEY] > Game.time &&
+        !criticalNewThreat
+    ) {
+        return oldTarget;
+    }
+
     if(target) {
         creep.memory[COMBAT_TARGET_MEMORY_KEY] = target.id;
+        creep.memory[COMBAT_TARGET_UNTIL_MEMORY_KEY] =
+            Game.time + COMBAT_TARGET_LOCK_TICKS;
+        creep.memory[COMBAT_TARGET_SCORE_MEMORY_KEY] = targetScore;
+    }
+    else {
+        WarRoom.clearCombatTarget(creep);
     }
 
     return target;
+};
+
+WarRoom.isValidCombatTarget = function(creep, target) {
+    if (
+        target &&
+        typeof STRUCTURE_INVADER_CORE !== 'undefined' &&
+        target.structureType === STRUCTURE_INVADER_CORE &&
+        typeof creep.getActiveBodyparts === 'function' &&
+        creep.getActiveBodyparts(ATTACK) <= 0
+    ) {
+        return false;
+    }
+    return !!(
+        creep && target && target.hits > 0 && target.pos &&
+        target.pos.roomName === creep.room.name &&
+        (!target.body || WarRoom.isHostileCreepThreat(target))
+    );
+};
+
+WarRoom.getCombatTargetScore = function(target, room) {
+    if(!target) {
+        return 0;
+    }
+    return target.body ? WarRoom.getHostileCreepScore(target, room) :
+        WarRoom.getHostileStructureScore(target);
 };
 
 /*
@@ -739,6 +780,8 @@ WarRoom.getCombatTarget = function(creep) {
 WarRoom.clearCombatTarget = function(creep) {
     if(creep && creep.memory) {
         delete creep.memory[COMBAT_TARGET_MEMORY_KEY];
+        delete creep.memory[COMBAT_TARGET_UNTIL_MEMORY_KEY];
+        delete creep.memory[COMBAT_TARGET_SCORE_MEMORY_KEY];
     }
 };
 
@@ -750,34 +793,60 @@ WarRoom.findBestHealTarget = function(creep) {
         return null;
     }
 
-    var hurtCreeps = creep.room.find(FIND_MY_CREEPS, {
-        filter: function(friendly) {
-            return friendly.hits < friendly.hitsMax && WarRoom.isCombatCreep(friendly);
+    var roomCreeps = tickCache.getMyCreepsInRoom(creep.room);
+    var hurtCreeps = [];
+    for(var hurtIndex = 0; hurtIndex < roomCreeps.length; hurtIndex++) {
+        if(
+            roomCreeps[hurtIndex].hits < roomCreeps[hurtIndex].hitsMax &&
+            WarRoom.isCombatCreep(roomCreeps[hurtIndex])
+        ) {
+            hurtCreeps.push(roomCreeps[hurtIndex]);
         }
-    });
+    }
 
     if(hurtCreeps.length === 0) {
         return null;
     }
 
     var bestTarget = null;
-    var bestMissingHits = -1;
+    var bestDangerScore = -1;
+    var hostiles = tickCache.getHostileCreeps(creep.room);
 
     for(var i = 0; i < hurtCreeps.length; i++) {
         var target = hurtCreeps[i];
         var missingHits = target.hitsMax - target.hits;
+        var incoming = WarRoom.getIncomingDamage(target, hostiles);
+        var hitRatio = target.hits / Math.max(1, target.hitsMax);
+        var dangerScore = missingHits + incoming * 10 +
+            Math.round((1 - hitRatio) * 500);
 
         if(
             !bestTarget ||
-            missingHits > bestMissingHits ||
-            (missingHits === bestMissingHits && creep.pos.getRangeTo(target) < creep.pos.getRangeTo(bestTarget))
+            dangerScore > bestDangerScore ||
+            (dangerScore === bestDangerScore && creep.pos.getRangeTo(target) < creep.pos.getRangeTo(bestTarget))
         ) {
             bestTarget = target;
-            bestMissingHits = missingHits;
+            bestDangerScore = dangerScore;
         }
     }
 
     return bestTarget;
+};
+
+WarRoom.getIncomingDamage = function(target, hostiles) {
+    var incoming = 0;
+    hostiles = hostiles || [];
+    for(var i = 0; i < hostiles.length; i++) {
+        var analysis = combatThreat.analyze(hostiles[i], target.room);
+        var range = combatThreat.getRange(hostiles[i].pos, target.pos);
+        if(range <= 1) {
+            incoming += analysis.attackPower;
+        }
+        if(range <= 3) {
+            incoming += analysis.rangedPower;
+        }
+    }
+    return incoming;
 };
 
 /*
@@ -803,18 +872,49 @@ WarRoom.findCombatBuddy = function(creep) {
         return null;
     }
 
-    return creep.pos.findClosestByPath(FIND_MY_CREEPS, {
-        filter: function(friendly) {
-            if(friendly.name === creep.name) {
-                return false;
-            }
+    var remembered = creep.memory[HEALER_PARTNER_MEMORY_KEY] ?
+        Game.getObjectById(creep.memory[HEALER_PARTNER_MEMORY_KEY]) : null;
+    if (
+        remembered && remembered.hits > 0 && remembered.room === creep.room &&
+        remembered.memory &&
+        (
+            remembered.memory.role === COMBAT_ROLE_RONIN ||
+            remembered.memory.role === COMBAT_ROLE_VOLLEY
+        ) &&
+        creep.memory[HEALER_PARTNER_UNTIL_MEMORY_KEY] > Game.time
+    ) {
+        return remembered;
+    }
 
-            return friendly.memory && (
-                friendly.memory.role === COMBAT_ROLE_RONIN ||
-                friendly.memory.role === COMBAT_ROLE_VOLLEY
-            );
+    delete creep.memory[HEALER_PARTNER_MEMORY_KEY];
+    delete creep.memory[HEALER_PARTNER_UNTIL_MEMORY_KEY];
+
+    var roomCreeps = tickCache.getMyCreepsInRoom(creep.room);
+    var best = null;
+    var bestScore = -1;
+    for(var i = 0; i < roomCreeps.length; i++) {
+        var friendly = roomCreeps[i];
+        if(
+            friendly.name === creep.name || !friendly.memory ||
+            (
+                friendly.memory.role !== COMBAT_ROLE_RONIN &&
+                friendly.memory.role !== COMBAT_ROLE_VOLLEY
+            )
+        ) {
+            continue;
         }
-    });
+        var range = creep.pos.getRangeTo(friendly);
+        var score = (friendly.hitsMax - friendly.hits) * 2 - range;
+        if(!best || score > bestScore) {
+            best = friendly;
+            bestScore = score;
+        }
+    }
+    if(best) {
+        creep.memory[HEALER_PARTNER_MEMORY_KEY] = best.id;
+        creep.memory[HEALER_PARTNER_UNTIL_MEMORY_KEY] = Game.time + 10;
+    }
+    return best;
 };
 
 /*
@@ -832,6 +932,184 @@ WarRoom.moveToRange = function(creep, target, range, strokeColor) {
             stroke: strokeColor || '#ffffff'
         }
     });
+};
+
+function resetRampartClaims() {
+    if(rampartClaimTick !== Game.time) {
+        rampartClaimTick = Game.time;
+        rampartClaims = {};
+    }
+}
+
+WarRoom.findDefensiveRampart = function(creep, target, desiredRange) {
+    if(
+        !creep || !creep.room || !target ||
+        !creep.room.controller || !creep.room.controller.my
+    ) {
+        return null;
+    }
+    resetRampartClaims();
+    var structures = tickCache.getMyStructures(creep.room);
+    var best = null;
+    var bestScore = 9999;
+    for(var i = 0; i < structures.length; i++) {
+        var rampart = structures[i];
+        if(rampart.structureType !== STRUCTURE_RAMPART || rampart.my === false) {
+            continue;
+        }
+        var claimedBy = rampartClaims[rampart.id];
+        if(claimedBy && claimedBy !== (creep.id || creep.name)) {
+            continue;
+        }
+        var targetRange = combatThreat.getRange(rampart.pos, target.pos);
+        var rangePenalty = desiredRange <= 1 ?
+            Math.abs(targetRange - 1) * 12 :
+            targetRange < 2 ? 18 : targetRange > 3 ? (targetRange - 3) * 12 : 0;
+        if(desiredRange <= 1 && targetRange > 1) {
+            continue;
+        }
+        if(desiredRange > 1 && targetRange > 3) {
+            continue;
+        }
+        var score = rangePenalty + combatThreat.getRange(creep.pos, rampart.pos);
+        if(!best || score < bestScore) {
+            best = rampart;
+            bestScore = score;
+        }
+    }
+    if(best) {
+        rampartClaims[best.id] = creep.id || creep.name;
+        creep.memory.defenseRampartId = best.id;
+        creep.memory.defenseRampartUntil = Game.time + RAMPART_CLAIM_TICKS;
+    }
+    else {
+        delete creep.memory.defenseRampartId;
+        delete creep.memory.defenseRampartUntil;
+    }
+    return best;
+};
+
+WarRoom.moveToDefensiveRampart = function(creep, target, desiredRange) {
+    var rampart = WarRoom.findDefensiveRampart(creep, target, desiredRange);
+    if(!rampart) {
+        return false;
+    }
+    if(creep.pos.x === rampart.pos.x && creep.pos.y === rampart.pos.y) {
+        return true;
+    }
+    if(creep.memory._sushiMoveTick !== Game.time) {
+        travel.move(creep, rampart, {
+            range: 0,
+            reusePath: 5,
+            visualizePathStyle: { stroke: '#66ccff' }
+        });
+    }
+    return true;
+};
+
+WarRoom.shouldRetreat = function(creep) {
+    if(!creep || creep.hitsMax <= 0) {
+        return false;
+    }
+    var ratio = creep.hits / creep.hitsMax;
+    var activeHeal = typeof creep.getActiveBodyparts === 'function' ?
+        creep.getActiveBodyparts(HEAL) : 0;
+    return ratio < 0.25 || (ratio < 0.40 && activeHeal <= 0);
+};
+
+WarRoom.retreatDefender = function(creep) {
+    if(!creep || !creep.room || creep.memory._sushiMoveTick === Game.time) {
+        return false;
+    }
+    var structures = tickCache.getMyStructures(creep.room);
+    var best = null;
+    var bestScore = 9999;
+    for(var i = 0; i < structures.length; i++) {
+        var structure = structures[i];
+        if(
+            structure.structureType !== STRUCTURE_RAMPART &&
+            structure.structureType !== STRUCTURE_TOWER &&
+            structure.structureType !== STRUCTURE_SPAWN
+        ) {
+            continue;
+        }
+        var score = combatThreat.getRange(creep.pos, structure.pos);
+        if(structure.structureType === STRUCTURE_RAMPART) {
+            score -= 3;
+        }
+        if(!best || score < bestScore) {
+            best = structure;
+            bestScore = score;
+        }
+    }
+    if(!best) {
+        return false;
+    }
+    creep.memory.defenseRetreat = true;
+    travel.move(creep, best, {
+        range: best.structureType === STRUCTURE_RAMPART ? 0 : 1,
+        reusePath: 5,
+        visualizePathStyle: { stroke: '#ffffff' }
+    });
+    return true;
+};
+
+WarRoom.clearRetreat = function(creep) {
+    if(creep && creep.memory) {
+        delete creep.memory.defenseRetreat;
+    }
+};
+
+WarRoom.shouldUseRangedMassAttack = function(creep) {
+    if(!creep || !creep.room) {
+        return false;
+    }
+    var hostiles = WarRoom.findHostileCreeps(creep);
+    var massDamage = 0;
+    for(var i = 0; i < hostiles.length; i++) {
+        var range = creep.pos.getRangeTo(hostiles[i]);
+        massDamage += range <= 1 ? 10 : range === 2 ? 4 : range === 3 ? 1 : 0;
+    }
+    return massDamage > 10;
+};
+
+WarRoom.kiteFromTarget = function(creep, target) {
+    if(!creep || !target || creep.memory._sushiMoveTick === Game.time) {
+        return false;
+    }
+    var targetPos = target.pos || target;
+    var dx = creep.pos.x === targetPos.x ? 0 : creep.pos.x > targetPos.x ? 1 : -1;
+    var dy = creep.pos.y === targetPos.y ? 0 : creep.pos.y > targetPos.y ? 1 : -1;
+    var x = Math.max(1, Math.min(48, creep.pos.x + dx * 3));
+    var y = Math.max(1, Math.min(48, creep.pos.y + dy * 3));
+    var retreatPosition = new RoomPosition(x, y, creep.room.name);
+    travel.move(creep, retreatPosition, {
+        range: 0,
+        reusePath: 2,
+        visualizePathStyle: { stroke: '#ffcc66' }
+    });
+    return true;
+};
+
+WarRoom.getRampartClaims = function() {
+    resetRampartClaims();
+    return rampartClaims;
+};
+
+WarRoom.isOnClaimedRampart = function(creep) {
+    if(
+        !creep || !creep.memory ||
+        creep.memory.defenseRampartUntil < Game.time ||
+        !creep.memory.defenseRampartId
+    ) {
+        return false;
+    }
+    var rampart = Game.getObjectById(creep.memory.defenseRampartId);
+    return !!(
+        rampart && rampart.pos &&
+        rampart.pos.x === creep.pos.x && rampart.pos.y === creep.pos.y &&
+        rampart.pos.roomName === creep.pos.roomName
+    );
 };
 
 /*
