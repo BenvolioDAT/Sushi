@@ -13,10 +13,19 @@
 
 var spawnManager = require('spawn.manager');
 var creepBodyConfig = require('role.creepBodyConfig');
-var RemotePlanner = require('Planner.Remote');
 var creepUtility = require('utility.Creep');
 var cpuStatusUtility = require('CPU.Status');
 var scoreSeason = require('Season.Score');
+var tickCache = require('Tick.Cache');
+
+var remotePlannerModule = null;
+
+function getRemotePlanner() {
+    if (!remotePlannerModule) {
+        remotePlannerModule = require('Planner.Remote');
+    }
+    return remotePlannerModule;
+}
 
 var RESERVE_DESIRED_TICKS = 4000;
 var RESERVE_SPAWN_AT_TICKS = 2500;
@@ -73,6 +82,7 @@ var DEFAULT_SPAWN_POLICY = {
 };
 
 var activePlanningContext = null;
+var spawnGovernorByRoom = {};
 
 /*
  * How many creeps we want for now.
@@ -147,31 +157,9 @@ var REPLACEMENT_BUFFER_TICKS = {
  */
 
 function roomHasOwnedSpawn(room) {
-    if (!room) {
-        return false;
-    }
-
-    for (var spawnName in Game.spawns) {
-        if (!Game.spawns.hasOwnProperty(spawnName)) {
-            continue;
-        }
-
-        var spawn = Game.spawns[spawnName];
-
-        if (!spawn || !spawn.room) {
-            continue;
-        }
-
-        if (spawn.my === false) {
-            continue;
-        }
-
-        if (spawn.room.name === room.name) {
-            return true;
-        }
-    }
-
-    return false;
+    return !!(
+        room && tickCache.getOwnedSpawnsInRoom(room.name).length > 0
+    );
 }
 
 /**
@@ -183,35 +171,7 @@ function roomHasOwnedSpawn(room) {
  * @returns {Room[]}
  */
 function getOwnedSpawnRooms() {
-    var rooms = [];
-    var seenRooms = {};
-
-    for (var spawnName in Game.spawns) {
-        if (!Game.spawns.hasOwnProperty(spawnName)) {
-            continue;
-        }
-
-        var spawn = Game.spawns[spawnName];
-
-        if (!spawn || !spawn.room || spawn.my === false) {
-            continue;
-        }
-
-        var room = spawn.room;
-
-        if (!room.controller || !room.controller.my) {
-            continue;
-        }
-
-        if (seenRooms[room.name]) {
-            continue;
-        }
-
-        seenRooms[room.name] = true;
-        rooms.push(room);
-    }
-
-    return rooms;
+    return tickCache.getOwnedSpawnRooms().slice();
 }
 
 /**
@@ -612,21 +572,11 @@ function buildRoomPlanningContext(room, roomIndex, skipNormalPlanning) {
         emergencyMinimumBypassByRole: {}
     };
 
-    for (var creepName in Game.creeps) {
-        if (!Game.creeps.hasOwnProperty(creepName)) {
-            continue;
-        }
-
-        var creep = Game.creeps[creepName];
+    var indexedCreeps = tickCache.getCreepsByHomeRoom(roomName);
+    for (var creepIndex = 0; creepIndex < indexedCreeps.length; creepIndex++) {
+        var creep = indexedCreeps[creepIndex];
 
         if (!creep || !creep.memory) {
-            continue;
-        }
-
-        var homeRoom = creep.memory.homeRoom ||
-            (creep.room ? creep.room.name : null);
-
-        if (homeRoom !== roomName) {
             continue;
         }
 
@@ -706,23 +656,7 @@ function getHomeLivingCreeps(roomName) {
         return context.livingCreeps;
     }
 
-    var creeps = [];
-
-    for (var creepName in Game.creeps) {
-        if (!Game.creeps.hasOwnProperty(creepName)) {
-            continue;
-        }
-
-        var creep = Game.creeps[creepName];
-        var homeRoom = creep && creep.memory ?
-            (creep.memory.homeRoom || (creep.room && creep.room.name)) : null;
-
-        if (homeRoom === roomName) {
-            creeps.push(creep);
-        }
-    }
-
-    return creeps;
+    return tickCache.getCreepsByHomeRoom(roomName);
 }
 
 function recordDenied(context, role, reason) {
@@ -1060,7 +994,7 @@ function getControllerContainerEnergy(room) {
 }
 
 function getActiveRemoteNetIncome(roomName) {
-    var activeSources = RemotePlanner.getActiveRemoteSourcesForHome(roomName);
+    var activeSources = getRemotePlanner().getActiveRemoteSourcesForHome(roomName);
     var income = 0;
 
     if (!activeSources) {
@@ -1364,7 +1298,7 @@ function getDesiredTechWork(room) {
 }
 
 function countActiveRemoteRooms(roomName) {
-    var sources = RemotePlanner.getActiveRemoteSourcesForHome(roomName) || [];
+    var sources = getRemotePlanner().getActiveRemoteSourcesForHome(roomName) || [];
     var rooms = {};
     var count = 0;
 
@@ -1582,23 +1516,9 @@ function countLivingRoleBodyParts(roomName, role, partType) {
 
     var partCount = 0;
 
-    for (var creepName in Game.creeps) {
-        if (!Game.creeps.hasOwnProperty(creepName)) {
-            continue;
-        }
-
-        var creep = Game.creeps[creepName];
-
-        if (!creep || !creep.memory || creep.memory.role !== role) {
-            continue;
-        }
-
-        var creepHomeRoom = creep.memory.homeRoom ||
-            (creep.room ? creep.room.name : null);
-
-        if (creepHomeRoom !== roomName) {
-            continue;
-        }
+    var roleCreeps = tickCache.getCreepsByHomeRoomAndRole(roomName, role);
+    for (var creepIndex = 0; creepIndex < roleCreeps.length; creepIndex++) {
+        var creep = roleCreeps[creepIndex];
 
         var bodyLength = creep.body ? creep.body.length : 0;
         var replacementLeadTicks = (bodyLength * 3) +
@@ -1949,7 +1869,7 @@ function getValidLocalRepairDemand(room) {
 }
 
 function getVisibleRemoteArtificerDemand(roomName) {
-    var activeSources = RemotePlanner.getActiveRemoteSourcesForHome(roomName);
+    var activeSources = getRemotePlanner().getActiveRemoteSourcesForHome(roomName);
     var seenRooms = {};
     var result = {
         constructionSites: 0,
@@ -2346,7 +2266,7 @@ function requestDynamicArtificersForRoom(room, demandOverride, options) {
 
 function requestRemoteExtractorsForRoom(room, extractorBody, priority, maxRequests, options) {
     var queue = spawnManager.getSpawnQueue(room.name);
-    var demands = RemotePlanner.getRemoteExtractorDemand(room.name, extractorBody, queue);
+    var demands = getRemotePlanner().getRemoteExtractorDemand(room.name, extractorBody, queue);
     var added = 0;
 
     if (typeof maxRequests !== 'number' || maxRequests < 0) {
@@ -2503,7 +2423,7 @@ function requestAnnexForRoom(room) {
         return result;
     }
 
-    var activeSources = RemotePlanner.getActiveRemoteSourcesForHome(room.name);
+    var activeSources = getRemotePlanner().getActiveRemoteSourcesForHome(room.name);
     var queue = spawnManager.getSpawnQueue(room.name);
     var annexBody = creepBodyConfig.getAnnexBody(room);
 
@@ -3378,7 +3298,7 @@ function getSourceMiningDemand(room) {
     var bodyWork = Math.max(1, countBodyParts(extractorBody, WORK));
     var localSources = ensureVisibleLocalSourceMemories(room);
     var activeRemoteSources = room ?
-        RemotePlanner.getActiveRemoteSourcesForHome(room.name) : [];
+        getRemotePlanner().getActiveRemoteSourcesForHome(room.name) : [];
     var desiredWork = 0;
 
     for (var i = 0; i < localSources.length; i++) {
@@ -3470,7 +3390,7 @@ function getFreighterCarryDemand(room) {
     }
 
     var activeSources = room ?
-        RemotePlanner.getActiveRemoteSourcesForHome(room.name) : [];
+        getRemotePlanner().getActiveRemoteSourcesForHome(room.name) : [];
     var remoteBacklog = 0;
     var remoteReservedCarry = 0;
     var worstHaulAge = 0;
@@ -3859,7 +3779,7 @@ function saveSpawnGovernorDebug(context) {
     context.demandCache.roleBodyPartTotals = context.bodyPartsByRole;
     context.demandCache.queuedRoleBodyPartTotals = context.queuedBodyPartsByRole;
 
-    roomMemory.spawnGovernor = {
+    var governor = {
         tick: Game.time,
         fullPlan: context.fullPlan,
         skippedForCpu: context.skippedForCpu,
@@ -3871,6 +3791,22 @@ function saveSpawnGovernorDebug(context) {
         maxQueueLength: policy.maxQueueLengthPerRoom,
         denied: context.denied
     };
+
+    spawnGovernorByRoom[context.roomName] = governor;
+
+    /* Light passes keep their live report in heap. Persist only useful state
+     * transitions or an occasional heartbeat, not a new debug object per tick. */
+    var saved = roomMemory.spawnGovernor;
+    var heartbeatDue = !saved || Game.time - (saved.tick || 0) >= 25;
+    if (context.fullPlan || context.skippedForCpu || heartbeatDue) {
+        roomMemory.spawnGovernor = governor;
+    }
+}
+
+function getSpawnGovernorDebug(roomName) {
+    return spawnGovernorByRoom[roomName] ||
+        (Memory.rooms && Memory.rooms[roomName] &&
+            Memory.rooms[roomName].spawnGovernor) || null;
 }
 
 /**
@@ -4010,7 +3946,8 @@ function runForRoom(room, options) {
  *
  * @returns {object}
  */
-function run() {
+function run(options) {
+    options = options || {};
     var rooms = getOwnedSpawnRooms();
     var cpuPolicy = ensureCpuPolicyMemory();
     var spawnPolicy = ensureSpawnPolicyMemory();
@@ -4023,7 +3960,8 @@ function run() {
         cpuStatus.remaining,
         cpuPolicy.spawnPlanningCpuBudget * planningScale
     ));
-    var skipNormalPlanning = cpuStatus.mode === 'critical';
+    var skipNormalPlanning = cpuStatus.mode === 'critical' ||
+        options.emergencyOnly === true;
     var report = {
         rooms: {},
         cpuBudget: budget,
@@ -4091,5 +4029,6 @@ module.exports = {
     requestDynamicExtractorsForRoom: requestDynamicExtractorsForRoom,
     requestDynamicFreightersForRoom: requestDynamicFreightersForRoom,
     requestRemoteExtractorsForRoom: requestRemoteExtractorsForRoom,
-    requestAnnexForRoom: requestAnnexForRoom
+    requestAnnexForRoom: requestAnnexForRoom,
+    getSpawnGovernorDebug: getSpawnGovernorDebug
 };

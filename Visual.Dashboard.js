@@ -1,5 +1,6 @@
 var cpuStatusUtility = require('CPU.Status');
 var scoreSeason = require('Season.Score');
+var tickCache = require('Tick.Cache');
 
 var COLORS = {
     background: '#111111',
@@ -137,15 +138,7 @@ function drawRow(visual, columns, x, y, columnWidths) {
 }
 
 function getOwnedRooms() {
-    var rooms = [];
-
-    for (var roomName in Game.rooms) {
-        var room = Game.rooms[roomName];
-
-        if (room && room.controller && room.controller.my) {
-            rooms.push(room);
-        }
-    }
+    var rooms = tickCache.getOwnedRooms().slice();
 
     rooms.sort(function(a, b) {
         return a.name < b.name ? -1 : a.name > b.name ? 1 : 0;
@@ -180,8 +173,9 @@ function buildCreepStats() {
         freighterDetails: []
     };
 
-    for (var creepName in Game.creeps) {
-        var creep = Game.creeps[creepName];
+    var creeps = tickCache.getAllCreeps();
+    for (var creepIndex = 0; creepIndex < creeps.length; creepIndex++) {
+        var creep = creeps[creepIndex];
 
         if (!creep || !creep.memory) {
             continue;
@@ -333,7 +327,7 @@ function getRoomSourceStats(room) {
     }
 
     if (result.length === 0) {
-        var visibleSources = room.find(FIND_SOURCES);
+        var visibleSources = tickCache.getSources(room);
 
         for (var j = 0; j < visibleSources.length; j++) {
             result.push(makeSourceStat(room.name, { id: visibleSources[j].id }, visibleSources[j].id, j + 1));
@@ -554,14 +548,16 @@ function getStoredEnergy(structure) {
 }
 
 function getRemoteDangerStatus(room) {
-    var hostileCreeps = room.find(FIND_HOSTILE_CREEPS);
+    var hostileCreeps = tickCache.getHostileCreeps(room);
     var invaderCoreType = typeof STRUCTURE_INVADER_CORE !== 'undefined' ?
         STRUCTURE_INVADER_CORE : 'invaderCore';
-    var invaderCores = room.find(FIND_HOSTILE_STRUCTURES, {
-        filter: function(structure) {
-            return structure.structureType === invaderCoreType;
+    var hostileStructures = tickCache.getHostileStructures(room);
+    var invaderCores = [];
+    for (var structureIndex = 0; structureIndex < hostileStructures.length; structureIndex++) {
+        if (hostileStructures[structureIndex].structureType === invaderCoreType) {
+            invaderCores.push(hostileStructures[structureIndex]);
         }
-    });
+    }
 
     if (hostileCreeps.length > 0 || invaderCores.length > 0) {
         var detail = hostileCreeps.length > 0 ? ' H' + hostileCreeps.length : '';
@@ -698,7 +694,7 @@ function getLiveRemoteSourceData(remoteRoom, remoteSources) {
 }
 
 function getSpawnStatus(room, queue) {
-    var spawns = room.find(FIND_MY_SPAWNS);
+    var spawns = tickCache.getOwnedSpawnsInRoom(room.name);
 
     for (var i = 0; i < spawns.length; i++) {
         var spawn = spawns[i];

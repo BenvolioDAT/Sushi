@@ -1,36 +1,56 @@
-var roleForeman = require('role.Foreman');
-var roleExtractor = require('role.Extractor');
-var roleTech = require('role.Tech');
-var roleFreighter = require('role.Freighter');
-var roleAnnex = require('role.Annex');
-var roleArtificer = require('role.Artificer');
-var rolePioneer = require('role.Pioneer');
-var roleSupplyRunner = require('role.SupplyRunner');
-var roleScout = require('role.Scout');
-var roleRonin = require('role.Ronin');
-var roleVolley = require('role.Volley');
-var roleCleric = require('role.Cleric');
-var roleScoreRunner = require('role.scorerunner');
-
-var utility_spawn = require('utility.spawn');
-var utilityVisual = require('utility.Visual');
-var utility = require('utility');
-
+var globalLoadCpuStart = typeof Game !== 'undefined' && Game.cpu &&
+    typeof Game.cpu.getUsed === 'function' ? Game.cpu.getUsed() : null;
 var TowerLogic = require('Logic.Tower');
-var WarRoom = require('Logic.WarRoom');
-var ExpansionLogic = require('Logic.Expansion');
-
 var spawnManager = require('spawn.manager');
 var spawnRequestManager = require('spawn.request.manager');
 var trafficManager = require('traffic_manager');
 var travelUtility = require('utility.Travel.Creep');
-var RemotePlanner = require('Planner.Remote');
-var PlannerBrain = require('Planner.Brain');
-var RoadPlanner = require('Planner.Roads');
-var Dashboard = require('Visual.Dashboard');
-var StructurePlannerVisual = require('Visual.Planner.Structures');
 var scoreSeason = require('Season.Score');
 var cpuStatusUtility = require('CPU.Status');
+var tickCache = require('Tick.Cache');
+var cpuProfiler = require('CPU.Profiler');
+
+/* Optional planners, visuals, and role modules are loaded on first use. This
+ * shortens resets for colonies that do not currently need every subsystem. */
+var optionalModules = {};
+var roleModules = {};
+var globalResetTick = null;
+var globalLoadRecorded = false;
+var ROLE_MODULE_NAMES = {
+    Foreman: 'role.Foreman',
+    Extractor: 'role.Extractor',
+    Tech: 'role.Tech',
+    Freighter: 'role.Freighter',
+    Annex: 'role.Annex',
+    Artificer: 'role.Artificer',
+    Pioneer: 'role.Pioneer',
+    SupplyRunner: 'role.SupplyRunner',
+    Scout: 'role.Scout',
+    Ronin: 'role.Ronin',
+    Volley: 'role.Volley',
+    Cleric: 'role.Cleric',
+    ScoreRunner: 'role.scorerunner'
+};
+
+function getOptionalModule(moduleName) {
+    if (!optionalModules[moduleName]) {
+        optionalModules[moduleName] = require(moduleName);
+    }
+    return optionalModules[moduleName];
+}
+
+function getRoleModule(role) {
+    if (roleModules[role]) {
+        return roleModules[role];
+    }
+
+    var moduleName = ROLE_MODULE_NAMES[role];
+    if (!moduleName) {
+        return null;
+    }
+    roleModules[role] = require(moduleName);
+    return roleModules[role];
+}
 
 /*
  * Harabi-style traffic movement is initialized once when this global is loaded.
@@ -90,11 +110,13 @@ function updateRepairStructureMemory(room) {
      * A structure needs repair when:
      * structure.hits < structure.hitsMax
      */
-    var damagedStructures = room.find(FIND_STRUCTURES, {
-        filter: function(structure) {
-            return structure.hits < structure.hitsMax;
+    var roomStructures = tickCache.getRoomStructures(room);
+    var damagedStructures = [];
+    for (var structureIndex = 0; structureIndex < roomStructures.length; structureIndex++) {
+        if (roomStructures[structureIndex].hits < roomStructures[structureIndex].hitsMax) {
+            damagedStructures.push(roomStructures[structureIndex]);
         }
-    });
+    }
 
     /*
      * Clear the old repair list.
@@ -102,7 +124,7 @@ function updateRepairStructureMemory(room) {
      * This is important because some structures may get repaired later.
      * We do not want old repaired structures staying in memory forever.
      */
-    Memory.rooms[room.name].RepairStructure = [];
+    var newRepairList = [];
 
     /*
      * Save only the structure IDs into memory.
@@ -113,7 +135,21 @@ function updateRepairStructureMemory(room) {
      * Do not store the full structure object in Memory.
      */
     for (var i = 0; i < damagedStructures.length; i++) {
-        Memory.rooms[room.name].RepairStructure.push(damagedStructures[i].id);
+        newRepairList.push(damagedStructures[i].id);
+    }
+
+    var oldRepairList = Memory.rooms[room.name].RepairStructure;
+    var changed = !oldRepairList || oldRepairList.length !== newRepairList.length;
+    if (!changed) {
+        for (var repairIndex = 0; repairIndex < newRepairList.length; repairIndex++) {
+            if (oldRepairList[repairIndex] !== newRepairList[repairIndex]) {
+                changed = true;
+                break;
+            }
+        }
+    }
+    if (changed) {
+        Memory.rooms[room.name].RepairStructure = newRepairList;
     }
 }
 
@@ -231,6 +267,53 @@ function ensureStructurePlannerSetting() {
     }
 }
 
+function ensurePerformanceSettings() {
+    if (!Memory.settings) {
+        Memory.settings = {};
+    }
+    if (Memory.settings.showSourceMapFlags === undefined) {
+        Memory.settings.showSourceMapFlags = false;
+    }
+    if (typeof Memory.settings.sourceMapFlagInterval !== 'number') {
+        Memory.settings.sourceMapFlagInterval = 5;
+    }
+    if (Memory.settings.enableCpuProfiling === undefined) {
+        Memory.settings.enableCpuProfiling = false;
+    }
+}
+
+function getStableRoomOffset(roomName, interval) {
+    var hash = 0;
+    roomName = roomName || '';
+    for (var i = 0; i < roomName.length; i++) {
+        hash = ((hash * 31) + roomName.charCodeAt(i)) & 2147483647;
+    }
+    return interval > 0 ? hash % interval : 0;
+}
+
+function shouldRunForRoom(roomName, interval) {
+    interval = Math.max(1, Math.floor(interval || 1));
+    return (Game.time + getStableRoomOffset(roomName, interval)) % interval === 0;
+}
+
+function isResetWarmup(delayTicks) {
+    if (globalResetTick === null) {
+        return true;
+    }
+    return Game.time - globalResetTick < delayTicks;
+}
+
+function getStartupState() {
+    return {
+        resetTick: globalResetTick,
+        currentTick: typeof Game !== 'undefined' ? Game.time : null,
+        warmup: globalResetTick === null ? true : isResetWarmup(2),
+        loadedOptionalModules: Object.keys(optionalModules),
+        loadedRoleModules: Object.keys(roleModules),
+        tickCache: tickCache.getDebugStats()
+    };
+}
+
 function runTrafficManagerForVisibleRooms() {
     if (!isTrafficManagerEnabled()) {
         return;
@@ -243,8 +326,9 @@ function runTrafficManagerForVisibleRooms() {
      * - traffic manager resolves the room together
      * - traffic manager performs the real creep.move(direction) calls
      */
-    for (var roomName in Game.rooms) {
-        var room = Game.rooms[roomName];
+    var visibleRooms = tickCache.getVisibleRooms();
+    for (var roomIndex = 0; roomIndex < visibleRooms.length; roomIndex++) {
+        var room = visibleRooms[roomIndex];
         var costs = buildTrafficCostMatrix(room);
 
         trafficManager.run(room, costs, TRAFFIC_MANAGER_THRESHOLD);
@@ -258,7 +342,7 @@ function buildTrafficCostMatrix(room) {
      * roads are preferred, containers are passable, hard obstacles are blocked.
      */
     var costs = new PathFinder.CostMatrix();
-    var structures = room.find(FIND_STRUCTURES);
+    var structures = tickCache.getRoomStructures(room);
 
     for (var i = 0; i < structures.length; i++) {
         var structure = structures[i];
@@ -278,7 +362,7 @@ function buildTrafficCostMatrix(room) {
         }
     }
 
-    var sites = room.find(FIND_CONSTRUCTION_SITES);
+    var sites = tickCache.getRoomConstructionSites(room);
 
     for (var j = 0; j < sites.length; j++) {
         var site = sites[j];
@@ -323,193 +407,149 @@ function isTrafficBlockedStructure(structure) {
  * construction progresses, and your JavaScript runs from top to bottom.
  */
 module.exports.loop = function () {
+    if (globalResetTick === null) {
+        globalResetTick = Game.time;
+    }
 
-    /*
-     * Cleanup runs before creep logic so stale shared routes do not keep getting
-     * reused by roles later in this same tick.
-     */
-    travelUtility.cleanupRouteCaches();
-    /* Freeze this tick's strategic CPU mode before optional planners run. */
-    cpuStatusUtility.getCpuStatus();
-    scoreSeason.maintain();
-
+    ensurePerformanceSettings();
     ensureStructurePlannerSetting();
+    tickCache.build();
+
+    if (!globalLoadRecorded) {
+        cpuProfiler.end('globalModuleLoad', globalLoadCpuStart);
+        globalLoadRecorded = true;
+    }
+
+    var profileStart = cpuProfiler.start();
+    travelUtility.cleanupRouteCaches();
+    cpuProfiler.end('routeCacheCleanup', profileStart);
+
+    profileStart = cpuProfiler.start();
+    cpuStatusUtility.getCpuStatus();
+    cpuProfiler.end('cpuStatus', profileStart);
+
+    profileStart = cpuProfiler.start();
+    scoreSeason.maintain();
+    cpuProfiler.end('seasonScore', profileStart);
     maybeGeneratePixel();
-    /*
-     * Automatic WarRoom radar only scans visible spawn rooms and their directly
-     * adjacent rooms. This prevents far-away scouts or remote rooms from
-     * pulling combat creeps across the map.
-     *
-     * Manual targetRoom and targetFlag orders still work when this scan is
-     * disabled because combat roles read those assignments independently.
-     */
+
+    /* WarRoom is user-enabled and urgent, so it is not delayed after a reset. */
     if (isWarRoomEnabled()) {
-        WarRoom.run();
+        profileStart = cpuProfiler.start();
+        getOptionalModule('Logic.WarRoom').run();
+        cpuProfiler.end('warRoom', profileStart);
     }
 
-    /*
-     * RemotePlanner is intentionally light most ticks. Scouts do heavy refreshes
-     * when they see rooms, and this run call mostly cleans stale assignments and
-     * occasionally rescoring active candidates per owned room.
-     */
-    RemotePlanner.run();
-    PlannerBrain.run();
-    RoadPlanner.run();
+    /* The first tick keeps defense, spawning, creep actions, and movement only. */
+    if (!isResetWarmup(1)) {
+        profileStart = cpuProfiler.start();
+        getOptionalModule('Planner.Remote').run();
+        cpuProfiler.end('remotePlanner', profileStart);
 
-    for (var towerRoomName in Game.rooms) {
-        var towerRoom = Game.rooms[towerRoomName];
+        profileStart = cpuProfiler.start();
+        getOptionalModule('Planner.Brain').run();
+        cpuProfiler.end('plannerBrain', profileStart);
 
-        if (towerRoom.controller && towerRoom.controller.my) {
-            TowerLogic.run(towerRoom);
+        profileStart = cpuProfiler.start();
+        getOptionalModule('Planner.Roads').run();
+        cpuProfiler.end('plannerRoads', profileStart);
+    }
+
+    var ownedRooms = tickCache.getOwnedRooms();
+    profileStart = cpuProfiler.start();
+    for (var towerRoomIndex = 0; towerRoomIndex < ownedRooms.length; towerRoomIndex++) {
+        TowerLogic.run(ownedRooms[towerRoomIndex]);
+    }
+    cpuProfiler.end('towerDefense', profileStart);
+
+    /* Repair-list scans are stable-staggered instead of synchronized by tick. */
+    for (var repairRoomIndex = 0; repairRoomIndex < ownedRooms.length; repairRoomIndex++) {
+        var repairRoom = ownedRooms[repairRoomIndex];
+        if (shouldRunForRoom(repairRoom.name, 10)) {
+            updateRepairStructureMemory(repairRoom);
         }
     }
 
-
-    for (var roomName in Game.rooms) {
-    var room = Game.rooms[roomName];
-
-    if (room.controller && room.controller.my && Game.time % 10 === 0) {
-        updateRepairStructureMemory(room);
-        /*
-         * Road construction now belongs to Planner.Roads.js.   
-         * The travel route cache remains enabled for movement/fallback only,
-         * so creep-walked paths no longer become the main source of roads.
-         */
-        // travelUtility.buildRoadsFromRouteCache(room);
+    if (
+        !isResetWarmup(1) &&
+        Memory.settings.showSourceMapFlags === true
+    ) {
+        var sourceVisual = getOptionalModule('utility.Visual');
+        var sourceInterval = Math.max(1, Math.floor(
+            Memory.settings.sourceMapFlagInterval || 1
+        ));
+        var visibleRooms = tickCache.getVisibleRooms();
+        for (var sourceRoomIndex = 0; sourceRoomIndex < visibleRooms.length; sourceRoomIndex++) {
+            if (shouldRunForRoom(visibleRooms[sourceRoomIndex].name, sourceInterval)) {
+                sourceVisual.drawSourceFlags(visibleRooms[sourceRoomIndex].name);
+            }
         }
     }
-    /*
-     * Game.rooms is a Screeps object containing only rooms you can currently see.
-     * This loop asks the utility planner to check visible rooms every 10 ticks,
-     * not every tick, because planning construction sites can use CPU.
-     */
-    for (var roomName in Game.rooms) {
-    if (Game.time % 10 === 0) {
-        /*
-         * planSourceContainers(roomName) reads Memory.rooms[roomName].sources
-         * and may write container planning data back into that room memory.
-         */
-       //utility.planSourceContainers(roomName);
-    }}
-    // Draw a flag on each source on the MAP.
-    /*
-     * Map visuals are temporary in Screeps. They disappear after the tick ends,
-     * so this loop redraws source markers every tick for every visible room.
-     */
-    for (var roomName in Game.rooms) {
-        utilityVisual.drawSourceFlags(roomName);
-    }
 
-    /*
-     * Memory.creeps stores data by creep name and survives after a creep dies.
-     * Game.creeps only contains living creeps right now.
-     * If a name exists in Memory.creeps but not Game.creeps, the creep is dead,
-     * so deleting that memory prevents old data from building up forever.
-     */
-    for(var name in Memory.creeps) {
-        if(!Game.creeps[name]) {
-            delete Memory.creeps[name];
-            console.log('Clearing non-existing creep memory:', name);
+    if (!Memory.creeps) {
+        Memory.creeps = {};
+    }
+    for (var memoryCreepName in Memory.creeps) {
+        if (!Game.creeps[memoryCreepName]) {
+            delete Memory.creeps[memoryCreepName];
         }
     }
-    /*
-     * Expansion runs before normal spawn requests so it can add
-     * Annex/Pioneer/SupplyRunner work to the origin room queue first.
-     * Logic.Expansion owns its Memory.expansion.enabled guard.
-     */
-    ExpansionLogic.run();
 
-    /*
-     * Step 1:
-     * Decide what the room needs.
-     * This adds requests to Memory.rooms[roomName].spawnQueue.
-     */
-    var requestReport = spawnRequestManager.run();
+    if (!isResetWarmup(1)) {
+        getOptionalModule('Logic.Expansion').run();
+    }
 
-    /*
-     * Step 2:
-     * Actually try to spawn from each owned spawn room's queue.
-     */
+    profileStart = cpuProfiler.start();
+    var requestReport = spawnRequestManager.run({
+        emergencyOnly: isResetWarmup(1)
+    });
+    cpuProfiler.end('spawnPlanning', profileStart);
+
     if (requestReport && requestReport.rooms) {
         for (var spawnRoomName in requestReport.rooms) {
-            if (!requestReport.rooms.hasOwnProperty(spawnRoomName)) {
-                continue;
+            if (requestReport.rooms.hasOwnProperty(spawnRoomName)) {
+                spawnManager.runAllIdleSpawns(spawnRoomName);
             }
-
-            spawnManager.runAllIdleSpawns(spawnRoomName);
         }
     }
 
-
-    /*
-     * Game.creeps contains every living creep you own, keyed by creep name.
-     * This loop is the role dispatcher: it reads creep.memory.role and calls
-     * the matching role module so each creep knows what behavior to run.
-     */
-    for(var name in Game.creeps) {
-        var creep = Game.creeps[name];
-        /*
-         * Each if-statement checks one possible role name. The role names are
-         * plain strings stored in creep memory when the creep is spawned.
-         */
-        if(creep.memory.role == 'ScoreRunner') {
-            roleScoreRunner.run(creep);
-            continue;
-        }
-        if(creep.memory.role == 'Tech') {
-            roleTech.run(creep);
-        }
-        if(creep.memory.role == 'Foreman') {
-            roleForeman.run(creep);
-        }
-        if(creep.memory.role == 'Extractor') {
-            roleExtractor.run(creep);
-        }
-        if(creep.memory.role == 'Freighter') {
-            roleFreighter.run(creep);
-        }
-        if(creep.memory.role == 'Annex') {
-            roleAnnex.run(creep);
-        }
-        if(creep.memory.role == 'Artificer') {
-            roleArtificer.run(creep);
-        }
-        if(creep.memory.role == 'Pioneer') {
-            rolePioneer.run(creep);
-        }
-        if(creep.memory.role == 'SupplyRunner') {
-            roleSupplyRunner.run(creep);
-        }
-        if(creep.memory.role == 'Scout') {
-            roleScout.run(creep);
-        }
-        if(creep.memory.role == 'Ronin') {
-            roleRonin.run(creep);
-        }
-        if(creep.memory.role == 'Volley') {
-            roleVolley.run(creep);
-        }
-        if(creep.memory.role == 'Cleric') {
-            roleCleric.run(creep);
+    profileStart = cpuProfiler.start();
+    var creeps = tickCache.getAllCreeps();
+    for (var creepIndex = 0; creepIndex < creeps.length; creepIndex++) {
+        var creep = creeps[creepIndex];
+        var role = creep && creep.memory ? creep.memory.role : null;
+        var roleModule = getRoleModule(role);
+        if (roleModule && typeof roleModule.run === 'function') {
+            roleModule.run(creep);
         }
     }
+    cpuProfiler.end('creepRoles', profileStart);
 
-    /*
-     * Owned rooms, visible remotes, Scouts, and ScoreRunners all use the same
-     * per-tick scan cache. This loop makes incidental vision useful without
-     * multiplying room.find(FIND_SCORES) calls by the number of creeps.
-     */
-    for (var scoreRoomName in Game.rooms) {
-        scoreSeason.reportVisibleRoom(
-            Game.rooms[scoreRoomName],
-            'main',
-            false
-        );
+    if (!isResetWarmup(1)) {
+        profileStart = cpuProfiler.start();
+        var scoreRooms = tickCache.getVisibleRooms();
+        for (var scoreRoomIndex = 0; scoreRoomIndex < scoreRooms.length; scoreRoomIndex++) {
+            scoreSeason.reportVisibleRoom(scoreRooms[scoreRoomIndex], 'main', false);
+        }
+        cpuProfiler.end('seasonScore', profileStart);
     }
 
+    profileStart = cpuProfiler.start();
     runTrafficManagerForVisibleRooms();
-    StructurePlannerVisual.run();
-    Dashboard.run();
-    /* Save completed usage for the next tick without changing this tick's mode. */
+    cpuProfiler.end('trafficManager', profileStart);
+
+    if (!isResetWarmup(1)) {
+        profileStart = cpuProfiler.start();
+        getOptionalModule('Visual.Planner.Structures').run();
+        cpuProfiler.end('structurePlannerVisuals', profileStart);
+
+        profileStart = cpuProfiler.start();
+        getOptionalModule('Visual.Dashboard').run();
+        cpuProfiler.end('dashboard', profileStart);
+    }
+
     cpuStatusUtility.finalizeCpuStatus();
-}
+    cpuProfiler.flush();
+};
+
+module.exports.getStartupState = getStartupState;

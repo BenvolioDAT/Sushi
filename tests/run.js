@@ -58,6 +58,14 @@ function defineScreepsBodyGlobals() {
     global.ERR_BUSY = -4;
     global.ERR_NAME_EXISTS = -3;
     global.ERR_INVALID_ARGS = -10;
+    global.TOP = 1;
+    global.TOP_RIGHT = 2;
+    global.RIGHT = 3;
+    global.BOTTOM_RIGHT = 4;
+    global.BOTTOM = 5;
+    global.BOTTOM_LEFT = 6;
+    global.LEFT = 7;
+    global.TOP_LEFT = 8;
 }
 
 function loadFreshSpawnManager() {
@@ -73,6 +81,12 @@ function loadFreshSpawnManager() {
     }
 
     return require(path.resolve(__dirname, '..', 'spawn.manager.js'));
+}
+
+function loadFreshModule(fileName) {
+    var modulePath = path.resolve(__dirname, '..', fileName);
+    delete require.cache[modulePath];
+    return require(modulePath);
 }
 
 test('CPU mode thresholds and hysteresis', function() {
@@ -263,6 +277,115 @@ test('all idle spawns in a room can consume the shared queue', function() {
     assertEqual(result.spawned, 2, 'two idle spawns start creeps');
     assertEqual(spawnedNames.length, 2, 'two unique spawn calls occur');
     assertEqual(Memory.rooms.W1N1.spawnQueue.length, 0, 'both requests are consumed');
+});
+
+test('tick cache indexes creeps once per tick', function() {
+    global.Game = {
+        time: 300,
+        rooms: {
+            W1N1: { name: 'W1N1', controller: { my: true } }
+        },
+        creeps: {
+            A: {
+                name: 'A',
+                memory: { role: 'Tech', homeRoom: 'W1N1' },
+                body: [{ type: WORK, hits: 100 }],
+                room: { name: 'W1N1' }
+            }
+        },
+        spawns: {}
+    };
+
+    var tickCache = loadFreshModule('Tick.Cache.js');
+    var firstStats = tickCache.getDebugStats();
+    assertEqual(tickCache.getAllCreeps().length, 1, 'creep index is available');
+    assertEqual(
+        tickCache.getCreepsByHomeRoomAndRole('W1N1', 'Tech').length,
+        1,
+        'home and role index is available'
+    );
+    assertEqual(
+        tickCache.getDebugStats().buildsThisGlobal,
+        firstStats.buildsThisGlobal,
+        'repeated queries reuse one build'
+    );
+
+    Game.time = 301;
+    tickCache.getAllCreeps();
+    assertEqual(
+        tickCache.getDebugStats().buildsThisGlobal,
+        firstStats.buildsThisGlobal + 1,
+        'new tick rebuilds once'
+    );
+});
+
+test('tick cache reuses room structure scans', function() {
+    global.FIND_STRUCTURES = 1;
+    var findCalls = 0;
+    var room = {
+        name: 'W2N2',
+        find: function() {
+            findCalls++;
+            return [{ id: 'road1' }];
+        }
+    };
+    global.Game = { time: 400, rooms: { W2N2: room }, creeps: {}, spawns: {} };
+
+    var tickCache = loadFreshModule('Tick.Cache.js');
+    tickCache.getRoomStructures(room);
+    tickCache.getRoomStructures(room);
+    assertEqual(findCalls, 1, 'room.find runs once for the cached type');
+});
+
+test('disabled profiler does not sample Game.cpu', function() {
+    var cpuCalls = 0;
+    global.Memory = { settings: { enableCpuProfiling: false } };
+    global.Game = {
+        time: 500,
+        cpu: {
+            getUsed: function() {
+                cpuCalls++;
+                return 1;
+            }
+        }
+    };
+
+    var profiler = loadFreshModule('CPU.Profiler.js');
+    var start = profiler.start();
+    profiler.end('disabled', start);
+    profiler.flush();
+    assertEqual(start, null, 'disabled profiler returns no token');
+    assertEqual(cpuCalls, 0, 'disabled profiler does not call getUsed');
+});
+
+test('main module loads without Game.rooms or populated Memory', function() {
+    defineScreepsBodyGlobals();
+    global.RESOURCE_ENERGY = 'energy';
+    global.Creep = function() {};
+    global.RoomPosition = function(x, y, roomName) {
+        this.x = x;
+        this.y = y;
+        this.roomName = roomName;
+    };
+    global.Memory = {};
+    global.Game = {
+        time: 600,
+        cpu: { getUsed: function() { return 0; } },
+        creeps: {},
+        spawns: {},
+        flags: {},
+        map: {}
+    };
+
+    var trafficPath = path.resolve(__dirname, '..', 'traffic_manager.js');
+    var travelPath = path.resolve(__dirname, '..', 'utility.Travel.Creep.js');
+    var travelerPath = path.resolve(__dirname, '..', 'Traveler.js');
+    delete require.cache[trafficPath];
+    delete require.cache[travelPath];
+    delete require.cache[travelerPath];
+    var main = loadFreshModule('main.js');
+    assertEqual(typeof main.loop, 'function', 'main exports the tick loop');
+    assertEqual(typeof main.getStartupState, 'function', 'startup state is inspectable');
 });
 
 console.log('RESULT ' + passed + ' passed, ' + failed + ' failed');
