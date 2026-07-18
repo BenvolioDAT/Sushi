@@ -17,6 +17,8 @@ var RemotePlanner = require('Planner.Remote');
 var creepUtility = require('utility.Creep');
 var cpuStatusUtility = require('CPU.Status');
 var scoreSeason = require('Season.Score');
+var spawnRequestShared = require('spawn.request.shared');
+var spawnRequestGovernor = require('spawn.request.governor');
 
 var RESERVE_DESIRED_TICKS = 4000;
 var RESERVE_SPAWN_AT_TICKS = 2500;
@@ -439,33 +441,9 @@ function getActiveContext(roomName) {
     return null;
 }
 
-function addCount(map, key, amount) {
-    if (!key) {
-        return;
-    }
-
-    map[key] = (map[key] || 0) + (amount || 1);
-}
-
-function addBodyPartCount(map, role, partType, amount) {
-    if (!role || !partType || amount <= 0) {
-        return;
-    }
-
-    if (!map[role]) {
-        map[role] = {};
-    }
-
-    addCount(map[role], partType, amount);
-}
-
-function getBodyPartCount(map, role, partType) {
-    if (!map || !map[role]) {
-        return 0;
-    }
-
-    return map[role][partType] || 0;
-}
+var addCount = spawnRequestShared.addCount;
+var addBodyPartCount = spawnRequestShared.addBodyPartCount;
+var getBodyPartCount = spawnRequestShared.getBodyPartCount;
 
 function isHealthyForReplacement(creep, role) {
     if (!creep) {
@@ -525,21 +503,7 @@ function isQueuedLocalExtractorRequest(request, roomName) {
         isLocalExtractorMemory(request.memory, roomName);
 }
 
-function countQueueRequestsAtTick(queue, tick) {
-    var count = 0;
-
-    if (!queue) {
-        return count;
-    }
-
-    for (var i = 0; i < queue.length; i++) {
-        if (queue[i] && queue[i].requestedAt === tick) {
-            count++;
-        }
-    }
-
-    return count;
-}
+var countQueueRequestsAtTick = spawnRequestShared.countQueueRequestsAtTick;
 
 function summarizeQueue(queue, roomName) {
     var summary = {
@@ -2406,19 +2370,7 @@ function requestRemoteExtractorsForRoom(room, extractorBody, priority, maxReques
     };
 }
 
-function sortSpawnQueue(queue) {
-    if (!queue) {
-        return;
-    }
-
-    queue.sort(function(a, b) {
-        if (b.priority !== a.priority) {
-            return b.priority - a.priority;
-        }
-
-        return a.requestedAt - b.requestedAt;
-    });
-}
+var sortSpawnQueue = spawnRequestShared.sortSpawnQueue;
 
 function getMyUsername(room) {
     if (room && room.controller && room.controller.owner) {
@@ -3258,21 +3210,7 @@ function containerSourceNeedsExtractor(
     return hasDyingExtractor && healthyAssignedCount === 0;
 }
 
-function countBodyParts(body, bodyPartType) {
-    var count = 0;
-
-    if (!body) {
-        return count;
-    }
-
-    for (var i = 0; i < body.length; i++) {
-        if (body[i] === bodyPartType) {
-            count++;
-        }
-    }
-
-    return count;
-}
+var countBodyParts = spawnRequestShared.countBodyParts;
 
 function getSourceSeatCount(source, sourceMemory) {
     if (sourceMemory) {
@@ -4016,14 +3954,12 @@ function run() {
     var spawnPolicy = ensureSpawnPolicyMemory();
     var cpuStatus = cpuStatusUtility.getCpuStatus();
     var startCpu = getCpuUsed();
-    var planningScale = cpuStatus.mode === 'high' ?
-        Math.min(2.5, Math.max(1, cpuStatus.limit / 20)) :
-        cpuStatus.mode === 'critical' ? 0.5 : 1;
-    var budget = Math.max(0.25, Math.min(
-        cpuStatus.remaining,
-        cpuPolicy.spawnPlanningCpuBudget * planningScale
-    ));
-    var skipNormalPlanning = cpuStatus.mode === 'critical';
+    var budget = spawnRequestGovernor.getPlanningBudget(cpuStatus, cpuPolicy);
+    var skipNormalPlanning = spawnRequestGovernor.shouldSkipNormalPlanning(
+        cpuStatus,
+        0,
+        budget
+    );
     var report = {
         rooms: {},
         cpuBudget: budget,
@@ -4037,9 +3973,11 @@ function run() {
     });
 
     for (var i = 0; i < rooms.length; i++) {
-        if (getCpuUsed() - startCpu > budget) {
-            skipNormalPlanning = true;
-        }
+        skipNormalPlanning = skipNormalPlanning || spawnRequestGovernor.shouldSkipNormalPlanning(
+            cpuStatus,
+            getCpuUsed() - startCpu,
+            budget
+        );
 
         var roomReport = runForRoom(rooms[i], {
             roomIndex: i,
@@ -4050,9 +3988,11 @@ function run() {
             report.rooms[roomReport.roomName] = roomReport;
         }
 
-        if (getCpuUsed() - startCpu > budget) {
-            skipNormalPlanning = true;
-        }
+        skipNormalPlanning = skipNormalPlanning || spawnRequestGovernor.shouldSkipNormalPlanning(
+            cpuStatus,
+            getCpuUsed() - startCpu,
+            budget
+        );
     }
 
     report.cpuUsed = Math.round((getCpuUsed() - startCpu) * 1000) / 1000;
