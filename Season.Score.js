@@ -7,6 +7,7 @@
  */
 
 var cpuStatusUtility = require('CPU.Status');
+var scoreEntryUtility = require('Season.Score.Entry');
 
 var DEFAULT_MAXIMUM_ROOM_RANGE = 5;
 var DEFAULT_DECAY_SAFETY_TICKS = 25;
@@ -156,6 +157,10 @@ function getScoresUncached(room, forceEssentialScan) {
     return [];
 }
 
+function unwrapScoreEntry(entry) {
+    return scoreEntryUtility.unwrapScoreEntry(entry);
+}
+
 function getVisibleScores(room, forceEssentialScan) {
     if (scanCacheTick !== Game.time) {
         scanCacheTick = Game.time;
@@ -200,19 +205,7 @@ function getRoomScanCacheRecord(roomName) {
 }
 
 function unwrapScore(entry) {
-    if (!entry) {
-        return null;
-    }
-    if (entry.pos) {
-        return entry;
-    }
-    if (entry.score && entry.score.pos) {
-        return entry.score;
-    }
-    if (typeof LOOK_SCORE !== 'undefined' && entry[LOOK_SCORE]) {
-        return entry[LOOK_SCORE];
-    }
-    return null;
+    return unwrapScoreEntry(entry);
 }
 
 function getScoreValue(score) {
@@ -889,5 +882,6 @@ module.exports = {
     markHostileRoom: markHostileRoom,
     isRoomUnsafe: isRoomUnsafe,
     getReachableTargetSummaryForRoom: getReachableTargetSummaryForRoom,
-    getStats: getStats
+    getStats: getStats,
+    unwrapScoreEntry: unwrapScoreEntry
 };

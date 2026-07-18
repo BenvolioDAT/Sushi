@@ -1,17 +1,17 @@
 /*
  * CPU.Status.js
  *
- * Small shared view of the CPU that is sustainably available on this shard.
- * Game.cpu.tickLimit is deliberately reported but never used as the normal
- * allowance: it is only the emergency ceiling Screeps may permit this tick.
+ * Capacity is shard information that stays stable for a tick (limit, tick
+ * limit, and bucket). Pressure is the work consumed so far and is sampled on
+ * every getCpuStatus() call. Game.cpu.tickLimit is reported as an emergency
+ * ceiling; Game.cpu.limit remains the sustainable allowance.
  */
 
-var FALLBACK_CPU_LIMIT = 20;
+var FALLBACK_CPU_LIMIT = 0.1;
 var FULL_BUCKET = 10000;
 var cachedTick = -1;
 var cachedStatus = null;
 var lastDebugSaveTick = -1;
-var overrideMigrationChecked = false;
 
 function safeNumber(value, fallback) {
     return typeof value === 'number' && isFinite(value) ? value : fallback;
@@ -76,21 +76,6 @@ function chooseMode(limit, bucket, usageRatio, previousMode) {
     return 'normal';
 }
 
-function removeStaleCpuOverride() {
-    if (overrideMigrationChecked || typeof Memory === 'undefined') {
-        return;
-    }
-
-    overrideMigrationChecked = true;
-
-    if (
-        Memory.cpuPolicy &&
-        Memory.cpuPolicy.maxCpuOverride !== undefined
-    ) {
-        delete Memory.cpuPolicy.maxCpuOverride;
-    }
-}
-
 function saveDebug(status, previousMode) {
     if (
         typeof Memory === 'undefined' ||
@@ -121,8 +106,6 @@ function getCpuStatus() {
     var tick = typeof Game !== 'undefined' && typeof Game.time === 'number' ?
         Game.time : 0;
 
-    removeStaleCpuOverride();
-
     if (cachedStatus && cachedTick === tick) {
         var currentUsed = cachedStatus.used;
         if (
@@ -137,12 +120,14 @@ function getCpuStatus() {
         cachedStatus.usageRatio = cachedStatus.limit > 0 ?
             currentUsed / cachedStatus.limit : 1;
         cachedStatus.currentUsageRatio = cachedStatus.usageRatio;
+        cachedStatus.mode = chooseMode(
+            cachedStatus.limit,
+            cachedStatus.bucket,
+            cachedStatus.usageRatio,
+            cachedStatus.mode
+        );
 
-        /*
-         * Strategic mode is intentionally frozen at the first sample of the
-         * tick. Later callers see fresh used/remaining values without making
-         * strategy look progressively worse merely because more code ran.
-         */
+        /* Capacity fields remain unchanged; pressure may worsen during a tick. */
         return cachedStatus;
     }
 
