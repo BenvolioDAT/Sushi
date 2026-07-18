@@ -60,8 +60,7 @@ function isStandingOnScore(creep) {
     var scores = scoreSeason.getVisibleScores(creep.room, true);
 
     for (var i = 0; i < scores.length; i++) {
-        var score = scores[i] && scores[i].pos ? scores[i] :
-            scores[i] && scores[i].score && scores[i].score.pos ? scores[i].score : null;
+        var score = scoreSeason.unwrapScoreEntry(scores[i]);
         if (
             score && score.pos &&
             score.pos.x === creep.pos.x && score.pos.y === creep.pos.y

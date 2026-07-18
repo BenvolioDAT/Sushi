@@ -29,6 +29,7 @@ var PlannerFactory = require('Planner.Factory');
 var PlannerPowerSpawn = require('Planner.PowerSpawn');
 var PlannerNuker = require('Planner.Nuker');
 var PlannerObserver = require('Planner.Observer');
+var PlannerMemory = require('Planner.Memory');
 
 var STRUCTURE_PLANNER_VERSION = 4;
 var STRUCTURE_REPLAN_INTERVAL = 5000;
@@ -79,6 +80,8 @@ var POSITION_KEYS = [
     STRUCTURE_LAB,
     STRUCTURE_RAMPART
 ];
+
+var plannerMemory = PlannerMemory.create(STRUCTURE_PLANNER_VERSION, POSITION_KEYS);
 
 var RAMPART_TARGETS = [
     STRUCTURE_STORAGE,
@@ -368,51 +371,11 @@ function continuePlanJob(room, planner) {
 }
 
 function ensurePlanJobMemory(job) {
-    job.draftPlan = ensurePlanShape(job.draftPlan);
-    job.reserved = job.reserved || {};
-    job.candidates = job.candidates || [];
-    job.candidateScan = job.candidateScan || {
-        range: 1,
-        x: 0,
-        y: 0,
-        done: false,
-        started: false
-    };
-
-    if (job.rcl === undefined) {
-        job.rcl = 0;
-    }
+    return plannerMemory.ensurePlanJobMemory(job);
 }
 
 function ensurePlanShape(plan) {
-    var shaped = plan || makeEmptyPlan();
-
-    if (!shaped.byRcl) {
-        shaped.byRcl = makeEmptyByRcl();
-    }
-    if (!shaped.positions) {
-        shaped.positions = makeEmptyPositions();
-    }
-    ensurePositionKeys(shaped.positions);
-    if (!shaped.links) {
-        shaped.links = {
-            storage: null,
-            controller: null,
-            sources: {}
-        };
-    }
-    if (!shaped.containers) {
-        shaped.containers = {
-            controller: null,
-            mineral: null,
-            sources: {}
-        };
-    }
-    if (!shaped.extensionServiceTiles) {
-        shaped.extensionServiceTiles = [];
-    }
-
-    return shaped;
+    return plannerMemory.ensurePlanShape(plan);
 }
 
 function runPlanJobInit(room, job) {
@@ -666,148 +629,39 @@ function buildSites(room) {
 }
 
 function resetRoom(roomName) {
-    if (!Memory.rooms) {
-        Memory.rooms = {};
-    }
-    if (!Memory.rooms[roomName]) {
-        Memory.rooms[roomName] = {};
-    }
-
-    Memory.rooms[roomName].structurePlanner = makeEmptyPlannerMemory();
+    return plannerMemory.resetRoom(roomName);
 }
 
 function packCoord(pos) {
-    return pos.x + (pos.y * 50);
+    return plannerMemory.packCoord(pos);
 }
 
 function unpackCoord(packed, roomName) {
-    var value = parseInt(packed, 10) || 0;
-    var x = value % 50;
-    var y = Math.floor(value / 50);
-
-    return new RoomPosition(x, y, roomName);
+    return plannerMemory.unpackCoord(packed, roomName);
 }
 
 function ensurePlannerMemory(roomName) {
-    if (!Memory.rooms) {
-        Memory.rooms = {};
-    }
-    if (!Memory.rooms[roomName]) {
-        Memory.rooms[roomName] = {};
-    }
-    if (!Memory.rooms[roomName].structurePlanner) {
-        Memory.rooms[roomName].structurePlanner = makeEmptyPlannerMemory();
-    }
-
-    var planner = Memory.rooms[roomName].structurePlanner;
-
-    if (!planner.plan) {
-        planner.plan = makeEmptyPlan();
-    }
-    if (!planner.plan.byRcl) {
-        planner.plan.byRcl = makeEmptyByRcl();
-    }
-    if (!planner.plan.positions) {
-        planner.plan.positions = makeEmptyPositions();
-    }
-    ensurePositionKeys(planner.plan.positions);
-    if (!planner.plan.links) {
-        planner.plan.links = {
-            storage: null,
-            controller: null,
-            sources: {}
-        };
-    }
-    if (!planner.plan.containers) {
-        planner.plan.containers = {
-            controller: null,
-            mineral: null,
-            sources: {}
-        };
-    }
-    if (!planner.plan.extensionServiceTiles) {
-        planner.plan.extensionServiceTiles = [];
-    }
-    if (planner.forceReplan === undefined) {
-        planner.forceReplan = false;
-    }
-    if (!planner.lastPlanned) {
-        planner.lastPlanned = 0;
-    }
-    if (!planner.lastBuilt) {
-        planner.lastBuilt = 0;
-    }
-    if (!planner.lastRcl) {
-        planner.lastRcl = 0;
-    }
-    if (!planner.buildIndex) {
-        planner.buildIndex = 0;
-    }
-
-    return planner;
+    return plannerMemory.ensurePlannerMemory(roomName);
 }
 
 function makeEmptyPlannerMemory() {
-    return {
-        version: STRUCTURE_PLANNER_VERSION,
-        lastPlanned: 0,
-        lastBuilt: 0,
-        lastRcl: 0,
-        buildIndex: 0,
-        forceReplan: false,
-        plan: makeEmptyPlan()
-    };
+    return plannerMemory.makeEmptyPlannerMemory();
 }
 
 function makeEmptyPlan() {
-    return {
-        anchor: null,
-        byRcl: makeEmptyByRcl(),
-        positions: makeEmptyPositions(),
-        links: {
-            storage: null,
-            controller: null,
-            sources: {}
-        },
-        containers: {
-            controller: null,
-            mineral: null,
-            sources: {}
-        },
-        extensionServiceTiles: []
-    };
+    return plannerMemory.makeEmptyPlan();
 }
 
 function makeEmptyByRcl() {
-    var byRcl = {};
-
-    for (var rcl = 1; rcl <= 8; rcl++) {
-        byRcl[rcl] = [];
-    }
-
-    return byRcl;
+    return plannerMemory.makeEmptyByRcl();
 }
 
 function makeEmptyPositions() {
-    var positions = {};
-
-    for (var i = 0; i < POSITION_KEYS.length; i++) {
-        positions[POSITION_KEYS[i]] = [];
-    }
-
-    return positions;
+    return plannerMemory.makeEmptyPositions();
 }
 
 function ensurePositionKeys(positions) {
-    if (!positions) {
-        return;
-    }
-
-    for (var i = 0; i < POSITION_KEYS.length; i++) {
-        if (!positions[POSITION_KEYS[i]]) {
-            positions[POSITION_KEYS[i]] = [];
-        }
-    }
+    return plannerMemory.ensurePositionKeys(positions);
 }
 
 function shouldReplan(room, planner) {
