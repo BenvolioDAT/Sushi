@@ -179,10 +179,6 @@ var BODY_PLANS = {
         [[HEAL, 3], [MOVE, 3]],
         [[HEAL, 2], [MOVE, 2]],
         [[HEAL, 1], [MOVE, 1]]
-    ],
-
-    ScoreRunner: [
-        [[MOVE, 1]]
     ]
 };
 
@@ -455,10 +451,6 @@ function getClericBody(room) {
     return getBody('Cleric', room);
 }
 
-function getScoreRunnerBody(room) {
-    return getBody('ScoreRunner', room);
-}
-
 module.exports = {
     getBody: getBody,
     getBestBodyForAvailableEnergy: getBestBodyForAvailableEnergy,
@@ -481,6 +473,5 @@ module.exports = {
     getSupplyRunnerBody: getSupplyRunnerBody,
     getRoninBody: getRoninBody,
     getVolleyBody: getVolleyBody,
-    getClericBody: getClericBody,
-    getScoreRunnerBody: getScoreRunnerBody
+    getClericBody: getClericBody
 };

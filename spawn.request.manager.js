@@ -16,7 +16,6 @@ var creepBodyConfig = require('role.creepBodyConfig');
 var RemotePlanner = require('Planner.Remote');
 var creepUtility = require('utility.Creep');
 var cpuStatusUtility = require('CPU.Status');
-var scoreSeason = require('Season.Score');
 
 var RESERVE_DESIRED_TICKS = 4000;
 var RESERVE_SPAWN_AT_TICKS = 2500;
@@ -52,7 +51,6 @@ var DEFAULT_SPAWN_POLICY = {
         Ronin: 1,
         Volley: 1,
         Cleric: 1,
-        ScoreRunner: 5,
         Tech: 3,
         Artificer: 3,
         Extractor: 6,
@@ -104,7 +102,6 @@ var PRIORITY = {
     Extractor: 80,
     Freighter: 60,
     Annex: 8,
-    ScoreRunner: 18,
     Tech: 30,
     Artificer: 20,
     Pioneer: 55,
@@ -133,8 +130,7 @@ var REPLACEMENT_BUFFER_TICKS = {
     Scout: 10,
     Ronin: 40,
     Volley: 40,
-    Cleric: 40,
-    ScoreRunner: 20
+    Cleric: 40
 };
 
 /*
@@ -315,18 +311,6 @@ function ensureSpawnPolicyMemory() {
         ) {
             policy.roleCaps[role] = DEFAULT_SPAWN_POLICY.roleCaps[role];
         }
-    }
-
-    /*
-     * Older Sushi versions wrote the disabled default (zero) into persistent
-     * Memory. Migrate that value once so installing this code actually enables
-     * seasonal spawning; later user changes back to zero remain respected.
-     */
-    if (policy.scoreRunnerRoleCapMigrated !== true) {
-        if (policy.roleCaps.ScoreRunner === 0) {
-            policy.roleCaps.ScoreRunner = DEFAULT_SPAWN_POLICY.roleCaps.ScoreRunner;
-        }
-        policy.scoreRunnerRoleCapMigrated = true;
     }
 
     if (!policy.maxCreepsPerRoomByRcl) {
@@ -754,12 +738,6 @@ function canAddSpawnRequest(context, request, options) {
     var roleCap = policy.roleCaps ? policy.roleCaps[role] : null;
     var maxCreeps = getMaxCreepsForRoom(context.room, policy);
 
-    /* A small seasonal allowance avoids a full mature room blocking runners. */
-    if (role === 'ScoreRunner' && scoreSeason.isEnabled()) {
-        var scoreSettings = scoreSeason.ensureSettings();
-        maxCreeps += Math.min(3, Math.max(0,
-            Math.floor(scoreSettings.scoreRunnerMaximumPerRoom)));
-    }
     var maxQueueLength = policy.maxQueueLengthPerRoom;
     var maxNewRequests = policy.maxNewRequestsPerRoomPerTick;
     var emergencyMinimumBypass = emergency &&
@@ -1361,195 +1339,6 @@ function getDesiredTechWork(room) {
     setMemoryValueIfChanged(roomMemory, 'techBoostReason', boostReason);
 
     return desiredWork;
-}
-
-function countActiveRemoteRooms(roomName) {
-    var sources = RemotePlanner.getActiveRemoteSourcesForHome(roomName) || [];
-    var rooms = {};
-    var count = 0;
-
-    for (var i = 0; i < sources.length; i++) {
-        var remoteRoomName = sources[i] && sources[i].roomName;
-        if (remoteRoomName && !rooms[remoteRoomName]) {
-            rooms[remoteRoomName] = true;
-            count++;
-        }
-    }
-
-    return count;
-}
-
-function getScoreRunnerDemand(room, suppliedCpuStatus) {
-    var cpuStatus = suppliedCpuStatus || cpuStatusUtility.getCpuStatus();
-    var settings = scoreSeason.ensureSettings();
-    var demand = {
-        desired: 0,
-        living: 0,
-        queued: 0,
-        cpuMode: cpuStatus.mode,
-        reason: 'Season score API unavailable',
-        priority: PRIORITY.ScoreRunner,
-        knownTargets: 0,
-        unclaimedTargets: 0,
-        reachableScore: 0
-    };
-
-    if (!room) {
-        demand.reason = 'missing room';
-        return demand;
-    }
-
-    var body = creepBodyConfig.getScoreRunnerBody(room);
-    var replacementLead = getReplacementLeadTicks('ScoreRunner', body);
-    demand.living = countHealthyCreeps(room.name, 'ScoreRunner', replacementLead);
-    demand.queued = countQueuedRequests(room.name, 'ScoreRunner');
-
-    if (!scoreSeason.isEnabled()) {
-        return demand;
-    }
-
-    var targetSummary = scoreSeason.getReachableTargetSummaryForRoom(
-        room.name,
-        settings.scoreRunnerMaximumRoomRange
-    );
-    demand.knownTargets = targetSummary.reachableTargets;
-    demand.unclaimedTargets = targetSummary.unclaimedTargets;
-    demand.reachableScore = targetSummary.totalScore;
-
-    var level = room.controller ? (room.controller.level || 1) : 1;
-    var energyCapacity = room.energyCapacityAvailable || 300;
-    var storageEnergy = getStoredEnergy(room.storage);
-    var context = getActiveContext(room.name);
-    var foremen = context ? getPlannedRoleCount(context, 'Foreman') :
-        countHealthyCreeps(room.name, 'Foreman', 30) + countQueuedRequests(room.name, 'Foreman');
-    var extractors = context ? getPlannedRoleCount(context, 'Extractor') :
-        countHealthyCreeps(room.name, 'Extractor', 30) + countQueuedRequests(room.name, 'Extractor');
-    var freighters = context ? getPlannedRoleCount(context, 'Freighter') :
-        countHealthyCreeps(room.name, 'Freighter', 40) + countQueuedRequests(room.name, 'Freighter');
-    var economyReady = foremen >= 1 && extractors >= 1 && freighters >= 1;
-    var storageReady = level < 4 || (room.storage && storageEnergy >= 20000);
-    var emergencyTechReady = !room.controller ||
-        room.controller.ticksToDowngrade >= TECH_DOWNGRADE_DANGER_TICKS ||
-        (context ? getPlannedRoleCount(context, 'Tech') >= 1 :
-            countHealthyCreeps(room.name, 'Tech', 40) +
-                countQueuedRequests(room.name, 'Tech') >= 1);
-
-    if (!economyReady || !emergencyTechReady || energyCapacity < 300 || !storageReady) {
-        demand.reason = 'bootstrap or recovering economy';
-        return demand;
-    }
-
-    if (cpuStatus.mode === 'critical') {
-        demand.reason = 'critical CPU preserves existing runners only';
-        return demand;
-    }
-
-    var desired = level <= 2 ? 1 : level <= 4 ? 1 : level <= 6 ? 2 : 3;
-    var activeRemoteRooms = countActiveRemoteRooms(room.name);
-
-    if (cpuStatus.mode === 'low') {
-        desired = Math.min(desired, 1);
-        demand.reason = 'low CPU caps seasonal demand';
-    }
-    else {
-        demand.reason = 'stable room baseline';
-
-        if (targetSummary.unclaimedTargets > 0) {
-            desired = Math.max(desired, Math.min(3,
-                demand.living + demand.queued + targetSummary.unclaimedTargets));
-            demand.reason = 'reachable unclaimed Score targets';
-        }
-
-        if (activeRemoteRooms >= 2 && level >= 5) {
-            desired++;
-            demand.reason = 'healthy remote coverage';
-        }
-
-        if (
-            cpuStatus.mode === 'high' &&
-            settings.scoreRunnerCpuScaling !== false &&
-            (level < 4 || storageEnergy >= 50000)
-        ) {
-            desired += Math.min(2, Math.floor(Math.max(0,
-                cpuStatus.limit - 20) / 35));
-            demand.reason = 'high CPU seasonal scaling';
-        }
-    }
-
-    desired = Math.max(Math.floor(settings.scoreRunnerMinimum), desired);
-    desired = Math.min(
-        Math.max(0, Math.floor(settings.scoreRunnerMaximumPerRoom)),
-        desired
-    );
-
-    /* A known valuable object may outrank optional roles, never core economy. */
-    if (targetSummary.unclaimedTargets > 0) {
-        demand.priority = Math.min(28, PRIORITY.ScoreRunner + 4 +
-            Math.floor(Math.log(Math.max(1, targetSummary.highestScore)) / Math.log(10)));
-    }
-
-    demand.desired = desired;
-    demand.activeRemoteRooms = activeRemoteRooms;
-    return demand;
-}
-
-function saveScoreRunnerDemandDebug(roomName, demand) {
-    var roomMemory = ensureRoomMemory(roomName);
-    setMemoryValueIfChanged(roomMemory, 'scoreRunnerDesired', demand.desired);
-    setMemoryValueIfChanged(roomMemory, 'scoreRunnerLiving', demand.living);
-    setMemoryValueIfChanged(roomMemory, 'scoreRunnerQueued', demand.queued);
-    setMemoryValueIfChanged(roomMemory, 'scoreRunnerCpuMode', demand.cpuMode);
-    setMemoryValueIfChanged(
-        roomMemory,
-        'scoreRunnerDemandReason',
-        demand.reason
-    );
-    setMemoryValueIfChanged(
-        roomMemory,
-        'scoreRunnerKnownTargets',
-        demand.knownTargets
-    );
-    setMemoryValueIfChanged(
-        roomMemory,
-        'scoreRunnerUnclaimedTargets',
-        demand.unclaimedTargets
-    );
-    setMemoryValueIfChanged(
-        roomMemory,
-        'scoreRunnerReachableScore',
-        demand.reachableScore
-    );
-}
-
-function getDesiredScoreRunnerCount(room, cpuStatus) {
-    return getScoreRunnerDemand(room, cpuStatus).desired;
-}
-
-function requestScoreRunnersForRoom(room, cpuStatus) {
-    var demand = getScoreRunnerDemand(room, cpuStatus);
-
-    if (room) {
-        saveScoreRunnerDemandDebug(room.name, demand);
-    }
-
-    if (!room || demand.desired <= 0) {
-        return {
-            ok: true,
-            role: 'ScoreRunner',
-            requested: 0,
-            desired: demand.desired,
-            healthy: demand.living,
-            queued: demand.queued,
-            reason: demand.reason
-        };
-    }
-
-    return requestRoleForRoom(
-        room,
-        'ScoreRunner',
-        demand.desired,
-        demand.priority
-    );
 }
 
 function getCreepActiveBodyParts(creep, partType) {
@@ -3988,10 +3777,6 @@ function runForRoom(room, options) {
             room,
             demandCache.artificerDemand
         ));
-        report.requests.push(requestScoreRunnersForRoom(
-            room,
-            cpuStatusUtility.getCpuStatus()
-        ));
         report.requests.push(requestRoleForRoom(room, 'Scout', DESIRED_COUNTS.Scout));
         report.requests.push(requestRoleForRoom(room, 'Ronin', DESIRED_COUNTS.Ronin));
         report.requests.push(requestRoleForRoom(room, 'Volley', DESIRED_COUNTS.Volley));
@@ -4084,9 +3869,6 @@ module.exports = {
     getFreighterCarryDemand: getFreighterCarryDemand,
     getDesiredTechWork: getDesiredTechWork,
     getCpuStatus: cpuStatusUtility.getCpuStatus,
-    getDesiredScoreRunnerCount: getDesiredScoreRunnerCount,
-    getScoreRunnerDemand: getScoreRunnerDemand,
-    requestScoreRunnersForRoom: requestScoreRunnersForRoom,
     getReplacementLeadTicks: getReplacementLeadTicks,
     requestDynamicExtractorsForRoom: requestDynamicExtractorsForRoom,
     requestDynamicFreightersForRoom: requestDynamicFreightersForRoom,

@@ -10,7 +10,6 @@ var roleScout = require('role.Scout');
 var roleRonin = require('role.Ronin');
 var roleVolley = require('role.Volley');
 var roleCleric = require('role.Cleric');
-var roleScoreRunner = require('role.scorerunner');
 
 var utility_spawn = require('utility.spawn');
 var utilityVisual = require('utility.Visual');
@@ -29,7 +28,6 @@ var PlannerBrain = require('Planner.Brain');
 var RoadPlanner = require('Planner.Roads');
 var Dashboard = require('Visual.Dashboard');
 var StructurePlannerVisual = require('Visual.Planner.Structures');
-var scoreSeason = require('Season.Score');
 var cpuStatusUtility = require('CPU.Status');
 
 /*
@@ -331,7 +329,6 @@ module.exports.loop = function () {
     travelUtility.cleanupRouteCaches();
     /* Freeze this tick's strategic CPU mode before optional planners run. */
     cpuStatusUtility.getCpuStatus();
-    scoreSeason.maintain();
 
     ensureStructurePlannerSetting();
     maybeGeneratePixel();
@@ -452,10 +449,6 @@ module.exports.loop = function () {
          * Each if-statement checks one possible role name. The role names are
          * plain strings stored in creep memory when the creep is spawned.
          */
-        if(creep.memory.role == 'ScoreRunner') {
-            roleScoreRunner.run(creep);
-            continue;
-        }
         if(creep.memory.role == 'Tech') {
             roleTech.run(creep);
         }
@@ -492,19 +485,6 @@ module.exports.loop = function () {
         if(creep.memory.role == 'Cleric') {
             roleCleric.run(creep);
         }
-    }
-
-    /*
-     * Owned rooms, visible remotes, Scouts, and ScoreRunners all use the same
-     * per-tick scan cache. This loop makes incidental vision useful without
-     * multiplying room.find(FIND_SCORES) calls by the number of creeps.
-     */
-    for (var scoreRoomName in Game.rooms) {
-        scoreSeason.reportVisibleRoom(
-            Game.rooms[scoreRoomName],
-            'main',
-            false
-        );
     }
 
     runTrafficManagerForVisibleRooms();
