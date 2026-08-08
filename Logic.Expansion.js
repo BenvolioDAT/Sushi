@@ -43,7 +43,6 @@ var DEFAULT_SPAWN_POLICY = {
         Ronin: 1,
         Volley: 1,
         Cleric: 1,
-        ScoreRunner: 0,
         Tech: 3,
         Artificer: 3,
         Extractor: 6,

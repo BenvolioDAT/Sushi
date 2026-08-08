@@ -1,5 +1,4 @@
 var cpuStatusUtility = require('CPU.Status');
-var scoreSeason = require('Season.Score');
 
 var COLORS = {
     background: '#111111',
@@ -21,8 +20,7 @@ var ROLE_NAMES = [
     'Scout',
     'Ronin',
     'Volley',
-    'Cleric',
-    'ScoreRunner'
+    'Cleric'
 ];
 
 var LINE_HEIGHT = 0.7;
@@ -807,7 +805,6 @@ function drawGlobalPanel(visual, ownedRoomCount, totalCreeps) {
     var width = 48;
     var height = 2;
     var cpuStatus = cpuStatusUtility.getCpuStatus();
-    var scoreStats = scoreSeason.getStats();
     var cpuUsed = cpuStatus.used;
     var cpuLimit = cpuStatus.runtimeLimit;
     var bucket = cpuStatus.bucket;
@@ -821,9 +818,8 @@ function drawGlobalPanel(visual, ownedRoomCount, totalCreeps) {
     drawText(visual, 'CPU ' + round(cpuUsed, 1) + '/' + compactNumber(cpuLimit), x + 10.1, y + 0.35, cpuColor, 0.6);
     drawText(visual, cpuStatus.mode.toUpperCase(), x + 19, y + 0.35, cpuColor, 0.6);
     drawText(visual, 'Bucket ' + compactNumber(bucket), x + 24.2, y + 0.35, bucketColor, 0.6);
-    drawText(visual, 'Scores ' + scoreStats.liveTargets, x + 33, y + 0.35, scoreStats.liveTargets > 0 ? COLORS.good : COLORS.muted, 0.6);
-    drawText(visual, 'Rooms ' + ownedRoomCount, x + 38.2, y + 0.35, COLORS.text, 0.6);
-    drawText(visual, 'Creeps ' + totalCreeps, x + 43, y + 0.35, COLORS.text, 0.6);
+    drawText(visual, 'Rooms ' + ownedRoomCount, x + 33, y + 0.35, COLORS.text, 0.6);
+    drawText(visual, 'Creeps ' + totalCreeps, x + 41, y + 0.35, COLORS.text, 0.6);
 }
 
 function drawRoomPanel(visual, room, sourceStats, remoteStats, roomCreeps) {
@@ -831,7 +827,7 @@ function drawRoomPanel(visual, room, sourceStats, remoteStats, roomCreeps) {
     var y = 3.7;
     var width = 18;
     var showRoleCounts = Memory.settings && Memory.settings.dashboardShowRoleCounts === true;
-    var height = showRoleCounts ? 17.1 : 15;
+    var height = showRoleCounts ? 16.4 : 14.3;
     var controller = room.controller;
     var roomMemory = Memory.rooms && Memory.rooms[room.name];
     var queue = getSpawnQueueInfo(room.name);
@@ -854,10 +850,6 @@ function drawRoomPanel(visual, room, sourceStats, remoteStats, roomCreeps) {
     var techQueuedWork = hasTechWork ? safeNumber(roomMemory.techQueuedWork) : 0;
     var techCpuMultiplier = roomMemory ?
         safeNumber(roomMemory.techCpuMultiplier) : 1;
-    var scoreRunnerLiving = roomMemory ?
-        safeNumber(roomMemory.scoreRunnerLiving) : roles.ScoreRunner;
-    var scoreRunnerDesired = roomMemory ?
-        safeNumber(roomMemory.scoreRunnerDesired) : 0;
     var hasArtificerWork = roomMemory &&
         typeof roomMemory.artificerDesiredWork === 'number';
     var artificerWorkText = hasArtificerWork ?
@@ -938,15 +930,6 @@ function drawRoomPanel(visual, room, sourceStats, remoteStats, roomCreeps) {
     rowY += LINE_HEIGHT;
     drawText(
         visual,
-        'ScoreRunner ' + scoreRunnerLiving + '/' + scoreRunnerDesired +
-            ' targets ' + safeNumber(roomMemory && roomMemory.scoreRunnerKnownTargets),
-        x,
-        rowY,
-        scoreRunnerDesired > 0 ? COLORS.good : COLORS.muted
-    );
-    rowY += LINE_HEIGHT;
-    drawText(
-        visual,
         'Art W ' + artificerWorkText +
             (artificerQueuedWork > 0 ? ' +' + artificerQueuedWork + 'q' : ''),
         x,
@@ -986,7 +969,7 @@ function drawRoomPanel(visual, room, sourceStats, remoteStats, roomCreeps) {
         rowY += LINE_HEIGHT;
         drawText(visual, 'Art ' + roles.Artificer + ' Scout ' + roles.Scout + ' Ronin ' + roles.Ronin, x, rowY, COLORS.text);
         rowY += LINE_HEIGHT;
-        drawText(visual, 'Volley ' + roles.Volley + ' Cleric ' + roles.Cleric + ' Score ' + roles.ScoreRunner, x, rowY, COLORS.text);
+        drawText(visual, 'Volley ' + roles.Volley + ' Cleric ' + roles.Cleric, x, rowY, COLORS.text);
     }
 }
 
