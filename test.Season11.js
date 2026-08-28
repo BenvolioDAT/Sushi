@@ -251,15 +251,15 @@ test('season roles use Sushi travel and do not use market or portals', function(
     assert.strictEqual(combined.indexOf('STRUCTURE_' + 'PORTAL'), -1);
 });
 
-test('existing and Season 11 roles remain in main dispatch', function() {
-    var source = fs.readFileSync(path.join(__dirname, 'main.js'), 'utf8');
+test('existing and Season 11 roles remain in tick dispatch', function() {
+    var source = fs.readFileSync(path.join(__dirname, 'Tick.Creeps.js'), 'utf8');
     var roles = [
         'Foreman', 'Extractor', 'Freighter', 'Annex', 'Tech', 'Artificer',
         'Pioneer', 'SupplyRunner', 'Scout', 'Ronin', 'Volley', 'Cleric',
         'ThoriumMiner', 'ThoriumHauler', 'ReactorClaimer'
     ];
     for (var i = 0; i < roles.length; i++) {
-        assert.ok(source.indexOf("creep.memory.role == '" + roles[i] + "'") >= 0,
+        assert.ok(source.indexOf(roles[i] + ':') >= 0,
             'missing dispatch for ' + roles[i]);
     }
 });

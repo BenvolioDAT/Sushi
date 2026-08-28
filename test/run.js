@@ -39,15 +39,47 @@ function loadCpu(cpu) {
     return require(path.join(mocks.root, 'CPU.Status.js'));
 }
 
-function testCpuStatusShape() {
+function testCpuStatus() {
     for (const limit of [20, 100]) {
-        const api = loadCpu({ limit, tickLimit: limit + 100, bucket: 10000, getUsed: () => 1 });
-        const status = api.getCpuStatus();
+        let used = 1;
+        const api = loadCpu({ limit, tickLimit: limit + 100, bucket: 10000, getUsed: () => used });
+        let status = api.getCpuStatus();
         assert.strictEqual(status.limit, limit);
         assert.strictEqual(status.tickLimit, limit + 100);
         assert.strictEqual(status.remaining, limit - 1);
-        assert.strictEqual(typeof status.mode, 'string');
+        assert.strictEqual(status.capacity.limit, limit);
+        const firstBucket = status.bucket;
+        const debugBefore = JSON.stringify(Memory.cpuStatus);
+        Game.cpu.bucket = 0;
+        used = limit * 0.97;
+        status = api.getCpuStatus();
+        assert.strictEqual(status.bucket, firstBucket, 'capacity changed during the tick');
+        assert.strictEqual(status.mode, 'critical', 'pressure did not worsen later in the tick');
+        assert.strictEqual(status.pressure.used, used);
+        assert.strictEqual(JSON.stringify(Memory.cpuStatus), debugBefore, 'CPU debug Memory rewrote within a tick');
     }
+}
+
+function testBootstrapAndPixels() {
+    let calls = 0;
+    mocks.installGlobals({
+        bucket: 9999,
+        generatePixel: () => { calls++; return OK; }
+    });
+    Memory.settings.keepMe = true;
+    mocks.clearLocalModules();
+    const bootstrap = require(path.join(mocks.root, 'Tick.Bootstrap.js'));
+    const settings = bootstrap.ensureSettings();
+    assert.strictEqual(settings.keepMe, true, 'settings migration replaced existing Memory');
+    assert.strictEqual(settings.pixels.enabled, false, 'pixels must default off');
+    settings.pixels.enabled = true;
+    settings.pixels.tickModulo = 1;
+    assert.strictEqual(bootstrap.maybeGeneratePixel(), null);
+    assert.strictEqual(calls, 0, 'pixel generated below a full bucket');
+    Game.cpu.bucket = 10000;
+    assert.strictEqual(bootstrap.maybeGeneratePixel(), OK);
+    assert.strictEqual(calls, 1);
+    assert.deepStrictEqual(bootstrap.getPixelStatus(), { tick: Game.time, result: OK });
 }
 
 function assertExports(file, expected) {
@@ -67,12 +99,16 @@ function testExportCompatibility() {
     assertExports('spawn.manager.js', ['getBodyCost', 'getSpawnQueue', 'countAliveRole', 'countQueuedRole', 'requestRoleCount', 'findIdleSpawn', 'runRoom']);
     assertExports('spawn.request.manager.js', ['run', 'runForRoom', 'runRoom', 'getOwnedSpawnRooms', 'requestRoleForRoom', 'requestTechWorkForRoom', 'getTechWorkDemand', 'getSourceMiningDemand', 'getFreighterCarryDemand', 'getDesiredTechWork', 'getCpuStatus', 'getReplacementLeadTicks', 'requestDynamicExtractorsForRoom', 'requestDynamicFreightersForRoom', 'requestRemoteExtractorsForRoom', 'requestAnnexForRoom', 'requestSeason11RolesForRoom']);
     assertExports('utility.Travel.Creep.js', ['move', 'moveToRoom', 'moveDirection', 'requestMove', 'cleanupRouteCaches']);
+    assertExports('Tick.Bootstrap.js', ['run', 'ensureSettings', 'maybeGeneratePixel', 'getPixelStatus']);
+    assertExports('Tick.Planning.js', ['refreshIntelAndThreats', 'runStrategy', 'generateSpawnRequests', 'runSpawning']);
+    assertExports('Tick.Rooms.js', ['runStructures', 'drawSourceFlags', 'updateRepairStructureMemory']);
+    assertExports('Tick.Finalize.js', ['resolveTraffic', 'runOptionalWork', 'cleanDeadCreepMemory', 'buildTrafficCostMatrix']);
 }
 
 function testRoleBodySpawnConsistency() {
     mocks.installGlobals();
     mocks.clearLocalModules();
-    const source = fs.readFileSync(path.join(mocks.root, 'main.js'), 'utf8');
+    const dispatched = require(path.join(mocks.root, 'Tick.Creeps.js')).roles;
     const bodyConfig = require(path.join(mocks.root, 'role.creepBodyConfig.js'));
     const roles = [
         'Foreman', 'Extractor', 'Tech', 'Freighter', 'Annex', 'Artificer',
@@ -80,8 +116,7 @@ function testRoleBodySpawnConsistency() {
         'ThoriumMiner', 'ThoriumHauler', 'ReactorClaimer'
     ];
     for (const role of roles) {
-        assert(source.includes(`role.${role}`), `main missing module for ${role}`);
-        assert(source.includes(`'${role}'`), `main missing dispatch for ${role}`);
+        assert(dispatched[role] && typeof dispatched[role].run === 'function', `missing dispatch for ${role}`);
         if (role === 'ThoriumHauler') {
             assert.strictEqual(typeof bodyConfig.getThoriumHaulerBodyForAvailableEnergy, 'function');
         }
@@ -101,7 +136,8 @@ function testNoScoreRunner() {
 testSyntax();
 testAllModulesLoad();
 testMainSmoke();
-testCpuStatusShape();
+testCpuStatus();
+testBootstrapAndPixels();
 testExportCompatibility();
 testRoleBodySpawnConsistency();
 testNoScoreRunner();

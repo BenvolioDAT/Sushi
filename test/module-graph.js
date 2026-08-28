@@ -5,11 +5,7 @@ const { root } = require('./mock-screeps');
 
 /* These were proven unreachable at the Phase 0 baseline. Phase 1 removes the
  * obsolete roles; Traveler remains a console-compatible movement facade. */
-const allowlistedOrphans = new Set([
-    'Traveler.js',
-    'role.Dismantler.js',
-    'role.Repair.js'
-]);
+const allowlistedOrphans = new Set([]);
 const files = fs.readdirSync(root)
     .filter(file => file.endsWith('.js') && !file.startsWith('test.'))
     .sort();
