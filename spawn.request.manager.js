@@ -18,6 +18,7 @@ var creepUtility = require('utility.Creep');
 var cpuStatusUtility = require('CPU.Status');
 var Season11 = require('Logic.Season11');
 var TickIndex = require('HiveMind.Index');
+var defenseDemand = require('Defense.Demand');
 
 var RESERVE_DESIRED_TICKS = 4000;
 var RESERVE_SPAWN_AT_TICKS = 2500;
@@ -50,9 +51,9 @@ var DEFAULT_SPAWN_POLICY = {
         Foreman: 1,
         Scout: 1,
         Annex: 4,
-        Ronin: 1,
-        Volley: 1,
-        Cleric: 1,
+        Ronin: 4,
+        Volley: 4,
+        Cleric: 3,
         Tech: 3,
         Artificer: 3,
         Extractor: 6,
@@ -90,9 +91,9 @@ var DESIRED_COUNTS = {
      */
     Annex: 6,
     Scout: 1,
-    Ronin: 1,
-    Volley: 1,
-    Cleric: 1
+    Ronin: 0,
+    Volley: 0,
+    Cleric: 0
 };
 
 /*
@@ -112,9 +113,9 @@ var PRIORITY = {
     Pioneer: 55,
     SupplyRunner: 54,
     Scout: 10,
-    Ronin: 15,
-    Volley: 15,
-    Cleric: 16,
+    Ronin: 85,
+    Volley: 86,
+    Cleric: 84,
     ThoriumMiner: 35,
     ThoriumHauler: 42,
     ReactorClaimer: 38
@@ -2845,6 +2846,13 @@ function requestRoleForRoom(room, role, desiredCount, priorityOverride, options)
             role: role,
             homeRoom: roomName
         };
+        if (options && options.memory) {
+            for (var memoryKey in options.memory) {
+                if (options.memory.hasOwnProperty(memoryKey)) {
+                    memory[memoryKey] = options.memory[memoryKey];
+                }
+            }
+        }
 
         var addResult = addSpawnRequest(roomName, {
             role: role,
@@ -3582,6 +3590,70 @@ function runEmergencyPlanning(room, report, context) {
     ) {
         report.requests.push(requestEmergencyTechForRoom(room));
     }
+
+    report.defense = requestDefendersForRoom(room, context);
+}
+
+function cleanDefenseQueue(roomName, demand) {
+    var queue = spawnManager.getSpawnQueue(roomName) || [];
+    var desired = {
+        Ronin: demand.desiredMelee,
+        Volley: demand.desiredRanged,
+        Cleric: demand.desiredHealers
+    };
+    var removed = 0;
+    for (var i = queue.length - 1; i >= 0; i--) {
+        var request = queue[i];
+        var role = getRequestRole(request);
+        var memory = request && request.memory || {};
+        if (!desired.hasOwnProperty(role)) continue;
+        var belongsToDefense = memory.defenseRequest === true ||
+            (!memory.operationId && !memory.manualCombat);
+        if (belongsToDefense && (!desired[role] || demand.harmfulHostileCount <= 0)) {
+            queue.splice(i, 1);
+            removed++;
+        }
+    }
+    return removed;
+}
+
+function requestDefendersForRoom(room, context) {
+    var demand = defenseDemand.getDemand(room);
+    var result = {
+        roomName: room && room.name,
+        demand: demand,
+        requests: [],
+        removedStaleRequests: 0
+    };
+    if (!room || !demand) return result;
+    result.removedStaleRequests = cleanDefenseQueue(room.name, demand);
+    if (demand.harmfulHostileCount <= 0) return result;
+    var options = {
+        emergency: demand.emergency,
+        bypassRoleCap: demand.emergency,
+        memory: {
+            defenseRequest: true,
+            defendedRoom: room.name,
+            targetRoom: room.name,
+            operationId: demand.operationId,
+            defenseRequestedAt: Game.time,
+            trafficPriority: demand.emergency ? 100 : 80
+        }
+    };
+    if (demand.desiredMelee > 0) {
+        result.requests.push(requestRoleForRoom(room, 'Ronin', demand.desiredMelee, demand.priority, options));
+    }
+    if (demand.desiredRanged > 0) {
+        result.requests.push(requestRoleForRoom(room, 'Volley', demand.desiredRanged, demand.priority + 1, options));
+    }
+    var fighters = context ?
+        getPlannedRoleCount(context, 'Ronin') + getPlannedRoleCount(context, 'Volley') :
+        countHealthyCreeps(room.name, 'Ronin', 40) + countQueuedRequests(room.name, 'Ronin') +
+        countHealthyCreeps(room.name, 'Volley', 40) + countQueuedRequests(room.name, 'Volley');
+    if (demand.desiredHealers > 0 && fighters > 0) {
+        result.requests.push(requestRoleForRoom(room, 'Cleric', demand.desiredHealers, demand.priority, options));
+    }
+    return result;
 }
 
 function saveSpawnGovernorDebug(context) {
@@ -3846,9 +3918,6 @@ function runForRoom(room, options) {
         ));
         report.requests.push(requestSeason11RolesForRoom(room));
         report.requests.push(requestRoleForRoom(room, 'Scout', DESIRED_COUNTS.Scout));
-        report.requests.push(requestRoleForRoom(room, 'Ronin', DESIRED_COUNTS.Ronin));
-        report.requests.push(requestRoleForRoom(room, 'Volley', DESIRED_COUNTS.Volley));
-        report.requests.push(requestRoleForRoom(room, 'Cleric', DESIRED_COUNTS.Cleric));
 
         return report;
     }
@@ -3942,5 +4011,7 @@ module.exports = {
     requestDynamicFreightersForRoom: requestDynamicFreightersForRoom,
     requestRemoteExtractorsForRoom: requestRemoteExtractorsForRoom,
     requestAnnexForRoom: requestAnnexForRoom,
-    requestSeason11RolesForRoom: requestSeason11RolesForRoom
+    requestSeason11RolesForRoom: requestSeason11RolesForRoom,
+    requestDefendersForRoom: requestDefendersForRoom,
+    cleanDefenseQueue: cleanDefenseQueue
 };

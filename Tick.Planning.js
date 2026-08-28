@@ -8,6 +8,7 @@ const PlannerBrain = require('Planner.Brain');
 const RoadPlanner = require('Planner.Roads');
 const Scheduler = require('HiveMind.Scheduler');
 const Telemetry = require('HiveMind.Telemetry');
+const ThreatLedger = require('Combat.ThreatLedger');
 
 function isWarRoomEnabled() {
     if (!Memory.settings) Memory.settings = {};
@@ -16,6 +17,7 @@ function isWarRoomEnabled() {
 }
 
 function refreshIntelAndThreats() {
+    ThreatLedger.run();
     if (isWarRoomEnabled()) Scheduler.run('emergencyDefense', () => WarRoom.run(), { emergency: true });
 }
 

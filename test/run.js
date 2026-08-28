@@ -107,6 +107,13 @@ function testExportCompatibility() {
     assertExports('HiveMind.Scheduler.js', ['shouldRun', 'run', 'markDirty', 'getState']);
     assertExports('HiveMind.Telemetry.js', ['startTick', 'measure', 'finish', 'getView']);
     assertExports('traffic_manager.js', ['init', 'run', 'hasMovementIntents', 'getMovementIntents']);
+    assertExports('HiveMind.Memory.js', ['ensure', 'migrate']);
+    assertExports('Combat.Policy.js', ['getClassification', 'setClassification', 'recordIncident', 'shouldDefendAgainst', 'mayLaunchOffense']);
+    assertExports('Combat.Math.js', ['analyzeBody', 'damageAfterTough', 'rangedMassDamage', 'towerDamage', 'incomingDamage', 'timeToKill']);
+    assertExports('Combat.ThreatLedger.js', ['run', 'observeRoom', 'getRoomThreat', 'cleanup']);
+    assertExports('Defense.Demand.js', ['getDemand']);
+    assertExports('SafeMode.Policy.js', ['evaluate', 'run']);
+    assertExports('Logic.Tower.js', ['run', 'chooseTowerTarget', 'evaluateTowerTarget', 'chooseDecision', 'getFortificationTarget']);
 }
 
 function testRoleBodySpawnConsistency() {

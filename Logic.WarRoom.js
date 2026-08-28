@@ -20,6 +20,9 @@
  */
 
 var travel = require('utility.Travel.Creep');
+var CombatMath = require('Combat.Math');
+var CombatPolicy = require('Combat.Policy');
+var ThreatLedger = require('Combat.ThreatLedger');
 
 var WarRoom = {};
 
@@ -210,18 +213,10 @@ WarRoom.findBestThreatInRoom = function(room) {
         return null;
     }
 
-    var bestCreepInfo = WarRoom.findBestHostileCreepInRoom(room);
-    var bestStructureInfo = WarRoom.findBestHostileStructureInRoom(room);
-
-    if(bestCreepInfo && (!bestStructureInfo || bestCreepInfo.score >= bestStructureInfo.score)) {
-        return bestCreepInfo;
-    }
-
-    if(bestStructureInfo) {
-        return bestStructureInfo;
-    }
-
-    return null;
+    /* Automatic defense never turns mere neighboring structures into an
+     * offensive order. Explicit operations may still call the structure
+     * helpers through a creep with allowOffensiveTargets set. */
+    return WarRoom.findBestHostileCreepInRoom(room);
 };
 
 /*
@@ -233,12 +228,19 @@ WarRoom.isHostileCreepThreat = function(hostile) {
         return false;
     }
 
-    return (
-        hostile.getActiveBodyparts(ATTACK) > 0 ||
-        hostile.getActiveBodyparts(RANGED_ATTACK) > 0 ||
-        hostile.getActiveBodyparts(HEAL) > 0 ||
-        hostile.getActiveBodyparts(WORK) > 0
-    );
+    var analysis = CombatMath.analyzeBody(hostile);
+    var roomName = hostile.room && hostile.room.name || hostile.pos && hostile.pos.roomName;
+    var ledger = roomName ? ThreatLedger.getRoomThreat(roomName) : null;
+    var record = ledger && ledger.hostiles.find(function(item) {
+        return item.id === (hostile.id || hostile.name);
+    });
+    return CombatPolicy.shouldDefendAgainst(hostile, {
+        melee: analysis.melee,
+        ranged: analysis.ranged,
+        dismantle: analysis.dismantle,
+        heal: analysis.heal,
+        claim: analysis.claim
+    }, !!(record && record.attackedUs));
 };
 
 /*
@@ -548,23 +550,25 @@ WarRoom.getHostileCreepScore = function(hostile) {
         return 0;
     }
 
+    var analysis = CombatMath.analyzeBody(hostile);
     var score = 0;
 
     /*
      * Healers are dangerous because they undo our damage.
      */
-    score += hostile.getActiveBodyparts(HEAL) * 500;
+    score += analysis.heal * 40;
 
     /*
      * Ranged and melee attackers hurt our creeps.
      */
-    score += hostile.getActiveBodyparts(RANGED_ATTACK) * 300;
-    score += hostile.getActiveBodyparts(ATTACK) * 250;
+    score += analysis.ranged * 30;
+    score += analysis.melee * 25;
 
     /*
      * WORK parts can dismantle structures.
      */
-    score += hostile.getActiveBodyparts(WORK) * 100;
+    score += analysis.dismantle * 10;
+    score += analysis.effectiveHits * 0.1;
 
     /*
      * Prefer finishing wounded enemies.
@@ -615,6 +619,10 @@ WarRoom.findHostileStructures = function(creep) {
         return [];
     }
 
+    if (!creep.memory || creep.memory.allowOffensiveTargets !== true) {
+        return [];
+    }
+
     return creep.room.find(FIND_HOSTILE_STRUCTURES, {
         filter: function(structure) {
             /*
@@ -624,7 +632,7 @@ WarRoom.findHostileStructures = function(creep) {
                 return false;
             }
 
-            return true;
+            return CombatPolicy.mayLaunchOffense(structure, true);
         }
     });
 };

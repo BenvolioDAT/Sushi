@@ -1,525 +1,195 @@
-/*
- * Logic.Tower.js
- *
- * Owned-room tower logic.
- *
- * Towers always defend first. If hostile creeps are in the room, every tower
- * attacks the chosen hostile target and no repairs happen that tick.
- *
- * When the room is safe, towers may repair important structures in a clear
- * priority order. The repair code remembers one target so towers finish that
- * target before starting a new one.
- */
-var TowerLogic = {};
+const TickIndex = require('HiveMind.Index');
+const HiveMemory = require('HiveMind.Memory');
+const CombatMath = require('Combat.Math');
+const ThreatLedger = require('Combat.ThreatLedger');
 
-/*
- * Towers should keep energy ready for defense.
- * A tower only repairs when it has at least this much energy.
- */
-var TOWER_REPAIR_MIN_ENERGY = 500;
-
-/*
- * Structures start being tower-repaired when they are below 60% of their
- * repair target. For normal structures the target is hitsMax. For ramparts and
- * walls the target is a safer configurable cap.
- */
-var REPAIR_START_PERCENT = 0.60;
-
-/*
- * Ramparts can have very large hitsMax values. These caps keep towers from
- * spending all their energy trying to repair ramparts to their maximum.
- */
-var RAMPART_REPAIR_CAP_BY_RCL = {
-    1: 0,
-    2: 5000,
-    3: 10000,
-    4: 10000,
-    5: 10000,
-    6: 10000,
-    7: 10000,
-    8: 10000
+const FORTIFICATION_BY_RCL = {
+    1: 0, 2: 20000, 3: 50000, 4: 100000,
+    5: 250000, 6: 1000000, 7: 3000000, 8: 10000000
 };
+let lastDecisionByRoom = {};
 
-/*
- * Walls can also have very large hitsMax values. These caps keep wall repairs
- * useful without draining every tower forever.
- */
-var WALL_REPAIR_CAP_BY_RCL = {
-    1: 0,
-    2: 5000,
-    3: 10000,
-    4: 10000,
-    5: 10000,
-    6: 10000,
-    7: 10000,
-    8: 10000
-};
-
-/*
- * Main function.
- *
- * Call this once per owned room every tick.
- *
- * Example:
- * TowerLogic.run(room);
- */
-TowerLogic.run = function(room) {
-    /*
-     * Safety check:
-     * If the room is missing, or the room is not mine, stop.
-     */
-    if (!room || !room.controller || !room.controller.my) {
-        return;
+function energy(tower) {
+    if (!tower) return 0;
+    if (tower.store && typeof tower.store.getUsedCapacity === 'function') {
+        return tower.store.getUsedCapacity(RESOURCE_ENERGY) || 0;
     }
+    return tower.store ? tower.store[RESOURCE_ENERGY] || 0 : tower.energy || 0;
+}
 
-    /*
-     * Find all my towers in this room.
-     */
-    var towers = findMyTowers(room);
+function structuresOfType(roomName, type) {
+    const byType = TickIndex.get().structuresByRoom.get(roomName);
+    return byType && byType.get(type) || [];
+}
 
-    /*
-     * If I have no towers, there is nothing to do.
-     */
-    if (towers.length === 0) {
-        return;
-    }
-
-    /*
-     * Find enemy creeps in the room.
-     */
-    var enemies = findEnemyCreeps(room);
-
-    /*
-     * Defense always comes first.
-     *
-     * If enemies exist, forget any repair target and shoot the hostile target.
-     * This prevents repair work from overriding tower attacks.
-     */
-    if (enemies.length > 0) {
-        clearRepairTarget(room);
-
-        var target = chooseTowerTarget(towers, enemies);
-
-        if (target) {
-            attackWithAllTowers(towers, target);
-        }
-
-        return;
-    }
-
-    /*
-     * No enemies are present, so towers may spend extra energy on repairs.
-     */
-    repairWithAvailableTowers(room, towers);
-};
-
-/*
- * Find all owned towers in the room.
- */
 function findMyTowers(room) {
-    return room.find(FIND_MY_STRUCTURES, {
-        filter: function(structure) {
-            return structure.structureType === STRUCTURE_TOWER;
+    const type = typeof STRUCTURE_TOWER !== 'undefined' ? STRUCTURE_TOWER : 'tower';
+    const indexed = structuresOfType(room.name, type).filter(tower => tower.my !== false);
+    if (indexed.length || typeof room.find !== 'function') return indexed;
+    return room.find(FIND_MY_STRUCTURES, { filter: structure => structure.structureType === type }) || [];
+}
+
+function liveHostiles(room) {
+    const threat = ThreatLedger.getRoomThreat(room.name) || ThreatLedger.observeRoom(room);
+    const allowed = new Set((threat && threat.hostiles || []).filter(record => record.harmful).map(record => record.id));
+    return ThreatLedger.getLiveHostiles(room.name).filter(hostile => allowed.has(hostile.id || hostile.name));
+}
+
+function healingSupport(target, hostiles) {
+    let healing = 0;
+    for (const hostile of hostiles) {
+        const body = CombatMath.analyzeBody(hostile);
+        const range = CombatMath.rangeBetween(hostile, target);
+        if (range <= 1) healing += body.heal;
+        else if (range <= 3) healing += body.rangedHeal;
+    }
+    return healing;
+}
+
+function getRecord(roomName, target) {
+    const threat = ThreatLedger.getRoomThreat(roomName);
+    return threat && threat.hostiles.find(record => record.id === (target.id || target.name)) || null;
+}
+
+function attackTowersForTarget(roomName, towers, target) {
+    const settings = HiveMemory.ensure().settings.towers;
+    const record = getRecord(roomName, target);
+    const urgent = record && (record.closestCriticalRange <= 3 || record.attackedUs);
+    return towers.filter(tower => energy(tower) >= 10 && (urgent || energy(tower) > (settings.energyReserve || 200)));
+}
+
+function evaluateTowerTarget(room, towers, target, enemies) {
+    const firingTowers = attackTowersForTarget(room.name, towers, target);
+    const rawDamage = firingTowers.reduce((sum, tower) => sum + CombatMath.towerDamage(tower, target), 0);
+    const actualDamage = CombatMath.damageAfterTough(target, rawDamage);
+    const hostileHealing = healingSupport(target, enemies);
+    const netDamage = actualDamage - hostileHealing;
+    const record = getRecord(room.name, target);
+    const hits = typeof target.hits === 'number' ? target.hits : CombatMath.analyzeBody(target).liveHits;
+    const killable = actualDamage >= hits + hostileHealing;
+    const important = !!(record && (record.attackedUs || record.closestCriticalRange <= 3));
+    const score = (killable ? 100000 : 0) + (important ? 20000 : 0) +
+        (record ? record.score : 0) + Math.max(0, netDamage) * 5 +
+        (record && record.capabilities.heal > 0 ? 5000 : 0) +
+        (hits < actualDamage * 2 ? 2000 : 0) - (netDamage <= 0 ? 10000 : 0);
+    return {
+        target, record, firingTowers, rawDamage: Math.round(rawDamage),
+        actualDamage: Math.round(actualDamage), hostileHealing: Math.round(hostileHealing),
+        netDamage: Math.round(netDamage), killable, important, score: Math.round(score),
+        timeToKill: CombatMath.timeToKill(target, rawDamage, hostileHealing)
+    };
+}
+
+function chooseTowerTarget(room, towers, enemies) {
+    const evaluations = enemies.map(target => evaluateTowerTarget(room, towers, target, enemies));
+    evaluations.sort((a, b) => b.score - a.score || String(a.target.id).localeCompare(String(b.target.id)));
+    return evaluations[0] || null;
+}
+
+function friendlyCreeps(room) {
+    const indexed = TickIndex.get().creepsByCurrentRoom.get(room.name) || [];
+    if (indexed.length || typeof room.find !== 'function') return indexed;
+    return room.find(FIND_MY_CREEPS) || [];
+}
+
+function chooseFriendlyHealTarget(room, hostiles, towers) {
+    let best = null;
+    for (const creep of friendlyCreeps(room)) {
+        if (!creep || creep.hits >= creep.hitsMax) continue;
+        const incoming = CombatMath.incomingDamage(creep, hostiles);
+        const healing = towers.reduce((sum, tower) => sum + (energy(tower) >= 10 ? CombatMath.towerHeal(tower, creep) : 0), 0);
+        const projectedHits = creep.hits - incoming + healing;
+        const ratio = creep.hits / Math.max(1, creep.hitsMax);
+        const score = (projectedHits <= 0 ? 100000 : 0) + incoming * 10 + (1 - ratio) * 1000;
+        if (!best || score > best.score) best = { target: creep, incoming, healing, projectedHits, score };
+    }
+    return best;
+}
+
+function chooseDecision(room, towers, hostiles) {
+    const target = chooseTowerTarget(room, towers, hostiles);
+    const friendly = chooseFriendlyHealTarget(room, hostiles, towers);
+    if (target && target.killable && target.important) return { action: 'attack', evaluation: target, target: target.target };
+    if (friendly && friendly.projectedHits <= 0) return { action: 'heal', friendly, target: friendly.target };
+    if (target && target.killable) return { action: 'attack', evaluation: target, target: target.target };
+    if (target && (target.netDamage > 0 || target.important)) return { action: 'attack', evaluation: target, target: target.target };
+    if (friendly && friendly.target.hits < friendly.target.hitsMax) return { action: 'heal', friendly, target: friendly.target };
+    return { action: 'preserve', evaluation: target, target: null };
+}
+
+function executeDecision(towers, decision) {
+    if (decision.action === 'attack') {
+        for (const tower of decision.evaluation.firingTowers) tower.attack(decision.target);
+    }
+    else if (decision.action === 'heal') {
+        for (const tower of towers) if (energy(tower) >= 10) tower.heal(decision.target);
+    }
+}
+
+function getFortificationTarget(room, structure) {
+    const rcl = room.controller && room.controller.level || 1;
+    let target = FORTIFICATION_BY_RCL[rcl] || 0;
+    const stored = room.storage && room.storage.store ? room.storage.store[RESOURCE_ENERGY] || 0 : 0;
+    const economyMultiplier = stored >= 250000 ? 1.5 : stored < 20000 ? 0.5 : 1;
+    const threat = ThreatLedger.getRoomThreat(room.name);
+    const threatMultiplier = threat && threat.harmfulHostileCount > 0 ? 2 : 1;
+    if (structure.structureType === (typeof STRUCTURE_WALL !== 'undefined' ? STRUCTURE_WALL : 'constructedWall')) target *= 0.75;
+    return Math.min(structure.hitsMax || target, Math.round(target * economyMultiplier * threatMultiplier));
+}
+
+function repairTarget(room) {
+    const byType = TickIndex.get().structuresByRoom.get(room.name);
+    const structures = byType ? Array.from(byType.values()).flat() : [];
+    const wall = typeof STRUCTURE_WALL !== 'undefined' ? STRUCTURE_WALL : 'constructedWall';
+    const rampart = typeof STRUCTURE_RAMPART !== 'undefined' ? STRUCTURE_RAMPART : 'rampart';
+    const road = typeof STRUCTURE_ROAD !== 'undefined' ? STRUCTURE_ROAD : 'road';
+    const threat = ThreatLedger.getRoomThreat(room.name);
+    return structures.filter(structure => {
+        if (!structure || structure.my === false || structure.hits >= structure.hitsMax || structure.structureType === road) return false;
+        if (structure.structureType === wall || structure.structureType === rampart) {
+            return !!(threat && threat.harmfulHostileCount > 0 && structure.hits < Math.min(5000, getFortificationTarget(room, structure)));
         }
-    });
+        return structure.hits < structure.hitsMax * 0.6;
+    }).sort((a, b) => {
+        const aRatio = a.hits / Math.max(1, a.hitsMax);
+        const bRatio = b.hits / Math.max(1, b.hitsMax);
+        return aRatio - bRatio || String(a.id).localeCompare(String(b.id));
+    })[0] || null;
 }
 
-/*
- * Find enemy creeps in the room.
- *
- * FIND_HOSTILE_CREEPS only finds creeps that are not yours.
- */
-function findEnemyCreeps(room) {
-    return room.find(FIND_HOSTILE_CREEPS);
+function peacefulWork(room, towers) {
+    const wounded = chooseFriendlyHealTarget(room, [], towers);
+    if (wounded && wounded.target.hits < wounded.target.hitsMax) {
+        for (const tower of towers) if (energy(tower) >= 10) tower.heal(wounded.target);
+        return { action: 'heal', target: wounded.target };
+    }
+    const target = repairTarget(room);
+    if (!target) return { action: 'idle', target: null };
+    const reserve = HiveMemory.ensure().settings.towers.repairEnergyReserve || 700;
+    for (const tower of towers) if (energy(tower) >= reserve) tower.repair(target);
+    return { action: 'repair', target };
 }
 
-/*
- * Pick which enemy to shoot.
- *
- * Simple beginner rule:
- * Use the first tower and find the enemy closest to that tower.
- */
-function chooseTowerTarget(towers, enemies) {
-    /*
-     * Using the first tower as the perspective is simple and deterministic.
-     * A later upgrade could score enemies by total tower damage, healing parts,
-     * or distance to important structures.
-     */
-    var firstTower = towers[0];
-
-    if (!firstTower) {
-        return null;
-    }
-
-    return firstTower.pos.findClosestByRange(enemies);
+function run(room) {
+    if (!room || !room.controller || !room.controller.my) return null;
+    const towers = findMyTowers(room);
+    if (!towers.length) return null;
+    const hostiles = liveHostiles(room);
+    const decision = hostiles.length ? chooseDecision(room, towers, hostiles) : peacefulWork(room, towers);
+    if (hostiles.length) executeDecision(towers, decision);
+    lastDecisionByRoom[room.name] = { tick: Game.time, action: decision.action, targetId: decision.target && decision.target.id || null };
+    return decision;
 }
 
-/*
- * Make every tower shoot the same target.
- */
-function attackWithAllTowers(towers, target) {
-    for (var i = 0; i < towers.length; i++) {
-        var tower = towers[i];
-
-        /*
-         * If the tower has no energy, skip it.
-         *
-         * Towers need energy to attack.
-         */
-        if (tower.store.getUsedCapacity(RESOURCE_ENERGY) <= 0) {
-            continue;
-        }
-
-        tower.attack(target);
-    }
-}
-
-/*
- * Repair one remembered or newly chosen structure with towers that have enough
- * reserve energy.
- */
-function repairWithAvailableTowers(room, towers) {
-    var target = getRepairTarget(room);
-
-    /*
-     * If there is no valid repair target, towers stay idle and keep energy.
-     */
-    if (!target) {
-        return;
-    }
-
-    for (var i = 0; i < towers.length; i++) {
-        var tower = towers[i];
-
-        /*
-         * Keep a defensive energy reserve. A low-energy tower should wait so it
-         * can still help if enemies arrive soon.
-         */
-        if (tower.store.getUsedCapacity(RESOURCE_ENERGY) < TOWER_REPAIR_MIN_ENERGY) {
-            continue;
-        }
-
-        /*
-         * The target came from Game.getObjectById or room.find, so it is a real
-         * structure object. Repairing only happens after all hostile checks.
-         */
-        tower.repair(target);
-    }
-
-    /*
-     * If the structure is already at its target level, stop remembering it.
-     * In Screeps, hits usually update next tick after repairs are processed, so
-     * this also works as a clean-up check on the next safe tick.
-     */
-    if (target.hits >= getRepairTargetHits(room, target)) {
-        clearRepairTarget(room);
-    }
-}
-
-/*
- * Get the current repair target.
- *
- * First try the remembered target. If it is gone or finished, choose a new one.
- */
-function getRepairTarget(room) {
-    var rememberedTarget = getRememberedRepairTarget(room);
-
-    if (rememberedTarget) {
-        return rememberedTarget;
-    }
-
-    /*
-     * Scanning every structure in the room costs CPU. If the last scan found
-     * nothing to repair, wait a few ticks before scanning again. Remembered
-     * targets are still checked every tick above.
-     */
-    if (!shouldScanForRepairTarget(room)) {
-        return null;
-    }
-
-    var newTarget = findBestRepairTarget(room);
-
-    if (newTarget) {
-        rememberRepairTarget(room, newTarget);
-        return newTarget;
-    }
-
-    setNextRepairScan(room);
-    return null;
-}
-
-/*
- * Read the saved target ID from Memory and return the object if it still needs
- * repair up to its target level.
- */
-function getRememberedRepairTarget(room) {
-    var roomMemory = getTowerRoomMemory(room);
-    var targetId = roomMemory.towerRepairTargetId;
-
-    if (!targetId) {
-        return null;
-    }
-
-    var target = Game.getObjectById(targetId);
-
-    if (!target) {
-        clearRepairTarget(room);
-        return null;
-    }
-
-    /*
-     * Only repair the structure types this file understands. This protects the
-     * tower from using an old or manually edited memory value on the wrong kind
-     * of object. Roads are not wanted, so old remembered road targets are
-     * cleared here before any tower can repair them.
-     */
-    if (!isWantedRepairStructure(target)) {
-        clearRepairTarget(room);
-        return null;
-    }
-
-    /*
-     * Remembered targets continue being repaired until they reach their target
-     * hits, not just until they rise above the 60% start threshold.
-     */
-    if (target.hits < getRepairTargetHits(room, target)) {
-        return target;
-    }
-
-    clearRepairTarget(room);
-    return null;
-}
-
-/*
- * Save the selected repair target ID in room memory.
- */
-function rememberRepairTarget(room, target) {
-    if (!target) {
-        return;
-    }
-
-    var roomMemory = getTowerRoomMemory(room);
-
-    roomMemory.towerRepairTargetId = target.id;
-
-    /*
-     * A real target was found, so no scan cooldown is needed right now.
-     */
-    delete roomMemory.towerRepairNextScan;
-}
-
-/*
- * Clear the saved repair target ID.
- */
-function clearRepairTarget(room) {
-    var roomMemory = getTowerRoomMemory(room);
-    delete roomMemory.towerRepairTargetId;
-}
-
-/*
- * Decide if it is time to scan all structures for a new repair target.
- */
-function shouldScanForRepairTarget(room) {
-    var roomMemory = getTowerRoomMemory(room);
-
-    if (typeof roomMemory.towerRepairNextScan !== 'number') {
-        return true;
-    }
-
-    return Game.time >= roomMemory.towerRepairNextScan;
-}
-
-/*
- * After a scan finds no work, wait 10 ticks before scanning every structure
- * again. This saves CPU in rooms where nothing needs tower repair.
- */
-function setNextRepairScan(room) {
-    getTowerRoomMemory(room).towerRepairNextScan = Game.time + 10;
-}
-
-/*
- * Make sure Memory.rooms[room.name] exists before reading or writing tower
- * repair memory.
- */
-function getTowerRoomMemory(room) {
-    if (!Memory.rooms) {
-        Memory.rooms = {};
-    }
-
-    if (!Memory.rooms[room.name]) {
-        Memory.rooms[room.name] = {};
-    }
-
-    return Memory.rooms[room.name];
-}
-
-/*
- * Decide if a structure should start a new tower repair job.
- */
-function structureNeedsTowerRepair(room, structure) {
-    var targetHits = getRepairTargetHits(room, structure);
-    var startHits = getRepairStartHits(room, structure);
-
-    if (targetHits <= 0) {
-        return false;
-    }
-
-    return structure.hits < startHits;
-}
-
-/*
- * Get the hits level that towers should repair this structure up to.
- */
-function getRepairTargetHits(room, structure) {
-    if (!structure) {
-        return 0;
-    }
-
-    if (structure.structureType === STRUCTURE_RAMPART) {
-        return getRampartRepairCap(room);
-    }
-
-    if (structure.structureType === STRUCTURE_WALL) {
-        return getWallRepairCap(room);
-    }
-
-    return structure.hitsMax;
-}
-
-/*
- * Get the hits level where this structure should start being repaired.
- */
-function getRepairStartHits(room, structure) {
-    return getRepairTargetHits(room, structure) * REPAIR_START_PERCENT;
-}
-
-/*
- * Read the rampart cap for the room controller level.
- */
-function getRampartRepairCap(room) {
-    var level = getRoomControllerLevel(room);
-    return RAMPART_REPAIR_CAP_BY_RCL[level] || 0;
-}
-
-/*
- * Read the wall cap for the room controller level.
- */
-function getWallRepairCap(room) {
-    var level = getRoomControllerLevel(room);
-    return WALL_REPAIR_CAP_BY_RCL[level] || 0;
-}
-
-/*
- * Get the room controller level safely.
- */
-function getRoomControllerLevel(room) {
-    if (!room || !room.controller) {
-        return 0;
-    }
-
-    return room.controller.level || 0;
-}
-
-/*
- * Lower number means higher priority.
- */
-function getRepairPriority(structure) {
-    if (structure.structureType === STRUCTURE_SPAWN) {
-        return 1;
-    }
-
-    if (structure.structureType === STRUCTURE_TOWER) {
-        return 2;
-    }
-
-    if (structure.structureType === STRUCTURE_STORAGE) {
-        return 3;
-    }
-
-    if (structure.structureType === STRUCTURE_CONTAINER) {
-        return 4;
-    }
-
-    if (structure.structureType === STRUCTURE_EXTENSION) {
-        return 5;
-    }
-
-    if (structure.structureType === STRUCTURE_RAMPART) {
-        return 6;
-    }
-
-    if (structure.structureType === STRUCTURE_WALL) {
-        return 7;
-    }
-
-    return 999;
-}
-
-/*
- * Find the best new repair target in the room.
- *
- * Priority order:
- * 1. Spawns
- * 2. Towers
- * 3. Storage
- * 4. Containers
- * 5. Extensions
- * 6. Ramparts
- * 7. Walls
- *
- * Roads are not listed because towers should never repair roads.
- */
-function findBestRepairTarget(room) {
-    var repairableStructures = room.find(FIND_STRUCTURES, {
-        filter: function(structure) {
-            return isWantedRepairStructure(structure) && structureNeedsTowerRepair(room, structure);
-        }
-    });
-
-    if (repairableStructures.length === 0) {
-        return null;
-    }
-
-    repairableStructures.sort(function(a, b) {
-        var priorityA = getRepairPriority(a);
-        var priorityB = getRepairPriority(b);
-
-        if (priorityA !== priorityB) {
-            return priorityA - priorityB;
-        }
-
-        return getRepairHitsPercent(room, a) - getRepairHitsPercent(room, b);
-    });
-
-    return repairableStructures[0];
-}
-
-/*
- * Only these structures are repaired by towers.
- */
-function isWantedRepairStructure(structure) {
-    return structure.structureType === STRUCTURE_SPAWN ||
-        structure.structureType === STRUCTURE_TOWER ||
-        structure.structureType === STRUCTURE_STORAGE ||
-        structure.structureType === STRUCTURE_CONTAINER ||
-        structure.structureType === STRUCTURE_EXTENSION ||
-        structure.structureType === STRUCTURE_RAMPART ||
-        structure.structureType === STRUCTURE_WALL;
-}
-
-/*
- * Compare repair candidates by how damaged they are relative to their target.
- * Smaller percent means more damaged, so it should be repaired first when two
- * structures have the same priority.
- */
-function getRepairHitsPercent(room, structure) {
-    var targetHits = getRepairTargetHits(room, structure);
-
-    if (targetHits <= 0) {
-        return 1;
-    }
-
-    return structure.hits / targetHits;
-}
-
-module.exports = TowerLogic;
+module.exports = {
+    run,
+    findMyTowers,
+    chooseTowerTarget,
+    evaluateTowerTarget,
+    chooseFriendlyHealTarget,
+    chooseDecision,
+    getTowerAttackDamage: (towers, target) => Math.round(towers.reduce((sum, tower) => sum + CombatMath.towerDamage(tower, target), 0)),
+    getTowerPowerAtRange: CombatMath.towerPowerAtRange,
+    getFortificationTarget,
+    getLastDecision: roomName => lastDecisionByRoom[roomName] || null
+};
