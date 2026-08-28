@@ -19,6 +19,8 @@
  */
 var spawnManager = require('spawn.manager');
 var creepBodyConfig = require('role.creepBodyConfig');
+var DemandBoard = require('Spawn.DemandBoard');
+var TickIndex = require('HiveMind.Index');
 
 var DEFAULT_MAX_ROUTE_DISTANCE = 8;
 var DEFAULT_MIN_RANGE_BETWEEN_BASES = 3;
@@ -1423,12 +1425,9 @@ function getExpansionHomeCounts(originRoomName, queue) {
         newRequestsThisTick: 0
     };
 
-    for (var creepName in Game.creeps) {
-        if (!Game.creeps.hasOwnProperty(creepName)) {
-            continue;
-        }
-
-        var creep = Game.creeps[creepName];
+    var indexedCreeps = TickIndex.get().creepsByHomeRoom.get(originRoomName) || [];
+    for (var creepIndex = 0; creepIndex < indexedCreeps.length; creepIndex++) {
+        var creep = indexedCreeps[creepIndex];
         var memory = creep && creep.memory;
         var homeRoom = memory ? (memory.homeRoom || (creep.room && creep.room.name)) : null;
 
@@ -1568,75 +1567,31 @@ function ensureExpansionCreepCount(
     priority,
     extraMemory
 ) {
-    var queue = spawnManager.getSpawnQueue(originRoomName);
-
-    if (!queue || !body || desiredCount <= 0) {
+    if (!body || desiredCount <= 0) {
         return false;
     }
-
-    var replacementLeadTicks = getExpansionReplacementLeadTicks(role, body);
-    var planned = countLivingExpansionCreeps(
-        originRoomName,
-        targetRoomName,
-        role,
-        replacementLeadTicks
-    ) +
-        countQueuedExpansionCreeps(queue, originRoomName, targetRoomName, role);
-
-    if (planned >= desiredCount) {
-        return true;
-    }
-
-    var homeCounts = getExpansionHomeCounts(originRoomName, queue);
-    var added = 0;
-
-    for (var i = planned; i < desiredCount; i++) {
-        var allowStallBypass = planned + added <= 0;
-        var allowed = canQueueExpansionRequest(
-            originRoomName,
-            role,
-            queue,
-            homeCounts,
-            allowStallBypass
-        );
-
-        if (!allowed.ok) {
-            rememberExpansionSpawnDenial(originRoomName, role, allowed.reason);
-            break;
-        }
-
-        var memory = {
+    var operationId = 'expand:' + targetRoomName;
+    DemandBoard.emit({
+        id: operationId + ':' + role,
+        operationId: operationId,
+        role: role,
+        count: desiredCount,
+        priority: priority,
+        originRoom: originRoomName,
+        preferredSpawnRoom: originRoomName,
+        targetRoom: targetRoomName,
+        bodyRequirements: { body: body },
+        replacementBuffer: EXPANSION_REPLACEMENT_BUFFER_TICKS[role] || 150,
+        validUntil: Game.time + 25,
+        memory: Object.assign({
             role: role,
             homeRoom: originRoomName,
             targetRoom: targetRoomName,
             expansionId: targetRoomName
-        };
-
-        for (var key in extraMemory) {
-            if (extraMemory.hasOwnProperty(key)) {
-                memory[key] = extraMemory[key];
-            }
-        }
-
-        queue.push({
-            role: role,
-            body: body,
-            priority: priority,
-            memory: memory,
-            requestedAt: Game.time
-        });
-
-        added++;
-        homeCounts.totalQueued++;
-        homeCounts.roleQueued[role] = (homeCounts.roleQueued[role] || 0) + 1;
-        homeCounts.newRequestsThisTick++;
-    }
-
-    if (added > 0) {
-        sortSpawnQueue(queue);
-    }
-
-    return planned + added >= desiredCount || added > 0;
+        }, extraMemory || {}),
+        reason: 'Expansion state ' + (Memory.expansion && Memory.expansion.state)
+    });
+    return true;
 }
 
 function getExpansionReplacementLeadTicks(role, body) {
@@ -1649,12 +1604,9 @@ function getExpansionReplacementLeadTicks(role, body) {
 function countLivingExpansionCreeps(originRoomName, targetRoomName, role, replacementLeadTicks) {
     var count = 0;
 
-    for (var creepName in Game.creeps) {
-        if (!Game.creeps.hasOwnProperty(creepName)) {
-            continue;
-        }
-
-        var creep = Game.creeps[creepName];
+    var indexedCreeps = TickIndex.get().creepsByHomeRoom.get(originRoomName) || [];
+    for (var creepIndex = 0; creepIndex < indexedCreeps.length; creepIndex++) {
+        var creep = indexedCreeps[creepIndex];
 
         if (!isExpansionCreepMemory(creep && creep.memory, originRoomName, targetRoomName, role)) {
             continue;
@@ -1726,5 +1678,6 @@ module.exports = {
     run: run,
     ensureExpansionMemory: ensureExpansionMemory,
     chooseExpansionTarget: chooseExpansionTarget,
-    chooseSpawnSitePosition: chooseSpawnSitePosition
+    chooseSpawnSitePosition: chooseSpawnSitePosition,
+    ensureExpansionCreepCount: ensureExpansionCreepCount
 };

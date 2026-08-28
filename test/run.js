@@ -114,6 +114,10 @@ function testExportCompatibility() {
     assertExports('Defense.Demand.js', ['getDemand']);
     assertExports('SafeMode.Policy.js', ['evaluate', 'run']);
     assertExports('Logic.Tower.js', ['run', 'chooseTowerTarget', 'evaluateTowerTarget', 'chooseDecision', 'getFortificationTarget']);
+    assertExports('HiveMind.Utility.js', ['normalize', 'score', 'rank']);
+    assertExports('HiveMind.Operations.js', ['create', 'get', 'transition', 'abort', 'rescore', 'syncExpansion', 'emitDemands', 'run']);
+    assertExports('HiveMind.Strategy.js', ['run', 'scoreOperations']);
+    assertExports('Spawn.DemandBoard.js', ['beginTick', 'emit', 'flush', 'getDemands', 'assignmentCount', 'chooseSpawnRoom']);
 }
 
 function testRoleBodySpawnConsistency() {

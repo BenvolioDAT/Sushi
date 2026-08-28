@@ -1,4 +1,4 @@
-const SCHEMA_VERSION = 1;
+const SCHEMA_VERSION = 2;
 
 function setDefault(target, key, value) {
     if (target[key] === undefined) target[key] = value;
@@ -14,6 +14,8 @@ function ensure() {
     if (!hive.settings || typeof hive.settings !== 'object') hive.settings = {};
     if (!hive.season || typeof hive.season !== 'object') hive.season = {};
     if (!hive.threats || typeof hive.threats !== 'object') hive.threats = {};
+    if (!hive.demands || typeof hive.demands !== 'object') hive.demands = {};
+    if (!hive.counters || typeof hive.counters !== 'object') hive.counters = {};
 
     setDefault(hive.settings, 'enabled', true);
     setDefault(hive.settings, 'independentCombat', true);
@@ -25,6 +27,9 @@ function ensure() {
     }
     if (!hive.settings.safeMode) {
         hive.settings.safeMode = { enabled: true, manualConfirmation: true };
+    }
+    if (!hive.settings.strategy) {
+        hive.settings.strategy = { enabled: true, scoreInterval: 17, maxCandidates: 12 };
     }
     return hive;
 }

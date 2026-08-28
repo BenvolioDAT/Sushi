@@ -1,6 +1,4 @@
 const WarRoom = require('Logic.WarRoom');
-const ExpansionLogic = require('Logic.Expansion');
-const Season11 = require('Logic.Season11');
 const spawnManager = require('spawn.manager');
 const spawnRequestManager = require('spawn.request.manager');
 const RemotePlanner = require('Planner.Remote');
@@ -9,6 +7,8 @@ const RoadPlanner = require('Planner.Roads');
 const Scheduler = require('HiveMind.Scheduler');
 const Telemetry = require('HiveMind.Telemetry');
 const ThreatLedger = require('Combat.ThreatLedger');
+const HiveStrategy = require('HiveMind.Strategy');
+const DemandBoard = require('Spawn.DemandBoard');
 
 function isWarRoomEnabled() {
     if (!Memory.settings) Memory.settings = {};
@@ -28,13 +28,19 @@ function runStrategy() {
     Scheduler.run('roomPlanning', () => PlannerBrain.run(), { interval: 3 });
     Scheduler.run('roadPlanning', () => RoadPlanner.run(), { interval: 5 });
     Telemetry.measure('hiveMindStrategy', () => {
-        Scheduler.run('expansionStrategy', () => ExpansionLogic.run(), { interval: 17 });
-        Scheduler.run('season11Operations', () => Season11.run(), { interval: 1 });
+        HiveStrategy.run();
     });
 }
 
 function generateSpawnRequests() {
-    return spawnRequestManager.run();
+    const report = spawnRequestManager.run();
+    const board = DemandBoard.flush();
+    if (!report.rooms) report.rooms = {};
+    for (const roomName of Object.keys(board.rooms)) {
+        if (!report.rooms[roomName]) report.rooms[roomName] = { roomName, demandBoardOnly: true };
+    }
+    report.demandBoard = board;
+    return report;
 }
 
 function runSpawning(requestReport) {

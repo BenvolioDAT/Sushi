@@ -19,6 +19,7 @@ var cpuStatusUtility = require('CPU.Status');
 var Season11 = require('Logic.Season11');
 var TickIndex = require('HiveMind.Index');
 var defenseDemand = require('Defense.Demand');
+var DemandBoard = require('Spawn.DemandBoard');
 
 var RESERVE_DESIRED_TICKS = 4000;
 var RESERVE_SPAWN_AT_TICKS = 2500;
@@ -3628,30 +3629,39 @@ function requestDefendersForRoom(room, context) {
     if (!room || !demand) return result;
     result.removedStaleRequests = cleanDefenseQueue(room.name, demand);
     if (demand.harmfulHostileCount <= 0) return result;
-    var options = {
-        emergency: demand.emergency,
-        bypassRoleCap: demand.emergency,
-        memory: {
+    var demandMemory = {
             defenseRequest: true,
             defendedRoom: room.name,
             targetRoom: room.name,
             operationId: demand.operationId,
             defenseRequestedAt: Game.time,
             trafficPriority: demand.emergency ? 100 : 80
-        }
     };
+    function emitDefenseRole(role, count, priority) {
+        if (count <= 0) return null;
+        return DemandBoard.emit({
+            id: demand.operationId + ':' + role,
+            operationId: demand.operationId,
+            role: role,
+            count: count,
+            priority: priority,
+            originRoom: room.name,
+            preferredSpawnRoom: room.name,
+            targetRoom: room.name,
+            emergency: demand.emergency,
+            validUntil: Game.time + 5,
+            memory: demandMemory,
+            reason: 'Dynamic room defense'
+        });
+    }
     if (demand.desiredMelee > 0) {
-        result.requests.push(requestRoleForRoom(room, 'Ronin', demand.desiredMelee, demand.priority, options));
+        result.requests.push(emitDefenseRole('Ronin', demand.desiredMelee, demand.priority));
     }
     if (demand.desiredRanged > 0) {
-        result.requests.push(requestRoleForRoom(room, 'Volley', demand.desiredRanged, demand.priority + 1, options));
+        result.requests.push(emitDefenseRole('Volley', demand.desiredRanged, demand.priority + 1));
     }
-    var fighters = context ?
-        getPlannedRoleCount(context, 'Ronin') + getPlannedRoleCount(context, 'Volley') :
-        countHealthyCreeps(room.name, 'Ronin', 40) + countQueuedRequests(room.name, 'Ronin') +
-        countHealthyCreeps(room.name, 'Volley', 40) + countQueuedRequests(room.name, 'Volley');
-    if (demand.desiredHealers > 0 && fighters > 0) {
-        result.requests.push(requestRoleForRoom(room, 'Cleric', demand.desiredHealers, demand.priority, options));
+    if (demand.desiredHealers > 0 && demand.desiredMelee + demand.desiredRanged > 0) {
+        result.requests.push(emitDefenseRole('Cleric', demand.desiredHealers, demand.priority));
     }
     return result;
 }
@@ -3743,7 +3753,6 @@ function requestSeason11RolesForRoom(room) {
             room.name,
             plan.assignmentKey
         );
-        var missing = Math.max(0, plan.desired - healthy - queued);
         var planReport = {
             role: plan.role,
             assignmentKey: plan.assignmentKey,
@@ -3760,42 +3769,33 @@ function requestSeason11RolesForRoom(room) {
             continue;
         }
 
-        for (var requestIndex = 0; requestIndex < missing; requestIndex++) {
-            var memory = {
+        var operationId = 'season11:' + plan.assignmentKey;
+        var emitted = DemandBoard.emit({
+            id: operationId + ':' + plan.role,
+            operationId: operationId,
+            role: plan.role,
+            count: plan.desired,
+            priority: typeof plan.priority === 'number' ?
+                plan.priority : (PRIORITY[plan.role] || 0),
+            originRoom: room.name,
+            preferredSpawnRoom: room.name,
+            targetRoom: plan.memory && (
+                plan.memory.season11ThoriumRoom ||
+                plan.memory.season11ReactorRoom
+            ),
+            bodyRequirements: { body: body },
+            replacementBuffer: getReplacementLeadTicks(plan.role, body),
+            validUntil: Game.time + 10,
+            emergency: plan.emergency === true,
+            memory: Object.assign({
                 role: plan.role,
                 homeRoom: room.name
-            };
-            for (var key in plan.memory) {
-                if (plan.memory.hasOwnProperty(key)) {
-                    memory[key] = plan.memory[key];
-                }
-            }
-
-            var request = {
-                role: plan.role,
-                body: body,
-                priority: typeof plan.priority === 'number' ?
-                    plan.priority : (PRIORITY[plan.role] || 0),
-                memory: memory,
-                requestedAt: Game.time
-            };
-            if (plan.requestedCarryParts) {
-                request.requestedCarryParts = plan.requestedCarryParts;
-            }
-
-            var addResult = addSpawnRequest(room.name, request, {
-                emergency: plan.emergency === true
-            });
-            if (!addResult.ok) {
-                planReport.reason = addResult.reason;
-                result.ok = false;
-                break;
-            }
-
-            planReport.requested++;
-            result.requested++;
-            Season11.noteSpawnRequestQueued(plan);
-        }
+            }, plan.memory || {}),
+            reason: 'Season 11 assignment ' + plan.assignmentKey
+        });
+        planReport.demandId = emitted.id;
+        planReport.requested = Math.max(0, plan.desired - healthy - queued);
+        result.requested += planReport.requested;
         result.plans.push(planReport);
     }
     return result;
