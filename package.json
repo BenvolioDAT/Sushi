@@ -1,0 +1,11 @@
+{
+  "name": "sushi-screeps",
+  "private": true,
+  "scripts": {
+    "test": "node test/run.js",
+    "test:season11": "node test.Season11.js",
+    "validate:graph": "node test/module-graph.js",
+    "validate:movement": "node test/movement-audit.js",
+    "validate": "node test/run.js && node test/module-graph.js && node test/movement-audit.js && node test.Season11.js"
+  }
+}
