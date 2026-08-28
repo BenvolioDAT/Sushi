@@ -151,6 +151,32 @@ var BODY_PLANS = {
         [[CARRY, 2], [MOVE, 2]]
     ],
 
+    ThoriumMiner: [
+        /* Five WORK matches the normal mineral extractor cooldown. */
+        [[WORK, 5], [CARRY, 2], [MOVE, 4]],
+        [[WORK, 3], [CARRY, 2], [MOVE, 3]],
+        [[WORK, 2], [CARRY, 1], [MOVE, 2]],
+        [[WORK, 1], [CARRY, 1], [MOVE, 1]]
+    ],
+
+    ThoriumHauler: [
+        /* Thorium ages creeps, so keep full off-road mobility and avoid piles. */
+        [[CARRY, 25], [MOVE, 25]],
+        [[CARRY, 20], [MOVE, 20]],
+        [[CARRY, 16], [MOVE, 16]],
+        [[CARRY, 12], [MOVE, 12]],
+        [[CARRY, 10], [MOVE, 10]],
+        [[CARRY, 8], [MOVE, 8]],
+        [[CARRY, 6], [MOVE, 6]],
+        [[CARRY, 4], [MOVE, 4]],
+        [[CARRY, 2], [MOVE, 2]],
+        [[CARRY, 1], [MOVE, 1]]
+    ],
+
+    ReactorClaimer: [
+        [[CLAIM, 1], [MOVE, 1]]
+    ],
+
     Scout: [
         [[MOVE, 1]]
     ],
@@ -323,6 +349,25 @@ function getFreighterBodyForEnergyAndCarry(energy, desiredCarryParts) {
     return null;
 }
 
+function getThoriumHaulerBodyForEnergyAndCarry(energy, desiredCarryParts) {
+    var bodyPlans = BODY_PLANS.ThoriumHauler;
+
+    if (typeof energy !== 'number' || energy < 0 || desiredCarryParts <= 0) {
+        return null;
+    }
+
+    for (var index = 0; index < bodyPlans.length; index++) {
+        var body = buildBody(bodyPlans[index]);
+        var carryParts = countBodyParts(body, CARRY);
+
+        if (carryParts <= desiredCarryParts && getBodyCost(body) <= energy) {
+            return body;
+        }
+    }
+
+    return null;
+}
+
 /**
  * Pick the strongest configured body the room can support when full. This is
  * normal request-planning behavior; the spawn manager performs a second choice
@@ -335,8 +380,8 @@ function getBody(role, room) {
         return body;
     }
 
-    /* Annex must never receive the generic worker fallback body. */
-    if (role === 'Annex') {
+    /* CLAIM-only roles must never receive the generic worker fallback body. */
+    if (role === 'Annex' || role === 'ReactorClaimer') {
         return null;
     }
 
@@ -380,6 +425,24 @@ function getFreighterBodyForAvailableEnergy(room, desiredCarryParts) {
     }
 
     return getFreighterBodyForEnergyAndCarry(
+        room.energyAvailable,
+        desiredCarryParts
+    );
+}
+
+function getThoriumHaulerBodyForCarry(room, desiredCarryParts) {
+    return getThoriumHaulerBodyForEnergyAndCarry(
+        getRoomEnergyCapacity(room),
+        desiredCarryParts
+    );
+}
+
+function getThoriumHaulerBodyForAvailableEnergy(room, desiredCarryParts) {
+    if (!room || typeof room.energyAvailable !== 'number') {
+        return null;
+    }
+
+    return getThoriumHaulerBodyForEnergyAndCarry(
         room.energyAvailable,
         desiredCarryParts
     );
@@ -461,6 +524,8 @@ module.exports = {
     getArtificerBodyForAvailableEnergy: getArtificerBodyForAvailableEnergy,
     getFreighterBodyForCarry: getFreighterBodyForCarry,
     getFreighterBodyForAvailableEnergy: getFreighterBodyForAvailableEnergy,
+    getThoriumHaulerBodyForCarry: getThoriumHaulerBodyForCarry,
+    getThoriumHaulerBodyForAvailableEnergy: getThoriumHaulerBodyForAvailableEnergy,
 
     getScoutBody: getScoutBody,
     getForemanBody: getForemanBody,

@@ -1,6 +1,7 @@
 var utility = require('utility');
 var utilityTravelCreep = require('utility.Travel.Creep');
 var RemotePlanner = require('Planner.Remote');
+var Season11 = require('Logic.Season11');
 
 var SCOUT_RADIUS = 3;
 var SCOUT_RESCAN_AFTER_TICKS = 3000;
@@ -49,6 +50,9 @@ var roleScout = {
          * score remote sources after Sushi has saved room/source/controller intel.
          */
         RemotePlanner.onScoutRoom(creep);
+
+        /* Season intel piggybacks on the existing Scout's normal visibility. */
+        Season11.observeRoom(creep.room, creep.memory.homeRoom, true);
 
         /*
          * If the Scout just arrived, clear targetRoom so the next choice comes
@@ -123,13 +127,15 @@ function ensureScoutPlan(creep) {
 
     var plan = homeMemory[SCOUT_PLAN_MEMORY_KEY];
 
+    var scoutRadius = Season11.getScoutRadius(SCOUT_RADIUS);
+
     if(
         !plan ||
         plan.homeRoom !== homeRoom ||
-        plan.radius !== SCOUT_RADIUS ||
+        plan.radius !== scoutRadius ||
         !plan.rooms
     ) {
-        homeMemory[SCOUT_PLAN_MEMORY_KEY] = buildScoutPlan(homeRoom, SCOUT_RADIUS);
+        homeMemory[SCOUT_PLAN_MEMORY_KEY] = buildScoutPlan(homeRoom, scoutRadius);
     }
 
     return homeMemory[SCOUT_PLAN_MEMORY_KEY];

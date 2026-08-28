@@ -92,6 +92,14 @@ function selectAffordableQueuedBodyForSpawn(spawn, request) {
             requestedCarry
         );
     }
+    else if (request.role === 'ThoriumHauler') {
+        var requestedThoriumCarry = request.requestedCarryParts ||
+            request.maxCarryParts || countBodyParts(request.body, CARRY);
+        bestBody = creepBodyConfig.getThoriumHaulerBodyForAvailableEnergy(
+            spawn.room,
+            requestedThoriumCarry
+        );
+    }
     else {
         bestBody = creepBodyConfig.getBestBodyForAvailableEnergy(
             request.role,

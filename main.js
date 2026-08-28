@@ -10,6 +10,9 @@ var roleScout = require('role.Scout');
 var roleRonin = require('role.Ronin');
 var roleVolley = require('role.Volley');
 var roleCleric = require('role.Cleric');
+var roleThoriumMiner = require('role.ThoriumMiner');
+var roleThoriumHauler = require('role.ThoriumHauler');
+var roleReactorClaimer = require('role.ReactorClaimer');
 
 var utility_spawn = require('utility.spawn');
 var utilityVisual = require('utility.Visual');
@@ -18,6 +21,7 @@ var utility = require('utility');
 var TowerLogic = require('Logic.Tower');
 var WarRoom = require('Logic.WarRoom');
 var ExpansionLogic = require('Logic.Expansion');
+var Season11 = require('Logic.Season11');
 
 var spawnManager = require('spawn.manager');
 var spawnRequestManager = require('spawn.request.manager');
@@ -139,6 +143,11 @@ function maybeGeneratePixel() {
     };
 
     if (!pixelCfg.enabled) {
+        return;
+    }
+
+    /* Seasonal logistics and Reactor continuity take priority over pixels. */
+    if (Season11.shouldSuppressPixelGeneration()) {
         return;
     }
 
@@ -416,6 +425,9 @@ module.exports.loop = function () {
      */
     ExpansionLogic.run();
 
+    /* Optional seasonal planning runs after core colony/tower/expansion work. */
+    Season11.run();
+
     /*
      * Step 1:
      * Decide what the room needs.
@@ -484,6 +496,15 @@ module.exports.loop = function () {
         }
         if(creep.memory.role == 'Cleric') {
             roleCleric.run(creep);
+        }
+        if(creep.memory.role == 'ThoriumMiner') {
+            roleThoriumMiner.run(creep);
+        }
+        if(creep.memory.role == 'ThoriumHauler') {
+            roleThoriumHauler.run(creep);
+        }
+        if(creep.memory.role == 'ReactorClaimer') {
+            roleReactorClaimer.run(creep);
         }
     }
 

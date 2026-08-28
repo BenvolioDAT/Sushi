@@ -16,6 +16,7 @@ var creepBodyConfig = require('role.creepBodyConfig');
 var RemotePlanner = require('Planner.Remote');
 var creepUtility = require('utility.Creep');
 var cpuStatusUtility = require('CPU.Status');
+var Season11 = require('Logic.Season11');
 
 var RESERVE_DESIRED_TICKS = 4000;
 var RESERVE_SPAWN_AT_TICKS = 2500;
@@ -56,7 +57,10 @@ var DEFAULT_SPAWN_POLICY = {
         Extractor: 6,
         Freighter: 6,
         Pioneer: 2,
-        SupplyRunner: 2
+        SupplyRunner: 2,
+        ThoriumMiner: 2,
+        ThoriumHauler: 4,
+        ReactorClaimer: 1
     },
     maxCreepsPerRoomByRcl: {
         RCL1: 10,
@@ -110,6 +114,9 @@ var PRIORITY = {
     Ronin: 15,
     Volley: 15,
     Cleric: 16,
+    ThoriumMiner: 35,
+    ThoriumHauler: 42,
+    ReactorClaimer: 38
 };
 
 /*
@@ -130,7 +137,10 @@ var REPLACEMENT_BUFFER_TICKS = {
     Scout: 10,
     Ronin: 40,
     Volley: 40,
-    Cleric: 40
+    Cleric: 40,
+    ThoriumMiner: 120,
+    ThoriumHauler: 180,
+    ReactorClaimer: 180
 };
 
 /*
@@ -3662,6 +3672,128 @@ function saveSpawnGovernorDebug(context) {
     };
 }
 
+function countQueuedSeason11Assignment(roomName, assignmentKey) {
+    var queue = spawnManager.getSpawnQueue(roomName) || [];
+    var count = 0;
+
+    for (var i = 0; i < queue.length; i++) {
+        if (
+            queue[i] &&
+            queue[i].memory &&
+            queue[i].memory.season11AssignmentKey === assignmentKey
+        ) {
+            count++;
+        }
+    }
+    return count;
+}
+
+function countHealthySeason11Assignment(roomName, plan) {
+    var count = 0;
+    var creeps = getHomeLivingCreeps(roomName);
+
+    for (var i = 0; i < creeps.length; i++) {
+        var creep = creeps[i];
+        if (
+            !creep || !creep.memory ||
+            creep.memory.season11AssignmentKey !== plan.assignmentKey
+        ) {
+            continue;
+        }
+
+        var lead = getReplacementLeadTicks(plan.role, creep.body || []);
+        var routeDistance = Number(creep.memory.season11RouteDistance) || 0;
+        if (plan.role === 'ThoriumMiner') {
+            routeDistance *= 50;
+        }
+        lead += Math.min(1000, Math.max(0, routeDistance));
+
+        if (creep.ticksToLive === undefined || creep.ticksToLive > lead) {
+            count++;
+        }
+    }
+    return count;
+}
+
+function requestSeason11RolesForRoom(room) {
+    var result = {
+        ok: true,
+        role: 'Season11',
+        requested: 0,
+        plans: []
+    };
+    var plans = Season11.getSpawnPlanForRoom(room);
+
+    for (var i = 0; i < plans.length; i++) {
+        var plan = plans[i];
+        var body = plan.role === 'ThoriumHauler' ?
+            creepBodyConfig.getThoriumHaulerBodyForCarry(
+                room,
+                plan.requestedCarryParts || 1
+            ) : creepBodyConfig.getBody(plan.role, room);
+        var healthy = countHealthySeason11Assignment(room.name, plan);
+        var queued = countQueuedSeason11Assignment(
+            room.name,
+            plan.assignmentKey
+        );
+        var missing = Math.max(0, plan.desired - healthy - queued);
+        var planReport = {
+            role: plan.role,
+            assignmentKey: plan.assignmentKey,
+            desired: plan.desired,
+            healthy: healthy,
+            queued: queued,
+            requested: 0
+        };
+
+        if (!body || body.length === 0) {
+            planReport.reason = 'No affordable configured body';
+            result.ok = false;
+            result.plans.push(planReport);
+            continue;
+        }
+
+        for (var requestIndex = 0; requestIndex < missing; requestIndex++) {
+            var memory = {
+                role: plan.role,
+                homeRoom: room.name
+            };
+            for (var key in plan.memory) {
+                if (plan.memory.hasOwnProperty(key)) {
+                    memory[key] = plan.memory[key];
+                }
+            }
+
+            var request = {
+                role: plan.role,
+                body: body,
+                priority: typeof plan.priority === 'number' ?
+                    plan.priority : (PRIORITY[plan.role] || 0),
+                memory: memory,
+                requestedAt: Game.time
+            };
+            if (plan.requestedCarryParts) {
+                request.requestedCarryParts = plan.requestedCarryParts;
+            }
+
+            var addResult = addSpawnRequest(room.name, request, {
+                emergency: plan.emergency === true
+            });
+            if (!addResult.ok) {
+                planReport.reason = addResult.reason;
+                result.ok = false;
+                break;
+            }
+
+            planReport.requested++;
+            result.requested++;
+            Season11.noteSpawnRequestQueued(plan);
+        }
+        result.plans.push(planReport);
+    }
+    return result;
+}
+
 /**
  * Run spawn requests for one visible owned spawn room.
  *
@@ -3777,6 +3909,7 @@ function runForRoom(room, options) {
             room,
             demandCache.artificerDemand
         ));
+        report.requests.push(requestSeason11RolesForRoom(room));
         report.requests.push(requestRoleForRoom(room, 'Scout', DESIRED_COUNTS.Scout));
         report.requests.push(requestRoleForRoom(room, 'Ronin', DESIRED_COUNTS.Ronin));
         report.requests.push(requestRoleForRoom(room, 'Volley', DESIRED_COUNTS.Volley));
@@ -3873,5 +4006,6 @@ module.exports = {
     requestDynamicExtractorsForRoom: requestDynamicExtractorsForRoom,
     requestDynamicFreightersForRoom: requestDynamicFreightersForRoom,
     requestRemoteExtractorsForRoom: requestRemoteExtractorsForRoom,
-    requestAnnexForRoom: requestAnnexForRoom
+    requestAnnexForRoom: requestAnnexForRoom,
+    requestSeason11RolesForRoom: requestSeason11RolesForRoom
 };

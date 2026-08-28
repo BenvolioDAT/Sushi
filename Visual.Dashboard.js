@@ -1,4 +1,5 @@
 var cpuStatusUtility = require('CPU.Status');
+var Season11 = require('Logic.Season11');
 
 var COLORS = {
     background: '#111111',
@@ -20,7 +21,10 @@ var ROLE_NAMES = [
     'Scout',
     'Ronin',
     'Volley',
-    'Cleric'
+    'Cleric',
+    'ThoriumMiner',
+    'ThoriumHauler',
+    'ReactorClaimer'
 ];
 
 var LINE_HEIGHT = 0.7;
@@ -1104,6 +1108,96 @@ function drawRemotePanel(visual, remoteStats, sourcePanel) {
     }
 }
 
+function drawSeason11Panel(visual) {
+    var diagnostics = Season11.getDiagnostics();
+    var x = 1;
+    var y = 20.7;
+    var width = 18;
+    var height = 8.6;
+    var rowY = y + 1;
+    var apiColor = diagnostics.apiAvailable ? COLORS.good : COLORS.muted;
+    var reactor = diagnostics.selectedReactor;
+    var alerts = [];
+
+    for (var i = 0; i < diagnostics.alerts.length; i++) {
+        alerts.push(diagnostics.alerts[i].code);
+    }
+
+    drawPanel(visual, x, y, width, height, 'SEASON 11');
+    drawRow(visual, [
+        'Mode',
+        { text: diagnostics.mode, color: apiColor },
+        diagnostics.apiAvailable ? 'API' : 'NO API'
+    ], x, rowY, [3.2, 5.2, 5]);
+    rowY += LINE_HEIGHT;
+    drawText(
+        visual,
+        'Known ' + compactNumber(diagnostics.knownThoriumRemaining) +
+            ' Stored ' + compactNumber(diagnostics.storedThorium),
+        x,
+        rowY,
+        diagnostics.knownThoriumRemaining > 0 ? COLORS.text : COLORS.muted
+    );
+    rowY += LINE_HEIGHT;
+    drawText(
+        visual,
+        'Transit ' + compactNumber(diagnostics.inTransit) +
+            ' M' + diagnostics.miners + ' H' + diagnostics.haulers +
+            ' C' + diagnostics.claimers,
+        x,
+        rowY,
+        diagnostics.inTransit > 0 ? COLORS.good : COLORS.text
+    );
+    rowY += LINE_HEIGHT;
+    drawText(
+        visual,
+        'Reactor ' + (reactor ? reactor.roomName : 'none'),
+        x,
+        rowY,
+        reactor ? COLORS.text : COLORS.muted
+    );
+    rowY += LINE_HEIGHT;
+    drawText(
+        visual,
+        'Owner ' + (reactor && reactor.owner ? truncate(reactor.owner, 11) : 'none'),
+        x,
+        rowY,
+        reactor && reactor.my ? COLORS.good : reactor && reactor.owner ?
+            COLORS.warning : COLORS.muted
+    );
+    rowY += LINE_HEIGHT;
+    drawText(
+        visual,
+        reactor ? 'T ' + reactor.thorium + '/' + reactor.capacity +
+            ' continuous ' + compactNumber(reactor.continuousWork) :
+            'T -/1000 continuous -',
+        x,
+        rowY,
+        reactor && reactor.thorium > 0 ? COLORS.good : COLORS.muted
+    );
+    rowY += LINE_HEIGHT;
+    drawText(
+        visual,
+        reactor ? 'Score ' + reactor.scorePerTick + '/t empty ' +
+            reactor.ticksUntilEmpty + ' ETA ' +
+            (diagnostics.nextDeliveryEta === null ? '-' : diagnostics.nextDeliveryEta) :
+            'Score 0/t empty - ETA -',
+        x,
+        rowY,
+        reactor && reactor.my ? COLORS.text : COLORS.muted
+    );
+    rowY += LINE_HEIGHT;
+    drawText(
+        visual,
+        alerts.length > 0 ? 'ALERT ' + truncate(alerts.join(' '), 24) :
+            'Alerts none',
+        x,
+        rowY,
+        alerts.length > 0 ? COLORS.danger : COLORS.good,
+        0.5
+    );
+}
+
 function drawRemoteRoomDashboard(remoteRoom, homeRoomName, remoteSources, creepStats) {
     var x = 1;
     var y = 1;
@@ -1191,6 +1285,7 @@ function drawDashboard(room, ownedRoomCount, creepStats) {
     drawRoomPanel(visual, room, sourceStats, remoteStats, roomCreeps);
     var sourcePanel = drawSourcePanel(visual, sourceStats);
     drawRemotePanel(visual, remoteStats, sourcePanel);
+    drawSeason11Panel(visual);
 }
 
 var Dashboard = {

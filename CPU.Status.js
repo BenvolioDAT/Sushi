@@ -6,7 +6,8 @@
  * allowance: it is only the emergency ceiling Screeps may permit this tick.
  */
 
-var FALLBACK_CPU_LIMIT = 20;
+/* Game.cpu.limit is authoritative; one is only a defensive non-game fallback. */
+var FALLBACK_CPU_LIMIT = 1;
 var FULL_BUCKET = 10000;
 var cachedTick = -1;
 var cachedStatus = null;
