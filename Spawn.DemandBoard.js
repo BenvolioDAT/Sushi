@@ -53,6 +53,7 @@ function beginTick() {
         const operationEnded = operation && (operation.state === 'COMPLETE' || operation.state === 'ABORTED');
         if (!saved || saved.validUntil < Game.time || operationEnded) {
             delete hive.demands[id];
+            state.demands.delete(id);
             continue;
         }
         state.demands.set(id, saved);
@@ -84,6 +85,7 @@ function emit(input) {
 function memoryMatches(demand, memory) {
     if (!memory) return false;
     if (memory.demandId === demand.id) return true;
+    if (demand.squadId && memory.squadId !== demand.squadId) return false;
     if (demand.operationId && memory.operationId === demand.operationId && memory.role === demand.role) return true;
     if (demand.operationId && demand.operationId.startsWith('expand:') &&
         memory.expansionId === demand.targetRoom && memory.role === demand.role) return true;
@@ -91,6 +93,23 @@ function memoryMatches(demand, memory) {
         memory.season11AssignmentKey === demand.memory.season11AssignmentKey &&
         memory.role === demand.role) return true;
     return false;
+}
+
+function cancel(id) {
+    if (!id) return false;
+    const state = beginTick();
+    const existed = state.demands.delete(id) || !!HiveMemory.ensure().demands[id];
+    state.emitted.delete(id);
+    delete HiveMemory.ensure().demands[id];
+    for (const roomMemory of Object.values(Memory.rooms || {})) {
+        const queue = roomMemory && roomMemory.spawnQueue;
+        if (!Array.isArray(queue)) continue;
+        for (let index = queue.length - 1; index >= 0; index--) {
+            const request = queue[index];
+            if (request && request.memory && request.memory.demandId === id) queue.splice(index, 1);
+        }
+    }
+    return existed;
 }
 
 function assignmentCount(demand) {
@@ -238,4 +257,4 @@ function getDemands() {
     return Array.from(beginTick().demands.values());
 }
 
-module.exports = { beginTick, emit, flush, getDemands, assignmentCount, chooseSpawnRoom, memoryMatches };
+module.exports = { beginTick, emit, cancel, flush, getDemands, assignmentCount, chooseSpawnRoom, memoryMatches };

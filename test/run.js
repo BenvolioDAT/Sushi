@@ -117,7 +117,9 @@ function testExportCompatibility() {
     assertExports('HiveMind.Utility.js', ['normalize', 'score', 'rank']);
     assertExports('HiveMind.Operations.js', ['create', 'get', 'transition', 'abort', 'rescore', 'syncExpansion', 'emitDemands', 'run']);
     assertExports('HiveMind.Strategy.js', ['run', 'scoreOperations']);
-    assertExports('Spawn.DemandBoard.js', ['beginTick', 'emit', 'flush', 'getDemands', 'assignmentCount', 'chooseSpawnRoom']);
+    assertExports('Spawn.DemandBoard.js', ['beginTick', 'emit', 'cancel', 'flush', 'getDemands', 'assignmentCount', 'chooseSpawnRoom']);
+    assertExports('Squad.Tactics.js', ['selectTarget', 'chooseHealTarget', 'chooseAttackMode', 'evaluateDuo', 'chooseKitePositions']);
+    assertExports('Squad.Controller.js', ['createDuo', 'get', 'transition', 'abort', 'plan', 'execute', 'runSquad', 'emitDemands']);
 }
 
 function testRoleBodySpawnConsistency() {

@@ -1,4 +1,4 @@
-const SCHEMA_VERSION = 2;
+const SCHEMA_VERSION = 3;
 
 function setDefault(target, key, value) {
     if (target[key] === undefined) target[key] = value;
@@ -30,6 +30,15 @@ function ensure() {
     }
     if (!hive.settings.strategy) {
         hive.settings.strategy = { enabled: true, scoreInterval: 17, maxCandidates: 12 };
+    }
+    if (!hive.settings.squads) {
+        hive.settings.squads = { enabled: true, autoDefenseDuos: true };
+    }
+    for (const squad of Object.values(hive.squads)) {
+        if (!squad || typeof squad !== 'object') continue;
+        if (!squad.members || typeof squad.members !== 'object') squad.members = { attacker: null, healer: null };
+        if (!squad.stateTimeouts) squad.stateTimeouts = {};
+        if (!squad.demandIds) squad.demandIds = [];
     }
     return hive;
 }

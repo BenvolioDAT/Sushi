@@ -16,9 +16,12 @@ const roles = {
     ReactorClaimer: require('role.ReactorClaimer')
 };
 const TickIndex = require('HiveMind.Index');
+const SquadController = require('Squad.Controller');
 
 function run() {
+    const squadControlled = SquadController.execute();
     for (const creep of TickIndex.get().allCreeps) {
+        if (squadControlled.has(creep.name)) continue;
         const role = creep && creep.memory ? roles[creep.memory.role] : null;
         if (role && typeof role.run === 'function') role.run(creep);
     }

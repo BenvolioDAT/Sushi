@@ -20,6 +20,7 @@ var Season11 = require('Logic.Season11');
 var TickIndex = require('HiveMind.Index');
 var defenseDemand = require('Defense.Demand');
 var DemandBoard = require('Spawn.DemandBoard');
+var SquadController = require('Squad.Controller');
 
 var RESERVE_DESIRED_TICKS = 4000;
 var RESERVE_SPAWN_AT_TICKS = 2500;
@@ -3654,14 +3655,18 @@ function requestDefendersForRoom(room, context) {
             reason: 'Dynamic room defense'
         });
     }
+    var squadVolley = SquadController.getCommittedRoleCount(demand.operationId, 'Volley');
+    var squadCleric = SquadController.getCommittedRoleCount(demand.operationId, 'Cleric');
+    var independentRanged = Math.max(0, demand.desiredRanged - squadVolley);
+    var independentHealers = Math.max(0, demand.desiredHealers - squadCleric);
     if (demand.desiredMelee > 0) {
         result.requests.push(emitDefenseRole('Ronin', demand.desiredMelee, demand.priority));
     }
-    if (demand.desiredRanged > 0) {
-        result.requests.push(emitDefenseRole('Volley', demand.desiredRanged, demand.priority + 1));
+    if (independentRanged > 0) {
+        result.requests.push(emitDefenseRole('Volley', independentRanged, demand.priority + 1));
     }
-    if (demand.desiredHealers > 0 && demand.desiredMelee + demand.desiredRanged > 0) {
-        result.requests.push(emitDefenseRole('Cleric', demand.desiredHealers, demand.priority));
+    if (independentHealers > 0 && demand.desiredMelee + demand.desiredRanged > 0) {
+        result.requests.push(emitDefenseRole('Cleric', independentHealers, demand.priority));
     }
     return result;
 }

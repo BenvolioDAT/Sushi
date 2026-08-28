@@ -9,6 +9,7 @@ const Telemetry = require('HiveMind.Telemetry');
 const ThreatLedger = require('Combat.ThreatLedger');
 const HiveStrategy = require('HiveMind.Strategy');
 const DemandBoard = require('Spawn.DemandBoard');
+const SquadController = require('Squad.Controller');
 
 function isWarRoomEnabled() {
     if (!Memory.settings) Memory.settings = {};
@@ -33,6 +34,7 @@ function runStrategy() {
 }
 
 function generateSpawnRequests() {
+    SquadController.plan();
     const report = spawnRequestManager.run();
     const board = DemandBoard.flush();
     if (!report.rooms) report.rooms = {};

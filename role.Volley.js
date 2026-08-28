@@ -19,6 +19,8 @@
 
 var WarRoom = require('Logic.WarRoom');
 var travel = require('utility.Travel.Creep');
+var CombatMath = require('Combat.Math');
+var SquadTactics = require('Squad.Tactics');
 
 var roleVolley = {
 
@@ -41,6 +43,7 @@ var roleVolley = {
              */
             supportCombatHealing(creep, false);
             attackRangedTarget(creep, target);
+            kiteMeleeTarget(creep, target);
 
             /*
              * Shooting and moving are separate actions. If approaching the
@@ -141,6 +144,22 @@ function supportCombatHealing(creep, allowMoveToHealTarget) {
     }
 
     return false;
+}
+
+function kiteMeleeTarget(creep, target) {
+    if (!creep || !target || creep.memory._sushiMoveTick === Game.time) return false;
+    if (CombatMath.analyzeBody(target).melee <= 0 || creep.pos.getRangeTo(target) > 3) return false;
+    var kite = SquadTactics.chooseKitePositions(creep, null, [target]);
+    if (!kite.primary) return false;
+    travel.move(creep, kite.primary, {
+        range: 0,
+        reusePath: 0,
+        trafficPriority: 70,
+        fallbackPositions: kite.fallbacks,
+        disableSharedRouteCache: true
+    });
+    creep.say('kite');
+    return true;
 }
 
 function attackRangedTarget(creep, target) {
