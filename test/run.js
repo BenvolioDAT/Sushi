@@ -120,6 +120,12 @@ function testExportCompatibility() {
     assertExports('Spawn.DemandBoard.js', ['beginTick', 'emit', 'cancel', 'flush', 'getDemands', 'assignmentCount', 'chooseSpawnRoom']);
     assertExports('Squad.Tactics.js', ['selectTarget', 'chooseHealTarget', 'chooseAttackMode', 'evaluateDuo', 'chooseKitePositions']);
     assertExports('Squad.Controller.js', ['createDuo', 'get', 'transition', 'abort', 'plan', 'execute', 'runSquad', 'emitDemands']);
+    assertExports('Resource.Minerals.js', ['observe', 'emitDemands', 'jobs', 'plan']);
+    assertExports('Resource.Links.js', ['run', 'classify']);
+    assertExports('Resource.Terminals.js', ['requestTransfer', 'planBalance', 'validate', 'run']);
+    assertExports('Resource.Labs.js', ['configureReaction', 'clearReaction', 'requestBoost', 'identifyCluster', 'ingredientsFor', 'run']);
+    assertExports('Resource.Observer.js', ['buildQueue', 'chooseTarget', 'run']);
+    assertExports('Resource.Manager.js', ['plan', 'runRoom', 'runEmpireStructures', 'addJobs', 'getJobForCreep']);
 }
 
 function testRoleBodySpawnConsistency() {
@@ -130,7 +136,8 @@ function testRoleBodySpawnConsistency() {
     const roles = [
         'Foreman', 'Extractor', 'Tech', 'Freighter', 'Annex', 'Artificer',
         'Pioneer', 'SupplyRunner', 'Scout', 'Ronin', 'Volley', 'Cleric',
-        'ThoriumMiner', 'ThoriumHauler', 'ReactorClaimer'
+        'ThoriumMiner', 'ThoriumHauler', 'ReactorClaimer',
+        'MineralMiner', 'ResourceCourier'
     ];
     for (const role of roles) {
         assert(dispatched[role] && typeof dispatched[role].run === 'function', `missing dispatch for ${role}`);

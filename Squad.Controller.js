@@ -5,6 +5,7 @@ const CombatMath = require('Combat.Math');
 const WarRoom = require('Logic.WarRoom');
 const Tactics = require('Squad.Tactics');
 const travel = require('utility.Travel.Creep');
+const ResourceLabs = require('Resource.Labs');
 
 const STATES = Object.freeze([
     'FORMING', 'RALLYING', 'BOOSTING', 'MARCHING', 'ENGAGING',
@@ -378,8 +379,13 @@ function runBoosting(squad, members) {
     if (attackerReady && healerReady) transition(squad, 'MARCHING', 'Required boosts verified');
     else if (squad.acceptPartialBoosts && Game.time - squad.stateStartTick > 25) transition(squad, 'MARCHING', 'Partial boosts explicitly accepted');
     else {
-        setHold(members.attacker);
-        setHold(members.healer);
+        for (const [slot, member] of Object.entries(members)) {
+            if (!member) continue;
+            const positions = ResourceLabs.getBoostPositions(squad.id, slot);
+            const next = positions.find(item => !member.body.some(part => part.hits > 0 && part.boost === item.compound));
+            if (next && next.pos) moveTo(member, unpackPosition(next.pos), 1, squad);
+            else setHold(member);
+        }
         squad.debugReason = 'Waiting for lab boost verification';
     }
 }

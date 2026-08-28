@@ -2,6 +2,7 @@ const TowerLogic = require('Logic.Tower');
 const utilityVisual = require('utility.Visual');
 const TickIndex = require('HiveMind.Index');
 const SafeModePolicy = require('SafeMode.Policy');
+const ResourceManager = require('Resource.Manager');
 
 function updateRepairStructureMemory(room) {
     if (!room) return;
@@ -20,8 +21,10 @@ function runStructures() {
     for (const room of TickIndex.get().ownedRooms) {
         TowerLogic.run(room);
         SafeModePolicy.run(room);
+        ResourceManager.runRoom(room);
         if (Game.time % 10 === 0) updateRepairStructureMemory(room);
     }
+    ResourceManager.runEmpireStructures();
 }
 
 function drawSourceFlags() {

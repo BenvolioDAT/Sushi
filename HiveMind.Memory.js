@@ -1,4 +1,4 @@
-const SCHEMA_VERSION = 3;
+const SCHEMA_VERSION = 4;
 
 function setDefault(target, key, value) {
     if (target[key] === undefined) target[key] = value;
@@ -16,6 +16,12 @@ function ensure() {
     if (!hive.threats || typeof hive.threats !== 'object') hive.threats = {};
     if (!hive.demands || typeof hive.demands !== 'object') hive.demands = {};
     if (!hive.counters || typeof hive.counters !== 'object') hive.counters = {};
+    if (!hive.resources || typeof hive.resources !== 'object') hive.resources = {};
+    if (!hive.resources.rooms) hive.resources.rooms = {};
+    if (!hive.resources.labs) hive.resources.labs = {};
+    if (!hive.resources.transfers) hive.resources.transfers = {};
+    if (!hive.resources.boosts) hive.resources.boosts = {};
+    if (!hive.resources.observers) hive.resources.observers = {};
 
     setDefault(hive.settings, 'enabled', true);
     setDefault(hive.settings, 'independentCombat', true);
@@ -33,6 +39,12 @@ function ensure() {
     }
     if (!hive.settings.squads) {
         hive.settings.squads = { enabled: true, autoDefenseDuos: true };
+    }
+    if (!hive.settings.resources) {
+        hive.settings.resources = {
+            enabled: true, minerals: true, links: true,
+            terminals: true, labs: true, observers: true, market: false
+        };
     }
     for (const squad of Object.values(hive.squads)) {
         if (!squad || typeof squad !== 'object') continue;

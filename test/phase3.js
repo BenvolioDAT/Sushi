@@ -123,7 +123,7 @@ test('Memory migration is additive and versioned', function() {
     const hive = fresh('HiveMind.Memory.js').migrate();
     assert.strictEqual(hive.custom, 7);
     assert.strictEqual(hive.players.Friend.classification, 'ally');
-    assert.strictEqual(hive.schemaVersion, 3);
+    assert.strictEqual(hive.schemaVersion, 4);
     assert.deepStrictEqual(hive.operations, {});
 });
 

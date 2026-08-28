@@ -177,6 +177,21 @@ var BODY_PLANS = {
         [[CLAIM, 1], [MOVE, 1]]
     ],
 
+    MineralMiner: [
+        [[WORK, 5], [CARRY, 1], [MOVE, 3]],
+        [[WORK, 4], [CARRY, 1], [MOVE, 3]],
+        [[WORK, 3], [CARRY, 1], [MOVE, 2]],
+        [[WORK, 2], [CARRY, 1], [MOVE, 2]]
+    ],
+
+    ResourceCourier: [
+        [[CARRY, 16], [MOVE, 8]],
+        [[CARRY, 12], [MOVE, 6]],
+        [[CARRY, 8], [MOVE, 4]],
+        [[CARRY, 4], [MOVE, 2]],
+        [[CARRY, 2], [MOVE, 1]]
+    ],
+
     Scout: [
         [[MOVE, 1]]
     ],
@@ -514,6 +529,14 @@ function getClericBody(room) {
     return getBody('Cleric', room);
 }
 
+function getMineralMinerBody(room) {
+    return getBody('MineralMiner', room);
+}
+
+function getResourceCourierBody(room) {
+    return getBody('ResourceCourier', room);
+}
+
 module.exports = {
     getBody: getBody,
     getBestBodyForAvailableEnergy: getBestBodyForAvailableEnergy,
@@ -538,5 +561,7 @@ module.exports = {
     getSupplyRunnerBody: getSupplyRunnerBody,
     getRoninBody: getRoninBody,
     getVolleyBody: getVolleyBody,
-    getClericBody: getClericBody
+    getClericBody: getClericBody,
+    getMineralMinerBody: getMineralMinerBody,
+    getResourceCourierBody: getResourceCourierBody
 };

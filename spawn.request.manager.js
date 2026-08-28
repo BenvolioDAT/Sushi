@@ -120,7 +120,9 @@ var PRIORITY = {
     Cleric: 84,
     ThoriumMiner: 35,
     ThoriumHauler: 42,
-    ReactorClaimer: 38
+    ReactorClaimer: 38,
+    MineralMiner: 32,
+    ResourceCourier: 48
 };
 
 /*
@@ -142,6 +144,8 @@ var REPLACEMENT_BUFFER_TICKS = {
     Ronin: 40,
     Volley: 40,
     Cleric: 40,
+    MineralMiner: 75,
+    ResourceCourier: 60,
     ThoriumMiner: 120,
     ThoriumHauler: 180,
     ReactorClaimer: 180
