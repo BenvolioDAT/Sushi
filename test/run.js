@@ -103,6 +103,10 @@ function testExportCompatibility() {
     assertExports('Tick.Planning.js', ['refreshIntelAndThreats', 'runStrategy', 'generateSpawnRequests', 'runSpawning']);
     assertExports('Tick.Rooms.js', ['runStructures', 'drawSourceFlags', 'updateRepairStructureMemory']);
     assertExports('Tick.Finalize.js', ['resolveTraffic', 'runOptionalWork', 'cleanDeadCreepMemory', 'buildTrafficCostMatrix']);
+    assertExports('HiveMind.Index.js', ['build', 'get', 'resetForTests', 'isCombatCapable']);
+    assertExports('HiveMind.Scheduler.js', ['shouldRun', 'run', 'markDirty', 'getState']);
+    assertExports('HiveMind.Telemetry.js', ['startTick', 'measure', 'finish', 'getView']);
+    assertExports('traffic_manager.js', ['init', 'run', 'hasMovementIntents', 'getMovementIntents']);
 }
 
 function testRoleBodySpawnConsistency() {

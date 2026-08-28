@@ -6,6 +6,8 @@ const spawnRequestManager = require('spawn.request.manager');
 const RemotePlanner = require('Planner.Remote');
 const PlannerBrain = require('Planner.Brain');
 const RoadPlanner = require('Planner.Roads');
+const Scheduler = require('HiveMind.Scheduler');
+const Telemetry = require('HiveMind.Telemetry');
 
 function isWarRoomEnabled() {
     if (!Memory.settings) Memory.settings = {};
@@ -14,15 +16,19 @@ function isWarRoomEnabled() {
 }
 
 function refreshIntelAndThreats() {
-    if (isWarRoomEnabled()) WarRoom.run();
+    if (isWarRoomEnabled()) Scheduler.run('emergencyDefense', () => WarRoom.run(), { emergency: true });
 }
 
 function runStrategy() {
-    RemotePlanner.run();
-    PlannerBrain.run();
-    RoadPlanner.run();
-    ExpansionLogic.run();
-    Season11.run();
+    Telemetry.measure('remotePlanning', () => {
+        Scheduler.run('remotePlanning', () => RemotePlanner.run(), { interval: 5 });
+    });
+    Scheduler.run('roomPlanning', () => PlannerBrain.run(), { interval: 3 });
+    Scheduler.run('roadPlanning', () => RoadPlanner.run(), { interval: 5 });
+    Telemetry.measure('hiveMindStrategy', () => {
+        Scheduler.run('expansionStrategy', () => ExpansionLogic.run(), { interval: 17 });
+        Scheduler.run('season11Operations', () => Season11.run(), { interval: 1 });
+    });
 }
 
 function generateSpawnRequests() {

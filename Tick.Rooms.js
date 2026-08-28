@@ -1,5 +1,6 @@
 const TowerLogic = require('Logic.Tower');
 const utilityVisual = require('utility.Visual');
+const TickIndex = require('HiveMind.Index');
 
 function updateRepairStructureMemory(room) {
     if (!room) return;
@@ -15,17 +16,14 @@ function updateRepairStructureMemory(room) {
 }
 
 function runStructures() {
-    for (const roomName of Object.keys(Game.rooms)) {
-        const room = Game.rooms[roomName];
-        if (room.controller && room.controller.my) {
-            TowerLogic.run(room);
-            if (Game.time % 10 === 0) updateRepairStructureMemory(room);
-        }
+    for (const room of TickIndex.get().ownedRooms) {
+        TowerLogic.run(room);
+        if (Game.time % 10 === 0) updateRepairStructureMemory(room);
     }
 }
 
 function drawSourceFlags() {
-    for (const roomName of Object.keys(Game.rooms)) utilityVisual.drawSourceFlags(roomName);
+    for (const room of TickIndex.get().visibleRooms) utilityVisual.drawSourceFlags(room.name);
 }
 
 module.exports = { runStructures, drawSourceFlags, updateRepairStructureMemory };

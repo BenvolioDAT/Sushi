@@ -61,8 +61,8 @@ class RoomPosition {
         this.y = y;
         this.roomName = roomName;
     }
-    getRangeTo(target) {
-        const pos = target && target.pos ? target.pos : target;
+    getRangeTo(target, y) {
+        const pos = typeof target === 'number' ? { x: target, y } : (target && target.pos ? target.pos : target);
         if (!pos) return Infinity;
         return Math.max(Math.abs(this.x - pos.x), Math.abs(this.y - pos.y));
     }
@@ -93,6 +93,10 @@ class MockCreep {
 }
 
 function installGlobals(cpu) {
+    delete global.__sushiTickIndex;
+    delete global.__sushiTrafficIntents;
+    delete global.__sushiScheduler;
+    delete global.__sushiTelemetry;
     installConstants();
     global.RoomPosition = RoomPosition;
     global.RoomVisual = class { text() { return this; } circle() { return this; } line() { return this; } rect() { return this; } };

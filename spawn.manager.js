@@ -185,18 +185,16 @@ function getSpawnQueue(roomName) {
  * @returns {number}
  */
 function countAliveRole(roomName, role) {
+    var TickIndex = require('HiveMind.Index');
     var count = 0;
 
     /*
      * Game.creeps is all living owned creeps. Looping by name lets us inspect
      * each creep's memory and decide if it belongs to this count.
      */
-    for (var creepName in Game.creeps) {
-        if (!Game.creeps.hasOwnProperty(creepName)) {
-            continue;
-        }
-
-        var creep = Game.creeps[creepName];
+    var creeps = TickIndex.get().creepsByHomeRoom.get(roomName) || [];
+    for (var creepIndex = 0; creepIndex < creeps.length; creepIndex++) {
+        var creep = creeps[creepIndex];
 
         if (!creep || !creep.memory) {
             continue;

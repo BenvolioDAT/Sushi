@@ -661,7 +661,7 @@ function clearCachedMovementForFreshPath(creep) {
     delete creep.memory._move;
 }
 
-function followSharedRoute(creep, routeKey, route, targetPosition, range) {
+function followSharedRoute(creep, routeKey, route, targetPosition, range, moveOptions) {
     var positions = getRoutePositions(route);
     if (positions.length < 2) {
         /*
@@ -751,7 +751,12 @@ function followSharedRoute(creep, routeKey, route, targetPosition, range) {
     route.lastUsed = Game.time;
     route.uses = (route.uses || 0) + 1;
 
-    return makeRouteFollowResult(requestMove(creep, creep.pos.getDirectionTo(nextPosition)), null, false, false);
+    return makeRouteFollowResult(
+        requestMove(creep, creep.pos.getDirectionTo(nextPosition), moveOptions),
+        null,
+        false,
+        false
+    );
 }
 
 function samePackedPosition(a, b) {
@@ -833,7 +838,7 @@ function trySharedRoute(creep, target, targetPosition, moveOptions) {
         route = cache.routes[routeKey];
 
         if (isRouteFresh(route)) {
-            var activeFollow = followSharedRoute(creep, routeKey, route, targetPosition, range);
+            var activeFollow = followSharedRoute(creep, routeKey, route, targetPosition, range, moveOptions);
             var activeResult = applyRouteFollowResult(creep, cache, routeKey, activeFollow, moveOptions);
             if (activeResult !== null) {
                 return activeResult;
@@ -888,7 +893,7 @@ function trySharedRoute(creep, target, targetPosition, moveOptions) {
         creep,
         cache,
         routeKey,
-        followSharedRoute(creep, routeKey, route, targetPosition, range),
+        followSharedRoute(creep, routeKey, route, targetPosition, range, moveOptions),
         moveOptions
     );
 }
@@ -1008,7 +1013,7 @@ function buildRoadsFromRouteCache(room) {
  * @param {number} direction
  * @returns {number}
  */
-function requestMove(creep, direction) {
+function requestMove(creep, direction, options) {
     if (!creep) {
         return ERR_INVALID_ARGS;
     }
@@ -1024,7 +1029,14 @@ function requestMove(creep, direction) {
 
     if (shouldUseTrafficManager()) {
         if (typeof creep.registerMove === 'function') {
-            return creep.registerMove(direction);
+            options = options || {};
+            return creep.registerMove(direction, {
+                priority: options.trafficPriority,
+                fixed: options.trafficFixed === true,
+                squadId: options.squadId,
+                operationId: options.operationId,
+                fallbackPositions: options.fallbackPositions
+            });
         }
 
         /*
@@ -1121,7 +1133,9 @@ function move(creep, target, options) {
      * room routing, and choosing the next direction. This callback only changes
      * how the final one-step move is submitted.
      */
-    moveOptions.sushiMoveHandler = requestMove;
+    moveOptions.sushiMoveHandler = function(handlerCreep, direction) {
+        return requestMove(handlerCreep, direction, moveOptions);
+    };
 
     /*
      * If the creep is already close enough, do not move.
@@ -1229,7 +1243,7 @@ function moveToRoom(creep, roomName, options) {
  * @param {number} direction
  * @returns {number} Screeps result code.
  */
-function moveDirection(creep, direction) {
+function moveDirection(creep, direction, options) {
     /*
      * Return an error instead of throwing if the caller gives bad input.
      * This keeps role code simple and safe.
@@ -1257,7 +1271,7 @@ function moveDirection(creep, direction) {
         return ERR_BUSY;
     }
 
-    var result = requestMove(creep, direction);
+    var result = requestMove(creep, direction, options);
 
     /*
      * These results mean the wrapper safely handled this tick's movement

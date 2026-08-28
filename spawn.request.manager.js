@@ -17,6 +17,7 @@ var RemotePlanner = require('Planner.Remote');
 var creepUtility = require('utility.Creep');
 var cpuStatusUtility = require('CPU.Status');
 var Season11 = require('Logic.Season11');
+var TickIndex = require('HiveMind.Index');
 
 var RESERVE_DESIRED_TICKS = 4000;
 var RESERVE_SPAWN_AT_TICKS = 2500;
@@ -189,35 +190,7 @@ function roomHasOwnedSpawn(room) {
  * @returns {Room[]}
  */
 function getOwnedSpawnRooms() {
-    var rooms = [];
-    var seenRooms = {};
-
-    for (var spawnName in Game.spawns) {
-        if (!Game.spawns.hasOwnProperty(spawnName)) {
-            continue;
-        }
-
-        var spawn = Game.spawns[spawnName];
-
-        if (!spawn || !spawn.room || spawn.my === false) {
-            continue;
-        }
-
-        var room = spawn.room;
-
-        if (!room.controller || !room.controller.my) {
-            continue;
-        }
-
-        if (seenRooms[room.name]) {
-            continue;
-        }
-
-        seenRooms[room.name] = true;
-        rooms.push(room);
-    }
-
-    return rooms;
+    return TickIndex.get().ownedSpawnRooms.slice();
 }
 
 /**
@@ -606,21 +579,11 @@ function buildRoomPlanningContext(room, roomIndex, skipNormalPlanning) {
         emergencyMinimumBypassByRole: {}
     };
 
-    for (var creepName in Game.creeps) {
-        if (!Game.creeps.hasOwnProperty(creepName)) {
-            continue;
-        }
-
-        var creep = Game.creeps[creepName];
+    var indexedCreeps = TickIndex.get().creepsByHomeRoom.get(roomName) || [];
+    for (var creepIndex = 0; creepIndex < indexedCreeps.length; creepIndex++) {
+        var creep = indexedCreeps[creepIndex];
 
         if (!creep || !creep.memory) {
-            continue;
-        }
-
-        var homeRoom = creep.memory.homeRoom ||
-            (creep.room ? creep.room.name : null);
-
-        if (homeRoom !== roomName) {
             continue;
         }
 
@@ -700,23 +663,7 @@ function getHomeLivingCreeps(roomName) {
         return context.livingCreeps;
     }
 
-    var creeps = [];
-
-    for (var creepName in Game.creeps) {
-        if (!Game.creeps.hasOwnProperty(creepName)) {
-            continue;
-        }
-
-        var creep = Game.creeps[creepName];
-        var homeRoom = creep && creep.memory ?
-            (creep.memory.homeRoom || (creep.room && creep.room.name)) : null;
-
-        if (homeRoom === roomName) {
-            creeps.push(creep);
-        }
-    }
-
-    return creeps;
+    return (TickIndex.get().creepsByHomeRoom.get(roomName) || []).slice();
 }
 
 function recordDenied(context, role, reason) {
@@ -925,12 +872,9 @@ function countHealthyCreeps(roomName, role, replacementLeadTicks) {
      * Loop through living creeps and count only matching role/homeRoom creeps
      * that are not too close to death.
      */
-    for (var creepName in Game.creeps) {
-        if (!Game.creeps.hasOwnProperty(creepName)) {
-            continue;
-        }
-
-        var creep = Game.creeps[creepName];
+    var indexedCreeps = TickIndex.get().creepsByHomeRoom.get(roomName) || [];
+    for (var creepIndex = 0; creepIndex < indexedCreeps.length; creepIndex++) {
+        var creep = indexedCreeps[creepIndex];
 
         if (!creep || !creep.memory) {
             continue;
@@ -1381,12 +1325,9 @@ function countLivingRoleBodyParts(roomName, role, partType) {
 
     var partCount = 0;
 
-    for (var creepName in Game.creeps) {
-        if (!Game.creeps.hasOwnProperty(creepName)) {
-            continue;
-        }
-
-        var creep = Game.creeps[creepName];
+    var indexedCreeps = TickIndex.get().creepsByHomeRoom.get(roomName) || [];
+    for (var creepIndex = 0; creepIndex < indexedCreeps.length; creepIndex++) {
+        var creep = indexedCreeps[creepIndex];
 
         if (!creep || !creep.memory || creep.memory.role !== role) {
             continue;
@@ -2325,13 +2266,10 @@ function requestAnnexForRoom(room) {
         }
     }
     else {
-        for (var creepName in Game.creeps) {
-            if (!Game.creeps.hasOwnProperty(creepName)) {
-                continue;
-            }
-
-            if (isLivingAnnexForHome(Game.creeps[creepName], room.name)) {
-                livingAnnexes.push(Game.creeps[creepName]);
+        var indexedCreeps = TickIndex.get().creepsByHomeRoom.get(room.name) || [];
+        for (var creepIndex = 0; creepIndex < indexedCreeps.length; creepIndex++) {
+            if (isLivingAnnexForHome(indexedCreeps[creepIndex], room.name)) {
+                livingAnnexes.push(indexedCreeps[creepIndex]);
             }
         }
     }
@@ -3222,12 +3160,9 @@ function countIdleFreighters(roomName) {
 
     var idle = 0;
 
-    for (var creepName in Game.creeps) {
-        if (!Game.creeps.hasOwnProperty(creepName)) {
-            continue;
-        }
-
-        var creep = Game.creeps[creepName];
+    var indexedCreeps = TickIndex.get().creepsByHomeRoom.get(roomName) || [];
+    for (var creepIndex = 0; creepIndex < indexedCreeps.length; creepIndex++) {
+        var creep = indexedCreeps[creepIndex];
         if (!creep || !creep.memory || creep.memory.role !== 'Freighter') {
             continue;
         }
@@ -3549,7 +3484,7 @@ function refreshSpawnDemandCache(room, context) {
     cache.artificerDemand = getArtificerBuildDemand(room);
 
     /*
-     * These totals are built from one Game.creeps pass in the room context.
+     * These totals are built from the shared TickIndex room slice.
      * Keeping a Memory copy makes console inspection cheap.
      */
     cache.roleBodyPartTotals = context.bodyPartsByRole;

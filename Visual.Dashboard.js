@@ -1,5 +1,6 @@
 var cpuStatusUtility = require('CPU.Status');
 var Season11 = require('Logic.Season11');
+var TickIndex = require('HiveMind.Index');
 
 var COLORS = {
     background: '#111111',
@@ -139,15 +140,7 @@ function drawRow(visual, columns, x, y, columnWidths) {
 }
 
 function getOwnedRooms() {
-    var rooms = [];
-
-    for (var roomName in Game.rooms) {
-        var room = Game.rooms[roomName];
-
-        if (room && room.controller && room.controller.my) {
-            rooms.push(room);
-        }
-    }
+    var rooms = TickIndex.get().ownedRooms.slice();
 
     rooms.sort(function(a, b) {
         return a.name < b.name ? -1 : a.name > b.name ? 1 : 0;
@@ -182,8 +175,9 @@ function buildCreepStats() {
         freighterDetails: []
     };
 
-    for (var creepName in Game.creeps) {
-        var creep = Game.creeps[creepName];
+    var indexedCreeps = TickIndex.get().allCreeps;
+    for (var creepIndex = 0; creepIndex < indexedCreeps.length; creepIndex++) {
+        var creep = indexedCreeps[creepIndex];
 
         if (!creep || !creep.memory) {
             continue;

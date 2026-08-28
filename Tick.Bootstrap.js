@@ -1,6 +1,7 @@
 const travelUtility = require('utility.Travel.Creep');
 const cpuStatusUtility = require('CPU.Status');
 const Season11 = require('Logic.Season11');
+const TickIndex = require('HiveMind.Index');
 
 const FULL_CPU_BUCKET = 10000;
 const PIXEL_FAILURE_LOG_INTERVAL = 1000;
@@ -54,6 +55,7 @@ function run() {
     ensureSettings();
     travelUtility.cleanupRouteCaches();
     const cpuStatus = cpuStatusUtility.getCpuStatus();
+    TickIndex.build();
     maybeGeneratePixel();
     return cpuStatus;
 }

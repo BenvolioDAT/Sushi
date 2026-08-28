@@ -15,9 +15,10 @@ const roles = {
     ThoriumHauler: require('role.ThoriumHauler'),
     ReactorClaimer: require('role.ReactorClaimer')
 };
+const TickIndex = require('HiveMind.Index');
 
 function run() {
-    for (const creep of Object.values(Game.creeps)) {
+    for (const creep of TickIndex.get().allCreeps) {
         const role = creep && creep.memory ? roles[creep.memory.role] : null;
         if (role && typeof role.run === 'function') role.run(creep);
     }
