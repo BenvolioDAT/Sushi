@@ -62,7 +62,7 @@ The versioned root is `Memory.season11`:
 
 Migration from schema 1 is additive: room intel, Reactor records, event history,
 operator configuration, and unknown custom fields are preserved. The durable
-HiveMind schema is version 5 and adds bounded delivery events, active seasonal
+HiveMind schema is version 6 and adds bounded delivery events, active seasonal
 operation IDs, dashboard state, and occasional operation CPU summaries under
 `Memory.hive.season`.
 
@@ -92,7 +92,8 @@ maintenance, threat risk, and opportunity cost. An ownership loss becomes
 `RECOVERING` by default. It becomes `CONTESTING` only when `recapture: true` is
 an explicit operator directive and the shared diplomacy policy does not classify
 the owner as an ally. Threatened owned Reactors and explicitly permitted
-contests request a ranged/healing duo through the normal squad demand flow.
+contests request coordinated ranged/healing squads through the normal squad
+demand flow. Normal threats use a duo; heavy threats can select a ranged quad.
 
 Only strings, ids, room names, coordinates, numbers, booleans, arrays, and plain
 objects are stored. Live Screeps objects are never written to Memory. Intel,
@@ -240,8 +241,9 @@ Every owned-room dashboard has a compact `SEASON 11` panel showing:
 - measured delivery throughput, contest threat, and operation CPU;
 - `STARVING`, `STOLEN`, `NO ROUTE`, `NO CLAIM`, and `DEPLETED` alerts.
 
-The panel is drawn every tick. Its summary is cached once per tick; route and
-planning work is not repeated by the visual layer.
+The panel follows the configured visual cadence (five ticks by default). Its
+summary is cached once per tick; route and planning work is not repeated by the
+visual layer.
 
 Console-friendly plain diagnostics:
 

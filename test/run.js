@@ -118,8 +118,12 @@ function testExportCompatibility() {
     assertExports('HiveMind.Operations.js', ['create', 'get', 'transition', 'abort', 'rescore', 'syncExpansion', 'emitDemands', 'run']);
     assertExports('HiveMind.Strategy.js', ['run', 'scoreOperations']);
     assertExports('Spawn.DemandBoard.js', ['beginTick', 'emit', 'cancel', 'flush', 'getDemands', 'assignmentCount', 'chooseSpawnRoom']);
-    assertExports('Squad.Tactics.js', ['selectTarget', 'chooseHealTarget', 'chooseAttackMode', 'evaluateDuo', 'chooseKitePositions']);
-    assertExports('Squad.Controller.js', ['createDuo', 'get', 'transition', 'abort', 'plan', 'execute', 'runSquad', 'emitDemands']);
+    assertExports('Squad.Tactics.js', ['selectTarget', 'chooseHealTarget', 'chooseAttackMode', 'evaluateDuo', 'evaluateQuad', 'chooseKitePositions']);
+    assertExports('Squad.Controller.js', ['createDuo', 'createQuad', 'get', 'transition', 'abort', 'plan', 'execute', 'runSquad', 'emitDemands']);
+    assertExports('Squad.Quad.js', ['create', 'get', 'transition', 'buildFormationCostMatrix', 'positionsFor', 'chooseTransform', 'runSquad', 'plan', 'abort']);
+    assertExports('Combat.Operations.js', ['evaluate', 'run', 'createManual', 'setManualTarget', 'roomSnapshot']);
+    assertExports('Season11.Adapter.js', ['isAvailable', 'findReactors', 'claim', 'harvestThorium', 'snapshot', 'capabilities']);
+    assertExports('Season11.Operations.js', ['transition', 'utilityFor', 'agingMetrics', 'deliveryThroughput', 'noteDelivery', 'run', 'getDashboard']);
     assertExports('Resource.Minerals.js', ['observe', 'emitDemands', 'jobs', 'plan']);
     assertExports('Resource.Links.js', ['run', 'classify']);
     assertExports('Resource.Terminals.js', ['requestTransfer', 'planBalance', 'validate', 'run']);

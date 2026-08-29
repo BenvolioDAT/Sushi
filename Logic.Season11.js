@@ -8,6 +8,7 @@
 
 var Season11Adapter = require('Season11.Adapter');
 var CombatPolicy = require('Combat.Policy');
+var TickIndex = require('HiveMind.Index');
 
 var SCHEMA_VERSION = 2;
 var REACTOR_CAPACITY = 1000;
@@ -84,18 +85,9 @@ function isApiAvailable() {
 function isClaimApiAvailable() {
     if (Season11Adapter.canClaim()) return true;
 
-    if (typeof Game === 'undefined' || !Game.creeps) {
-        return false;
-    }
-
-    for (var name in Game.creeps) {
-        if (
-            Game.creeps.hasOwnProperty(name) &&
-            Game.creeps[name] &&
-            Season11Adapter.canClaim(Game.creeps[name])
-        ) {
-            return true;
-        }
+    var creeps = TickIndex.get().allCreeps;
+    for (var i = 0; i < creeps.length; i++) {
+        if (Season11Adapter.canClaim(creeps[i])) return true;
     }
 
     return false;
@@ -299,21 +291,18 @@ function getMyUsername() {
         return null;
     }
 
-    for (var spawnName in Game.spawns) {
-        if (Game.spawns.hasOwnProperty(spawnName)) {
-            var spawn = Game.spawns[spawnName];
-            if (spawn && spawn.owner && spawn.owner.username) {
-                return spawn.owner.username;
-            }
+    var index = TickIndex.get();
+    for (var spawnIndex = 0; spawnIndex < index.ownedSpawns.length; spawnIndex++) {
+        var spawn = index.ownedSpawns[spawnIndex];
+        if (spawn && spawn.owner && spawn.owner.username) {
+            return spawn.owner.username;
         }
     }
 
-    for (var roomName in Game.rooms) {
-        if (Game.rooms.hasOwnProperty(roomName)) {
-            var controller = Game.rooms[roomName] && Game.rooms[roomName].controller;
-            if (controller && controller.my && controller.owner) {
-                return getOwnerName(controller.owner);
-            }
+    for (var roomIndex = 0; roomIndex < index.ownedRooms.length; roomIndex++) {
+        var controller = index.ownedRooms[roomIndex].controller;
+        if (controller && controller.owner) {
+            return getOwnerName(controller.owner);
         }
     }
 
@@ -663,24 +652,7 @@ function noteRouteFailure(fromRoom, toRoom, detail) {
 }
 
 function getOwnedSpawnRooms() {
-    var result = [];
-    var seen = {};
-
-    if (typeof Game === 'undefined') {
-        return result;
-    }
-
-    for (var spawnName in Game.spawns) {
-        if (!Game.spawns.hasOwnProperty(spawnName)) {
-            continue;
-        }
-        var spawn = Game.spawns[spawnName];
-        var room = spawn && spawn.room;
-        if (room && spawn.my !== false && !seen[room.name]) {
-            seen[room.name] = true;
-            result.push(room);
-        }
-    }
+    var result = TickIndex.get().ownedSpawnRooms.slice();
 
     result.sort(function(a, b) {
         return a.name < b.name ? -1 : a.name > b.name ? 1 : 0;
@@ -1142,14 +1114,7 @@ function run() {
         return getDiagnostics();
     }
 
-    var rooms = [];
-    if (typeof Game !== 'undefined' && Game.rooms) {
-        for (var roomName in Game.rooms) {
-            if (Game.rooms.hasOwnProperty(roomName) && Game.rooms[roomName]) {
-                rooms.push(Game.rooms[roomName]);
-            }
-        }
-    }
+    var rooms = TickIndex.get().visibleRooms.slice();
     var selectedReactorRoom = memory.assignments.selectedReactorRoom;
     rooms.sort(function(a, b) {
         var aSelected = a.name === selectedReactorRoom;
@@ -1221,46 +1186,38 @@ function calculateHaulerDemand(routeDistance, carryCapacity, lifetime, safetyMar
 
 function getAssignmentCount(assignmentKey, includeQueued) {
     var count = 0;
-    if (typeof Game !== 'undefined' && Game.creeps) {
-        for (var name in Game.creeps) {
-            if (
-                Game.creeps.hasOwnProperty(name) &&
-                Game.creeps[name] &&
-                Game.creeps[name].memory &&
-                Game.creeps[name].memory.season11AssignmentKey === assignmentKey
-            ) {
-                var creep = Game.creeps[name];
-                var routeDistance = Number(
-                    creep.memory.season11RouteDistance
-                ) || 0;
-                if (creep.memory.role === 'ThoriumMiner') {
-                    routeDistance *= 50;
-                }
-                var spawnTime = Array.isArray(creep.body) ?
-                    creep.body.length * 3 : 0;
-                var replacementLead = spawnTime + routeDistance +
-                    ensureMemory().config.haulerReplacementMargin;
-                if (creep.ticksToLive === undefined ||
-                    creep.ticksToLive > replacementLead) {
-                    count++;
-                }
+    var index = TickIndex.get();
+    for (var creepIndex = 0; creepIndex < index.allCreeps.length; creepIndex++) {
+        var creep = index.allCreeps[creepIndex];
+        if (creep && creep.memory &&
+            creep.memory.season11AssignmentKey === assignmentKey) {
+            var routeDistance = Number(
+                creep.memory.season11RouteDistance
+            ) || 0;
+            if (creep.memory.role === 'ThoriumMiner') {
+                routeDistance *= 50;
+            }
+            var spawnTime = Array.isArray(creep.body) ?
+                creep.body.length * 3 : 0;
+            var replacementLead = spawnTime + routeDistance +
+                ensureMemory().config.haulerReplacementMargin;
+            if (creep.ticksToLive === undefined ||
+                creep.ticksToLive > replacementLead) {
+                count++;
             }
         }
     }
 
-    if (!includeQueued || typeof Memory === 'undefined' || !Memory.rooms) {
+    if (!includeQueued) {
         return count;
     }
-    for (var roomName in Memory.rooms) {
-        var queue = Memory.rooms[roomName] && Memory.rooms[roomName].spawnQueue;
-        if (!Array.isArray(queue)) {
-            continue;
-        }
-        for (var i = 0; i < queue.length; i++) {
-            if (queue[i] && queue[i].memory &&
-                queue[i].memory.season11AssignmentKey === assignmentKey) {
-                count++;
-            }
+    for (var requestIndex = 0;
+        requestIndex < index.spawnRequests.length;
+        requestIndex++) {
+        var request = index.spawnRequests[requestIndex];
+        if (request && request.memory &&
+            request.memory.season11AssignmentKey === assignmentKey) {
+            count++;
         }
     }
     return count;
@@ -1279,16 +1236,13 @@ function roomHasEssentialEconomy(room) {
     }
 
     var roles = { Foreman: 0, Extractor: 0, Freighter: 0 };
-    if (typeof Game === 'undefined' || !Game.creeps) {
-        return false;
-    }
-    for (var name in Game.creeps) {
-        var creep = Game.creeps[name];
+    var creeps = TickIndex.get().creepsByHomeRoom.get(room.name) || [];
+    for (var creepIndex = 0; creepIndex < creeps.length; creepIndex++) {
+        var creep = creeps[creepIndex];
         if (!creep || !creep.memory || !roles.hasOwnProperty(creep.memory.role)) {
             continue;
         }
-        var home = creep.memory.homeRoom || (creep.room && creep.room.name);
-        if (home === room.name && (!creep.ticksToLive || creep.ticksToLive > 100)) {
+        if (!creep.ticksToLive || creep.ticksToLive > 100) {
             roles[creep.memory.role]++;
         }
     }
@@ -1587,20 +1541,15 @@ function getDiagnostics() {
         }
     }
 
-    if (typeof Game !== 'undefined' && Game.rooms) {
-        for (var visibleRoomName in Game.rooms) {
-            var visibleRoom = Game.rooms[visibleRoomName];
-            if (!visibleRoom || !visibleRoom.controller ||
-                !visibleRoom.controller.my) {
-                continue;
-            }
-            var ownedStores = [visibleRoom.storage, visibleRoom.terminal];
-            for (var storeIndex = 0; storeIndex < ownedStores.length; storeIndex++) {
-                var ownedStore = ownedStores[storeIndex];
-                if (ownedStore && ownedStore.id && !seenStores[ownedStore.id]) {
-                    seenStores[ownedStore.id] = true;
-                    stored += getStoreAmount(ownedStore, thoriumType);
-                }
+    var tickIndex = TickIndex.get();
+    for (var roomIndex = 0; roomIndex < tickIndex.ownedRooms.length; roomIndex++) {
+        var visibleRoom = tickIndex.ownedRooms[roomIndex];
+        var ownedStores = [visibleRoom.storage, visibleRoom.terminal];
+        for (var storeIndex = 0; storeIndex < ownedStores.length; storeIndex++) {
+            var ownedStore = ownedStores[storeIndex];
+            if (ownedStore && ownedStore.id && !seenStores[ownedStore.id]) {
+                seenStores[ownedStore.id] = true;
+                stored += getStoreAmount(ownedStore, thoriumType);
             }
         }
     }
@@ -1618,31 +1567,31 @@ function getDiagnostics() {
         }
     }
 
-    if (typeof Game !== 'undefined' && Game.creeps) {
-        for (var name in Game.creeps) {
-            var creep = Game.creeps[name];
-            if (!creep || !creep.memory) {
-                continue;
+    for (var creepIndex = 0;
+        creepIndex < tickIndex.allCreeps.length;
+        creepIndex++) {
+        var creep = tickIndex.allCreeps[creepIndex];
+        if (!creep || !creep.memory) {
+            continue;
+        }
+        if (creep.memory.role === 'ThoriumMiner') {
+            miners++;
+        }
+        else if (creep.memory.role === 'ThoriumHauler') {
+            haulers++;
+            var eta = creep.memory.season11DeliveryEta;
+            if (typeof eta === 'number' &&
+                getTime() - (creep.memory.season11EtaTick || 0) <= 2 &&
+                (nextEta === null || eta < nextEta)) {
+                nextEta = eta;
             }
-            if (creep.memory.role === 'ThoriumMiner') {
-                miners++;
-            }
-            else if (creep.memory.role === 'ThoriumHauler') {
-                haulers++;
-                var eta = creep.memory.season11DeliveryEta;
-                if (typeof eta === 'number' &&
-                    getTime() - (creep.memory.season11EtaTick || 0) <= 2 &&
-                    (nextEta === null || eta < nextEta)) {
-                    nextEta = eta;
-                }
-            }
-            else if (creep.memory.role === 'ReactorClaimer') {
-                claimers++;
-            }
-            if (creep.memory.role === 'ThoriumMiner' ||
-                creep.memory.role === 'ThoriumHauler') {
-                inTransit += getStoreAmount(creep, thoriumType);
-            }
+        }
+        else if (creep.memory.role === 'ReactorClaimer') {
+            claimers++;
+        }
+        if (creep.memory.role === 'ThoriumMiner' ||
+            creep.memory.role === 'ThoriumHauler') {
+            inTransit += getStoreAmount(creep, thoriumType);
         }
     }
 
@@ -1778,6 +1727,7 @@ function resetCacheForTests() {
     routeOps = 0;
     diagnosticsTick = -1;
     diagnosticsCache = null;
+    TickIndex.resetForTests();
 }
 
 module.exports = {

@@ -21,6 +21,7 @@ var TickIndex = require('HiveMind.Index');
 var defenseDemand = require('Defense.Demand');
 var DemandBoard = require('Spawn.DemandBoard');
 var SquadController = require('Squad.Controller');
+var HiveMemory = require('HiveMind.Memory');
 
 var RESERVE_DESIRED_TICKS = 4000;
 var RESERVE_SPAWN_AT_TICKS = 2500;
@@ -3602,10 +3603,11 @@ function runEmergencyPlanning(room, report, context) {
 
 function cleanDefenseQueue(roomName, demand) {
     var queue = spawnManager.getSpawnQueue(roomName) || [];
+    var independentCombat = HiveMemory.ensure().settings.independentCombat !== false;
     var desired = {
-        Ronin: demand.desiredMelee,
-        Volley: demand.desiredRanged,
-        Cleric: demand.desiredHealers
+        Ronin: independentCombat ? demand.desiredMelee : 0,
+        Volley: independentCombat ? demand.desiredRanged : 0,
+        Cleric: independentCombat ? demand.desiredHealers : 0
     };
     var removed = 0;
     for (var i = queue.length - 1; i >= 0; i--) {
@@ -3634,6 +3636,10 @@ function requestDefendersForRoom(room, context) {
     if (!room || !demand) return result;
     result.removedStaleRequests = cleanDefenseQueue(room.name, demand);
     if (demand.harmfulHostileCount <= 0) return result;
+    if (HiveMemory.ensure().settings.independentCombat === false) {
+        result.independentCombatDisabled = true;
+        return result;
+    }
     var demandMemory = {
             defenseRequest: true,
             defendedRoom: room.name,

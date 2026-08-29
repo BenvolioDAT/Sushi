@@ -256,6 +256,29 @@ test('dynamic defender demand is zero in peace and clears standing army requests
     assert.strictEqual(Memory.rooms.W1N1.spawnQueue.length, 0);
 });
 
+test('independent combat switch suppresses and cleans non-squad defense requests', function() {
+    installCombatWorld();
+    const invader = hostile('invader', [ATTACK, ATTACK, MOVE], 24, 25, 'Enemy');
+    const spawnStructure = { id: 'spawn', my: true, structureType: STRUCTURE_SPAWN, pos: pos(25, 25) };
+    const room = roomWorld('W1N1', [invader], [spawnStructure]);
+    Memory.rooms.W1N1.spawnQueue = [{
+        role: 'Ronin',
+        memory: {
+            role: 'Ronin', homeRoom: 'W1N1', operationId: 'defend:W1N1',
+            defenseRequest: true
+        }
+    }];
+    Game.spawns.Spawn1 = { my: true, room };
+    fresh('Combat.Policy.js').setClassification('Enemy', 'hostile');
+    delete global.__sushiTickIndex;
+    fresh('Combat.ThreatLedger.js').observeRoom(room, [invader]);
+    fresh('HiveMind.Memory.js').ensure().settings.independentCombat = false;
+    const result = fresh('spawn.request.manager.js').requestDefendersForRoom(room, null);
+    assert.strictEqual(result.independentCombatDisabled, true);
+    assert.strictEqual(result.requests.length, 0);
+    assert.strictEqual(Memory.rooms.W1N1.spawnQueue.length, 0);
+});
+
 test('safe mode ignores scouts and activates only for an overwhelming critical breach', function() {
     installCombatWorld();
     let activations = 0;
