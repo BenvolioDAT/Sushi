@@ -84,7 +84,7 @@ function runOptionalWork() {
     if (!Memory.settings) Memory.settings = {};
     if (Memory.settings.showStructurePlanner === undefined) Memory.settings.showStructurePlanner = false;
     cleanDeadCreepMemory();
-    const interval = Math.max(1, Memory.settings.visualInterval || 5);
+    const interval = Math.max(1, Memory.settings.visualInterval || 1);
     if (!Scheduler.shouldRun('visuals', { interval })) return;
     Rooms.drawSourceFlags();
     StructurePlannerVisual.run();
