@@ -6,7 +6,10 @@
  * this module is safe to load on the persistent shards and private servers.
  */
 
-var SCHEMA_VERSION = 1;
+var Season11Adapter = require('Season11.Adapter');
+var CombatPolicy = require('Combat.Policy');
+
+var SCHEMA_VERSION = 2;
 var REACTOR_CAPACITY = 1000;
 var DEFAULT_MODE = 'auto';
 var VALID_MODES = {
@@ -55,11 +58,11 @@ function getTime() {
 }
 
 function getThoriumResourceType() {
-    return typeof RESOURCE_THORIUM !== 'undefined' ? RESOURCE_THORIUM : null;
+    return Season11Adapter.resourceType();
 }
 
 function getReactorFindConstant() {
-    return typeof FIND_REACTORS !== 'undefined' ? FIND_REACTORS : null;
+    return Season11Adapter.reactorFindConstant();
 }
 
 function getMineralFindConstant() {
@@ -75,17 +78,11 @@ function getHostileStructureFindConstant() {
 }
 
 function isApiAvailable() {
-    return getThoriumResourceType() !== null && getReactorFindConstant() !== null;
+    return Season11Adapter.isAvailable();
 }
 
 function isClaimApiAvailable() {
-    if (
-        typeof Creep !== 'undefined' &&
-        Creep.prototype &&
-        typeof Creep.prototype.claimReactor === 'function'
-    ) {
-        return true;
-    }
+    if (Season11Adapter.canClaim()) return true;
 
     if (typeof Game === 'undefined' || !Game.creeps) {
         return false;
@@ -95,7 +92,7 @@ function isClaimApiAvailable() {
         if (
             Game.creeps.hasOwnProperty(name) &&
             Game.creeps[name] &&
-            typeof Game.creeps[name].claimReactor === 'function'
+            Season11Adapter.canClaim(Game.creeps[name])
         ) {
             return true;
         }
@@ -142,18 +139,7 @@ function ensureMemory() {
         return makeInitialMemory();
     }
 
-    if (!Memory.season11 || Memory.season11.schemaVersion !== SCHEMA_VERSION) {
-        var oldMode = Memory.season11 && Memory.season11.mode;
-        var oldConfig = Memory.season11 && Memory.season11.config;
-        Memory.season11 = makeInitialMemory();
-
-        if (VALID_MODES[oldMode]) {
-            Memory.season11.mode = oldMode;
-        }
-        if (oldConfig && typeof oldConfig === 'object') {
-            Memory.season11.config = oldConfig;
-        }
-    }
+    if (!Memory.season11 || typeof Memory.season11 !== 'object') Memory.season11 = makeInitialMemory();
 
     var memory = Memory.season11;
     memory.config = memory.config || {};
@@ -167,6 +153,7 @@ function ensureMemory() {
     memory.stats = memory.stats || {};
     memory.stats.events = Array.isArray(memory.stats.events) ?
         memory.stats.events : [];
+    memory.schemaVersion = SCHEMA_VERSION;
 
     if (!VALID_MODES[memory.mode]) {
         memory.mode = DEFAULT_MODE;
@@ -1321,7 +1308,7 @@ function mayClaimReactor(reactor) {
     if (!reactor.owner) {
         return true;
     }
-    return ensureMemory().config.recapture === true;
+    return ensureMemory().config.recapture === true && CombatPolicy.mayLaunchOffense(reactor, true);
 }
 
 function makeMinerPlan(assignment) {

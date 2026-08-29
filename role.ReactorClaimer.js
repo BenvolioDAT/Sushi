@@ -1,5 +1,6 @@
 var travel = require('utility.Travel.Creep');
 var Season11 = require('Logic.Season11');
+var Season11Adapter = require('Season11.Adapter');
 
 function moveFailed(result) {
     var noPath = typeof ERR_NO_PATH !== 'undefined' ? ERR_NO_PATH : -2;
@@ -58,8 +59,8 @@ var roleReactorClaimer = {
         }
 
         /* The seasonal intent is issued only at the documented adjacent range. */
-        if (typeof creep.claimReactor === 'function') {
-            var result = creep.claimReactor(reactor);
+        if (Season11Adapter.canClaim(creep)) {
+            var result = Season11Adapter.claim(creep, reactor);
             Season11.noteClaimResult(reactor.id, result);
         }
     }

@@ -1,5 +1,6 @@
 var cpuStatusUtility = require('CPU.Status');
 var Season11 = require('Logic.Season11');
+var Season11Operations = require('Season11.Operations');
 var TickIndex = require('HiveMind.Index');
 
 var COLORS = {
@@ -1104,10 +1105,11 @@ function drawRemotePanel(visual, remoteStats, sourcePanel) {
 
 function drawSeason11Panel(visual) {
     var diagnostics = Season11.getDiagnostics();
+    var operationSummary = Season11Operations.getDashboard();
     var x = 1;
     var y = 20.7;
     var width = 18;
-    var height = 8.6;
+    var height = 10.2;
     var rowY = y + 1;
     var apiColor = diagnostics.apiAvailable ? COLORS.good : COLORS.muted;
     var reactor = diagnostics.selectedReactor;
@@ -1179,6 +1181,27 @@ function drawSeason11Panel(visual) {
         x,
         rowY,
         reactor && reactor.my ? COLORS.text : COLORS.muted
+    );
+    rowY += LINE_HEIGHT;
+    drawText(
+        visual,
+        'Ops ' + (operationSummary.activeOperations || 0) + ' ' +
+            (operationSummary.reactorState || 'INERT') +
+            ' H' + (operationSummary.harvestOperations || 0) +
+            ' L' + (operationSummary.haulOperations || 0),
+        x,
+        rowY,
+        operationSummary.contestThreat > 0 ? COLORS.warning : COLORS.text
+    );
+    rowY += LINE_HEIGHT;
+    drawText(
+        visual,
+        'Flow ' + (operationSummary.throughput && operationSummary.throughput.perTick || 0) +
+            '/t threat ' + (operationSummary.contestThreat || 0) +
+            ' CPU ' + (operationSummary.operationCpu || 0),
+        x,
+        rowY,
+        operationSummary.contestThreat > 0 ? COLORS.danger : COLORS.muted
     );
     rowY += LINE_HEIGHT;
     drawText(

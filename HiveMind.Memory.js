@@ -1,4 +1,4 @@
-const SCHEMA_VERSION = 4;
+const SCHEMA_VERSION = 5;
 
 function setDefault(target, key, value) {
     if (target[key] === undefined) target[key] = value;
@@ -13,6 +13,9 @@ function ensure() {
     if (!hive.players || typeof hive.players !== 'object') hive.players = {};
     if (!hive.settings || typeof hive.settings !== 'object') hive.settings = {};
     if (!hive.season || typeof hive.season !== 'object') hive.season = {};
+    if (!Array.isArray(hive.season.activeOperationIds)) hive.season.activeOperationIds = [];
+    if (!Array.isArray(hive.season.deliveryEvents)) hive.season.deliveryEvents = [];
+    if (!hive.season.stats || typeof hive.season.stats !== 'object') hive.season.stats = {};
     if (!hive.threats || typeof hive.threats !== 'object') hive.threats = {};
     if (!hive.demands || typeof hive.demands !== 'object') hive.demands = {};
     if (!hive.counters || typeof hive.counters !== 'object') hive.counters = {};

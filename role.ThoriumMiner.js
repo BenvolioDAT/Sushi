@@ -1,5 +1,6 @@
 var travel = require('utility.Travel.Creep');
 var Season11 = require('Logic.Season11');
+var Season11Adapter = require('Season11.Adapter');
 
 function moveResultFailed(result) {
     var noPath = typeof ERR_NO_PATH !== 'undefined' ? ERR_NO_PATH : -2;
@@ -94,7 +95,7 @@ var roleThoriumMiner = {
             return;
         }
 
-        var result = creep.harvest(mineral);
+        var result = Season11Adapter.harvestThorium(creep, mineral);
         var notInRange = typeof ERR_NOT_IN_RANGE !== 'undefined' ? ERR_NOT_IN_RANGE : -9;
         var exhausted = typeof ERR_NOT_ENOUGH_RESOURCES !== 'undefined' ?
             ERR_NOT_ENOUGH_RESOURCES : -6;

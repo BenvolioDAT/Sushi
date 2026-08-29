@@ -4,6 +4,7 @@ const Utility = require('HiveMind.Utility');
 const Operations = require('HiveMind.Operations');
 const Expansion = require('Logic.Expansion');
 const Season11 = require('Logic.Season11');
+const Season11Operations = require('Season11.Operations');
 
 function scoreOperations() {
     const settings = HiveMemory.ensure().settings.strategy;
@@ -28,7 +29,10 @@ function run() {
     const expansion = Memory.expansion;
     const expansionActive = expansion && ['claiming', 'placeSpawn', 'buildSpawn', 'bootstrap'].includes(expansion.state);
     Scheduler.run('expansionStrategy', () => Expansion.run(), { interval: expansionActive ? 1 : 17 });
-    Scheduler.run('season11Operations', () => Season11.run(), { interval: 1 });
+    Scheduler.run('season11Operations', () => {
+        const diagnostics = Season11.run();
+        return Season11Operations.run(diagnostics);
+    }, { interval: 1 });
     Operations.run();
     Scheduler.run('utilityScoring', () => scoreOperations(), { interval: settings.scoreInterval || 17 });
     return { enabled: true, operations: Object.keys(HiveMemory.ensure().operations).length };

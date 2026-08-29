@@ -1,5 +1,6 @@
 var travel = require('utility.Travel.Creep');
 var Season11 = require('Logic.Season11');
+var Season11Operations = require('Season11.Operations');
 
 function moveFailed(result) {
     var noPath = typeof ERR_NO_PATH !== 'undefined' ? ERR_NO_PATH : -2;
@@ -107,6 +108,14 @@ var roleThoriumHauler = {
                     range: 1,
                     reusePath: 10,
                     visualizePathStyle: { stroke: '#aa66ff' }
+                });
+            }
+            else if (transferResult === (typeof OK !== 'undefined' ? OK : 0)) {
+                Season11Operations.noteDelivery(carried, {
+                    creepName: creep.name,
+                    sourceRoom: sourceRoom,
+                    reactorId: reactor.id,
+                    reactorRoom: reactorRoom
                 });
             }
             return;
