@@ -127,7 +127,7 @@ test('resource Memory migration is additive and defaults market use off', functi
     reset();
     Memory.hive = { custom: 9 };
     const hive = fresh('HiveMind.Memory.js').migrate();
-    assert.strictEqual(hive.schemaVersion, 4);
+    assert.strictEqual(hive.schemaVersion, 5);
     assert.strictEqual(hive.custom, 9);
     assert.deepStrictEqual(hive.resources.rooms, {});
     assert.strictEqual(hive.settings.resources.market, false);

@@ -3,6 +3,8 @@ var assert = require('assert');
 var fs = require('fs');
 var path = require('path');
 var Module = require('module');
+process.env.NODE_PATH = [__dirname, process.env.NODE_PATH || ''].filter(Boolean).join(path.delimiter);
+Module._initPaths();
 var Season11 = require('./Logic.Season11');
 
 var passed = 0;

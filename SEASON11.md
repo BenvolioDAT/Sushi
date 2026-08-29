@@ -1,6 +1,7 @@
 # Sushi Season 11: Thorium and Reactors
 
-Sushi now has a guarded Season 11 subsystem built around `Logic.Season11.js`.
+Sushi now has a guarded Season 11 subsystem built around `Logic.Season11.js`,
+`Season11.Adapter.js`, and `Season11.Operations.js`.
 It discovers Thorium minerals and Reactors, keeps bounded intelligence, ranks
 targets, stages mined Thorium, claims one selected Reactor, and maintains a
 dedicated hauling pipeline. The subsystem loads safely when seasonal globals do
@@ -8,6 +9,7 @@ not exist and does not restore any Season 10 ScoreRunner behavior.
 
 ## Automatic detection and safety
 
+The narrow adapter is the only module that invokes seasonal object methods.
 The seasonal API is considered available only when both `RESOURCE_THORIUM` and
 `FIND_REACTORS` exist at runtime. Claiming is checked separately through
 `Creep.prototype.claimReactor` or a live creep. Seasonal constants are never
@@ -41,7 +43,7 @@ The versioned root is `Memory.season11`:
 
 ```js
 {
-  schemaVersion: 1,
+  schemaVersion: 2,
   mode: 'auto',
   config: {},
   rooms: {},
@@ -57,6 +59,40 @@ The versioned root is `Memory.season11`:
   stats: { events: [] }
 }
 ```
+
+Migration from schema 1 is additive: room intel, Reactor records, event history,
+operator configuration, and unknown custom fields are preserved. The durable
+HiveMind schema is version 5 and adds bounded delivery events, active seasonal
+operation IDs, dashboard state, and occasional operation CPU summaries under
+`Memory.hive.season`.
+
+## HiveMind operation adapter
+
+The operation adapter mirrors the proven seasonal assignments into durable,
+stable `Memory.hive.operations` records. It does not introduce a second spawn
+queue. Existing miner, hauler, and claimant plans continue to emit through the
+shared demand board using matching operation IDs:
+
+```text
+season11:mine:<source room>
+season11:haul:<source room>:<reactor id>
+season11:reactor:<reactor id>
+season11:discover
+```
+
+Seasonal operations use explicit guarded states: `DISCOVERING`, `SELECTING`,
+`MUSTERING`, `CLAIMING`, `HARVESTING`, `HAULING`, `SUPPLYING`, `HOLDING`,
+`CONTESTING`, `RECOVERING`, `DEPLETED`, `COMPLETE`, and `ABORTED`. State,
+utility components, route/aging/maintenance estimates, finite supply, projected
+score value, assigned creep names, and the current debug reason are plain data.
+
+Utility favors finite accessible supply and continuity at an already-running
+Reactor, while subtracting travel, estimated aging/replacement pressure, route
+maintenance, threat risk, and opportunity cost. An ownership loss becomes
+`RECOVERING` by default. It becomes `CONTESTING` only when `recapture: true` is
+an explicit operator directive and the shared diplomacy policy does not classify
+the owner as an ally. Threatened owned Reactors and explicitly permitted
+contests request a ranged/healing duo through the normal squad demand flow.
 
 Only strings, ids, room names, coordinates, numbers, booleans, arrays, and plain
 objects are stored. Live Screeps objects are never written to Memory. Intel,
@@ -200,6 +236,8 @@ Every owned-room dashboard has a compact `SEASON 11` panel showing:
 - selected Reactor room and owner;
 - Reactor Thorium/capacity and `continuousWork`;
 - current logarithmic score rate, ticks until empty, and next delivery ETA;
+- operation state and active harvest/haul operation counts;
+- measured delivery throughput, contest threat, and operation CPU;
 - `STARVING`, `STOLEN`, `NO ROUTE`, `NO CLAIM`, and `DEPLETED` alerts.
 
 The panel is drawn every tick. Its summary is cached once per tick; route and
@@ -213,14 +251,19 @@ JSON.stringify(require('Logic.Season11').getDiagnostics())
 Memory.season11.assignments.rankedMiningTargets
 Memory.season11.assignments.rankedReactors
 Memory.season11.stats.events
+require('Season11.Operations').getDashboard()
+Memory.hive.operations['season11:reactor:reactorObjectId']
 ```
 
 ## Live-world checks still required
 
-The current Season API documentation confirms that Thorium is a Mineral,
+The current Season API documentation confirms that `RESOURCE_THORIUM` is `T`,
+`FIND_REACTORS` is `10051`, Thorium is a Mineral,
 Mineral harvesting requires an extractor and `WORK`, hostile ownership or
 reservation rejects harvesting, claiming requires an adjacent `CLAIM` part,
-and the Reactor has a 1,000 Thorium store. The Season 11 announcement confirms
+and the Reactor has a 1,000 Thorium store. It also documents Reactor fields
+`continuousWork`, `store`, `my`, and `owner`, and the score formula
+`1 + Math.floor(Math.log10(continuousWork))`. The Season 11 announcement confirms
 finite lower-volume deposits, northern density, one-per-tick Reactor use, no
 market, own-terminal-only transfers, and no portals.
 

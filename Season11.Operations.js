@@ -113,12 +113,14 @@ function agingMetrics(routeDistance, cargo = 100) {
     const agingMultiplier = 1 + Math.max(0, Math.floor(Math.log10(Math.max(1, cargo))));
     const effectiveLifetime = Math.max(1, Math.floor(1500 / agingMultiplier));
     const estimatedLoadedLifeUsed = Math.min(effectiveLifetime, routeTiles) * agingMultiplier;
+    const agingLoss = Utility.normalize(estimatedLoadedLifeUsed / 15);
     return {
         routeTiles,
         agingMultiplier,
         effectiveLifetime,
         estimatedLoadedLifeUsed,
-        agingLoss: Utility.normalize(estimatedLoadedLifeUsed / 15)
+        agingLoss,
+        estimatedAgingLoss: agingLoss
     };
 }
 
