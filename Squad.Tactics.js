@@ -125,6 +125,83 @@ function evaluateDuo(attacker, healer, hostiles, towers, options = {}) {
     return result;
 }
 
+function evaluateQuad(members, hostiles, towers, options = {}) {
+    const livingMembers = (members || []).filter(member => member && member.hits > 0);
+    const livingHostiles = (hostiles || []).filter(hostile => hostile && hostile.hits > 0);
+    const attackers = livingMembers.filter(member => {
+        const analysis = CombatMath.analyzeBody(member);
+        return analysis.ranged > 0 || analysis.melee > 0 || analysis.dismantle > 0;
+    });
+    const healers = livingMembers.filter(member => CombatMath.analyzeBody(member).heal > 0);
+    const leader = options.leader || attackers[0] || livingMembers[0] || null;
+    const result = {
+        retreat: false,
+        retreatReason: null,
+        recover: false,
+        movement: 'hold',
+        target: selectTarget(leader, livingHostiles, options.lockedTarget),
+        attackModes: {},
+        healAssignments: [],
+        memberRisk: [],
+        projectedRatio: 0
+    };
+    if (livingMembers.length < 3 || healers.length === 0) {
+        result.retreat = true;
+        result.retreatReason = livingMembers.length < 3 ? 'Quad lost half its formation' : 'Quad has no capable healer';
+        return result;
+    }
+    if (livingMembers.length < 4) result.recover = true;
+
+    let projectedHits = 0;
+    let maximumHits = 0;
+    for (const member of livingMembers) {
+        const rawIncoming = incomingDamage(member, livingHostiles, towers);
+        const realIncoming = CombatMath.damageAfterTough(member, rawIncoming);
+        const healing = healingAtTarget(member, healers);
+        const projected = member.hits + healing - realIncoming;
+        const risk = {
+            member,
+            rawIncoming,
+            realIncoming,
+            healing,
+            projectedHits: projected,
+            projectedRatio: projected / Math.max(1, member.hitsMax || member.hits)
+        };
+        result.memberRisk.push(risk);
+        projectedHits += Math.max(0, projected);
+        maximumHits += Math.max(1, member.hitsMax || member.hits);
+        if (projected <= 0) {
+            result.retreat = true;
+            result.retreatReason = `${member.name || member.id} cannot survive predicted focus`;
+        }
+    }
+    result.projectedRatio = projectedHits / Math.max(1, maximumHits);
+    if (result.projectedRatio < (options.abortThreshold || 0.2)) {
+        result.retreat = true;
+        result.retreatReason = 'Projected quad health is below abort threshold';
+    }
+
+    const risks = result.memberRisk.slice().sort((a, b) =>
+        a.projectedRatio - b.projectedRatio || b.realIncoming - a.realIncoming || compareIds(a.member, b.member));
+    for (let index = 0; index < healers.length; index++) {
+        const risk = risks[Math.min(index, risks.length - 1)];
+        if (risk) result.healAssignments.push({ healer: healers[index], target: risk.member, risk });
+    }
+    if (!result.target && options.structureTarget) result.target = options.structureTarget;
+    for (const attacker of attackers) {
+        result.attackModes[attacker.name || attacker.id] = chooseAttackMode(attacker, result.target, livingHostiles);
+    }
+    if (!result.target) return result;
+    const targetRange = leader ? CombatMath.rangeBetween(leader, result.target) : Infinity;
+    const closeMelee = livingHostiles.some(hostile =>
+        CombatMath.analyzeBody(hostile).melee > 0 && CombatMath.rangeBetween(leader, hostile) <= 3);
+    if (closeMelee && attackers.some(attacker => CombatMath.analyzeBody(attacker).ranged > 0)) result.movement = 'kite';
+    else if (targetRange > (attackers.some(attacker => CombatMath.analyzeBody(attacker).ranged > 0) ? 3 : 1)) {
+        result.movement = 'advance';
+    }
+    return result;
+}
+
 function insideRoom(x, y) {
     return x > 0 && x < 49 && y > 0 && y < 49;
 }
@@ -183,6 +260,7 @@ module.exports = {
     chooseHealTarget,
     chooseAttackMode,
     evaluateDuo,
+    evaluateQuad,
     chooseKitePositions,
     hasFriendlyRampart
 };

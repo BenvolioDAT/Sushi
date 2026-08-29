@@ -158,7 +158,7 @@ test('HiveMind migration adds Season 11 operation memory without replacing data'
     Memory.hive = { schemaVersion: 4, season: { keep: 7 }, operations: {}, settings: {} };
     const { HiveMemory } = seasonModules();
     const hive = HiveMemory.migrate();
-    assert.strictEqual(hive.schemaVersion, 5);
+    assert.strictEqual(hive.schemaVersion, HiveMemory.SCHEMA_VERSION);
     assert.strictEqual(hive.season.keep, 7);
     assert.deepStrictEqual(hive.season.activeOperationIds, []);
     assert.deepStrictEqual(hive.season.deliveryEvents, []);

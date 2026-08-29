@@ -1,4 +1,4 @@
-const SCHEMA_VERSION = 5;
+const SCHEMA_VERSION = 6;
 
 function setDefault(target, key, value) {
     if (target[key] === undefined) target[key] = value;
@@ -41,8 +41,13 @@ function ensure() {
         hive.settings.strategy = { enabled: true, scoreInterval: 17, maxCandidates: 12 };
     }
     if (!hive.settings.squads) {
-        hive.settings.squads = { enabled: true, autoDefenseDuos: true };
+        hive.settings.squads = {
+            enabled: true, autoDefenseDuos: true,
+            quadsEnabled: true, autoDefenseQuads: true
+        };
     }
+    setDefault(hive.settings.squads, 'quadsEnabled', true);
+    setDefault(hive.settings.squads, 'autoDefenseQuads', true);
     if (!hive.settings.resources) {
         hive.settings.resources = {
             enabled: true, minerals: true, links: true,

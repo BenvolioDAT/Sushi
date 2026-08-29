@@ -6,6 +6,7 @@ const WarRoom = require('Logic.WarRoom');
 const Tactics = require('Squad.Tactics');
 const travel = require('utility.Travel.Creep');
 const ResourceLabs = require('Resource.Labs');
+const QuadController = require('Squad.Quad');
 
 const STATES = Object.freeze([
     'FORMING', 'RALLYING', 'BOOSTING', 'MARCHING', 'ENGAGING',
@@ -104,6 +105,9 @@ function createDuo(options = {}) {
 
 function transition(squadOrId, nextState, reason, guard = () => true) {
     const squad = typeof squadOrId === 'string' ? get(squadOrId) : squadOrId;
+    if (squad && QuadController.TYPES.includes(squad.type)) {
+        return QuadController.transition(squad, nextState, reason, guard);
+    }
     if (!squad || TERMINAL.has(squad.state) || !STATES.includes(nextState) || !guard(squad)) return false;
     const allowed = TRANSITIONS[squad.state];
     if (!allowed || !allowed.has(nextState)) return false;
@@ -208,10 +212,11 @@ function emitDemands(squad) {
 
 function getCommittedRoleCount(operationId, role) {
     if (HiveMemory.ensure().settings.squads.enabled === false) return 0;
-    return Object.values(HiveMemory.ensure().squads).filter(squad => {
+    const duoCount = Object.values(HiveMemory.ensure().squads).filter(squad => {
         if (!squad || TERMINAL.has(squad.state) || squad.operationId !== operationId) return false;
-        return role === 'Volley' || role === 'Cleric';
+        return squad.type === 'RANGED_DUO' && (role === 'Volley' || role === 'Cleric');
     }).length;
+    return duoCount + QuadController.getCommittedRoleCount(operationId, role);
 }
 
 function syncDefenseDuos() {
@@ -523,6 +528,7 @@ function release(squad, members) {
 }
 
 function runSquad(squad) {
+    if (squad && QuadController.TYPES.includes(squad.type)) return QuadController.runSquad(squad);
     const members = refreshMembers(squad);
     clearMemberLocks(members);
     const operation = squad.operationId && HiveMemory.ensure().operations[squad.operationId];
@@ -559,10 +565,10 @@ function plan() {
     if (HiveMemory.ensure().settings.squads.enabled === false) return [];
     syncDefenseDuos();
     const active = Object.values(HiveMemory.ensure().squads)
-        .filter(squad => squad && !TERMINAL.has(squad.state))
+        .filter(squad => squad && !QuadController.TYPES.includes(squad.type) && !TERMINAL.has(squad.state))
         .sort((a, b) => String(a.id).localeCompare(String(b.id)));
     for (const squad of active) emitDemands(squad);
-    return active;
+    return active.concat(QuadController.plan());
 }
 
 function execute() {
@@ -571,7 +577,8 @@ function execute() {
     const squads = Object.values(HiveMemory.ensure().squads)
         .filter(Boolean).sort((a, b) => String(a.id).localeCompare(String(b.id)));
     for (const squad of squads) {
-        const members = runSquad(squad);
+        const members = QuadController.TYPES.includes(squad.type) ?
+            QuadController.runSquad(squad) : runSquad(squad);
         for (const creep of Object.values(members)) if (creep) controlled.add(creep.name);
     }
     return controlled;
@@ -579,6 +586,7 @@ function execute() {
 
 function abort(id, reason = 'Manual abort') {
     const squad = get(id);
+    if (squad && QuadController.TYPES.includes(squad.type)) return QuadController.abort(id, reason);
     if (!squad || TERMINAL.has(squad.state)) return false;
     squad.state = 'ABORTED';
     squad.abortedTick = Game.time;
@@ -590,6 +598,7 @@ function abort(id, reason = 'Manual abort') {
 module.exports = {
     STATES,
     createDuo,
+    createQuad: QuadController.create,
     get,
     transition,
     abort,

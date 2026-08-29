@@ -126,8 +126,9 @@ function courier(name, courierRoom, capacity = 100) {
 test('resource Memory migration is additive and defaults market use off', function() {
     reset();
     Memory.hive = { custom: 9 };
-    const hive = fresh('HiveMind.Memory.js').migrate();
-    assert.strictEqual(hive.schemaVersion, 5);
+    const memoryApi = fresh('HiveMind.Memory.js');
+    const hive = memoryApi.migrate();
+    assert.strictEqual(hive.schemaVersion, memoryApi.SCHEMA_VERSION);
     assert.strictEqual(hive.custom, 9);
     assert.deepStrictEqual(hive.resources.rooms, {});
     assert.strictEqual(hive.settings.resources.market, false);

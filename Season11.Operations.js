@@ -395,7 +395,13 @@ function syncReactorOperation(memory, diagnostics, activeIds) {
     assignCreeps(operation);
     activeIds.add(id);
 
-    if (reactor && (contested || reactor.my && (reactor.threatParts > 0 || reactor.hostileCreeps > 0)) && rank.homeRoom) {
+    const heavyContest = reactor && (reactor.threatParts || 0) >= 20;
+    operation.manualDirective = contested && memory.config.recapture === true;
+    operation.targetOwner = reactor && reactor.owner || null;
+    operation.preferredSquadType = heavyContest ? 'RANGED_QUAD' : null;
+    operation.requestedSquadSize = heavyContest ? 4 : 2;
+
+    if (!heavyContest && reactor && (contested || reactor.my && (reactor.threatParts > 0 || reactor.hostileCreeps > 0)) && rank.homeRoom) {
         SquadController.createDuo({
             id: `duo:${id}`,
             operationId: id,

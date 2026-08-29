@@ -120,10 +120,11 @@ function tower(id, x, y, energy = 1000) {
 test('Memory migration is additive and versioned', function() {
     installCombatWorld();
     Memory.hive = { players: { Friend: { classification: 'ally', manual: true } }, custom: 7 };
-    const hive = fresh('HiveMind.Memory.js').migrate();
+    const memoryApi = fresh('HiveMind.Memory.js');
+    const hive = memoryApi.migrate();
     assert.strictEqual(hive.custom, 7);
     assert.strictEqual(hive.players.Friend.classification, 'ally');
-    assert.strictEqual(hive.schemaVersion, 5);
+    assert.strictEqual(hive.schemaVersion, memoryApi.SCHEMA_VERSION);
     assert.deepStrictEqual(hive.operations, {});
 });
 
