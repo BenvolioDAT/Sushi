@@ -84,7 +84,7 @@ function runOptionalWork() {
     if (!Memory.settings) Memory.settings = {};
     if (Memory.settings.showStructurePlanner === undefined) Memory.settings.showStructurePlanner = false;
     cleanDeadCreepMemory();
-    const interval = Math.max(1, Memory.settings.visualInterval || 1);
+    const interval = Math.max(1, Memory.settings.visualInterval || 1); // I want this HUD to show every tick is why this was change so rember that Codex HUD allways show inless CPU or combat need CPU 
     if (!Scheduler.shouldRun('visuals', { interval })) return;
     Rooms.drawSourceFlags();
     StructurePlannerVisual.run();
