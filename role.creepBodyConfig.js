@@ -45,7 +45,9 @@ var BODY_PLANS = {
     ],
 
     Extractor: [
+        [[WORK, 7], [MOVE, 4], [CARRY, 1]],
         [[WORK, 6], [MOVE, 3], [CARRY, 1]],
+        [[WORK, 5], [MOVE, 3], [CARRY, 1]],
         [[WORK, 4], [MOVE, 2], [CARRY, 1]],
         [[WORK, 2], [MOVE, 1], [CARRY, 1]],
         [[WORK, 1], [MOVE, 1], [CARRY, 1]]
@@ -364,6 +366,25 @@ function getFreighterBodyForEnergyAndCarry(energy, desiredCarryParts) {
     return null;
 }
 
+function getExtractorBodyForEnergyAndWork(energy, desiredWork) {
+    var bodyPlans = BODY_PLANS.Extractor;
+
+    if (typeof energy !== 'number' || energy < 0 || desiredWork <= 0) {
+        return null;
+    }
+
+    for (var index = 0; index < bodyPlans.length; index++) {
+        var body = buildBody(bodyPlans[index]);
+        var workParts = countBodyParts(body, WORK);
+
+        if (workParts <= desiredWork && getBodyCost(body) <= energy) {
+            return body;
+        }
+    }
+
+    return null;
+}
+
 function getThoriumHaulerBodyForEnergyAndCarry(energy, desiredCarryParts) {
     var bodyPlans = BODY_PLANS.ThoriumHauler;
 
@@ -421,6 +442,18 @@ function getForemanBody(room) {
 
 function getExtractorBody(room) {
     return getBody('Extractor', room);
+}
+
+function getExtractorBodyForWork(room, desiredWork) {
+    return getExtractorBodyForEnergyAndWork(getRoomEnergyCapacity(room), desiredWork);
+}
+
+function getExtractorBodyForAvailableEnergy(room, desiredWork) {
+    if (!room || typeof room.energyAvailable !== 'number') {
+        return null;
+    }
+
+    return getExtractorBodyForEnergyAndWork(room.energyAvailable, desiredWork);
 }
 
 function getFreighterBody(room) {
@@ -553,6 +586,8 @@ module.exports = {
     getScoutBody: getScoutBody,
     getForemanBody: getForemanBody,
     getExtractorBody: getExtractorBody,
+    getExtractorBodyForWork: getExtractorBodyForWork,
+    getExtractorBodyForAvailableEnergy: getExtractorBodyForAvailableEnergy,
     getFreighterBody: getFreighterBody,
     getAnnexBody: getAnnexBody,
     getTechBody: getTechBody,

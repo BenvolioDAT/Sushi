@@ -108,6 +108,7 @@ function testExportCompatibility() {
     assertExports('HiveMind.Telemetry.js', ['startTick', 'measure', 'finish', 'getView']);
     assertExports('traffic_manager.js', ['init', 'run', 'hasMovementIntents', 'getMovementIntents']);
     assertExports('HiveMind.Memory.js', ['ensure', 'migrate']);
+    assertExports('HiveMind.Economy.js', ['run', 'updateRoom', 'get', 'rawState', 'applyHysteresis', 'canSpend', 'canSpawnRequest']);
     assertExports('Combat.Policy.js', ['getClassification', 'setClassification', 'recordIncident', 'shouldDefendAgainst', 'mayLaunchOffense']);
     assertExports('Combat.Math.js', ['analyzeBody', 'damageAfterTough', 'rangedMassDamage', 'towerDamage', 'incomingDamage', 'timeToKill']);
     assertExports('Combat.ThreatLedger.js', ['run', 'observeRoom', 'getRoomThreat', 'cleanup']);

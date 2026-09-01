@@ -5,6 +5,8 @@
  * the first spawn, then continue with basic construction or controller upgrade.
  */
 var travel = require('utility.Travel.Creep');
+var creepUtility = require('utility.Creep');
+var Economy = require('HiveMind.Economy');
 
 var PIONEER_PATH_STYLE = {
     stroke: '#66d9ff'
@@ -18,6 +20,14 @@ var rolePioneer = {
         }
 
         var targetRoomName = creep.memory.targetRoom;
+        var homeRoomName = creep.memory.homeRoom || creep.room.name;
+
+        if (creep.room.name === homeRoomName && !Economy.canSpend(homeRoomName, 'expansion')) {
+            if (creep.store[RESOURCE_ENERGY] > 0) creepUtility.fillRoomEnergy(creep);
+            else creepUtility.collectEnergy(creep);
+            creep.memory.pioneerState = 'heldForHomeEconomy';
+            return;
+        }
 
         if (!targetRoomName) {
             creep.memory.pioneerState = 'idleNoTarget';

@@ -402,6 +402,51 @@ Restore the same fields to `true` as conditions recover. `useWarRoom` controls
 the legacy emergency-defense compatibility pass. `useTrafficManager` is not a
 normal emergency switch because turning it off can halt movement resolution.
 
+## Room economy recovery
+
+`HiveMind.Economy` samples each owned spawn room before strategy and spawn
+planning. The authoritative snapshot is available at:
+
+```js
+Memory.hive.economy.rooms.W1N1
+require('HiveMind.Economy').get('W1N1')
+```
+
+The snapshot reports spawn fill, reserves and trend; per-source expected income,
+active/required/queued WORK, distance and backlog; distance-derived hauling
+demand, local/remote/queued CARRY; replacement risk; remote commitments; state;
+and the human-readable reason for that state.
+
+The states are:
+
+- `SURVIVAL`: no functional local miner, or critically empty spawn energy plus
+  less than 500 reserve energy and less than 45% of expected local income.
+- `RECOVERY`: local WORK below 90%, estimated income below 65%, local hauling
+  below 85%, a material source backlog, low spawn fill without healthy spawn
+  pressure, or an uncovered critical replacement with low reserves.
+- `STABLE`: local harvesting and hauling are sustainable.
+- `SURPLUS`: stable core economy, at least 100,000 reserve energy, at least 90%
+  spawn fill, and no meaningful negative energy trend.
+
+Emergency states are entered immediately. Improvement must persist for 12 ticks
+to leave `SURVIVAL`, 40 ticks to leave `RECOVERY`, and 100 ticks to promote from
+`STABLE` to `SURPLUS`. Each promotion advances only one state at a time.
+
+During `SURVIVAL`, the spawn queue prioritizes an affordable local Extractor,
+then minimum hauling, then Foreman. A local Extractor temporarily carries energy
+to spawn/extensions when no local hauling exists. Optional requests remain in
+the queue but the spawn consumer skips them until policy permits them. During
+`RECOVERY`, remotes, expansion, upgrading, construction, resources, special
+operations, and combat preparation stay suppressed. Owned-room defense,
+critical controller protection, and critical maintenance remain available.
+
+Remote plans are retained rather than destroyed. Active selection and new
+remote assignments pause during recovery; empty outbound Freighters return
+home, while loaded Freighters finish delivering their cargo.
+
+The room dashboard shows the current economy state/reason plus income, WORK,
+hauling capacity, and backlog.
+
 ## Console cookbook
 
 Initialize defaults before editing a nested branch:

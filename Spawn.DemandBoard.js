@@ -2,6 +2,7 @@ const HiveMemory = require('HiveMind.Memory');
 const TickIndex = require('HiveMind.Index');
 const spawnManager = require('spawn.manager');
 const bodyConfig = require('role.creepBodyConfig');
+const Economy = require('HiveMind.Economy');
 
 function tickState() {
     const hive = HiveMemory.ensure();
@@ -38,6 +39,7 @@ function plainDemand(input) {
         replacementBuffer: Number.isFinite(input.replacementBuffer) ? input.replacementBuffer : 50,
         validUntil: Number.isFinite(input.validUntil) ? input.validUntil : Game.time + 25,
         emergency: input.emergency === true,
+        economyCategory: input.economyCategory || null,
         memory: input.memory ? { ...input.memory } : {},
         reason: input.reason || null,
         emittedTick: Game.time
@@ -163,6 +165,10 @@ function bodyForDemand(demand, room) {
 
 function spawnRoomScore(room, demand) {
     if (!room || !room.controller || !room.controller.my || !roomSurvivalReady(room, demand)) return -Infinity;
+    const localPolicy = Economy.canSpawnRequest(room, demand);
+    if (!localPolicy.allowed) return -Infinity;
+    const origin = demand.originRoom && Game.rooms[demand.originRoom];
+    if (origin && !Economy.canSpawnRequest(origin, demand).allowed) return -Infinity;
     const body = bodyForDemand(demand, room);
     if (!body || !body.length) return -Infinity;
     const cost = spawnManager.getBodyCost(body);
@@ -196,6 +202,7 @@ function queueDemand(demand, room, count) {
             homeRoom: room.name,
             targetRoom: demand.targetRoom,
             operationId: demand.operationId,
+            economyCategory: demand.economyCategory,
             squadId: demand.squadId,
             demandId: demand.id,
             boostRequirements: demand.boostRequirements
@@ -208,6 +215,7 @@ function queueDemand(demand, room, count) {
             deadline: demand.deadline,
             demandId: demand.id,
             operationId: demand.operationId,
+            economyCategory: demand.economyCategory,
             memory,
             requestedAt: Game.time,
             expiresAt: demand.validUntil

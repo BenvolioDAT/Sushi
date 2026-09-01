@@ -14,6 +14,7 @@
 
 var travel = require('utility.Travel.Creep');
 var utility = require('utility');
+var Economy = require('HiveMind.Economy');
 
 var PATH_VERSION = 1;
 var HEAVY_PLAN_INTERVAL = 75;
@@ -456,6 +457,11 @@ function getRemotePath(homeRoomName, sourceId) {
 function shouldUseRemoteSource(homeRoomName, sourceId, ignoreScore) {
     var planner = ensurePlannerMemory(homeRoomName);
     var info = planner.sourceInfos[sourceId];
+
+    if (!Economy.canSpend(homeRoomName, 'remote')) {
+        if (info) info.rejectReason = 'home economy recovery';
+        return false;
+    }
 
     if (!info) {
         return false;
@@ -1035,6 +1041,19 @@ function selectActiveSources(homeRoomName) {
     var planner = ensurePlannerMemory(homeRoomName);
     var candidates = [];
 
+    if (!Economy.canSpend(homeRoomName, 'remote')) {
+        for (var blockedId in planner.sourceInfos) {
+            if (planner.sourceInfos.hasOwnProperty(blockedId) && planner.sourceInfos[blockedId]) {
+                planner.sourceInfos[blockedId].active = false;
+            }
+        }
+        planner.activeSourceIds = [];
+        planner.suspendedReason = 'home economy recovery';
+        planner.suspendedAt = Game.time;
+        return;
+    }
+    delete planner.suspendedReason;
+
     for (var sourceId in planner.sourceInfos) {
         if (!planner.sourceInfos.hasOwnProperty(sourceId)) {
             continue;
@@ -1326,6 +1345,7 @@ function getRemoteSourcePosition(homeRoomName, sourceId) {
 
 
 function getActiveRemoteSourcesForHome(homeRoomName) {
+    if (!Economy.canSpend(homeRoomName, 'remote')) return [];
     var planner = ensurePlannerMemory(homeRoomName);
     var activeSources = [];
 
@@ -1370,7 +1390,7 @@ function countRemoteAssignedExtractorWork(homeRoomName, sourceInfo) {
         }
 
         var replacementLead = ((creep.body && creep.body.length) || 0) * 3 +
-            EXTRACTOR_REPLACEMENT_BUFFER_TICKS;
+            Math.max(EXTRACTOR_REPLACEMENT_BUFFER_TICKS, sourceInfo.distance || 0) + 10;
         if (
             creep.ticksToLive !== undefined &&
             creep.ticksToLive <= replacementLead
@@ -1467,7 +1487,10 @@ function getRemoteExtractorDemand(homeRoomName, extractorBody, queue) {
             assignedWork: assigned.work,
             queuedCount: queued.count,
             queuedWork: queued.work,
-            wantedWork: SOURCE_WORK_TARGET,
+            wantedWork: Math.max(1, Math.ceil(
+                (sourceInfo.effectiveEnergyPerTick || sourceInfo.grossEnergyPerTick || 10) /
+                (typeof HARVEST_POWER !== 'undefined' ? HARVEST_POWER : 2)
+            )),
             bodyWork: countBodyParts(extractorBody, WORK)
         });
     }

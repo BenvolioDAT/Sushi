@@ -10,6 +10,7 @@
  */
 var creepUtility = require('utility.Creep');
 var utilityTravelCreep = require('utility.Travel.Creep');
+var Economy = require('HiveMind.Economy');
 
 var MAX_REPAIR_ARTIFICERS = 2;
 
@@ -47,6 +48,15 @@ var roleArtificer = {
     /** @param {Creep} creep **/
     run: function(creep) {
         if(!creep || creep.spawning) {
+            return;
+        }
+
+        var homeRoomName = creep.memory.homeRoom || creep.room.name;
+        if (!Economy.canSpend(homeRoomName, 'construction')) {
+            clearRemoteWorkTarget(creep);
+            creep.memory.builderWorking = false;
+            if (creep.store[RESOURCE_ENERGY] > 0) creepUtility.fillRoomEnergy(creep);
+            else creepUtility.collectEnergy(creep);
             return;
         }
 

@@ -17,6 +17,7 @@
 
 var spawnUtility = require('utility.spawn');
 var creepBodyConfig = require('role.creepBodyConfig');
+var Economy = require('HiveMind.Economy');
 
 var getBodyCost = creepBodyConfig.getBodyCost;
 
@@ -62,7 +63,15 @@ function selectAffordableQueuedBodyForSpawn(spawn, request) {
     var energyAvailable = spawn.room.energyAvailable;
     var bestBody;
 
-    if (request.role === 'Tech') {
+    if (request.role === 'Extractor') {
+        var requestedExtractorWork = request.requestedWorkParts ||
+            request.maxWorkParts || countBodyParts(request.body, WORK);
+        bestBody = creepBodyConfig.getExtractorBodyForAvailableEnergy(
+            spawn.room,
+            requestedExtractorWork
+        );
+    }
+    else if (request.role === 'Tech') {
         /*
          * Tech requests are sized to a missing WORK amount. Preserve that cap
          * while still allowing the body to shrink when current energy is low.
@@ -455,13 +464,34 @@ function runRoom(roomName) {
         return a.requestedAt - b.requestedAt;
     });
 
-    var request = queue[0];
+    var request = null;
+    var requestIndex = -1;
+    var blockedReasons = {};
+
+    for (var queueIndex = 0; queueIndex < queue.length; queueIndex++) {
+        var policy = Economy.canSpawnRequest(spawn.room, queue[queueIndex]);
+        if (policy.allowed) {
+            request = queue[queueIndex];
+            requestIndex = queueIndex;
+            break;
+        }
+        blockedReasons[queue[queueIndex] && queue[queueIndex].role || 'unknown'] = policy.reason;
+    }
+
+    if (!request) {
+        return {
+            ok: false,
+            result: null,
+            reason: 'All queued requests blocked by economy policy',
+            blocked: blockedReasons
+        };
+    }
 
     if (!request || !request.role || !request.body) {
         /*
          * Bad request. Remove it so it does not block the queue forever.
          */
-        queue.shift();
+        queue.splice(requestIndex, 1);
 
         return {
             ok: false,
@@ -520,7 +550,7 @@ function runRoom(roomName) {
      * If there is not enough energy, leave the request in queue.
      */
     if (result === OK) {
-        queue.shift();
+        queue.splice(requestIndex, 1);
 
         console.log(
             'Spawning ' + creepName +

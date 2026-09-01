@@ -1,4 +1,4 @@
-const SCHEMA_VERSION = 6;
+const SCHEMA_VERSION = 7;
 
 function setDefault(target, key, value) {
     if (target[key] === undefined) target[key] = value;
@@ -25,6 +25,8 @@ function ensure() {
     if (!hive.resources.transfers) hive.resources.transfers = {};
     if (!hive.resources.boosts) hive.resources.boosts = {};
     if (!hive.resources.observers) hive.resources.observers = {};
+    if (!hive.economy || typeof hive.economy !== 'object') hive.economy = {};
+    if (!hive.economy.rooms || typeof hive.economy.rooms !== 'object') hive.economy.rooms = {};
 
     setDefault(hive.settings, 'enabled', true);
     setDefault(hive.settings, 'independentCombat', true);

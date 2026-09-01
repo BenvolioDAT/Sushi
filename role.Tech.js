@@ -10,9 +10,19 @@
  */
 var creepUtility = require('utility.Creep');
 var travel = require('utility.Travel.Creep');
+var Economy = require('HiveMind.Economy');
 
 var roleTech = {
     run: function(creep) {
+        var homeRoomName = creep.memory.homeRoom || creep.room.name;
+        var controllerEmergency = creep.memory.controllerEmergency === true ||
+            creep.room.controller && creep.room.controller.ticksToDowngrade < 5000;
+        if (!Economy.canSpend(homeRoomName, controllerEmergency ? 'criticalController' : 'upgrade')) {
+            creep.memory.upgrading = false;
+            if (creep.store[RESOURCE_ENERGY] > 0) creepUtility.fillRoomEnergy(creep);
+            else creepUtility.collectEnergy(creep);
+            return;
+        }
         /*
          * Tech is the upgrader role.
          *

@@ -2,6 +2,7 @@ var cpuStatusUtility = require('CPU.Status');
 var Season11 = require('Logic.Season11');
 var Season11Operations = require('Season11.Operations');
 var TickIndex = require('HiveMind.Index');
+var Economy = require('HiveMind.Economy');
 
 var COLORS = {
     background: '#111111',
@@ -826,7 +827,7 @@ function drawRoomPanel(visual, room, sourceStats, remoteStats, roomCreeps) {
     var y = 3.7;
     var width = 18;
     var showRoleCounts = Memory.settings && Memory.settings.dashboardShowRoleCounts === true;
-    var height = showRoleCounts ? 16.4 : 14.3;
+    var height = showRoleCounts ? 18.8 : 16.7;
     var controller = room.controller;
     var roomMemory = Memory.rooms && Memory.rooms[room.name];
     var queue = getSpawnQueueInfo(room.name);
@@ -841,6 +842,7 @@ function drawRoomPanel(visual, room, sourceStats, remoteStats, roomCreeps) {
     var buildCount = getBuildCount(room);
     var repairCount = getRepairCount(room.name);
     var freighters = roomCreeps.freighters;
+    var economy = Economy.get(room.name);
     var roles = roomCreeps.roles;
     var hasTechWork = roomMemory && typeof roomMemory.techDesiredWork === 'number';
     var techWorkText = hasTechWork ?
@@ -890,6 +892,19 @@ function drawRoomPanel(visual, room, sourceStats, remoteStats, roomCreeps) {
         spawnStatus
     ], x, rowY, [3.8, 5.6, 1, 7.2]);
     rowY += LINE_HEIGHT;
+    if (economy) {
+        var economyColor = economy.state === 'SURVIVAL' ? COLORS.danger :
+            economy.state === 'RECOVERY' ? COLORS.warning : COLORS.good;
+        drawText(visual, 'ECO ' + economy.state + ' - ' + truncate(economy.reason, 24), x, rowY, economyColor);
+        rowY += LINE_HEIGHT;
+        drawText(visual, 'Income ' + round(economy.harvest.actualOrEstimatedIncome, 1) + '/' +
+            round(economy.harvest.expectedIncome, 1) + ' W ' + economy.harvest.workActive + '/' +
+            economy.harvest.workRequired, x, rowY, COLORS.text);
+        rowY += LINE_HEIGHT;
+        drawText(visual, 'Haul ' + economy.haul.localCarry + '/' + economy.haul.requiredCarry +
+            ' backlog ' + compactNumber(economy.haul.backlog), x, rowY, COLORS.text);
+        rowY += LINE_HEIGHT;
+    }
     drawRow(visual, ['Spawn queue', { text: queue.length, color: queue.length > 3 ? COLORS.warning : COLORS.text }], x, rowY, [7, 4]);
     rowY += LINE_HEIGHT;
     drawRow(visual, ['Next', queue.role ? truncate(queue.role, 9) + ' ' + queue.bodyCost + 'e' : 'none'], x, rowY, [3.2, 12]);

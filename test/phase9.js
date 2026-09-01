@@ -61,7 +61,7 @@ test('Hive migrations are additive and emergency switches have safe defaults', f
     reset();
     Memory.hive = { schemaVersion: 1, customOperatorField: { keep: true }, settings: { independentCombat: false } };
     const hive = fresh('HiveMind.Memory.js').migrate();
-    assert.strictEqual(hive.schemaVersion, 6);
+    assert.strictEqual(hive.schemaVersion, 7);
     assert.deepStrictEqual(hive.customOperatorField, { keep: true });
     assert.strictEqual(hive.settings.independentCombat, false, 'operator override was replaced');
     assert.strictEqual(hive.settings.safeMode.manualConfirmation, true);

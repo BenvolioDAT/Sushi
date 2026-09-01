@@ -5,6 +5,8 @@
  * it to Pioneers or the first spawn construction site in the target room.
  */
 var travel = require('utility.Travel.Creep');
+var creepUtility = require('utility.Creep');
+var Economy = require('HiveMind.Economy');
 
 var SUPPLY_PATH_STYLE = {
     stroke: '#ffaa00'
@@ -22,6 +24,21 @@ var roleSupplyRunner = {
 
         if (!originRoomName || !targetRoomName) {
             creep.memory.supplyRunnerState = 'idleMissingRoom';
+            return;
+        }
+
+        if (!Economy.canSpend(originRoomName, 'expansion')) {
+            if (creep.room.name !== originRoomName) {
+                creep.memory.supplyRunnerState = 'returningForHomeEconomy';
+                travel.moveToRoom(creep, originRoomName, { range: 22, visualizePathStyle: SUPPLY_PATH_STYLE });
+            }
+            else if (creep.store[RESOURCE_ENERGY] > 0) {
+                creepUtility.fillRoomEnergy(creep);
+                creep.memory.supplyRunnerState = 'refillingHomeEconomy';
+            }
+            else {
+                creep.memory.supplyRunnerState = 'heldForHomeEconomy';
+            }
             return;
         }
 

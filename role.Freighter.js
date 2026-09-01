@@ -11,6 +11,7 @@
 var travel = require('utility.Travel.Creep');
 var utility = require('utility');
 var RemotePlanner = require('Planner.Remote');
+var Economy = require('HiveMind.Economy');
 
 var MIN_DROPPED_ENERGY = 50;
 var MIN_CONTAINER_ENERGY = 50;
@@ -87,6 +88,18 @@ function collectEnergy(creep) {
      * Freighter actually has room vision and can prove it disappeared or emptied.
      */
     var hadRemoteJob = creep.memory.freighterJob === 'remote';
+
+    if (hadRemoteJob && !Economy.canSpend(creep.memory.homeRoom, 'remote')) {
+        RemotePlanner.clearRemoteFreighterMemory(creep);
+        if (creep.store[RESOURCE_ENERGY] > 0) {
+            creep.memory.FreighterWorking = true;
+            deliverEnergy(creep);
+        }
+        else if (creep.room.name !== creep.memory.homeRoom) {
+            moveTowardHomeRoom(creep);
+        }
+        return;
+    }
 
     if(hadRemoteJob) {
         if(handleRemoteCollection(creep)) {

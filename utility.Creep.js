@@ -693,6 +693,14 @@ function idleNearBase(creep) {
 var SOURCE_WORK_TARGET = 6;
 var EXTRACTOR_HANDOFF_TICKS = 100;
 
+function getSourceWorkTarget(source) {
+    if (!source) return SOURCE_WORK_TARGET;
+    var capacity = source.energyCapacity || 3000;
+    var regeneration = typeof ENERGY_REGEN_TIME !== 'undefined' ? ENERGY_REGEN_TIME : 300;
+    var harvestPower = typeof HARVEST_POWER !== 'undefined' ? HARVEST_POWER : 2;
+    return Math.max(1, Math.ceil((capacity / regeneration) / harvestPower));
+}
+
 function getCreepWorkParts(creep) {
     if (!creep) {
         return 0;
@@ -843,6 +851,7 @@ function getAssignedExtractorSummary(sourceRecord) {
         hasHealthyFullWorker: false,
         hasDyingWorker: false,
         oldestTicksToLive: null,
+        workTarget: getSourceWorkTarget(sourceRecord && sourceRecord.source),
         workers: []
     };
 
@@ -904,7 +913,7 @@ function getAssignedExtractorSummary(sourceRecord) {
         }
 
         if (
-            workParts >= SOURCE_WORK_TARGET &&
+            workParts >= summary.workTarget &&
             (ticksToLive === undefined || ticksToLive > EXTRACTOR_HANDOFF_TICKS)
         ) {
             summary.hasHealthyFullWorker = true;
@@ -939,6 +948,7 @@ function sourceHasOpenWorkCapacity(sourceRecord, requestingCreep) {
     var maxSeats = sourceRecord.seatCount;
     var roomName = sourceRecord.source && sourceRecord.source.pos ? sourceRecord.source.pos.roomName : null;
     var assignedSummary = getAssignedExtractorSummary(sourceRecord);
+    var workTarget = getSourceWorkTarget(sourceRecord.source);
 
     if (!maxSeats || maxSeats < 1) {
         maxSeats = getSafeSeatCount(sourceMemory);
@@ -961,7 +971,7 @@ function sourceHasOpenWorkCapacity(sourceRecord, requestingCreep) {
             return false;
         }
 
-        if (assignedSummary.work < SOURCE_WORK_TARGET) {
+        if (assignedSummary.work < workTarget) {
             return true;
         }
 
@@ -986,7 +996,7 @@ function sourceHasOpenWorkCapacity(sourceRecord, requestingCreep) {
      */
     return (
         assignedSummary.count < maxSeats &&
-        assignedSummary.work < SOURCE_WORK_TARGET
+        assignedSummary.work < workTarget
     );
 }
 /**
@@ -1634,7 +1644,7 @@ function summaryHasHealthyFullWorkerOtherThan(summary, creep) {
         }
 
         if (
-            getCreepWorkParts(worker) >= SOURCE_WORK_TARGET &&
+            getCreepWorkParts(worker) >= (summary.workTarget || SOURCE_WORK_TARGET) &&
             (
                 worker.ticksToLive === undefined ||
                 worker.ticksToLive > EXTRACTOR_HANDOFF_TICKS

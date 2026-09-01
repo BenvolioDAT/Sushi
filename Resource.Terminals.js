@@ -1,4 +1,5 @@
 const HiveMemory = require('HiveMind.Memory');
+const Economy = require('HiveMind.Economy');
 const TickIndex = require('HiveMind.Index');
 
 const ENERGY_RESERVE = 20000;
@@ -89,6 +90,7 @@ function validate(transfer) {
         return { ok: false, reason: 'both owned terminals are required' };
     }
     if (from.terminal.cooldown > 0) return { ok: false, reason: 'cooldown' };
+    if (!Economy.canSpend(from, 'resources')) return { ok: false, reason: 'home economy recovery' };
     if (amount(from.terminal.store, RESOURCE_ENERGY) < ENERGY_RESERVE) return { ok: false, reason: 'energy reserve' };
     if (amount(from.terminal.store, transfer.resourceType) < MIN_SEND) return { ok: false, reason: 'resource unavailable' };
     return { ok: true, from, to };

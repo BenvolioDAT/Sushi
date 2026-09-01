@@ -11,6 +11,7 @@ var utility = require('utility');
 var utilityCreep = require('utility.Creep');
 var utilityTravelCreep = require('utility.Travel.Creep');
 var RemotePlanner = require('Planner.Remote');
+var Economy = require('HiveMind.Economy');
 
 var SOURCE_HAUL_SCAN_INTERVAL = 5;
 
@@ -117,6 +118,12 @@ var roleExtractor = {
             return;
         }
 
+        /* During a total wipe the miner temporarily closes the source-to-spawn
+         * loop itself. This stops naturally as soon as local hauling returns. */
+        if (isHomeRoomSource(creep, source) && deliverBootstrapEnergy(creep)) {
+            return;
+        }
+
         // When full, prefer a nearby container/link. If none exists, drop energy
         // so a Trucker can collect it instead of letting the miner stand idle.
         if(!offloadEnergy(creep, source)) {
@@ -126,6 +133,29 @@ var roleExtractor = {
         }
     }
 };
+
+function deliverBootstrapEnergy(creep) {
+    var homeRoomName = creep.memory.homeRoom || creep.room.name;
+    if (creep.room.name !== homeRoomName || !Economy.shouldBootstrapSelfDeliver(homeRoomName)) {
+        return false;
+    }
+
+    var target = creep.pos.findClosestByPath(FIND_MY_STRUCTURES, {
+        filter: function(structure) {
+            return (structure.structureType === STRUCTURE_SPAWN ||
+                structure.structureType === STRUCTURE_EXTENSION) &&
+                structure.store && structure.store.getFreeCapacity(RESOURCE_ENERGY) > 0;
+        }
+    });
+
+    if (!target) return false;
+    var result = creep.transfer(target, RESOURCE_ENERGY);
+    if (result === ERR_NOT_IN_RANGE) {
+        utilityTravelCreep.move(creep, target, { visualizePathStyle: { stroke: '#ff5555' } });
+    }
+    creep.memory.extractorState = 'bootstrapSelfDelivery';
+    return result === OK || result === ERR_NOT_IN_RANGE;
+}
 
 
 

@@ -1,5 +1,7 @@
 const ResourceManager = require('Resource.Manager');
 const travel = require('utility.Travel.Creep');
+const Economy = require('HiveMind.Economy');
+const creepUtility = require('utility.Creep');
 
 function resourceKeys(store) {
     return Object.keys(store || {}).filter(type => typeof store[type] === 'number' && store[type] > 0);
@@ -18,6 +20,15 @@ function moveOrAct(creep, target, action) {
 
 function run(creep) {
     if (!creep || creep.spawning) return;
+    const homeRoomName = creep.memory.homeRoom || creep.room.name;
+    if (!Economy.canSpend(homeRoomName, 'resources')) {
+        ResourceManager.clearJob(creep);
+        if ((creep.store[RESOURCE_ENERGY] || 0) > 0 && creep.room.name === homeRoomName) {
+            creepUtility.fillRoomEnergy(creep);
+        }
+        creep.memory.resourceCourierState = 'heldForHomeEconomy';
+        return;
+    }
     const carriedTypes = resourceKeys(creep.store);
     const job = ResourceManager.getJobForCreep(creep);
     if (carriedTypes.length) {

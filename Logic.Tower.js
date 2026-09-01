@@ -2,6 +2,7 @@ const TickIndex = require('HiveMind.Index');
 const HiveMemory = require('HiveMind.Memory');
 const CombatMath = require('Combat.Math');
 const ThreatLedger = require('Combat.ThreatLedger');
+const Economy = require('HiveMind.Economy');
 
 const FORTIFICATION_BY_RCL = {
     1: 0, 2: 20000, 3: 50000, 4: 100000,
@@ -163,6 +164,7 @@ function peacefulWork(room, towers) {
         for (const tower of towers) if (energy(tower) >= 10) tower.heal(wounded.target);
         return { action: 'heal', target: wounded.target };
     }
+    if (!Economy.canSpend(room, 'criticalMaintenance')) return { action: 'preserve', target: null };
     const target = repairTarget(room);
     if (!target) return { action: 'idle', target: null };
     const reserve = HiveMemory.ensure().settings.towers.repairEnergyReserve || 700;

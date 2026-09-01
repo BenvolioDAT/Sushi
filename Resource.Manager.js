@@ -1,6 +1,7 @@
 const HiveMemory = require('HiveMind.Memory');
 const TickIndex = require('HiveMind.Index');
 const DemandBoard = require('Spawn.DemandBoard');
+const Economy = require('HiveMind.Economy');
 const Minerals = require('Resource.Minerals');
 const Links = require('Resource.Links');
 const Labs = require('Resource.Labs');
@@ -154,6 +155,7 @@ function plan() {
         schedule.mineralPlanTick = Game.time;
     }
     for (const room of TickIndex.get().ownedRooms) {
+        if (!Economy.canSpend(room, 'resources')) continue;
         if (needsCourier(room.name) && Game.time - (schedule.courierDemandTick[room.name] ?? -Infinity) >= 10) {
             emitCourierDemand(room.name);
             schedule.courierDemandTick[room.name] = Game.time;
@@ -165,17 +167,18 @@ function plan() {
 function runRoom(room) {
     const settings = HiveMemory.ensure().settings.resources;
     if (settings.enabled === false) return { roomName: room.name, disabled: true };
-    const report = { roomName: room.name, links: null, labs: null, observer: null, jobs: [] };
+    const discretionary = Economy.canSpend(room, 'resources');
+    const report = { roomName: room.name, links: null, labs: null, observer: null, jobs: [], economyBlocked: !discretionary };
     if (settings.links !== false) report.links = Links.run(room);
     const savedMineral = HiveMemory.ensure().resources.rooms[room.name];
     const shouldObserveMineral = settings.minerals !== false &&
         (!savedMineral || !savedMineral.mineral || (Game.time + roomOffset(room.name, 10)) % 10 === 0);
     const mineralState = settings.minerals !== false ?
         (shouldObserveMineral ? Minerals.observe(room) : savedMineral) : null;
-    addJobs(settings.minerals !== false ? Minerals.jobs(room, mineralState) : []);
+    addJobs(discretionary && settings.minerals !== false ? Minerals.jobs(room, mineralState) : []);
     const labState = HiveMemory.ensure().resources.labs[room.name];
     const labActive = labState && (labState.state !== 'IDLE' || labState.reactionGoal);
-    if (settings.labs !== false && (labActive || (Game.time + roomOffset(room.name, 5)) % 5 === 0)) {
+    if (discretionary && settings.labs !== false && (labActive || (Game.time + roomOffset(room.name, 5)) % 5 === 0)) {
         report.labs = Labs.run(room);
         addJobs(report.labs.jobs);
     }
