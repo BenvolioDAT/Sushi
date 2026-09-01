@@ -143,6 +143,20 @@ function selectAffordableQueuedBodyForSpawn(spawn, request) {
 }
 
 /**
+ * Evaluate an affordable body without changing the queued request. Candidate
+ * scanning must not resize requests that are not ultimately selected.
+ */
+function previewAffordableQueuedBodyForSpawn(spawn, request) {
+    var preview = Object.assign({}, request);
+    var selection = selectAffordableQueuedBodyForSpawn(spawn, preview);
+
+    return {
+        body: selection.affordable ? preview.body : null,
+        selection: selection
+    };
+}
+
+/**
  * Make sure the room memory and spawn queue exist.
  *
  * Queue path:
@@ -466,19 +480,48 @@ function runRoom(roomName) {
 
     var request = null;
     var requestIndex = -1;
+    var bodySelection = null;
     var blockedReasons = {};
+    var unaffordableRoles = [];
 
     for (var queueIndex = 0; queueIndex < queue.length; queueIndex++) {
-        var policy = Economy.canSpawnRequest(spawn.room, queue[queueIndex]);
-        if (policy.allowed) {
-            request = queue[queueIndex];
+        var candidate = queue[queueIndex];
+        var policy = Economy.canSpawnRequest(spawn.room, candidate);
+        if (!policy.allowed) {
+            blockedReasons[candidate && candidate.role || 'unknown'] = policy.reason;
+            continue;
+        }
+
+        /* Select malformed allowed work so the existing cleanup path removes it. */
+        if (!candidate || !candidate.role || !candidate.body) {
+            request = candidate;
             requestIndex = queueIndex;
             break;
         }
-        blockedReasons[queue[queueIndex] && queue[queueIndex].role || 'unknown'] = policy.reason;
+
+        var preview = previewAffordableQueuedBodyForSpawn(spawn, candidate);
+        if (!preview.selection.affordable) {
+            unaffordableRoles.push(candidate.role);
+            continue;
+        }
+
+        request = candidate;
+        requestIndex = queueIndex;
+        request.body = preview.body;
+        bodySelection = preview.selection;
+        break;
     }
 
     if (!request) {
+        if (unaffordableRoles.length > 0) {
+            return {
+                ok: false,
+                result: ERR_NOT_ENOUGH_ENERGY,
+                reason: 'No economy-allowed request has an affordable body',
+                unaffordable: unaffordableRoles,
+                blocked: blockedReasons
+            };
+        }
         return {
             ok: false,
             result: null,
@@ -497,24 +540,6 @@ function runRoom(roomName) {
             ok: false,
             result: ERR_INVALID_ARGS,
             reason: 'Removed bad spawn request'
-        };
-    }
-
-    var bodySelection = selectAffordableQueuedBodyForSpawn(spawn, request);
-
-    if (!bodySelection.affordable) {
-        console.log(
-            'Waiting to spawn ' + request.role +
-            ' in ' + roomName +
-            ': no affordable body for current energy'
-        );
-
-        return {
-            ok: false,
-            result: ERR_NOT_ENOUGH_ENERGY,
-            role: request.role,
-            bodySelection: bodySelection,
-            reason: bodySelection.reason
         };
     }
 
@@ -614,7 +639,7 @@ function runRoom(roomName) {
      * Other errors probably mean the request is bad.
      * Remove it so the queue does not get stuck forever.
      */
-    queue.shift();
+    queue.splice(requestIndex, 1);
 
     return {
         ok: false,
@@ -627,6 +652,7 @@ function runRoom(roomName) {
 module.exports = {
     getBodyCost: getBodyCost,
     selectAffordableQueuedBodyForSpawn: selectAffordableQueuedBodyForSpawn,
+    previewAffordableQueuedBodyForSpawn: previewAffordableQueuedBodyForSpawn,
     getSpawnQueue: getSpawnQueue,
     countAliveRole: countAliveRole,
     countQueuedRole: countQueuedRole,

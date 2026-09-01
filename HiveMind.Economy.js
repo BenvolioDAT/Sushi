@@ -1,5 +1,6 @@
 const HiveMemory = require('HiveMind.Memory');
 const TickIndex = require('HiveMind.Index');
+const Links = require('Resource.Links');
 
 const STATES = Object.freeze({
     SURVIVAL: 'SURVIVAL',
@@ -75,15 +76,150 @@ function getDistance(room, source, dropoff) {
 }
 
 function sourceBacklog(source) {
-    if (!source || !source.pos || typeof source.pos.findInRange !== 'function') return 0;
+    if (!source || !source.pos || typeof source.pos.findInRange !== 'function') {
+        return { energy: 0, containerEnergy: 0, droppedEnergy: 0, containers: 0 };
+    }
     const structures = source.pos.findInRange(FIND_STRUCTURES, 2, {
-        filter: structure => structure.structureType === STRUCTURE_CONTAINER && energyIn(structure) > 0
+        filter: structure => structure.structureType === STRUCTURE_CONTAINER
     }) || [];
     const drops = source.pos.findInRange(FIND_DROPPED_RESOURCES, 3, {
         filter: resource => resource.resourceType === RESOURCE_ENERGY && resource.amount > 0
     }) || [];
-    return structures.reduce((sum, structure) => sum + energyIn(structure), 0) +
-        drops.reduce((sum, resource) => sum + (resource.amount || 0), 0);
+    const containerEnergy = structures.reduce((sum, structure) => sum + energyIn(structure), 0);
+    const droppedEnergy = drops.reduce((sum, resource) => sum + (resource.amount || 0), 0);
+    return {
+        energy: containerEnergy + droppedEnergy,
+        containerEnergy,
+        droppedEnergy,
+        containers: structures.length
+    };
+}
+
+function linkContext(room, index) {
+    const byType = index.structuresByRoom.get(room.name);
+    const links = byType && byType.get(STRUCTURE_LINK) || [];
+    if (links.length === 0) return { roles: { storage: null, controller: null, sources: [] } };
+    return { roles: Links.classify(room, links) };
+}
+
+function sourceLinkFor(source, context) {
+    if (!source || !source.pos || !context || !context.roles) return null;
+    return context.roles.sources.filter(link => link && link.pos &&
+        typeof link.pos.getRangeTo === 'function' && link.pos.getRangeTo(source.pos) <= 2)
+        .sort((a, b) => a.pos.getRangeTo(source.pos) - b.pos.getRangeTo(source.pos) ||
+            String(a.id).localeCompare(String(b.id)))[0] || null;
+}
+
+/* Estimate only the residual income that still needs creep transport. */
+function analyzeSourceTransport(source, expectedIncome, backlog, context) {
+    const sourceLink = sourceLinkFor(source, context);
+    const receivers = context && context.roles ?
+        [context.roles.storage, context.roles.controller].filter(Boolean) : [];
+    const routeUsable = !!sourceLink && receivers.some(link => link.id !== sourceLink.id);
+    const destinationFree = receivers.reduce((sum, link) =>
+        sum + (link.id === (sourceLink && sourceLink.id) ? 0 : Links.free(link)), 0);
+    const sourceLinkEnergy = Links.energy(sourceLink);
+    const sourceLinkFree = Links.free(sourceLink);
+    const cooldown = sourceLink && sourceLink.cooldown || 0;
+    const saturated = !!sourceLink && sourceLinkFree <= Math.max(50, expectedIncome * (cooldown + 1));
+    const destinationBlocked = routeUsable && destinationFree <= 0;
+    const spillIncome = Math.min(expectedIncome, backlog.energy / 50);
+    let linkServedIncome = 0;
+
+    if (routeUsable && !(saturated && destinationBlocked)) {
+        /* A cooldown is normal Link operation; nearby spill is the residual haul load. */
+        linkServedIncome = Math.max(0, expectedIncome - spillIncome);
+    }
+
+    const creepIncome = Math.max(0, expectedIncome - linkServedIncome);
+    const linkBackpressure = sourceLink ? backlog.energy +
+        (saturated && (!routeUsable || destinationBlocked) ? sourceLinkEnergy : 0) : 0;
+    let mode = backlog.containers > 0 ? 'SOURCE_CONTAINER' : 'DIRECT';
+    if (sourceLink && routeUsable) mode = creepIncome > 0 ? 'HYBRID' : 'SOURCE_LINK';
+    else if (sourceLink) mode = 'HYBRID';
+    else if (backlog.energy > 0) mode = 'CREEP_HAUL';
+
+    return {
+        mode,
+        sourceLinkId: sourceLink && sourceLink.id || null,
+        routeUsable,
+        sourceLinkEnergy,
+        sourceLinkFree,
+        cooldown,
+        destinationFree,
+        saturated,
+        destinationBlocked,
+        linkServedIncome,
+        creepIncome,
+        linkBackpressure
+    };
+}
+
+function requestSourceId(request) {
+    const memory = request && request.memory || {};
+    return request && (request.sourceId || request.targetSourceId || request.assignedSource) ||
+        sourceIdFor(memory);
+}
+
+function spawningRemaining(name, spawns) {
+    const spawn = spawns.find(candidate => candidate && candidate.spawning &&
+        candidate.spawning.name === name);
+    return spawn && typeof spawn.spawning.remainingTime === 'number' ? spawn.spawning.remainingTime : 0;
+}
+
+function sourceReplacementCoverage(source, required, distance, assigned, queue, spawns) {
+    const active = assigned.filter(creep => !creep.spawning);
+    const healthy = [];
+    const dying = [];
+    const incoming = [];
+
+    for (const creep of active) {
+        const work = activeParts(creep, WORK);
+        if (creep.ticksToLive === undefined || creep.ticksToLive > replacementLead(creep, distance)) {
+            healthy.push({ work });
+        }
+        else dying.push({ work, at: Math.max(0, creep.ticksToLive || 0) });
+    }
+    for (const creep of assigned.filter(candidate => candidate.spawning)) {
+        incoming.push({
+            work: bodyParts(creep.body, WORK),
+            at: spawningRemaining(creep.name, spawns) + distance
+        });
+    }
+
+    let queueDelay = spawns.reduce((longest, spawn) => Math.max(longest,
+        spawn && spawn.spawning && spawn.spawning.remainingTime || 0), 0);
+    for (const request of queue) {
+        const spawnTime = (request && request.body ? request.body.length : 0) * 3;
+        queueDelay += spawnTime;
+        if ((request.role || request.memory && request.memory.role) === 'Extractor' &&
+            requestSourceId(request) === source.id) {
+            incoming.push({ work: bodyParts(request.body, WORK), at: queueDelay + distance });
+        }
+    }
+
+    const healthyWork = healthy.reduce((sum, row) => sum + row.work, 0);
+    const dyingWork = dying.reduce((sum, row) => sum + row.work, 0);
+    const incomingWork = incoming.reduce((sum, row) => sum + row.work, 0);
+    let uncoveredWork = Math.max(0, required - healthyWork - dyingWork);
+    for (const loss of dying.slice().sort((a, b) => a.at - b.at)) {
+        const remainingDying = dying.filter(row => row.at > loss.at)
+            .reduce((sum, row) => sum + row.work, 0);
+        const arrived = incoming.filter(row => row.at <= loss.at)
+            .reduce((sum, row) => sum + row.work, 0);
+        uncoveredWork = Math.max(uncoveredWork,
+            Math.max(0, required - healthyWork - remainingDying - arrived));
+    }
+    if (active.length === 0 && incomingWork === 0) uncoveredWork = Math.max(uncoveredWork, required);
+
+    return {
+        healthyWork,
+        dyingWork,
+        incomingWork,
+        replacementPending: incomingWork > 0,
+        replacementRisk: uncoveredWork > 0,
+        replacementUncoveredWork: uncoveredWork
+    };
 }
 
 function pendingLocalParts(roomName, role, partType) {
@@ -108,6 +244,8 @@ function buildSnapshot(room, previous) {
     const sources = typeof room.find === 'function' ? room.find(FIND_SOURCES) || [] : [];
     const spawns = index.ownedSpawnsByRoom.get(room.name) || [];
     const dropoff = room.storage || spawns[0] || null;
+    const queue = Memory.rooms && Memory.rooms[room.name] && Memory.rooms[room.name].spawnQueue || [];
+    const transportContext = linkContext(room, index);
     const sourceRows = [];
     let workRequired = 0;
     let workActive = 0;
@@ -115,6 +253,9 @@ function buildSnapshot(room, previous) {
     let incomeEstimated = 0;
     let backlog = 0;
     let replacementRisk = 0;
+    let creepHaulIncome = 0;
+    let linkServedIncome = 0;
+    let linkBackpressure = 0;
 
     for (const source of sources) {
         const capacity = source.energyCapacity || 3000;
@@ -123,24 +264,28 @@ function buildSnapshot(room, previous) {
         const required = Math.max(1, Math.ceil((capacity / regeneration) / harvestPower));
         const assigned = creeps.filter(creep => isLocalExtractor(creep, room.name) &&
             sourceIdFor(creep.memory) === source.id);
-        const activeWork = assigned.reduce((sum, creep) => sum + activeParts(creep, WORK), 0);
+        const activeAssigned = assigned.filter(creep => !creep.spawning);
+        const activeWork = activeAssigned.reduce((sum, creep) => sum + activeParts(creep, WORK), 0);
         const distance = getDistance(room, source, dropoff);
-        const stationedWork = assigned.reduce((sum, creep) => {
+        const stationedWork = activeAssigned.reduce((sum, creep) => {
             if (!creep.pos || creep.pos.roomName !== room.name ||
                 typeof creep.pos.getRangeTo !== 'function' || creep.pos.getRangeTo(source.pos) > 1) return sum;
             return sum + activeParts(creep, WORK);
         }, 0);
         const sourceIncome = capacity / regeneration;
         const estimated = Math.min(sourceIncome, stationedWork * harvestPower);
-        const sourceRisk = assigned.some(creep => creep.ticksToLive !== undefined &&
-            creep.ticksToLive <= replacementLead(creep, distance));
         const rowBacklog = sourceBacklog(source);
+        const transport = analyzeSourceTransport(source, sourceIncome, rowBacklog, transportContext);
+        const coverage = sourceReplacementCoverage(source, required, distance, assigned, queue, spawns);
         workRequired += required;
         workActive += activeWork;
         incomeExpected += sourceIncome;
         incomeEstimated += estimated;
-        backlog += rowBacklog;
-        if (sourceRisk || assigned.length === 0) replacementRisk++;
+        backlog += rowBacklog.energy;
+        creepHaulIncome += transport.creepIncome;
+        linkServedIncome += transport.linkServedIncome;
+        linkBackpressure += transport.linkBackpressure;
+        if (coverage.replacementRisk) replacementRisk++;
         sourceRows.push({
             id: source.id,
             energy: source.energy || 0,
@@ -152,15 +297,19 @@ function buildSnapshot(room, previous) {
             workActive: activeWork,
             expectedIncome: Math.round(sourceIncome * 100) / 100,
             estimatedIncome: Math.round(estimated * 100) / 100,
-            backlog: rowBacklog,
-            replacementRisk: sourceRisk
+            backlog: rowBacklog.energy,
+            transport,
+            ...coverage
         });
     }
 
     /* Unassigned local Extractors still matter during the few ticks before they claim a source. */
     const localExtractors = creeps.filter(creep => isLocalExtractor(creep, room.name));
-    const unassignedWork = localExtractors.filter(creep => !sourceIdFor(creep.memory))
+    const unassignedWork = localExtractors.filter(creep => !creep.spawning && !sourceIdFor(creep.memory))
         .reduce((sum, creep) => sum + activeParts(creep, WORK), 0);
+    const spawningWork = localExtractors.filter(creep => creep.spawning)
+        .reduce((sum, creep) => sum + bodyParts(creep.body, WORK), 0);
+    const queuedWork = pendingLocalParts(room.name, 'Extractor', WORK);
     workActive += unassignedWork;
 
     const freighters = creeps.filter(creep => creep && creep.memory && creep.memory.role === 'Freighter' &&
@@ -172,13 +321,8 @@ function buildSnapshot(room, previous) {
         creep.memory.freighterJob === 'remoteDelivery')
         .reduce((sum, creep) => sum + activeParts(creep, CARRY), 0);
     const localCarry = Math.max(0, activeCarry - remoteCarry);
-    const requiredCarry = Math.max(sources.length ? 2 : 0, Math.ceil(sourceRows.reduce((sum, source) =>
-        sum + source.expectedIncome * Math.max(2, source.distance * 2 + 4) / 50, 0) * 1.15));
-    for (const creep of freighters) {
-        if (creep.ticksToLive !== undefined && creep.ticksToLive <= replacementLead(creep, 25)) {
-            replacementRisk++;
-        }
-    }
+    const requiredCarry = Math.ceil(sourceRows.reduce((sum, source) =>
+        sum + source.transport.creepIncome * Math.max(2, source.distance * 2 + 4) / 50, 0) * 1.15);
 
     const storageEnergy = energyIn(room.storage);
     const terminalEnergy = energyIn(room.terminal);
@@ -195,8 +339,15 @@ function buildSnapshot(room, previous) {
         (creep.memory.remoteMining === true || creep.memory.freighterJob === 'remote' ||
             creep.memory.freighterJob === 'remoteDelivery' ||
             creep.memory.remoteWorkTargetId)).length;
-    const queue = Memory.rooms && Memory.rooms[room.name] && Memory.rooms[room.name].spawnQueue || [];
     const busySpawns = spawns.filter(spawn => spawn && spawn.spawning).length;
+    const usefulCarry = creeps.reduce((sum, creep) => sum + (!creep.spawning ? activeParts(creep, CARRY) : 0), 0);
+    const selfDeliverWork = localExtractors.reduce((sum, creep) => sum +
+        (!creep.spawning && activeParts(creep, CARRY) > 0 ? activeParts(creep, WORK) : 0), 0);
+    const storedForRecovery = storageEnergy + terminalEnergy + backlog;
+    const recoverableStoredEnergy = usefulCarry > 0 ? storedForRecovery : 0;
+    const extractorFloor = 200;
+    const floorReachable = energyAvailable >= extractorFloor || selfDeliverWork > 0 ||
+        energyAvailable + recoverableStoredEnergy >= extractorFloor;
 
     return {
         roomName: room.name,
@@ -218,16 +369,30 @@ function buildSnapshot(room, previous) {
             actualOrEstimatedIncome: Math.round(incomeEstimated * 100) / 100,
             workRequired,
             workActive,
-            workQueued: pendingLocalParts(room.name, 'Extractor', WORK),
+            workQueued: queuedWork,
+            workSpawning: spawningWork,
+            workIncoming: queuedWork + spawningWork,
             sources: sourceRows
         },
         haul: {
             requiredCarry,
+            creepRequiredCarry: requiredCarry,
             activeCarry,
             localCarry,
             queuedCarry: pendingLocalParts(room.name, 'Freighter', CARRY),
             remoteCarry,
-            backlog
+            backlog,
+            creepHaulIncome: Math.round(creepHaulIncome * 100) / 100,
+            linkServedIncome: Math.round(linkServedIncome * 100) / 100,
+            linkBackpressure
+        },
+        bootstrap: {
+            extractorFloor,
+            floorReachable,
+            recoverableStoredEnergy,
+            usefulCarry,
+            selfDeliverWork,
+            unrecoverable: !floorReachable
         },
         replacementRisk,
         remoteCommitments,
@@ -243,16 +408,27 @@ function rawState(snapshot) {
         harvest.actualOrEstimatedIncome / harvest.expectedIncome : 1;
     const haulRatio = haul.requiredCarry > 0 ? haul.localCarry / haul.requiredCarry : 1;
     const reserves = snapshot.storageEnergy + snapshot.terminalEnergy;
-    const functionalMining = harvest.workActive > 0;
+    const capacityExists = harvest.workActive +
+        (harvest.workIncoming === undefined ? harvest.workQueued || 0 : harvest.workIncoming) > 0;
+    const energyFlowing = harvest.actualOrEstimatedIncome > 0;
 
-    if (!functionalMining) return { state: STATES.SURVIVAL, reason: 'zero functional local source miners' };
+    if (!capacityExists) {
+        if (snapshot.bootstrap && snapshot.bootstrap.unrecoverable) {
+            return { state: STATES.SURVIVAL, reason: 'bootstrap energy floor not reachable' };
+        }
+        return { state: STATES.SURVIVAL, reason: 'zero functional local source miners' };
+    }
+    if (!energyFlowing && snapshot.spawnFill < 0.15 && reserves < 500) {
+        return { state: STATES.SURVIVAL, reason: 'no local source energy flowing at critical reserves' };
+    }
     if (snapshot.spawnFill < 0.15 && reserves < 500 && incomeRatio < 0.45) {
         return { state: STATES.SURVIVAL, reason: 'spawn energy critically low and harvest income below replacement level' };
     }
     if (harvestRatio < 0.9 || incomeRatio < 0.65) {
         return { state: STATES.RECOVERY, reason: 'harvesting below sustainable local demand' };
     }
-    if (haulRatio < 0.85 || haul.backlog > Math.max(500, haul.activeCarry * 75)) {
+    if (haulRatio < 0.85 || haul.backlog > Math.max(500, haul.activeCarry * 75) ||
+        (haul.linkBackpressure || 0) > 500) {
         return { state: STATES.RECOVERY, reason: 'harvest restored, logistics below demand' };
     }
     if (snapshot.spawnFill < 0.45 && reserves < 2000 &&
@@ -408,5 +584,8 @@ module.exports = {
     checkSpend,
     canSpawnRequest,
     categoryForRequest,
-    shouldBootstrapSelfDeliver
+    shouldBootstrapSelfDeliver,
+    buildSnapshot,
+    analyzeSourceTransport,
+    sourceReplacementCoverage
 };
