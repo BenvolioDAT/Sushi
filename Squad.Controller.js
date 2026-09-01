@@ -185,6 +185,7 @@ function emitDemands(squad) {
     if (TERMINAL.has(squad.state) || squad.replacementRequirements && squad.replacementRequirements.enabled === false) return [];
     const operation = squad.operationId && HiveMemory.ensure().operations[squad.operationId];
     const emergency = !!(operation && operation.priority >= 95);
+    const ownedDefense = !!(operation && operation.type === 'DEFEND_OWNED_ROOM');
     const demands = [
         { slot: 'attacker', role: 'Volley', capabilities: { ranged: 1 } },
         { slot: 'healer', role: 'Cleric', capabilities: { heal: 1 } }
@@ -203,7 +204,12 @@ function emitDemands(squad) {
         replacementBuffer: squad.expectedTravelTime + 75,
         validUntil: Game.time + 5,
         emergency,
-        memory: { squadSlot: specification.slot, formationRole: specification.slot },
+        defenseRequest: ownedDefense,
+        defendedRoom: ownedDefense ? operation.targetRoom : null,
+        economyCategory: ownedDefense ? 'emergencyDefense' : 'combat',
+        memory: { squadSlot: specification.slot, formationRole: specification.slot,
+            defenseRequest: ownedDefense, defendedRoom: ownedDefense ? operation.targetRoom : null,
+            economyCategory: ownedDefense ? 'emergencyDefense' : 'combat' },
         reason: `${squad.type} ${squad.state}`
     }));
     squad.demandIds = demands.map(demand => demand.id);
@@ -576,7 +582,8 @@ function execute() {
     const controlled = new Set();
     if (HiveMemory.getConfig('combat').squads.enabled === false) return controlled;
     const squads = Object.values(HiveMemory.ensure().squads)
-        .filter(Boolean).sort((a, b) => String(a.id).localeCompare(String(b.id)));
+        .filter(squad => squad && !TERMINAL.has(squad.state))
+        .sort((a, b) => String(a.id).localeCompare(String(b.id)));
     for (const squad of squads) {
         const members = QuadController.TYPES.includes(squad.type) ?
             QuadController.runSquad(squad) : runSquad(squad);

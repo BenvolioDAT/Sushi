@@ -19,6 +19,7 @@ var spawnUtility = require('utility.spawn');
 var creepBodyConfig = require('role.creepBodyConfig');
 var Economy = require('HiveMind.Economy');
 var HiveMemory = require('HiveMind.Memory');
+var SpawnArbiter = require('Spawn.Arbiter');
 
 var getBodyCost = creepBodyConfig.getBodyCost;
 
@@ -427,6 +428,7 @@ function findIdleSpawn(roomName) {
  */
 function runRoom(roomName) {
     var queue = getSpawnQueue(roomName);
+    SpawnArbiter.pruneRoom(roomName);
 
     /*
      * Empty queue is a normal success state. Nothing is wrong; there is simply
@@ -474,6 +476,15 @@ function runRoom(roomName) {
 
     for (var queueIndex = 0; queueIndex < queue.length; queueIndex++) {
         var candidate = queue[queueIndex];
+        var finalAdmission = SpawnArbiter.revalidate(spawn.room, candidate);
+        if (!finalAdmission.allowed) {
+            blockedReasons[candidate && candidate.role || 'unknown'] = finalAdmission.reason;
+            if (finalAdmission.reason === 'request expired' || finalAdmission.reason === 'operation is terminal') {
+                queue.splice(queueIndex, 1);
+                queueIndex--;
+            }
+            continue;
+        }
         var policy = Economy.canSpawnRequest(spawn.room, candidate);
         if (!policy.allowed) {
             blockedReasons[candidate && candidate.role || 'unknown'] = policy.reason;

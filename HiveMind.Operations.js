@@ -1,6 +1,7 @@
 const HiveMemory = require('HiveMind.Memory');
 const Utility = require('HiveMind.Utility');
 const DemandBoard = require('Spawn.DemandBoard');
+const Economy = require('HiveMind.Economy');
 
 const TYPES = Object.freeze([
     'DEFEND_OWNED_ROOM', 'DEFEND_REMOTE', 'RECOVER_ROOM', 'EXPAND',
@@ -112,17 +113,59 @@ function syncExpansion() {
     return operation;
 }
 
-function runOperation(operation) {
+function prerequisiteDecision(operation, budgets) {
+    const emergency = operation.type === 'DEFEND_OWNED_ROOM';
+    if (operation.timeoutTick && Game.time > operation.timeoutTick) return { decision: 'abort', reason: 'Operation timed out' };
+    if (['ATTACK_PLAYER', 'RAID_REMOTE', 'CONTEST_REACTOR'].includes(operation.type) && operation.policyApproved !== true) {
+        return { decision: 'wait', reason: 'Waiting for explicit policy and viability approval' };
+    }
+    const origin = operation.originRoom && Game.rooms[operation.originRoom];
+    if (!emergency && operation.spawnDemands && operation.spawnDemands.length &&
+        (!origin || !origin.controller || !origin.controller.my)) {
+        return { decision: 'wait', reason: 'No viable owned origin colony' };
+    }
+    if (!emergency && origin) {
+        const economy = Economy.get(origin.name);
+        if (economy && ['SURVIVAL', 'RECOVERY'].includes(economy.state)) {
+            return { decision: 'wait', reason: `${origin.name} economy is ${economy.state}` };
+        }
+    }
+    const total = operation.utility && operation.utility.total || 0;
+    if (!emergency && total < budgets.minimumUtility) return { decision: 'deny', reason: 'Utility below strategy threshold' };
+    if (!emergency && budgets.empireUsed >= budgets.empireLimit) return { decision: 'wait', reason: 'Empire operation budget exhausted' };
+    const colony = operation.respondingColony || operation.originRoom || 'empire';
+    if (!emergency && (budgets.byColony[colony] || 0) >= budgets.colonyLimit) {
+        return { decision: 'wait', reason: `Colony operation budget exhausted for ${colony}` };
+    }
+    if (!emergency) {
+        budgets.empireUsed++;
+        budgets.byColony[colony] = (budgets.byColony[colony] || 0) + 1;
+    }
+    return { decision: 'allow', reason: emergency ? 'Emergency owned-room defense' : 'Prerequisites and strategy budget accepted' };
+}
+
+function runOperation(operation, budgets) {
     if (operation.timeoutTick && Game.time > operation.timeoutTick) {
         abort(operation.id, 'Operation timed out');
         return;
     }
-    if (operation.state === 'PENDING') transition(operation, 'ACTIVE', 'Operation prerequisites accepted');
+    const result = prerequisiteDecision(operation, budgets);
+    operation.strategyDecision = result.decision;
+    operation.strategyReason = result.reason;
+    operation.strategyTick = Game.time;
+    if (result.decision === 'abort') abort(operation.id, result.reason);
+    else if (result.decision === 'allow' && ['PENDING', 'RECOVERING'].includes(operation.state)) {
+        transition(operation, 'ACTIVE', result.reason);
+    }
+    else if (result.decision !== 'allow' && operation.state === 'ACTIVE' && operation.type !== 'DEFEND_OWNED_ROOM') {
+        transition(operation, 'RECOVERING', result.reason);
+    }
 }
 
 function emitDemands() {
     for (const operation of Object.values(HiveMemory.ensure().operations)) {
-        if (!operation || TERMINAL_STATES.has(operation.state)) continue;
+        if (!operation || TERMINAL_STATES.has(operation.state) ||
+            operation.strategyDecision && operation.strategyDecision !== 'allow') continue;
         for (const specification of operation.spawnDemands || []) {
             const demand = DemandBoard.emit({
                 ...specification,
@@ -147,12 +190,20 @@ function cleanup() {
     }
 }
 
-function run() {
+function run(ranked) {
     syncExpansion();
-    const active = Object.values(HiveMemory.ensure().operations)
+    const settings = HiveMemory.getConfig('combat').strategy;
+    const active = (ranked || Object.values(HiveMemory.ensure().operations))
         .filter(operation => operation && !TERMINAL_STATES.has(operation.state))
-        .sort((a, b) => b.priority - a.priority || a.id.localeCompare(b.id));
-    for (const operation of active.slice(0, 25)) runOperation(operation);
+        .sort((a, b) => (b.utility && b.utility.total || 0) - (a.utility && a.utility.total || 0) ||
+            b.priority - a.priority || a.id.localeCompare(b.id));
+    const budgets = {
+        empireLimit: Math.max(0, settings.maxActiveNonEmergency || 3),
+        colonyLimit: Math.max(0, settings.maxActivePerColony || 2),
+        minimumUtility: Number.isFinite(settings.minimumUtility) ? settings.minimumUtility : -100,
+        empireUsed: 0, byColony: {}
+    };
+    for (const operation of active.slice(0, 25)) runOperation(operation, budgets);
     emitDemands();
     if (Game.time % 100 === 0) cleanup();
     return active;
@@ -160,5 +211,5 @@ function run() {
 
 module.exports = {
     TYPES, create, get, transition, abort, rescore,
-    syncExpansion, emitDemands, cleanup, run
+    syncExpansion, emitDemands, cleanup, prerequisiteDecision, run
 };

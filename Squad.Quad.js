@@ -250,6 +250,7 @@ function emitDemands(squad) {
         return [];
     }
     const offensive = operation && ['ATTACK_PLAYER', 'RAID_REMOTE', 'CONTEST_REACTOR'].includes(operation.type);
+    const ownedDefense = !!(operation && operation.type === 'DEFEND_OWNED_ROOM');
     const definitionsBySlot = new Map(definitions(squad.type).map(definition => [definition.slot, definition]));
     const demands = squad.memberSlots.map(slot => {
         const definition = definitionsBySlot.get(slot);
@@ -268,10 +269,16 @@ function emitDemands(squad) {
             replacementBuffer: squad.expectedTravelTime + 100,
             validUntil: Game.time + 5,
             emergency: !!(operation && operation.priority >= 95),
+            defenseRequest: ownedDefense,
+            defendedRoom: ownedDefense ? operation.targetRoom : null,
+            economyCategory: ownedDefense ? 'emergencyDefense' : 'combat',
             memory: {
                 squadSlot: slot,
                 formationRole: slot,
-                allowOffensiveTargets: offensive && operation.policyApproved === true
+                allowOffensiveTargets: offensive && operation.policyApproved === true,
+                defenseRequest: ownedDefense,
+                defendedRoom: ownedDefense ? operation.targetRoom : null,
+                economyCategory: ownedDefense ? 'emergencyDefense' : 'combat'
             },
             reason: `${squad.type} ${squad.state}`
         });

@@ -3,7 +3,21 @@ const SCHEMA_VERSION = 8;
 const CONFIG_DEFAULTS = Object.freeze({
     general: { enabled: true, useTrafficManager: true },
     cpu: { telemetry: { persistInterval: 100, debug: false } },
-    spawn: {}, economy: {},
+    spawn: {
+        enabled: true, maxQueueLengthPerRoom: 8, maxNewRequestsPerRoomPerTick: 2,
+        combatSpawnShare: 0.5,
+        roleCaps: { Foreman: 1, Scout: 1, Annex: 4, Ronin: 4, Volley: 4, Cleric: 3,
+            Tech: 3, Artificer: 3, Extractor: 6, Freighter: 6, Pioneer: 2,
+            SupplyRunner: 2, ThoriumMiner: 2, ThoriumHauler: 4, ReactorClaimer: 1 },
+        maxCreepsPerRoomByRcl: { RCL1: 10, RCL2: 16, RCL3: 20, RCL4: 26,
+            RCL5: 30, RCL6: 36, RCL7: 40, RCL8: 46 }
+    },
+    economy: {}, lifecycle: { hysteresisTicks: 5, milestoneTimeout: 1500 },
+    memoryGC: {
+        interval: 101, workBudget: 25, squadRetention: 250, operationRetention: 1000,
+        demandRetention: 25, queueRetention: 50, playerRetention: 50000,
+        intelRetention: 20000, expansionRetention: 10000, debugRetention: 5000
+    },
     upgrade: {
         autoCpuUpgradeBoost: true, cpuUpgradeBoostMaximum: 1.75,
         cpuUpgradeMinimumBucket: 7000, cpuUpgradeMinimumStorage: 50000,
@@ -14,7 +28,8 @@ const CONFIG_DEFAULTS = Object.freeze({
         diplomacy: { incidentHalfLife: 5000, hostileThreshold: 100 },
         towers: { energyReserve: 200, repairEnergyReserve: 700 },
         safeMode: { enabled: true, manualConfirmation: true },
-        strategy: { enabled: true, scoreInterval: 17, maxCandidates: 12 },
+        strategy: { enabled: true, scoreInterval: 17, maxCandidates: 12,
+            maxActiveNonEmergency: 3, maxActivePerColony: 2, minimumUtility: -100 },
         squads: { enabled: true, autoDefenseDuos: true, quadsEnabled: true, autoDefenseQuads: true }
     },
     resources: {
@@ -65,8 +80,12 @@ function ensureObject(parent, key) {
     return parent[key];
 }
 
+let cachedSchema = null;
+
 function ensureNewSchema() {
     if (typeof Memory === 'undefined') return { hive: {}, config: {}, rooms: {}, cpu: {}, meta: {} };
+    if (cachedSchema && cachedSchema.memory === Memory && cachedSchema.hive === Memory.hive &&
+        cachedSchema.config === Memory.config && cachedSchema.rooms === Memory.rooms) return cachedSchema;
     const meta = ensureObject(Memory, 'meta');
     const config = ensureObject(Memory, 'config');
     const hive = ensureObject(Memory, 'hive');
@@ -96,7 +115,8 @@ function ensureNewSchema() {
         if (!isObject(squad.stateTimeouts)) squad.stateTimeouts = {};
         if (!Array.isArray(squad.demandIds)) squad.demandIds = [];
     }
-    return { meta, config, hive, cpu, rooms: Memory.rooms };
+    cachedSchema = { memory: Memory, meta, config, hive, cpu, rooms: Memory.rooms };
+    return cachedSchema;
 }
 
 function copySetting(config, legacy, key, domain, targetKey) {
@@ -194,6 +214,7 @@ function migrateSeason11(config, hive, legacy) {
 }
 
 function migrate7To8() {
+    cachedSchema = null;
     const originalConfig = Memory.config;
     const existingConfig = isObject(Memory.config) ? clone(Memory.config) : {};
     try {
@@ -256,6 +277,7 @@ function migrate() {
         meta.migratedAt = typeof Game !== 'undefined' && typeof Game.time === 'number' ? Game.time : 0;
         meta.lastMigration = '7-to-8-memory-architecture';
     }
+    cachedSchema = null;
     const schema = ensureNewSchema();
     if (!schema.meta.schemaVersion || schema.meta.schemaVersion < SCHEMA_VERSION) schema.meta.schemaVersion = SCHEMA_VERSION;
     return schema.hive;
@@ -352,8 +374,14 @@ function memoryMap() {
         if (remotes.length) lines.push(`    Remotes: ${remotes.join(', ')}`);
     }
     lines.push('', 'CPU', `  Status: ${(Memory.cpu && Memory.cpu.status && Memory.cpu.status.mode || 'unknown').toUpperCase()}`);
-    lines.push('', 'HIVE', `  Operations: ${Object.keys(hive.operations || {}).length}`,
-        `  Squads: ${Object.keys(hive.squads || {}).length}`, `  Threats: ${Object.keys(hive.threats || {}).length}`);
+    const stale = hive.gc && hive.gc.lastReport && hive.gc.lastReport.stale || 0;
+    lines.push('', 'HIVE', `  Rooms: ${Object.keys(Memory.rooms || {}).length}`,
+        `  Operations: ${Object.keys(hive.operations || {}).length}`,
+        `  Squads: ${Object.keys(hive.squads || {}).length}`,
+        `  Demands: ${Object.keys(hive.demands || {}).length}`,
+        `  Threats: ${Object.keys(hive.threats || {}).length}`,
+        `  Expansion candidates: ${Object.keys(hive.expansion && hive.expansion.candidates || {}).length}`,
+        `  Stale records: ${stale}`);
     let size = 0;
     try { size = JSON.stringify(Memory).length; }
     catch (error) { /* Partially malformed Memory remains inspectable. */ }

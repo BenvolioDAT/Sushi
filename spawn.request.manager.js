@@ -23,6 +23,7 @@ var DemandBoard = require('Spawn.DemandBoard');
 var SquadController = require('Squad.Controller');
 var HiveMemory = require('HiveMind.Memory');
 var Economy = require('HiveMind.Economy');
+var SpawnArbiter = require('Spawn.Arbiter');
 
 var RESERVE_DESIRED_TICKS = 4000;
 var RESERVE_SPAWN_AT_TICKS = 2500;
@@ -800,28 +801,11 @@ function addSpawnRequest(roomName, request, options) {
         };
     }
 
-    var allowed = canAddSpawnRequest(context, request, options);
-
-    if (!allowed.ok) {
-        recordDenied(context, role, allowed.reason);
-
-        return {
-            ok: false,
-            role: role,
-            requested: 0,
-            reason: allowed.reason
-        };
+    var result = SpawnArbiter.admit(roomName, request, Object.assign({ producer: 'legacy' }, options || {}));
+    if (!result.ok) {
+        recordDenied(context, role, result.reason);
+        return result;
     }
-
-    if (request.requestedAt === undefined) {
-        request.requestedAt = Game.time;
-    }
-
-    if (options && options.emergency === true) {
-        request.emergency = true;
-    }
-
-    queue.push(request);
 
     if (
         context &&
@@ -832,13 +816,13 @@ function addSpawnRequest(roomName, request, options) {
         context.emergencyMinimumBypassByRole[role] = true;
     }
 
-    updateContextForQueuedRequest(context, request);
-    sortSpawnQueue(queue);
+    if (result.requested > 0) updateContextForQueuedRequest(context, result.request);
 
     return {
         ok: true,
         role: role,
-        requested: 1
+        requested: result.requested,
+        reason: result.reason
     };
 }
 
@@ -3877,6 +3861,7 @@ function runForRoom(room, options) {
 
     report.ok = true;
     options = options || {};
+    SpawnArbiter.pruneRoom(room.name);
 
     var context = buildRoomPlanningContext(
         room,

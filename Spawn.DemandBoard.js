@@ -3,12 +3,13 @@ const TickIndex = require('HiveMind.Index');
 const spawnManager = require('spawn.manager');
 const bodyConfig = require('role.creepBodyConfig');
 const Economy = require('HiveMind.Economy');
+const Arbiter = require('Spawn.Arbiter');
 
 function tickState() {
     const hive = HiveMemory.ensure();
     if (!global.__sushiDemandBoard || global.__sushiDemandBoard.tick !== Game.time ||
         global.__sushiDemandBoard.hive !== hive) {
-        global.__sushiDemandBoard = { tick: Game.time, hive, demands: new Map(), emitted: new Set() };
+        global.__sushiDemandBoard = { tick: Game.time, hive, demands: new Map(), emitted: new Set(), hydrated: false };
     }
     return global.__sushiDemandBoard;
 }
@@ -37,9 +38,13 @@ function plainDemand(input) {
         bodyRequirements: input.bodyRequirements ? { ...input.bodyRequirements } : null,
         boostRequirements: input.boostRequirements ? { ...input.boostRequirements } : null,
         replacementBuffer: Number.isFinite(input.replacementBuffer) ? input.replacementBuffer : 50,
-        validUntil: Number.isFinite(input.validUntil) ? input.validUntil : Game.time + 25,
+        validUntil: Number.isFinite(input.validUntil) ? input.validUntil :
+            Game.time + (HiveMemory.getConfig('memoryGC').demandRetention || 25),
         emergency: input.emergency === true,
+        defenseRequest: input.defenseRequest === true,
+        defendedRoom: input.defendedRoom || null,
         economyCategory: input.economyCategory || null,
+        producer: input.producer || 'demandBoard',
         memory: input.memory ? { ...input.memory } : {},
         reason: input.reason || null,
         emittedTick: Game.time
@@ -49,6 +54,8 @@ function plainDemand(input) {
 
 function beginTick() {
     const state = tickState();
+    if (state.hydrated) return state;
+    state.hydrated = true;
     const hive = HiveMemory.ensure();
     for (const [id, saved] of Object.entries(hive.demands)) {
         const operation = saved.operationId && hive.operations[saved.operationId];
@@ -191,9 +198,8 @@ function chooseSpawnRoom(demand) {
 }
 
 function queueDemand(demand, room, count) {
-    const queue = spawnManager.getSpawnQueue(room.name);
     const body = bodyForDemand(demand, room);
-    if (!queue || !body) return 0;
+    if (!body) return 0;
     let added = 0;
     const limit = Math.min(count, demand.emergency ? 3 : 1);
     for (let i = 0; i < limit; i++) {
@@ -208,7 +214,7 @@ function queueDemand(demand, room, count) {
             boostRequirements: demand.boostRequirements
         };
         Object.assign(memory, demand.memory || {});
-        queue.push({
+        const result = Arbiter.admit(room.name, {
             role: demand.role,
             body,
             priority: demand.priority,
@@ -216,13 +222,14 @@ function queueDemand(demand, room, count) {
             demandId: demand.id,
             operationId: demand.operationId,
             economyCategory: demand.economyCategory,
+            emergency: demand.emergency,
+            defenseRequest: demand.defenseRequest,
+            defendedRoom: demand.defendedRoom,
             memory,
-            requestedAt: Game.time,
             expiresAt: demand.validUntil
-        });
-        added++;
+        }, { producer: demand.producer || 'demandBoard', emergency: demand.emergency, ttl: 5 });
+        if (result.ok) added += result.requested;
     }
-    queue.sort((a, b) => (b.priority || 0) - (a.priority || 0) || (a.requestedAt || 0) - (b.requestedAt || 0));
     return added;
 }
 

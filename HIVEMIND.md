@@ -41,6 +41,8 @@ The main layers are:
 - `HiveMind.Telemetry`: heap measurements for every tick and a compact rolling
   Memory sample at a configurable interval.
 - `HiveMind.Memory`: additive schema defaults and migration.
+- `HiveMind.ColonyState`: lifecycle and danger overlays independent of economy health.
+- `HiveMind.MemoryGC`: staggered bounded retention for known Sushi-owned records.
 - `HiveMind.Operations`: durable lifecycle records and adapters for existing
   systems.
 - `HiveMind.Utility`: a shared, inspectable scoring model.
@@ -108,6 +110,32 @@ The Thorium aging calculation is an explicit planning estimate for live
 calibration, not a claim that the exact aging formula is exposed by the season
 API.
 
+The score now controls execution. Eligible operations are ordered by utility,
+priority, and stable id. `PENDING` work must pass origin, economy,
+offense-policy, utility, empire-budget, and per-colony budget checks before it
+can become `ACTIVE`. Defaults allow three simultaneous non-emergency operations
+empire-wide and two per colony. Each operation records `strategyDecision`,
+`strategyReason`, and `strategyTick`. Owned-room emergency defense wakes
+immediately; waiting, denied, completed, and aborted work emits no runtime
+demands.
+
+## Colony lifecycle
+
+Lifecycle is separate from economy and danger:
+
+| Phase | Meaning |
+| --- | --- |
+| `OWNED_NO_SPAWN` | Owned controller without an owned Spawn |
+| `BOOTSTRAP` | Spawn exists but harvesting, hauling, filling, or essential worker coverage is not sustainable |
+| `GROWTH` | Sustainable RCL1-RCL4 colony working through critical milestones |
+| `DEVELOPMENT` | RCL5-RCL7 colony adding advanced infrastructure while preserving reserves |
+| `MATURE` | RCL8 core economy and infrastructure operating |
+
+`PEACE`, `THREATENED`, and `SIEGE` are alert overlays. Only the small phase,
+alert, milestone, unmet-reason, and hysteresis record persists in
+`Memory.rooms[room].colony`; measurements remain heap-first. The dashboard
+shows phase, alert, and the first blocking milestone reason.
+
 ## Spawn demand flow
 
 Producers call `Spawn.DemandBoard.emit` with a stable id, operation/squad id,
@@ -121,12 +149,43 @@ At spawn-planning time the board:
 2. counts healthy living creeps, currently spawning creeps, and queued work;
 3. ignores creeps that cannot survive their replacement lead;
 4. selects a survival-ready owned spawn room with enough capacity;
-5. queues only the missing count through `spawn.manager`;
+5. submits only the missing count through `Spawn.Arbiter`;
 6. removes stale queue items.
 
 Existing expansion, defense, Season 11, squad, mineral, and courier producers
-all converge here. The legacy spawn governor remains authoritative for room
-survival, body cost, queue, CPU, and replacement constraints.
+all converge here. Legacy producers use the same compatibility admission path.
+The final order is normalize and assign a stable request id, deduplicate,
+validate operation/expiration, apply economy and lifecycle policy, enforce role,
+room, queue, per-tick and combat-share caps, queue, then revalidate immediately
+before `spawnCreep`. Blocked or unaffordable heads are skipped so an affordable
+survival request can run. Requests store producer, category, request/refresh
+ticks, and expiration. Source-specific Extractor assignments remain part of
+their stable identity and Memory.
+
+Owned-room squad and quad defenders carry `defenseRequest`, `defendedRoom`, and
+`emergencyDefense` classification. Remote defense and offense remain combat
+spending. Normal combat defaults to at most half of queue capacity, and defense
+admission preserves the local Extractor/Freighter survival anchor. A siege may
+bypass ordinary queue admission limits but cannot create a zero-income colony.
+
+## Growth release order
+
+Construction release is milestone-first. Essential containers, Spawns,
+extensions, towers, storage, links, and other unlocked core infrastructure are
+considered before bulk roads; roads remain planned and are released before
+low-priority ramparts. Lifecycle reasons expose missing harvest WORK, CARRY,
+spawn fill, extensions, tower/storage, and downgrade danger.
+
+## Memory retention
+
+`HiveMind.MemoryGC` runs through the scheduler with a bounded work budget.
+Defaults retain terminal squads for 250 ticks, terminal operations for 1,000,
+inactive non-manual players for 50,000, stale intel for 20,000, expansion
+candidates/routes for 10,000, and inactive known resource/debug records for
+5,000 ticks; demands and queues use their explicit TTL. HOME, owned bootstrap,
+active remote, operation and expansion targets, current Season assignments,
+manual diplomacy, and unknown user fields are protected. Old INTEL records are
+compacted by deleting known Sushi subtrees rather than deleting the whole room.
 
 ## Diplomacy and threat policy
 
@@ -335,6 +394,13 @@ JSON.stringify(Memory.rooms || {}).length
 Do not place live game objects into either root. If an emergency reset is ever
 needed, copy the affected branch in the console first and reset the narrowest
 subtree; do not erase all Memory as a migration technique.
+
+After bootstrap, schema access is cached in heap against the current Memory and
+canonical branch identities, and safely rebuilds after a global reset.
+DemandBoard persistent hydration runs once per game tick. Tick finalization
+persists the representative final CPU status rather than only the bootstrap
+sample. `MemorySchema.map()` includes approximate size plus room, operation,
+squad, demand, threat, expansion-candidate, and stale-record counts.
 
 ## Deployment
 

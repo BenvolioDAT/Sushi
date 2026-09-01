@@ -11,6 +11,7 @@ function scoreOperations() {
     const settings = HiveMemory.getConfig('combat').strategy;
     const candidates = Object.values(HiveMemory.ensure().operations)
         .filter(operation => operation && operation.state !== 'COMPLETE' && operation.state !== 'ABORTED')
+        .sort((a, b) => String(a.id).localeCompare(String(b.id)))
         .slice(0, settings.maxCandidates || 12);
     for (const operation of candidates) {
         const current = operation.utility && operation.utility.components || {};
@@ -34,9 +35,13 @@ function run() {
         const diagnostics = Season11.run();
         return Season11Operations.run(diagnostics);
     }, { interval: 1 });
-    Operations.run();
     CombatOperations.run();
+    Operations.syncExpansion();
     Scheduler.run('utilityScoring', () => scoreOperations(), { interval: settings.scoreInterval || 17 });
+    const ranked = Utility.rank(Object.values(HiveMemory.ensure().operations)
+        .filter(operation => operation && !['COMPLETE', 'ABORTED'].includes(operation.state)),
+    operation => operation.utility && operation.utility.components || {}).map(entry => entry.candidate);
+    Operations.run(ranked);
     return { enabled: true, operations: Object.keys(HiveMemory.ensure().operations).length };
 }
 

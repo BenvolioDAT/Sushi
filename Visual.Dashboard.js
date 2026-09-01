@@ -4,6 +4,7 @@ var Season11Operations = require('Season11.Operations');
 var TickIndex = require('HiveMind.Index');
 var Economy = require('HiveMind.Economy');
 var HiveMemory = require('HiveMind.Memory');
+var ColonyState = require('HiveMind.ColonyState');
 
 var COLORS = {
     background: '#111111',
@@ -828,7 +829,7 @@ function drawRoomPanel(visual, room, sourceStats, remoteStats, roomCreeps) {
     var y = 3.7;
     var width = 18;
     var showRoleCounts = HiveMemory.getConfig('visuals').dashboardShowRoleCounts === true;
-    var height = showRoleCounts ? 18.8 : 16.7;
+    var height = showRoleCounts ? 19.5 : 17.4;
     var controller = room.controller;
     var roomMemory = Memory.rooms && Memory.rooms[room.name];
     var queue = getSpawnQueueInfo(room.name);
@@ -844,6 +845,7 @@ function drawRoomPanel(visual, room, sourceStats, remoteStats, roomCreeps) {
     var repairCount = getRepairCount(room.name);
     var freighters = roomCreeps.freighters;
     var economy = Economy.get(room.name);
+    var colony = ColonyState.get(room.name);
     var roles = roomCreeps.roles;
     var hasTechWork = roomMemory && typeof roomMemory.techDesiredWork === 'number';
     var techWorkText = hasTechWork ?
@@ -904,6 +906,13 @@ function drawRoomPanel(visual, room, sourceStats, remoteStats, roomCreeps) {
         rowY += LINE_HEIGHT;
         drawText(visual, 'Haul ' + economy.haul.localCarry + '/' + economy.haul.requiredCarry +
             ' backlog ' + compactNumber(economy.haul.backlog), x, rowY, COLORS.text);
+        rowY += LINE_HEIGHT;
+    }
+    if (colony) {
+        var lifecycleColor = colony.alert === 'SIEGE' ? COLORS.danger :
+            colony.alert === 'THREATENED' ? COLORS.warning : COLORS.good;
+        drawText(visual, colony.phase + ' / ' + colony.alert + ' - ' +
+            truncate(colony.reason, 22), x, rowY, lifecycleColor);
         rowY += LINE_HEIGHT;
     }
     drawRow(visual, ['Spawn queue', { text: queue.length, color: queue.length > 3 ? COLORS.warning : COLORS.text }], x, rowY, [7, 4]);

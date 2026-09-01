@@ -32,7 +32,7 @@ function finish() {
     const telemetry = startTick();
     telemetry.total = Math.max(0, getUsed() - telemetry.start);
     telemetry.bucket = Game.cpu && Game.cpu.bucket;
-    telemetry.mode = cpuStatus.getCpuStatus().mode;
+    telemetry.mode = cpuStatus.persistCurrent().mode;
 
     const settings = HiveMemory.getConfig('cpu').telemetry;
     const interval = Math.max(10, settings.persistInterval || 100);

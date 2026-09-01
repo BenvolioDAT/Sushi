@@ -126,4 +126,12 @@ function getCpuStatus() {
     return cachedStatus;
 }
 
-module.exports = { getCpuStatus, chooseMode };
+function persistCurrent() {
+    const status = getCpuStatus();
+    const previous = typeof Memory !== 'undefined' && Memory.cpu && Memory.cpu.status && Memory.cpu.status.mode || status.mode;
+    lastDebugSaveTick = -1;
+    saveDebug(status, previous);
+    return status;
+}
+
+module.exports = { getCpuStatus, chooseMode, persistCurrent };

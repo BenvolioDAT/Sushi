@@ -46,11 +46,10 @@ var structurePlannerRunCpuStart = 0;
 
 var BUILD_PRIORITY = [
     STRUCTURE_CONTAINER,
-    STRUCTURE_STORAGE,
-    STRUCTURE_ROAD,
     STRUCTURE_SPAWN,
     STRUCTURE_EXTENSION,
     STRUCTURE_TOWER,
+    STRUCTURE_STORAGE,
     STRUCTURE_LINK,
     STRUCTURE_EXTRACTOR,
     STRUCTURE_TERMINAL,
@@ -59,6 +58,7 @@ var BUILD_PRIORITY = [
     STRUCTURE_POWER_SPAWN,
     STRUCTURE_NUKER,
     STRUCTURE_LAB,
+    STRUCTURE_ROAD,
     STRUCTURE_RAMPART
 ];
 
@@ -1960,20 +1960,17 @@ function getBuildEntries(room, plan) {
     var entries = [];
     var currentRcl = room.controller ? room.controller.level || 0 : 0;
 
-    for (var rcl = 1; rcl <= currentRcl; rcl++) {
+    /* Global type priority prevents old bulk roads from preceding newly unlocked essentials. */
+    for (var p = 0; p < BUILD_PRIORITY.length; p++) {
         if (!canContinueStructurePlanning()) {
             return entries;
         }
-
-        var rclEntries = plan.byRcl[rcl] || [];
-
-        for (var p = 0; p < BUILD_PRIORITY.length; p++) {
+        var priorityType = BUILD_PRIORITY[p];
+        for (var rcl = 1; rcl <= currentRcl; rcl++) {
             if (!canContinueStructurePlanning()) {
                 return entries;
             }
-
-            var priorityType = BUILD_PRIORITY[p];
-
+            var rclEntries = plan.byRcl[rcl] || [];
             for (var i = 0; i < rclEntries.length; i++) {
                 if (!canContinueStructurePlanning()) {
                     return entries;
@@ -2625,6 +2622,8 @@ module.exports = {
     planRoom: planRoom,
     buildSites: buildSites,
     resetRoom: resetRoom,
+    getBuildPriority: function() { return BUILD_PRIORITY.slice(); },
+    getBuildEntries: getBuildEntries,
     packCoord: packCoord,
     unpackCoord: unpackCoord
 };

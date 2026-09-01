@@ -75,6 +75,8 @@ Memory
 │   ├── cpu
 │   ├── spawn
 │   ├── economy
+│   ├── lifecycle
+│   ├── memoryGC
 │   ├── upgrade
 │   ├── combat
 │   ├── resources
@@ -86,6 +88,7 @@ Memory
 │   ├── operations, squads, players, threats, demands, counters
 │   ├── resources, season, expansion, warRoom
 │   ├── telemetry
+│   ├── gc                         last bounded collector report
 │   └── identity
 ├── cpu
 │   └── status                     small persisted mode/debug history
@@ -93,6 +96,7 @@ Memory
 │   └── <roomName>
 │       ├── identity
 │       ├── economy                hysteresis/trend state only
+│       ├── colony                 lifecycle, alert, milestone and transition reasons
 │       ├── spawn
 │       │   ├── queue
 │       │   ├── demandCache
@@ -124,6 +128,30 @@ defense, repair, and scout-intel shapes intentionally remain room-scoped in
 their existing locations. Moving them would touch many stable readers without
 removing transient data or preventing top-level drift. New room data should use
 an existing room domain; this decision is not permission to add new root keys.
+
+## Lifecycle and queue records
+
+`Memory.rooms[roomName].colony` stores only the lifecycle phase
+(`OWNED_NO_SPAWN`, `BOOTSTRAP`, `GROWTH`, `DEVELOPMENT`, or `MATURE`), its
+independent `PEACE`/`THREATENED`/`SIEGE` alert, RCL, milestone requirements,
+unmet reasons, and bounded transition/hysteresis ticks. Current creep,
+structure, energy, and threat measurements rebuild from heap after reset.
+
+Spawn queue entries carry a stable `requestId`, `producer`, `category`,
+`requestedAt`, `refreshTick`, and `expiresAt`. Demand records retain their
+stable id and TTL. Both legacy and DemandBoard producers therefore reconcile
+through one final queue owner.
+
+## Retention and garbage collection
+
+`Memory.config.memoryGC` owns cadence, work budget, and retention periods. The
+collector removes expired demands/queues, old terminal squads/operations,
+decayed inactive non-manual players, irrelevant expansion routes/candidates,
+stale known intel subtrees, and inactive known resource/debug records. It does
+not automatically remove HOME or owned-bootstrap records, active remotes,
+active operation or expansion targets, current Season assignments, manual
+diplomacy, or unknown fields. Stale INTEL records are compacted rather than
+deleted wholesale.
 
 ## Room identity
 
@@ -159,6 +187,9 @@ MemorySchema.map()
 ```
 
 It does not pathfind or write Memory.
+
+The map also reports approximate serialized size and counts for rooms,
+operations, squads, demands, threats, expansion candidates, and stale records.
 
 ## Adding fields
 

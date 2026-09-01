@@ -5,6 +5,7 @@ const Rooms = require('Tick.Rooms');
 const TickIndex = require('HiveMind.Index');
 const Scheduler = require('HiveMind.Scheduler');
 const HiveMemory = require('HiveMind.Memory');
+const MemoryGC = require('HiveMind.MemoryGC');
 
 const TRAFFIC_MANAGER_THRESHOLD = 20;
 trafficManager.init();
@@ -81,6 +82,9 @@ function cleanDeadCreepMemory() {
 
 function runOptionalWork() {
     cleanDeadCreepMemory();
+    Scheduler.run('memoryGC', () => MemoryGC.run({ force: true }), {
+        interval: Math.max(1, HiveMemory.getConfig('memoryGC').interval || 101)
+    });
     const interval = Math.max(1, HiveMemory.getConfig('visuals').visualInterval || 1);
     if (!Scheduler.shouldRun('visuals', { interval })) return;
     Rooms.drawSourceFlags();
