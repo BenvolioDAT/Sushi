@@ -99,7 +99,7 @@ function roomWorld(roomName, hostiles, structures, extra = {}) {
     }
     for (const item of structures || []) if (item.pos) item.pos.roomName = roomName;
     Game.rooms[roomName] = room;
-    Memory.rooms[roomName] = Memory.rooms[roomName] || { spawnQueue: [] };
+    Memory.rooms[roomName] = Memory.rooms[roomName] || { spawn: { queue: [] } };
     return room;
 }
 
@@ -124,7 +124,7 @@ test('Memory migration is additive and versioned', function() {
     const hive = memoryApi.migrate();
     assert.strictEqual(hive.custom, 7);
     assert.strictEqual(hive.players.Friend.classification, 'ally');
-    assert.strictEqual(hive.schemaVersion, memoryApi.SCHEMA_VERSION);
+    assert.strictEqual(Memory.meta.schemaVersion, memoryApi.SCHEMA_VERSION);
     assert.deepStrictEqual(hive.operations, {});
 });
 
@@ -242,18 +242,18 @@ test('dynamic defender demand is zero in peace and clears standing army requests
     installCombatWorld();
     const spawnStructure = { id: 'spawn', my: true, structureType: STRUCTURE_SPAWN, pos: pos(25, 25) };
     const room = roomWorld('W1N1', [], [spawnStructure]);
-    Memory.rooms.W1N1.spawnQueue = [
+    Memory.rooms.W1N1.spawn = { queue: [
         { role: 'Ronin', memory: { role: 'Ronin', homeRoom: 'W1N1' } },
         { role: 'Volley', memory: { role: 'Volley', homeRoom: 'W1N1' } },
         { role: 'Cleric', memory: { role: 'Cleric', homeRoom: 'W1N1' } }
-    ];
+    ] };
     Game.spawns.Spawn1 = { my: true, room };
     delete global.__sushiTickIndex;
     fresh('Combat.ThreatLedger.js').observeRoom(room, []);
     const manager = fresh('spawn.request.manager.js');
     const result = manager.requestDefendersForRoom(room, null);
     assert.strictEqual(result.demand.desiredMelee + result.demand.desiredRanged + result.demand.desiredHealers, 0);
-    assert.strictEqual(Memory.rooms.W1N1.spawnQueue.length, 0);
+    assert.strictEqual(Memory.rooms.W1N1.spawn.queue.length, 0);
 });
 
 test('independent combat switch suppresses and cleans non-squad defense requests', function() {
@@ -261,22 +261,22 @@ test('independent combat switch suppresses and cleans non-squad defense requests
     const invader = hostile('invader', [ATTACK, ATTACK, MOVE], 24, 25, 'Enemy');
     const spawnStructure = { id: 'spawn', my: true, structureType: STRUCTURE_SPAWN, pos: pos(25, 25) };
     const room = roomWorld('W1N1', [invader], [spawnStructure]);
-    Memory.rooms.W1N1.spawnQueue = [{
+    Memory.rooms.W1N1.spawn = { queue: [{
         role: 'Ronin',
         memory: {
             role: 'Ronin', homeRoom: 'W1N1', operationId: 'defend:W1N1',
             defenseRequest: true
         }
-    }];
+    }] };
     Game.spawns.Spawn1 = { my: true, room };
     fresh('Combat.Policy.js').setClassification('Enemy', 'hostile');
     delete global.__sushiTickIndex;
     fresh('Combat.ThreatLedger.js').observeRoom(room, [invader]);
-    fresh('HiveMind.Memory.js').ensure().settings.independentCombat = false;
+    fresh('HiveMind.Memory.js').getConfig('combat').independentCombat = false;
     const result = fresh('spawn.request.manager.js').requestDefendersForRoom(room, null);
     assert.strictEqual(result.independentCombatDisabled, true);
     assert.strictEqual(result.requests.length, 0);
-    assert.strictEqual(Memory.rooms.W1N1.spawnQueue.length, 0);
+    assert.strictEqual(Memory.rooms.W1N1.spawn.queue.length, 0);
 });
 
 test('safe mode ignores scouts and activates only for an overwhelming critical breach', function() {
@@ -306,7 +306,7 @@ test('safe mode ignores scouts and activates only for an overwhelming critical b
     delete global.__sushiTickIndex;
     ledger = fresh('Combat.ThreatLedger.js');
     ledger.observeRoom(room, [breach]);
-    Memory.hive.settings.safeMode.manualConfirmation = false;
+    fresh('HiveMind.Memory.js').getConfig('combat').safeMode.manualConfirmation = false;
     policy = fresh('SafeMode.Policy.js');
     assert.strictEqual(policy.run(room).activated, true);
     assert.strictEqual(activations, 1);

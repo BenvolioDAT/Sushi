@@ -54,7 +54,7 @@ test('normal shard feature detection is safe', function() {
     resetWorld();
     assert.strictEqual(Season11.isApiAvailable(), false);
     assert.doesNotThrow(function() { Season11.run(); });
-    assert.strictEqual(Memory.season11.stats.apiAvailable, false);
+    assert.strictEqual(Memory.hive.season.season11.stats.apiAvailable, false);
 });
 
 test('Season 11 API detection works', function() {
@@ -97,34 +97,34 @@ test('visible Thorium and Reactor intel is persisted as plain data', function() 
     };
 
     Season11.observeRoom(room, 'W5N5', true);
-    assert.strictEqual(Memory.season11.rooms.W5N5.thorium.id, 'mineral1');
-    assert.strictEqual(Memory.season11.rooms.W5N5.thorium.remaining, 4321);
-    assert.strictEqual(Memory.season11.rooms.W5N5.thorium.density, 3);
-    assert.strictEqual(Memory.season11.reactors.reactor1.thorium, 123);
-    assert.strictEqual(Memory.season11.reactors.reactor1.continuousWork, 99);
-    assert.doesNotThrow(function() { JSON.stringify(Memory.season11); });
+    assert.strictEqual(Memory.hive.season.season11.rooms.W5N5.thorium.id, 'mineral1');
+    assert.strictEqual(Memory.hive.season.season11.rooms.W5N5.thorium.remaining, 4321);
+    assert.strictEqual(Memory.hive.season.season11.rooms.W5N5.thorium.density, 3);
+    assert.strictEqual(Memory.hive.season.season11.reactors.reactor1.thorium, 123);
+    assert.strictEqual(Memory.hive.season.season11.reactors.reactor1.continuousWork, 99);
+    assert.doesNotThrow(function() { JSON.stringify(Memory.hive.season.season11); });
 });
 
 test('stale intel is eventually cleaned', function() {
     resetWorld();
     enableSeasonApi();
     Season11.ensureMemory();
-    Memory.season11.config.intelMaxAge = 10;
-    Memory.season11.rooms.W1N1 = {
+    Memory.config.season11.intelMaxAge = 10;
+    Memory.hive.season.season11.rooms.W1N1 = {
         roomName: 'W1N1',
         lastSeen: 1,
         thorium: { id: 'old', remaining: 10, depleted: false }
     };
     Game.time = 100;
     Season11.cleanupStaleIntel(true);
-    assert.strictEqual(Memory.season11.rooms.W1N1, undefined);
+    assert.strictEqual(Memory.hive.season.season11.rooms.W1N1, undefined);
 });
 
 test('depleted Thorium is not ranked or scheduled', function() {
     resetWorld();
     enableSeasonApi();
     Season11.ensureMemory();
-    Memory.season11.rooms.W2N2 = {
+    Memory.hive.season.season11.rooms.W2N2 = {
         roomName: 'W2N2',
         lastSeen: Game.time,
         thorium: { id: 'empty', remaining: 0, depleted: true }
@@ -175,7 +175,7 @@ test('assignment counting includes exact queued work and ignores dying creeps', 
     };
     Memory.rooms = {
         W1N1: {
-            spawnQueue: [{ memory: { season11AssignmentKey: 'haul:A:R' } }]
+            spawn: { queue: [{ memory: { season11AssignmentKey: 'haul:A:R' } }] }
         }
     };
     assert.strictEqual(Season11.getAssignmentCount('haul:A:R', true), 2);

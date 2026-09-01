@@ -7,6 +7,7 @@
 var travel = require('utility.Travel.Creep');
 var creepUtility = require('utility.Creep');
 var Economy = require('HiveMind.Economy');
+var HiveMemory = require('HiveMind.Memory');
 
 var PIONEER_PATH_STYLE = {
     stroke: '#66d9ff'
@@ -367,8 +368,8 @@ function getSpawnConstructionSite(room) {
         return null;
     }
 
-    var expansionSite = Memory.expansion && Memory.expansion.spawnSiteId ?
-        Game.getObjectById(Memory.expansion.spawnSiteId) : null;
+    var expansion = HiveMemory.ensure().expansion;
+    var expansionSite = expansion.spawnSiteId ? Game.getObjectById(expansion.spawnSiteId) : null;
 
     if (
         expansionSite &&

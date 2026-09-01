@@ -61,12 +61,12 @@ test('Hive migrations are additive and emergency switches have safe defaults', f
     reset();
     Memory.hive = { schemaVersion: 1, customOperatorField: { keep: true }, settings: { independentCombat: false } };
     const hive = fresh('HiveMind.Memory.js').migrate();
-    assert.strictEqual(hive.schemaVersion, 7);
+    assert.strictEqual(Memory.meta.schemaVersion, 8);
     assert.deepStrictEqual(hive.customOperatorField, { keep: true });
-    assert.strictEqual(hive.settings.independentCombat, false, 'operator override was replaced');
-    assert.strictEqual(hive.settings.safeMode.manualConfirmation, true);
-    assert.strictEqual(hive.settings.resources.market, false);
-    assert.strictEqual(hive.settings.squads.quadsEnabled, true);
+    assert.strictEqual(Memory.config.combat.independentCombat, false, 'operator override was replaced');
+    assert.strictEqual(Memory.config.combat.safeMode.manualConfirmation, true);
+    assert.strictEqual(Memory.config.resources.market, false);
+    assert.strictEqual(Memory.config.combat.squads.quadsEnabled, true);
 });
 
 test('durable operation and demand state remains JSON-safe plain data', function() {
@@ -105,7 +105,7 @@ test('hot subsystems declare cadence, dirty scheduling, and heap caches', functi
     assert(source('HiveMind.Index.js').includes('global.__sushiTickIndex'));
     assert(source('HiveMind.Telemetry.js').includes('persistInterval'));
     assert(source('Squad.Quad.js').includes('global.__sushiQuadMatrices'));
-    assert(source('spawn.request.manager.js').includes('settings.independentCombat === false'));
+    assert(source('spawn.request.manager.js').includes("getConfig('combat').independentCombat === false"));
 });
 
 test('Season 11 production path contains no market, portal, or legacy scorer behavior', function() {

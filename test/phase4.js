@@ -30,7 +30,7 @@ function room(name, energy = 800) {
         find: () => []
     };
     Game.rooms[name] = result;
-    Memory.rooms[name] = { spawnQueue: [] };
+    Memory.rooms[name] = { spawn: { queue: [] } };
     return result;
 }
 
@@ -138,7 +138,7 @@ test('living, spawning, and queued assignments are each counted once', function(
     Game.creeps.live = ownCreep('live', 'Volley', home.name, demandMemory);
     Memory.creeps.spawning = { role: 'Volley', homeRoom: home.name, ...demandMemory };
     addSpawn('Spawn1', home, 'spawning');
-    Memory.rooms.W1N1.spawnQueue.push({
+    Memory.rooms.W1N1.spawn.queue.push({
         role: 'Volley', requestedAt: Game.time,
         memory: { role: 'Volley', homeRoom: home.name, ...demandMemory }
     });
@@ -169,9 +169,9 @@ test('the best capable spawn is deterministic and queues no duplicates', functio
     });
     const first = board.flush();
     assert.strictEqual(first.demands['expand:test:Pioneer'].spawnRoom, roomB.name);
-    assert.strictEqual(Memory.rooms.W2N2.spawnQueue.length, 1);
+    assert.strictEqual(Memory.rooms.W2N2.spawn.queue.length, 1);
     board.flush();
-    assert.strictEqual(Memory.rooms.W2N2.spawnQueue.length, 1);
+    assert.strictEqual(Memory.rooms.W2N2.spawn.queue.length, 1);
 });
 
 test('bootstrap survival gates optional demands but emergency defense may proceed', function() {
@@ -201,7 +201,7 @@ test('Expansion emits shared demands without pushing its queue directly', functi
     expansion.ensureExpansionCreepCount(
         'W1N1', 'W2N2', 'Annex', 1, [CLAIM, MOVE], 95, { annexMode: 'expand' }
     );
-    assert.strictEqual(Memory.rooms.W1N1.spawnQueue.length, 0);
+    assert.strictEqual(Memory.rooms.W1N1.spawn.queue.length, 0);
     const demand = board.getDemands().find(item => item.id === 'expand:W2N2:Annex');
     assert.ok(demand);
     assert.strictEqual(demand.memory.expansionId, 'W2N2');

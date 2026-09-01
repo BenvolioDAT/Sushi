@@ -104,12 +104,12 @@ test('F excess CARRY cannot hide a harvesting deficit', function() {
 });
 
 test('G remote spending is suppressed during home recovery', function() {
-    Memory.hive = { economy: { rooms: { W1N1: snapshot({ state: 'RECOVERY' }) } } };
+    Memory.rooms.W1N1 = { economy: snapshot({ state: 'RECOVERY' }) };
     assert.strictEqual(Economy.canSpend('W1N1', 'remote'), false);
 });
 
 test('H discretionary combat demand cannot consume recovery energy', function() {
-    Memory.hive.economy.rooms.W1N1.state = 'RECOVERY';
+    Memory.rooms.W1N1.economy.state = 'RECOVERY';
     const room = { name: 'W1N1', controller: { my: true } };
     Game.rooms.W1N1 = room;
     const check = Economy.canSpawnRequest(room, {
@@ -151,7 +151,7 @@ test('J hysteresis requires sustained improvement before leaving survival', func
 });
 
 test('K full-wipe policy admits the bootstrap miner and blocks optional work', function() {
-    Memory.hive.economy.rooms.W1N1 = snapshot({
+    Memory.rooms.W1N1.economy = snapshot({
         state: 'SURVIVAL', energyAvailable: 200, spawnFill: 0.25,
         storageEnergy: 0, harvest: { workActive: 0, actualOrEstimatedIncome: 0 }
     });
@@ -177,7 +177,7 @@ test('K spawn consumer skips a higher-priority optional request for the bootstra
         }
     };
     Memory.rooms.W1N1 = Memory.rooms.W1N1 || {};
-    Memory.rooms.W1N1.spawnQueue = [
+    Memory.rooms.W1N1.spawn = { queue: [
         {
             role: 'Tech', body: [WORK, CARRY, MOVE], priority: 200, requestedAt: 1,
             memory: { role: 'Tech', homeRoom: 'W1N1' }
@@ -187,13 +187,13 @@ test('K spawn consumer skips a higher-priority optional request for the bootstra
             requestedWorkParts: 4, maxWorkParts: 4, priority: 120, requestedAt: 2,
             memory: { role: 'Extractor', homeRoom: 'W1N1', sourceRoom: 'W1N1' }
         }
-    ];
+    ] };
     const result = fresh('spawn.manager.js').runRoom('W1N1');
     assert.strictEqual(result.ok, true);
     assert.strictEqual(result.role, 'Extractor');
     assert.deepStrictEqual(spawned.body, [WORK, MOVE, CARRY]);
-    assert.strictEqual(Memory.rooms.W1N1.spawnQueue.length, 1);
-    assert.strictEqual(Memory.rooms.W1N1.spawnQueue[0].role, 'Tech');
+    assert.strictEqual(Memory.rooms.W1N1.spawn.queue.length, 1);
+    assert.strictEqual(Memory.rooms.W1N1.spawn.queue[0].role, 'Tech');
 });
 
 function runSpawnQueueAtEnergy(energy, queue, spawnResult) {
@@ -208,12 +208,13 @@ function runSpawnQueueAtEnergy(energy, queue, spawnResult) {
             return spawnResult === undefined ? OK : spawnResult;
         }
     };
-    Memory.rooms.W1N1.spawnQueue = queue;
+    Memory.rooms.W1N1.spawn = Memory.rooms.W1N1.spawn || {};
+    Memory.rooms.W1N1.spawn.queue = queue;
     return { result: fresh('spawn.manager.js').runRoom('W1N1'), spawned };
 }
 
 test('L affordable lower-priority recovery logistics bypasses an unaffordable miner', function() {
-    Memory.hive.economy.rooms.W1N1 = snapshot({ state: 'SURVIVAL', energyAvailable: 150 });
+    Memory.rooms.W1N1.economy = snapshot({ state: 'SURVIVAL', energyAvailable: 150 });
     const queue = [
         {
             role: 'Extractor', body: [WORK, MOVE, CARRY], requestedWorkParts: 1,
@@ -235,7 +236,7 @@ test('L affordable lower-priority recovery logistics bypasses an unaffordable mi
 });
 
 test('M an affordable discretionary request cannot bypass survival policy', function() {
-    Memory.hive.economy.rooms.W1N1 = snapshot({ state: 'SURVIVAL', energyAvailable: 150 });
+    Memory.rooms.W1N1.economy = snapshot({ state: 'SURVIVAL', energyAvailable: 150 });
     const queue = [
         {
             role: 'Extractor', body: [WORK, MOVE, CARRY], requestedWorkParts: 1,
@@ -254,7 +255,7 @@ test('M an affordable discretionary request cannot bypass survival policy', func
 });
 
 test('N the highest-priority miner wins again once its minimum body is affordable', function() {
-    Memory.hive.economy.rooms.W1N1 = snapshot({ state: 'SURVIVAL', energyAvailable: 200 });
+    Memory.rooms.W1N1.economy = snapshot({ state: 'SURVIVAL', energyAvailable: 200 });
     const queue = [
         {
             role: 'Extractor', body: [WORK, MOVE, CARRY], requestedWorkParts: 1,
@@ -274,7 +275,7 @@ test('N the highest-priority miner wins again once its minimum body is affordabl
 });
 
 test('O fatal spawn failure removes the selected index, not a blocked queue head', function() {
-    Memory.hive.economy.rooms.W1N1 = snapshot({ state: 'SURVIVAL', energyAvailable: 200 });
+    Memory.rooms.W1N1.economy = snapshot({ state: 'SURVIVAL', energyAvailable: 200 });
     const queue = [
         {
             role: 'Volley', body: [MOVE], priority: 200, requestedAt: 1,

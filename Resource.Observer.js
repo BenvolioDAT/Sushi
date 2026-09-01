@@ -28,7 +28,8 @@ function priorityRooms(origin) {
     const hive = HiveMemory.ensure();
     const priorities = [];
     for (const threat of Object.values(hive.threats)) if (threat && threat.roomName) priorities.push(threat.roomName);
-    if (Memory.expansion && Memory.expansion.targetRoom) priorities.push(Memory.expansion.targetRoom);
+    const expansion = HiveMemory.ensure().expansion;
+    if (expansion.targetRoom) priorities.push(expansion.targetRoom);
     const seasonRooms = hive.season && hive.season.rooms || {};
     for (const roomName of Object.keys(seasonRooms)) priorities.push(roomName);
     return Array.from(new Set(priorities)).filter(roomName => roomName !== origin &&

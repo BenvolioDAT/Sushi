@@ -3,6 +3,7 @@ var Season11 = require('Logic.Season11');
 var Season11Operations = require('Season11.Operations');
 var TickIndex = require('HiveMind.Index');
 var Economy = require('HiveMind.Economy');
+var HiveMemory = require('HiveMind.Memory');
 
 var COLORS = {
     background: '#111111',
@@ -243,7 +244,7 @@ function getCreepCountsByRole(roomName, creepStats) {
 
 function getSpawnQueueLength(roomName) {
     var roomMemory = Memory.rooms && Memory.rooms[roomName];
-    var queue = roomMemory && roomMemory.spawnQueue;
+    var queue = roomMemory && roomMemory.spawn && roomMemory.spawn.queue;
     return Array.isArray(queue) ? queue.length : 0;
 }
 
@@ -264,7 +265,7 @@ function getBodyCost(body) {
 
 function getSpawnQueueInfo(roomName) {
     var roomMemory = Memory.rooms && Memory.rooms[roomName];
-    var queue = roomMemory && roomMemory.spawnQueue;
+    var queue = roomMemory && roomMemory.spawn && roomMemory.spawn.queue;
     var first = Array.isArray(queue) && queue.length > 0 ? queue[0] : null;
 
     return {
@@ -743,7 +744,7 @@ function getSpawnStatus(room, queue) {
 }
 
 function getThreatStatus() {
-    var threat = Memory.WarRoom && Memory.WarRoom.activeThreat;
+    var threat = HiveMemory.ensure().warRoom.activeThreat;
 
     if (!threat) {
         return {
@@ -826,7 +827,7 @@ function drawRoomPanel(visual, room, sourceStats, remoteStats, roomCreeps) {
     var x = 1;
     var y = 3.7;
     var width = 18;
-    var showRoleCounts = Memory.settings && Memory.settings.dashboardShowRoleCounts === true;
+    var showRoleCounts = HiveMemory.getConfig('visuals').dashboardShowRoleCounts === true;
     var height = showRoleCounts ? 18.8 : 16.7;
     var controller = room.controller;
     var roomMemory = Memory.rooms && Memory.rooms[room.name];
@@ -1322,23 +1323,8 @@ function drawDashboard(room, ownedRoomCount, creepStats) {
 
 var Dashboard = {
     run: function() {
-        if (!Memory.settings) {
-            Memory.settings = {};
-        }
-
-        if (Memory.settings.showDashboard === undefined) {
-            Memory.settings.showDashboard = true;
-        }
-
-        if (Memory.settings.showRemoteRoomDashboard === undefined) {
-            Memory.settings.showRemoteRoomDashboard = true;
-        }
-
-        if (Memory.settings.dashboardShowRoleCounts === undefined) {
-            Memory.settings.dashboardShowRoleCounts = false;
-        }
-
-        if (Memory.settings.showDashboard === false) {
+        var settings = HiveMemory.getConfig('visuals');
+        if (settings.showDashboard === false) {
             return;
         }
 
@@ -1348,7 +1334,7 @@ var Dashboard = {
             return;
         }
 
-        var selectedRoomName = Memory.settings.dashboardRoom;
+        var selectedRoomName = settings.dashboardRoom;
         if (selectedRoomName) {
             var selectedRoom = Game.rooms[selectedRoomName];
 
@@ -1365,7 +1351,7 @@ var Dashboard = {
             drawDashboard(ownedRooms[i], ownedRoomCount, creepStats);
         }
 
-        if (Memory.settings.showRemoteRoomDashboard !== false) {
+        if (settings.showRemoteRoomDashboard !== false) {
             var remoteGroups = getActiveRemoteRoomsForDashboard(ownedRooms);
 
             for (var remoteIndex = 0; remoteIndex < remoteGroups.length; remoteIndex++) {

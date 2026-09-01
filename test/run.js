@@ -49,14 +49,14 @@ function testCpuStatus() {
         assert.strictEqual(status.remaining, limit - 1);
         assert.strictEqual(status.capacity.limit, limit);
         const firstBucket = status.bucket;
-        const debugBefore = JSON.stringify(Memory.cpuStatus);
+        const debugBefore = JSON.stringify(Memory.cpu.status);
         Game.cpu.bucket = 0;
         used = limit * 0.97;
         status = api.getCpuStatus();
         assert.strictEqual(status.bucket, firstBucket, 'capacity changed during the tick');
         assert.strictEqual(status.mode, 'critical', 'pressure did not worsen later in the tick');
         assert.strictEqual(status.pressure.used, used);
-        assert.strictEqual(JSON.stringify(Memory.cpuStatus), debugBefore, 'CPU debug Memory rewrote within a tick');
+        assert.strictEqual(JSON.stringify(Memory.cpu.status), debugBefore, 'CPU debug Memory rewrote within a tick');
     }
 }
 
@@ -70,7 +70,7 @@ function testBootstrapAndPixels() {
     mocks.clearLocalModules();
     const bootstrap = require(path.join(mocks.root, 'Tick.Bootstrap.js'));
     const settings = bootstrap.ensureSettings();
-    assert.strictEqual(settings.keepMe, true, 'settings migration replaced existing Memory');
+    assert.strictEqual(Memory.config.general.keepMe, true, 'settings migration replaced existing Memory');
     assert.strictEqual(settings.pixels.enabled, false, 'pixels must default off');
     settings.pixels.enabled = true;
     settings.pixels.tickModulo = 1;

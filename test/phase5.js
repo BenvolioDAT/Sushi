@@ -73,7 +73,7 @@ function room(name = 'W1N1', hostiles = [], structures = []) {
     };
     for (const hostile of hostiles) hostile.room = result;
     Game.rooms[name] = result;
-    Memory.rooms[name] = { spawnQueue: [] };
+    Memory.rooms[name] = { spawn: { queue: [] } };
     return result;
 }
 

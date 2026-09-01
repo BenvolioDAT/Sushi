@@ -1,4 +1,5 @@
 /* Stable capacity and live pressure for the current Screeps tick. */
+const HiveMemory = require('HiveMind.Memory');
 const FALLBACK_CPU_LIMIT = 1;
 const FULL_BUCKET = 10000;
 let cachedTick = -1;
@@ -16,8 +17,9 @@ function clamp(value, minimum, maximum) {
 }
 
 function getPreviousMode() {
-    if (typeof Memory !== 'undefined' && Memory.cpuStatus && typeof Memory.cpuStatus.mode === 'string') {
-        return Memory.cpuStatus.mode;
+    const status = typeof Memory !== 'undefined' && Memory.cpu && Memory.cpu.status;
+    if (status && typeof status.mode === 'string') {
+        return status.mode;
     }
     return 'normal';
 }
@@ -39,8 +41,9 @@ function chooseMode(limit, bucket, usageRatio, previousMode) {
 function removeStaleCpuOverride() {
     if (overrideMigrationChecked || typeof Memory === 'undefined') return;
     overrideMigrationChecked = true;
-    if (Memory.cpuPolicy && Memory.cpuPolicy.maxCpuOverride !== undefined) {
-        delete Memory.cpuPolicy.maxCpuOverride;
+    const policy = HiveMemory.getConfig('cpu');
+    if (policy.maxCpuOverride !== undefined) {
+        delete policy.maxCpuOverride;
     }
 }
 
@@ -67,8 +70,9 @@ function readUsed(fallback) {
 
 function saveDebug(status, previousMode) {
     if (typeof Memory === 'undefined' || lastDebugSaveTick === status.tick) return;
-    const oldSince = Memory.cpuStatus && Memory.cpuStatus.modeSince;
-    Memory.cpuStatus = {
+    if (!Memory.cpu || typeof Memory.cpu !== 'object') Memory.cpu = {};
+    const oldSince = Memory.cpu.status && Memory.cpu.status.modeSince;
+    Memory.cpu.status = {
         tick: status.tick,
         mode: status.mode,
         modeSince: status.mode === previousMode && typeof oldSince === 'number' ? oldSince : status.tick,

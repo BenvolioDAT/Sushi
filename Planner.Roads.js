@@ -1,3 +1,5 @@
+var HiveMemory = require('HiveMind.Memory');
+
 /*
  * Planner.Roads.js
  *
@@ -993,7 +995,7 @@ function buildStructurePlannerPlanLookups(roomName) {
 }
 
 function drawRoadPlannerVisuals(homeRoomName) {
-    if (!Memory.settings || Memory.settings.showRoadPlanner !== true) {
+    if (HiveMemory.getConfig('visuals').showRoadPlanner !== true) {
         return;
     }
 

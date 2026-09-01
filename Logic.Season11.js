@@ -9,6 +9,7 @@
 var Season11Adapter = require('Season11.Adapter');
 var CombatPolicy = require('Combat.Policy');
 var TickIndex = require('HiveMind.Index');
+var HiveMemory = require('HiveMind.Memory');
 
 var SCHEMA_VERSION = 2;
 var REACTOR_CAPACITY = 1000;
@@ -104,8 +105,6 @@ function copyDefaults(target, defaults) {
 function makeInitialMemory() {
     return {
         schemaVersion: SCHEMA_VERSION,
-        mode: DEFAULT_MODE,
-        config: {},
         rooms: {},
         reactors: {},
         assignments: {
@@ -131,11 +130,18 @@ function ensureMemory() {
         return makeInitialMemory();
     }
 
-    if (!Memory.season11 || typeof Memory.season11 !== 'object') Memory.season11 = makeInitialMemory();
-
-    var memory = Memory.season11;
-    memory.config = memory.config || {};
-    copyDefaults(memory.config, DEFAULT_CONFIG);
+    var memory = HiveMemory.getSeasonState();
+    var config = HiveMemory.getConfig('season11');
+    copyDefaults(config, DEFAULT_CONFIG);
+    if (!VALID_MODES[config.mode]) config.mode = DEFAULT_MODE;
+    Object.defineProperty(memory, 'config', {
+        configurable: true, enumerable: false, value: config
+    });
+    Object.defineProperty(memory, 'mode', {
+        configurable: true, enumerable: false,
+        get: function() { return config.mode; },
+        set: function(value) { config.mode = value; }
+    });
     memory.rooms = memory.rooms || {};
     memory.reactors = memory.reactors || {};
     memory.assignments = memory.assignments || {};
@@ -146,10 +152,6 @@ function ensureMemory() {
     memory.stats.events = Array.isArray(memory.stats.events) ?
         memory.stats.events : [];
     memory.schemaVersion = SCHEMA_VERSION;
-
-    if (!VALID_MODES[memory.mode]) {
-        memory.mode = DEFAULT_MODE;
-    }
 
     return memory;
 }

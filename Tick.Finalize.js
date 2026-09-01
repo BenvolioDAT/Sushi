@@ -4,15 +4,14 @@ const StructurePlannerVisual = require('Visual.Planner.Structures');
 const Rooms = require('Tick.Rooms');
 const TickIndex = require('HiveMind.Index');
 const Scheduler = require('HiveMind.Scheduler');
+const HiveMemory = require('HiveMind.Memory');
 
 const TRAFFIC_MANAGER_THRESHOLD = 20;
 trafficManager.init();
 const matrixCache = new Map();
 
 function isTrafficManagerEnabled() {
-    if (!Memory.settings) Memory.settings = {};
-    if (Memory.settings.useTrafficManager === undefined) Memory.settings.useTrafficManager = true;
-    return Memory.settings.useTrafficManager !== false;
+    return HiveMemory.getConfig('general').useTrafficManager !== false;
 }
 
 function isTrafficBlockedStructure(structure) {
@@ -81,10 +80,8 @@ function cleanDeadCreepMemory() {
 }
 
 function runOptionalWork() {
-    if (!Memory.settings) Memory.settings = {};
-    if (Memory.settings.showStructurePlanner === undefined) Memory.settings.showStructurePlanner = false;
     cleanDeadCreepMemory();
-    const interval = Math.max(1, Memory.settings.visualInterval || 1); // I want this HUD to show every tick is why this was change so rember that Codex HUD allways show inless CPU or combat need CPU 
+    const interval = Math.max(1, HiveMemory.getConfig('visuals').visualInterval || 1);
     if (!Scheduler.shouldRun('visuals', { interval })) return;
     Rooms.drawSourceFlags();
     StructurePlannerVisual.run();

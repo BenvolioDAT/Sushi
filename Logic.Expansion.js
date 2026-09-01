@@ -10,17 +10,18 @@
  * - buildSpawn: first spawn site exists; import workers and energy until done.
  * - bootstrap: reserved for spawnless recovery support after claiming.
  * - online: target has a completed spawn and normal multi-room spawning takes over.
- * - blocked: target was proven unsafe or impossible; user should inspect Memory.expansion.
+ * - blocked: target was proven unsafe or impossible; inspect Memory.hive.expansion.
  * - idle/complete: no active target; waiting for autoSelect/manual target or room limits.
  *
  * Expansion is enabled by default. Console controls:
- * - disable: Memory.expansion.enabled = false
- * - re-enable: Memory.expansion.enabled = true
+ * - disable: Memory.hive.expansion.enabled = false
+ * - re-enable: Memory.hive.expansion.enabled = true
  */
 var spawnManager = require('spawn.manager');
 var creepBodyConfig = require('role.creepBodyConfig');
 var DemandBoard = require('Spawn.DemandBoard');
 var TickIndex = require('HiveMind.Index');
+var HiveMemory = require('HiveMind.Memory');
 
 var DEFAULT_MAX_ROUTE_DISTANCE = 8;
 var DEFAULT_MIN_RANGE_BETWEEN_BASES = 3;
@@ -84,7 +85,7 @@ function run() {
         return {
             ok: true,
             enabled: false,
-            reason: 'Memory.expansion.enabled is false'
+            reason: 'Memory.hive.expansion.enabled is false'
         };
     }
 
@@ -158,11 +159,7 @@ function run() {
 }
 
 function ensureExpansionMemory() {
-    if (!Memory.expansion) {
-        Memory.expansion = {};
-    }
-
-    var expansion = Memory.expansion;
+    var expansion = HiveMemory.ensure().expansion;
 
     if (expansion.enabled === undefined) {
         expansion.enabled = true;
@@ -990,8 +987,9 @@ function isOwnedRoomName(roomName) {
 }
 
 function getMyUsername() {
-    if (Memory.username) {
-        return Memory.username;
+    var identity = HiveMemory.ensure().identity;
+    if (identity.username) {
+        return identity.username;
     }
 
     for (var spawnName in Game.spawns) {
@@ -999,8 +997,8 @@ function getMyUsername() {
             Game.spawns.hasOwnProperty(spawnName) &&
             Game.spawns[spawnName].owner
         ) {
-            Memory.username = Game.spawns[spawnName].owner.username;
-            return Memory.username;
+            identity.username = Game.spawns[spawnName].owner.username;
+            return identity.username;
         }
     }
 
@@ -1367,11 +1365,7 @@ function requestBootstrapCreeps(expansion, originRoom) {
 }
 
 function ensureExpansionSpawnPolicyMemory() {
-    if (!Memory.spawnPolicy) {
-        Memory.spawnPolicy = {};
-    }
-
-    var policy = Memory.spawnPolicy;
+    var policy = HiveMemory.getConfig('spawn');
 
     if (policy.enabled === undefined) {
         policy.enabled = DEFAULT_SPAWN_POLICY.enabled;
@@ -1589,7 +1583,7 @@ function ensureExpansionCreepCount(
             targetRoom: targetRoomName,
             expansionId: targetRoomName
         }, extraMemory || {}),
-        reason: 'Expansion state ' + (Memory.expansion && Memory.expansion.state)
+        reason: 'Expansion state ' + HiveMemory.ensure().expansion.state
     });
     return true;
 }

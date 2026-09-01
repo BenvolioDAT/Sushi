@@ -53,7 +53,7 @@ function getRecord(roomName, target) {
 }
 
 function attackTowersForTarget(roomName, towers, target) {
-    const settings = HiveMemory.ensure().settings.towers;
+    const settings = HiveMemory.getConfig('combat').towers;
     const record = getRecord(roomName, target);
     const urgent = record && (record.closestCriticalRange <= 3 || record.attackedUs);
     return towers.filter(tower => energy(tower) >= 10 && (urgent || energy(tower) > (settings.energyReserve || 200)));
@@ -167,7 +167,7 @@ function peacefulWork(room, towers) {
     if (!Economy.canSpend(room, 'criticalMaintenance')) return { action: 'preserve', target: null };
     const target = repairTarget(room);
     if (!target) return { action: 'idle', target: null };
-    const reserve = HiveMemory.ensure().settings.towers.repairEnergyReserve || 700;
+    const reserve = HiveMemory.getConfig('combat').towers.repairEnergyReserve || 700;
     for (const tower of towers) if (energy(tower) >= reserve) tower.repair(target);
     return { action: 'repair', target };
 }

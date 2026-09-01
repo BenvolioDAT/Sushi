@@ -132,7 +132,8 @@ function build() {
 
     const memoryRooms = typeof Memory !== 'undefined' && Memory.rooms ? Memory.rooms : {};
     for (const [roomName, roomMemory] of Object.entries(memoryRooms)) {
-        const requests = roomMemory && Array.isArray(roomMemory.spawnQueue) ? roomMemory.spawnQueue : [];
+        const requests = roomMemory && roomMemory.spawn && Array.isArray(roomMemory.spawn.queue) ?
+            roomMemory.spawn.queue : [];
         index.spawnRequestsByRoom.set(roomName, requests);
         for (const request of requests) index.spawnRequests.push(request);
     }

@@ -83,7 +83,7 @@ test('TickIndex builds one creep pass and rebuilds after the tick', function() {
     Game.rooms.W1N1 = room;
     Game.creeps = { worker, fighter: squad };
     Game.spawns.Spawn1 = { name: 'Spawn1', my: true, room, spawning: { name: 'newbie' } };
-    Memory.rooms.W1N1 = { spawnQueue: [{ demandId: 'd1' }] };
+    Memory.rooms.W1N1 = { spawn: { queue: [{ demandId: 'd1' }] } };
     const indexApi = fresh('HiveMind.Index.js');
     const first = indexApi.build();
     assert.strictEqual(first, indexApi.build());
@@ -121,8 +121,8 @@ test('telemetry remains heap-first and periodically persists rolling values', fu
     const result = telemetry.finish();
     assert.strictEqual(result.phases.planning, 2.5);
     assert.strictEqual(result.total, 3.5);
-    assert.strictEqual(Memory.stats.cpu.tick, Game.time);
-    assert.strictEqual(Memory.settings.cpuTelemetry.debug, false);
+    assert.strictEqual(Memory.hive.telemetry.cpu.tick, Game.time);
+    assert.strictEqual(Memory.config.cpu.telemetry.debug, false);
 });
 
 test('traffic resolves a two-creep swap', function() {

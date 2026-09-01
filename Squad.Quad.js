@@ -859,7 +859,7 @@ function runSquad(squad) {
 }
 
 function syncOperations() {
-    const settings = HiveMemory.ensure().settings.squads;
+    const settings = HiveMemory.getConfig('combat').squads;
     if (settings.enabled === false || settings.quadsEnabled === false) return [];
     const created = [];
     for (const operation of Object.values(HiveMemory.ensure().operations)) {

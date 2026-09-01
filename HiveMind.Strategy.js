@@ -8,7 +8,7 @@ const Season11Operations = require('Season11.Operations');
 const CombatOperations = require('Combat.Operations');
 
 function scoreOperations() {
-    const settings = HiveMemory.ensure().settings.strategy;
+    const settings = HiveMemory.getConfig('combat').strategy;
     const candidates = Object.values(HiveMemory.ensure().operations)
         .filter(operation => operation && operation.state !== 'COMPLETE' && operation.state !== 'ABORTED')
         .slice(0, settings.maxCandidates || 12);
@@ -25,9 +25,9 @@ function scoreOperations() {
 }
 
 function run() {
-    const settings = HiveMemory.ensure().settings.strategy;
+    const settings = HiveMemory.getConfig('combat').strategy;
     if (settings.enabled === false) return { enabled: false };
-    const expansion = Memory.expansion;
+    const expansion = HiveMemory.ensure().expansion;
     const expansionActive = expansion && ['claiming', 'placeSpawn', 'buildSpawn', 'bootstrap'].includes(expansion.state);
     Scheduler.run('expansionStrategy', () => Expansion.run(), { interval: expansionActive ? 1 : 17 });
     Scheduler.run('season11Operations', () => {

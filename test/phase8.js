@@ -88,7 +88,7 @@ function makeRoom(name = 'W1N1', options = {}) {
         if (object.pos) object.pos.roomName = name;
     }
     Game.rooms[name] = room;
-    Memory.rooms[name] = { spawnQueue: [] };
+    Memory.rooms[name] = { spawn: { queue: [] } };
     Game.getObjectById = id => Object.values(Game.creeps).find(creep => creep.id === id || creep.name === id) ||
         hostiles.concat(structures).find(object => object.id === id) || null;
     return room;

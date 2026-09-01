@@ -211,7 +211,7 @@ function emitDemands(squad) {
 }
 
 function getCommittedRoleCount(operationId, role) {
-    if (HiveMemory.ensure().settings.squads.enabled === false) return 0;
+    if (HiveMemory.getConfig('combat').squads.enabled === false) return 0;
     const duoCount = Object.values(HiveMemory.ensure().squads).filter(squad => {
         if (!squad || TERMINAL.has(squad.state) || squad.operationId !== operationId) return false;
         return squad.type === 'RANGED_DUO' && (role === 'Volley' || role === 'Cleric');
@@ -221,7 +221,8 @@ function getCommittedRoleCount(operationId, role) {
 
 function syncDefenseDuos() {
     const hive = HiveMemory.ensure();
-    if (hive.settings.squads.enabled === false || hive.settings.squads.autoDefenseDuos === false) return;
+    const settings = HiveMemory.getConfig('combat').squads;
+    if (settings.enabled === false || settings.autoDefenseDuos === false) return;
     for (const operation of Object.values(hive.operations)) {
         if (!operation || operation.state === 'COMPLETE' || operation.state === 'ABORTED') continue;
         if (!['DEFEND_OWNED_ROOM', 'DEFEND_REMOTE'].includes(operation.type)) continue;
@@ -562,7 +563,7 @@ function runSquad(squad) {
 }
 
 function plan() {
-    if (HiveMemory.ensure().settings.squads.enabled === false) return [];
+    if (HiveMemory.getConfig('combat').squads.enabled === false) return [];
     syncDefenseDuos();
     const active = Object.values(HiveMemory.ensure().squads)
         .filter(squad => squad && !QuadController.TYPES.includes(squad.type) && !TERMINAL.has(squad.state))
@@ -573,7 +574,7 @@ function plan() {
 
 function execute() {
     const controlled = new Set();
-    if (HiveMemory.ensure().settings.squads.enabled === false) return controlled;
+    if (HiveMemory.getConfig('combat').squads.enabled === false) return controlled;
     const squads = Object.values(HiveMemory.ensure().squads)
         .filter(Boolean).sort((a, b) => String(a.id).localeCompare(String(b.id)));
     for (const squad of squads) {

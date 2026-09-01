@@ -39,13 +39,17 @@ require('Logic.Season11').setMode('disabled')
 
 ## Memory schema
 
-The versioned root is `Memory.season11`:
+Season configuration and mode live under `Memory.config.season11`. Durable
+Season runtime state lives under `Memory.hive.season.season11`:
 
 ```js
 {
-  schemaVersion: 2,
   mode: 'auto',
-  config: {},
+  // ...operator configuration
+}
+
+{
+  schemaVersion: 2,
   rooms: {},
   reactors: {},
   assignments: {
@@ -60,10 +64,10 @@ The versioned root is `Memory.season11`:
 }
 ```
 
-Migration from schema 1 is additive: room intel, Reactor records, event history,
-operator configuration, and unknown custom fields are preserved. The durable
-HiveMind schema is version 6 and adds bounded delivery events, active seasonal
-operation IDs, dashboard state, and occasional operation CPU summaries under
+The HiveMind schema-7-to-8 migration separates the former combined Season root.
+Room intel, Reactor records, event history, operator configuration, and unknown
+custom fields are preserved. Bounded delivery events, active seasonal operation
+IDs, dashboard state, and occasional operation CPU summaries remain under
 `Memory.hive.season`.
 
 ## HiveMind operation adapter
@@ -250,9 +254,9 @@ Console-friendly plain diagnostics:
 ```js
 require('Logic.Season11').getDiagnostics()
 JSON.stringify(require('Logic.Season11').getDiagnostics())
-Memory.season11.assignments.rankedMiningTargets
-Memory.season11.assignments.rankedReactors
-Memory.season11.stats.events
+Memory.hive.season.season11.assignments.rankedMiningTargets
+Memory.hive.season.season11.assignments.rankedReactors
+Memory.hive.season.season11.stats.events
 require('Season11.Operations').getDashboard()
 Memory.hive.operations['season11:reactor:reactorObjectId']
 ```

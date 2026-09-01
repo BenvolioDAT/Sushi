@@ -8,12 +8,13 @@
  * changes planner or room layout decisions.
  *
  * It is off by default. Enable it manually from the console with:
- * Memory.settings = Memory.settings || {}; Memory.settings.showStructurePlanner = true;
+ * Memory.config.visuals.showStructurePlanner = true;
  *
  * Disable it with:
- * Memory.settings.showStructurePlanner = false;
+ * Memory.config.visuals.showStructurePlanner = false;
  */
 
+var HiveMemory = require('HiveMind.Memory');
 var MAX_MARKERS_PER_ROOM = 250;
 var MARKER_FONT = 0.4;
 var SERVICE_MARKER_FONT = 0.28;
@@ -54,7 +55,7 @@ COLORS[STRUCTURE_LAB] = '#b58cff';
 COLORS[STRUCTURE_RAMPART] = '#62e36f';
 
 function isEnabled() {
-    return Memory.settings && Memory.settings.showStructurePlanner === true;
+    return HiveMemory.getConfig('visuals').showStructurePlanner === true;
 }
 
 function run() {

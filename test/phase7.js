@@ -103,7 +103,7 @@ test('adapter is inert when the seasonal API is missing', function() {
     assert.deepStrictEqual(Adapter.findReactors({ find() { throw new Error('must be contained'); } }), []);
     assert.strictEqual(Adapter.claim({}, {}), ERR_INVALID_TARGET);
     assert.doesNotThrow(() => Operations.run({ operating: false }));
-    assert.strictEqual(Memory.hive, undefined, 'missing API should not create HiveMind operations');
+    assert.deepStrictEqual(Memory.hive.operations, {}, 'missing API should not create HiveMind operations');
 });
 
 test('adapter exposes only verified seasonal constants and calls', function() {
@@ -158,7 +158,7 @@ test('HiveMind migration adds Season 11 operation memory without replacing data'
     Memory.hive = { schemaVersion: 4, season: { keep: 7 }, operations: {}, settings: {} };
     const { HiveMemory } = seasonModules();
     const hive = HiveMemory.migrate();
-    assert.strictEqual(hive.schemaVersion, HiveMemory.SCHEMA_VERSION);
+    assert.strictEqual(Memory.meta.schemaVersion, HiveMemory.SCHEMA_VERSION);
     assert.strictEqual(hive.season.keep, 7);
     assert.deepStrictEqual(hive.season.activeOperationIds, []);
     assert.deepStrictEqual(hive.season.deliveryEvents, []);

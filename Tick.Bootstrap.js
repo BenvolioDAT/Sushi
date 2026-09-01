@@ -11,20 +11,12 @@ let lastPixelFailureLogTick = -PIXEL_FAILURE_LOG_INTERVAL;
 let pixelStatus = null;
 
 function ensureSettings() {
-    if (!Memory.settings) Memory.settings = {};
-    if (!Memory.settings.pixels) {
-        Memory.settings.pixels = {
-            enabled: false,
-            bucketThreshold: FULL_CPU_BUCKET,
-            tickModulo: 10
-        };
-    }
-    const pixels = Memory.settings.pixels;
+    const pixels = HiveMemory.getConfig('pixels');
     if (pixels.enabled === undefined) pixels.enabled = false;
     if (typeof pixels.bucketThreshold !== 'number') pixels.bucketThreshold = FULL_CPU_BUCKET;
     if (typeof pixels.tickModulo !== 'number' || pixels.tickModulo < 1) pixels.tickModulo = 10;
     pixels.bucketThreshold = Math.max(FULL_CPU_BUCKET, pixels.bucketThreshold);
-    return Memory.settings;
+    return { pixels };
 }
 
 function maybeGeneratePixel() {
@@ -54,12 +46,14 @@ function getPixelStatus() {
 }
 
 function run() {
-    ensureSettings();
     HiveMemory.migrate();
+    HiveMemory.installConsoleHelpers();
+    ensureSettings();
     DemandBoard.beginTick();
     travelUtility.cleanupRouteCaches();
     const cpuStatus = cpuStatusUtility.getCpuStatus();
-    TickIndex.build();
+    const index = TickIndex.build();
+    HiveMemory.syncHomeRooms(index);
     maybeGeneratePixel();
     return cpuStatus;
 }

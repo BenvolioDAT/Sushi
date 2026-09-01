@@ -15,6 +15,7 @@
 var travel = require('utility.Travel.Creep');
 var utility = require('utility');
 var Economy = require('HiveMind.Economy');
+var HiveMemory = require('HiveMind.Memory');
 
 var PATH_VERSION = 1;
 var HEAVY_PLAN_INTERVAL = 75;
@@ -1236,7 +1237,8 @@ function hasRemoteAssignmentCapacity(homeRoomName, info, requestingCreep) {
     }
 
     var assigned = countRemoteAssignedExtractorWork(homeRoomName, info);
-    var queue = Memory.rooms && Memory.rooms[homeRoomName] ? Memory.rooms[homeRoomName].spawnQueue : null;
+    var queue = Memory.rooms && Memory.rooms[homeRoomName] && Memory.rooms[homeRoomName].spawn ?
+        Memory.rooms[homeRoomName].spawn.queue : null;
     var queued = countPendingRemoteExtractorRequest(homeRoomName, info, queue);
 
     // One remote source gets one normal Extractor to avoid over-mining and spawn spam.
@@ -1840,14 +1842,15 @@ function clearHeapPathCache(homeRoomName) {
 }
 
 function getMyUsername() {
-    if (Memory.username) {
-        return Memory.username;
+    var identity = HiveMemory.ensure().identity;
+    if (identity.username) {
+        return identity.username;
     }
 
     for (var name in Game.spawns) {
         if (Game.spawns.hasOwnProperty(name) && Game.spawns[name].owner) {
-            Memory.username = Game.spawns[name].owner.username;
-            return Memory.username;
+            identity.username = Game.spawns[name].owner.username;
+            return identity.username;
         }
     }
 

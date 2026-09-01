@@ -18,6 +18,7 @@
 var spawnUtility = require('utility.spawn');
 var creepBodyConfig = require('role.creepBodyConfig');
 var Economy = require('HiveMind.Economy');
+var HiveMemory = require('HiveMind.Memory');
 
 var getBodyCost = creepBodyConfig.getBodyCost;
 
@@ -160,7 +161,7 @@ function previewAffordableQueuedBodyForSpawn(spawn, request) {
  * Make sure the room memory and spawn queue exist.
  *
  * Queue path:
- * Memory.rooms[roomName].spawnQueue
+ * Memory.rooms[roomName].spawn.queue
  *
  * @param {string} roomName
  * @returns {array|null}
@@ -168,29 +169,16 @@ function previewAffordableQueuedBodyForSpawn(spawn, request) {
 function getSpawnQueue(roomName) {
     /*
      * A room name is required because each room keeps its own queue under
-     * Memory.rooms[roomName].spawnQueue.
+     * Memory.rooms[roomName].spawn.queue.
      */
     if (!roomName) {
         return null;
     }
 
     /*
-     * Memory is persistent between ticks. These checks create the nested objects
-     * before code tries to read or write spawnQueue.
+     * Memory is persistent between ticks. The schema accessor owns this shape.
      */
-    if (!Memory.rooms) {
-        Memory.rooms = {};
-    }
-
-    if (!Memory.rooms[roomName]) {
-        Memory.rooms[roomName] = {};
-    }
-
-    if (!Memory.rooms[roomName].spawnQueue) {
-        Memory.rooms[roomName].spawnQueue = [];
-    }
-
-    return Memory.rooms[roomName].spawnQueue;
+    return HiveMemory.getRoomSpawnMemory(roomName).queue;
 }
 
 /**

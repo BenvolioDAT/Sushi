@@ -104,7 +104,7 @@ function cancel(id) {
     state.emitted.delete(id);
     delete HiveMemory.ensure().demands[id];
     for (const roomMemory of Object.values(Memory.rooms || {})) {
-        const queue = roomMemory && roomMemory.spawnQueue;
+        const queue = roomMemory && roomMemory.spawn && roomMemory.spawn.queue;
         if (!Array.isArray(queue)) continue;
         for (let index = queue.length - 1; index >= 0; index--) {
             const request = queue[index];
@@ -136,7 +136,7 @@ function assignmentCount(demand) {
     }
     const rooms = Memory.rooms || {};
     for (const [roomName, roomMemory] of Object.entries(rooms)) {
-        const queue = roomMemory && roomMemory.spawnQueue || [];
+        const queue = roomMemory && roomMemory.spawn && roomMemory.spawn.queue || [];
         for (let requestIndex = 0; requestIndex < queue.length; requestIndex++) {
             const request = queue[requestIndex];
             if (!memoryMatches(demand, request.memory)) continue;
@@ -228,7 +228,7 @@ function queueDemand(demand, room, count) {
 
 function cleanupQueues(activeIds) {
     for (const roomMemory of Object.values(Memory.rooms || {})) {
-        const queue = roomMemory && roomMemory.spawnQueue;
+        const queue = roomMemory && roomMemory.spawn && roomMemory.spawn.queue;
         if (!Array.isArray(queue)) continue;
         for (let i = queue.length - 1; i >= 0; i--) {
             const demandId = queue[i] && queue[i].memory && queue[i].memory.demandId;

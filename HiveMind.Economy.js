@@ -50,13 +50,12 @@ function replacementLead(creep, distance) {
 }
 
 function getDistance(room, source, dropoff) {
-    if (!Memory.rooms) Memory.rooms = {};
-    if (!Memory.rooms[room.name]) Memory.rooms[room.name] = {};
-    const roomMemory = Memory.rooms[room.name];
-    if (!roomMemory.economyDistanceCache) roomMemory.economyDistanceCache = {};
+    const roomMemory = HiveMemory.getRoomMemory(room.name);
+    if (!roomMemory.cache || typeof roomMemory.cache !== 'object') roomMemory.cache = {};
+    if (!roomMemory.cache.economyDistances) roomMemory.cache.economyDistances = {};
     const targetId = dropoff && dropoff.id || 'center';
     const key = source.id + ':' + targetId;
-    const cached = roomMemory.economyDistanceCache[key];
+    const cached = roomMemory.cache.economyDistances[key];
     if (cached && cached.version === 1 && cached.distance > 0) return cached.distance;
     let distance = dropoff && source.pos && dropoff.pos && typeof source.pos.getRangeTo === 'function' ?
         Math.max(1, source.pos.getRangeTo(dropoff.pos)) : 25;
@@ -71,7 +70,7 @@ function getDistance(room, source, dropoff) {
             /* Range distance remains a safe low-CPU fallback for unusual mocks/shards. */
         }
     }
-    roomMemory.economyDistanceCache[key] = { version: 1, distance, tick: Game.time };
+    roomMemory.cache.economyDistances[key] = { version: 1, distance, tick: Game.time };
     return distance;
 }
 
@@ -224,7 +223,7 @@ function sourceReplacementCoverage(source, required, distance, assigned, queue, 
 
 function pendingLocalParts(roomName, role, partType) {
     const roomMemory = Memory.rooms && Memory.rooms[roomName];
-    const queue = roomMemory && roomMemory.spawnQueue || [];
+    const queue = roomMemory && roomMemory.spawn && roomMemory.spawn.queue || [];
     let total = 0;
     for (const request of queue) {
         const memory = request && request.memory || {};
@@ -244,7 +243,8 @@ function buildSnapshot(room, previous) {
     const sources = typeof room.find === 'function' ? room.find(FIND_SOURCES) || [] : [];
     const spawns = index.ownedSpawnsByRoom.get(room.name) || [];
     const dropoff = room.storage || spawns[0] || null;
-    const queue = Memory.rooms && Memory.rooms[room.name] && Memory.rooms[room.name].spawnQueue || [];
+    const queue = Memory.rooms && Memory.rooms[room.name] && Memory.rooms[room.name].spawn &&
+        Memory.rooms[room.name].spawn.queue || [];
     const transportContext = linkContext(room, index);
     const sourceRows = [];
     let workRequired = 0;
@@ -490,19 +490,43 @@ function applyHysteresis(snapshot, previous) {
     return snapshot;
 }
 
-function ensureEconomyMemory() {
-    const hive = HiveMemory.ensure();
-    if (!hive.economy || typeof hive.economy !== 'object') hive.economy = {};
-    if (!hive.economy.rooms || typeof hive.economy.rooms !== 'object') hive.economy.rooms = {};
-    return hive.economy;
+function heapEconomy() {
+    if (!global.__sushiEconomy || global.__sushiEconomy.tick !== Game.time) {
+        global.__sushiEconomy = { tick: Game.time, rooms: {} };
+    }
+    return global.__sushiEconomy;
+}
+
+function previousSnapshot(persistent) {
+    if (!persistent) return null;
+    return {
+        ...persistent,
+        sampleTick: persistent.lastSampleTick,
+        liquidEnergy: persistent.lastLiquidEnergy
+    };
+}
+
+function savePersistent(roomName, snapshot) {
+    const persistent = HiveMemory.getRoomEconomyMemory(roomName);
+    persistent.state = snapshot.state;
+    persistent.rawState = snapshot.rawState;
+    persistent.stateSince = snapshot.stateSince;
+    persistent.stateChangedAt = snapshot.stateChangedAt;
+    persistent.healthyTicks = snapshot.healthyTicks;
+    persistent.reason = snapshot.reason;
+    persistent.lastSampleTick = snapshot.sampleTick;
+    persistent.lastLiquidEnergy = snapshot.liquidEnergy;
+    persistent.energyTrend = snapshot.energyTrend;
+    return persistent;
 }
 
 function updateRoom(room) {
     if (!room || !room.controller || !room.controller.my) return null;
-    const economy = ensureEconomyMemory();
-    const previous = economy.rooms[room.name] || null;
+    const persistent = HiveMemory.getRoomEconomyMemory(room.name);
+    const previous = previousSnapshot(persistent);
     const snapshot = applyHysteresis(buildSnapshot(room, previous), previous);
-    economy.rooms[room.name] = snapshot;
+    heapEconomy().rooms[room.name] = snapshot;
+    savePersistent(room.name, snapshot);
     return snapshot;
 }
 
@@ -514,7 +538,9 @@ function run() {
 
 function get(roomOrName) {
     const roomName = typeof roomOrName === 'string' ? roomOrName : roomOrName && roomOrName.name;
-    return roomName && ensureEconomyMemory().rooms[roomName] || null;
+    if (!roomName) return null;
+    const heap = heapEconomy();
+    return heap.rooms[roomName] || Memory.rooms && Memory.rooms[roomName] && Memory.rooms[roomName].economy || null;
 }
 
 function categoryForRequest(request) {
@@ -570,7 +596,7 @@ function canSpawnRequest(room, request) {
 function shouldBootstrapSelfDeliver(roomOrName) {
     const snapshot = get(roomOrName);
     return !!snapshot && snapshot.state === STATES.SURVIVAL &&
-        snapshot.haul.localCarry + snapshot.haul.queuedCarry < 1;
+        (!snapshot.haul || snapshot.haul.localCarry + snapshot.haul.queuedCarry < 1);
 }
 
 module.exports = {

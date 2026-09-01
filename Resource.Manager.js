@@ -145,7 +145,7 @@ function emitCourierDemand(roomName) {
 }
 
 function plan() {
-    const settings = HiveMemory.ensure().settings.resources;
+    const settings = HiveMemory.getConfig('resources');
     if (settings.enabled === false) return { enabled: false };
     syncBoostRequests();
     const schedule = scheduleState();
@@ -165,7 +165,7 @@ function plan() {
 }
 
 function runRoom(room) {
-    const settings = HiveMemory.ensure().settings.resources;
+    const settings = HiveMemory.getConfig('resources');
     if (settings.enabled === false) return { roomName: room.name, disabled: true };
     const discretionary = Economy.canSpend(room, 'resources');
     const report = { roomName: room.name, links: null, labs: null, observer: null, jobs: [], economyBlocked: !discretionary };
@@ -192,7 +192,7 @@ function runRoom(room) {
 }
 
 function runEmpireStructures() {
-    const settings = HiveMemory.ensure().settings.resources;
+    const settings = HiveMemory.getConfig('resources');
     if (settings.enabled === false || settings.terminals === false || Game.time % 10 !== 0) return [];
     return Terminals.run();
 }

@@ -1,4 +1,5 @@
 const cpuStatus = require('CPU.Status');
+const HiveMemory = require('HiveMind.Memory');
 
 function getUsed() {
     return Game.cpu && typeof Game.cpu.getUsed === 'function' ? Game.cpu.getUsed() : 0;
@@ -33,28 +34,25 @@ function finish() {
     telemetry.bucket = Game.cpu && Game.cpu.bucket;
     telemetry.mode = cpuStatus.getCpuStatus().mode;
 
-    if (!Memory.settings) Memory.settings = {};
-    if (!Memory.settings.cpuTelemetry) {
-        Memory.settings.cpuTelemetry = { persistInterval: 100, debug: false };
-    }
-    const interval = Math.max(10, Memory.settings.cpuTelemetry.persistInterval || 100);
+    const settings = HiveMemory.getConfig('cpu').telemetry;
+    const interval = Math.max(10, settings.persistInterval || 100);
     if (Game.time % interval === 0) persistRolling(telemetry);
-    if (Memory.settings.cpuTelemetry.debug === true) {
+    if (settings.debug === true) {
         console.log('Sushi CPU', JSON.stringify(getView()));
     }
     return telemetry;
 }
 
 function persistRolling(telemetry) {
-    if (!Memory.stats) Memory.stats = {};
-    const previous = Memory.stats.cpu || { samples: 0, phases: {} };
+    const telemetryMemory = HiveMemory.ensure().telemetry;
+    const previous = telemetryMemory.cpu || { samples: 0, phases: {} };
     const samples = Math.min(1000, (previous.samples || 0) + 1);
     const alpha = Math.max(0.05, 1 / samples);
     const phases = { ...(previous.phases || {}) };
     for (const [name, value] of Object.entries(telemetry.phases)) {
         phases[name] = phases[name] === undefined ? value : phases[name] + ((value - phases[name]) * alpha);
     }
-    Memory.stats.cpu = {
+    telemetryMemory.cpu = {
         tick: telemetry.tick,
         samples,
         total: previous.total === undefined ? telemetry.total : previous.total + ((telemetry.total - previous.total) * alpha),

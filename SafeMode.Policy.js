@@ -58,7 +58,7 @@ function evaluate(room) {
 }
 
 function run(room) {
-    const settings = HiveMemory.ensure().settings.safeMode;
+    const settings = HiveMemory.getConfig('combat').safeMode;
     if (settings.enabled === false) return { activated: false, reason: 'Safe-mode policy disabled' };
     const decision = evaluate(room);
     if (!decision.shouldActivate) return { ...decision, activated: false };

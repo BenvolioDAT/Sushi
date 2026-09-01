@@ -80,7 +80,7 @@ function makeRoom(name, options = {}) {
     for (const object of structures.concat(minerals)) if (object && object.pos) object.pos.roomName = name;
     for (const structure of [result.storage, result.terminal]) if (structure && !structures.includes(structure)) structures.push(structure);
     Game.rooms[name] = result;
-    Memory.rooms[name] = Memory.rooms[name] || { spawnQueue: [] };
+    Memory.rooms[name] = Memory.rooms[name] || { spawn: { queue: [] } };
     return result;
 }
 
@@ -128,10 +128,10 @@ test('resource Memory migration is additive and defaults market use off', functi
     Memory.hive = { custom: 9 };
     const memoryApi = fresh('HiveMind.Memory.js');
     const hive = memoryApi.migrate();
-    assert.strictEqual(hive.schemaVersion, memoryApi.SCHEMA_VERSION);
+    assert.strictEqual(Memory.meta.schemaVersion, memoryApi.SCHEMA_VERSION);
     assert.strictEqual(hive.custom, 9);
     assert.deepStrictEqual(hive.resources.rooms, {});
-    assert.strictEqual(hive.settings.resources.market, false);
+    assert.strictEqual(memoryApi.getConfig('resources').market, false);
 });
 
 test('mineral lifecycle waits for extractor, emits demand when active, and stops safely', function() {

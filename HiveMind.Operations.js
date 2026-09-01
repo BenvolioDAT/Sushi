@@ -91,7 +91,7 @@ function rescore(operation, breakdown) {
 }
 
 function syncExpansion() {
-    const expansion = Memory.expansion;
+    const expansion = HiveMemory.ensure().expansion;
     if (!expansion || !expansion.targetRoom) return null;
     const stateMap = {
         selectTarget: 'DISCOVERING', claiming: 'ACTIVE', placeSpawn: 'ACTIVE',

@@ -12,11 +12,10 @@ const DemandBoard = require('Spawn.DemandBoard');
 const SquadController = require('Squad.Controller');
 const ResourceManager = require('Resource.Manager');
 const Economy = require('HiveMind.Economy');
+const HiveMemory = require('HiveMind.Memory');
 
 function isWarRoomEnabled() {
-    if (!Memory.settings) Memory.settings = {};
-    if (Memory.settings.useWarRoom === undefined) Memory.settings.useWarRoom = false;
-    return Memory.settings.useWarRoom === true;
+    return HiveMemory.getConfig('combat').useWarRoom === true;
 }
 
 function refreshIntelAndThreats() {

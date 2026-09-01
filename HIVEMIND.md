@@ -194,7 +194,7 @@ allowlists only the traffic engine, travel facade, legacy Traveler facade, and
 the retained one-tile Extractor seat displacement.
 
 Do not disable the traffic manager as a routine CPU control. Since final
-movement belongs to it, `Memory.settings.useTrafficManager = false` can stop
+movement belongs to it, `Memory.config.general.useTrafficManager = false` can stop
 registered movement intents from resolving.
 
 ## Minerals, labs, and boosts
@@ -301,7 +301,7 @@ Useful live views:
 
 ```js
 require('HiveMind.Telemetry').getView()
-Memory.stats && Memory.stats.cpu
+Memory.hive.telemetry && Memory.hive.telemetry.cpu
 require('HiveMind.Scheduler').getState()
 require('Combat.ThreatLedger').getRoomThreat('W1N1')
 Memory.rooms.W1N1 && Memory.rooms.W1N1.defenseSummary
@@ -313,27 +313,23 @@ Memory.hive.resources
 Enable per-tick CPU logging only briefly:
 
 ```js
-Memory.settings.cpuTelemetry = { persistInterval: 100, debug: true }
-Memory.settings.cpuTelemetry.debug = false
+Memory.config.cpu.telemetry = { persistInterval: 100, debug: true }
+Memory.config.cpu.telemetry.debug = false
 ```
 
 ## Memory migrations
 
-`HiveMind.Memory.migrate()` runs during bootstrap. Current HiveMind schema is
-version 6. Migration is additive: it initializes missing branches and squad
-fields, preserves unknown/operator fields, and advances the schema number. It
-does not replace an existing setting merely because it differs from a default.
-
-Season 11 has a separate `Memory.season11.schemaVersion` (currently 2) because
-its bounded intel and assignments predate the HiveMind operation adapter.
-Season migrations also preserve operator config and unknown fields. After a
-deploy, inspect both roots before deleting any legacy state:
+`HiveMind.Memory.migrate()` runs before normal bootstrap work. Current schema is
+version 8 under `Memory.meta`. The explicit 7-to-8 migration consolidates
+configuration, CPU state, room spawn/cache/economy state, and Season 11 state;
+it preserves unknown/operator fields and gives an existing schema-8 value
+precedence over its stale legacy counterpart. After a deploy, inspect:
 
 ```js
-Memory.hive.schemaVersion
-Memory.season11 && Memory.season11.schemaVersion
+Memory.meta
+Memory.config
 JSON.stringify(Memory.hive).length
-JSON.stringify(Memory.season11 || {}).length
+JSON.stringify(Memory.rooms || {}).length
 ```
 
 Do not place live game objects into either root. If an emergency reset is ever
@@ -364,38 +360,38 @@ These assignments are reversible and preserve state for diagnosis:
 
 ```js
 // Stop broad strategy and new operation planning.
-Memory.hive.settings.strategy.enabled = false
+Memory.config.combat.strategy.enabled = false
 
 // Stop all coordinated squad planning/execution.
-Memory.hive.settings.squads.enabled = false
+Memory.config.combat.squads.enabled = false
 
 // Keep duos but stop quads or only automatic defensive quads.
-Memory.hive.settings.squads.quadsEnabled = false
-Memory.hive.settings.squads.autoDefenseQuads = false
+Memory.config.combat.squads.quadsEnabled = false
+Memory.config.combat.squads.autoDefenseQuads = false
 
 // Stop new independent Ronin/Volley/Cleric defense demands; squads remain.
-Memory.hive.settings.independentCombat = false
+Memory.config.combat.independentCombat = false
 
 // Stop all resource automation, or one subsystem.
-Memory.hive.settings.resources.enabled = false
-Memory.hive.settings.resources.labs = false
-Memory.hive.settings.resources.terminals = false
-Memory.hive.settings.resources.observers = false
-Memory.hive.settings.resources.minerals = false
+Memory.config.resources.enabled = false
+Memory.config.resources.labs = false
+Memory.config.resources.terminals = false
+Memory.config.resources.observers = false
+Memory.config.resources.minerals = false
 
 // Stop seasonal work while retaining intel and operation history.
 require('Logic.Season11').setMode('disabled')
 
 // Stop optional visuals.
-Memory.settings.showDashboard = false
-Memory.settings.showRemoteRoomDashboard = false
-Memory.settings.showStructurePlanner = false
+Memory.config.visuals.showDashboard = false
+Memory.config.visuals.showRemoteRoomDashboard = false
+Memory.config.visuals.showStructurePlanner = false
 
 // Pixels are already off by default.
-Memory.settings.pixels.enabled = false
+Memory.config.pixels.enabled = false
 
 // Preserve manual approval for safe mode.
-Memory.hive.settings.safeMode.manualConfirmation = true
+Memory.config.combat.safeMode.manualConfirmation = true
 ```
 
 Restore the same fields to `true` as conditions recover. `useWarRoom` controls
@@ -408,14 +404,16 @@ normal emergency switch because turning it off can halt movement resolution.
 planning. The authoritative snapshot is available at:
 
 ```js
-Memory.hive.economy.rooms.W1N1
 require('HiveMind.Economy').get('W1N1')
+Memory.rooms.W1N1.economy
 ```
 
-The snapshot reports spawn fill, reserves and trend; per-source expected income,
+The heap snapshot reports spawn fill, reserves and trend; per-source expected income,
 active/required/queued WORK, distance and backlog; distance-derived hauling
 demand, local/remote/queued CARRY; replacement risk; remote commitments; state;
-and the human-readable reason for that state.
+and the human-readable reason for that state. Only hysteresis, trend inputs,
+state, and reason persist in `Memory.rooms[room].economy`; live detail is rebuilt
+from `Game` and `HiveMind.Index` after a global reset.
 
 The states are:
 
@@ -458,10 +456,10 @@ require('HiveMind.Memory').ensure()
 Enable or disable strategy and independent combat-role spawning:
 
 ```js
-Memory.hive.settings.strategy.enabled = true
-Memory.hive.settings.strategy.enabled = false
-Memory.hive.settings.independentCombat = true
-Memory.hive.settings.independentCombat = false
+Memory.config.combat.strategy.enabled = true
+Memory.config.combat.strategy.enabled = false
+Memory.config.combat.independentCombat = true
+Memory.config.combat.independentCombat = false
 ```
 
 Set Season mode and pixel policy:
@@ -471,8 +469,8 @@ require('Logic.Season11').setMode('observe')
 require('Logic.Season11').setMode('auto')
 require('Logic.Season11').setMode('active')
 require('Logic.Season11').setMode('disabled')
-Memory.settings.pixels.enabled = true
-Memory.settings.pixels.enabled = false
+Memory.config.pixels.enabled = true
+Memory.config.pixels.enabled = false
 ```
 
 Classify players. Clearing a manual classification returns the player to
@@ -542,11 +540,11 @@ Inspect CPU telemetry and change visual cadence:
 
 ```js
 require('HiveMind.Telemetry').getView()
-Memory.stats && Memory.stats.cpu
-Memory.settings.visualInterval = 10
-Memory.settings.showDashboard = true
-Memory.settings.showRemoteRoomDashboard = false
-Memory.settings.showStructurePlanner = false
+Memory.hive.telemetry && Memory.hive.telemetry.cpu
+Memory.config.visuals.visualInterval = 10
+Memory.config.visuals.showDashboard = true
+Memory.config.visuals.showRemoteRoomDashboard = false
+Memory.config.visuals.showStructurePlanner = false
 ```
 
 Configure Reactor selection/recapture and boost production:

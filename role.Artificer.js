@@ -11,6 +11,7 @@
 var creepUtility = require('utility.Creep');
 var utilityTravelCreep = require('utility.Travel.Creep');
 var Economy = require('HiveMind.Economy');
+var HiveMemory = require('HiveMind.Memory');
 
 var MAX_REPAIR_ARTIFICERS = 2;
 
@@ -823,8 +824,8 @@ function getHomeRoomName(creep) {
         return creep.memory.home;
     }
 
-    if(Memory.firstSpawnRoom) {
-        return Memory.firstSpawnRoom;
+    if(HiveMemory.ensure().identity.firstSpawnRoom) {
+        return HiveMemory.ensure().identity.firstSpawnRoom;
     }
 
     return creep.room.name;

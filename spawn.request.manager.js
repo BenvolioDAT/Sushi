@@ -236,46 +236,38 @@ function ensureNumberSetting(target, key, defaultValue) {
 }
 
 function ensureCpuPolicyMemory() {
-    if (!Memory.cpuPolicy) {
-        Memory.cpuPolicy = {};
-    }
+    var policy = HiveMemory.getConfig('cpu');
 
     for (var key in DEFAULT_CPU_POLICY) {
         if (DEFAULT_CPU_POLICY.hasOwnProperty(key)) {
-            ensureNumberSetting(Memory.cpuPolicy, key, DEFAULT_CPU_POLICY[key]);
+            ensureNumberSetting(policy, key, DEFAULT_CPU_POLICY[key]);
         }
     }
 
-    return Memory.cpuPolicy;
+    return policy;
 }
 
 function ensureUpgradeSettings() {
-    if (!Memory.settings) {
-        Memory.settings = {};
+    var settings = HiveMemory.getConfig('upgrade');
+
+    if (settings.autoCpuUpgradeBoost === undefined) {
+        settings.autoCpuUpgradeBoost = true;
+    }
+    if (typeof settings.cpuUpgradeBoostMaximum !== 'number') {
+        settings.cpuUpgradeBoostMaximum = 1.75;
+    }
+    if (typeof settings.cpuUpgradeMinimumBucket !== 'number') {
+        settings.cpuUpgradeMinimumBucket = 7000;
+    }
+    if (typeof settings.cpuUpgradeMinimumStorage !== 'number') {
+        settings.cpuUpgradeMinimumStorage = 50000;
     }
 
-    if (Memory.settings.autoCpuUpgradeBoost === undefined) {
-        Memory.settings.autoCpuUpgradeBoost = true;
-    }
-    if (typeof Memory.settings.cpuUpgradeBoostMaximum !== 'number') {
-        Memory.settings.cpuUpgradeBoostMaximum = 1.75;
-    }
-    if (typeof Memory.settings.cpuUpgradeMinimumBucket !== 'number') {
-        Memory.settings.cpuUpgradeMinimumBucket = 7000;
-    }
-    if (typeof Memory.settings.cpuUpgradeMinimumStorage !== 'number') {
-        Memory.settings.cpuUpgradeMinimumStorage = 50000;
-    }
-
-    return Memory.settings;
+    return settings;
 }
 
 function ensureSpawnPolicyMemory() {
-    if (!Memory.spawnPolicy) {
-        Memory.spawnPolicy = {};
-    }
-
-    var policy = Memory.spawnPolicy;
+    var policy = HiveMemory.getConfig('spawn');
 
     if (policy.enabled === undefined) {
         policy.enabled = DEFAULT_SPAWN_POLICY.enabled;
@@ -323,25 +315,13 @@ function ensureSpawnPolicyMemory() {
 }
 
 function ensureRoomMemory(roomName) {
-    if (!Memory.rooms) {
-        Memory.rooms = {};
-    }
-
-    if (!Memory.rooms[roomName]) {
-        Memory.rooms[roomName] = {};
-    }
-
-    return Memory.rooms[roomName];
+    return HiveMemory.getRoomMemory(roomName);
 }
 
 function getSpawnDemandCache(roomName) {
     var roomMemory = ensureRoomMemory(roomName);
 
-    if (!roomMemory.spawnDemandCache) {
-        roomMemory.spawnDemandCache = {};
-    }
-
-    return roomMemory.spawnDemandCache;
+    return HiveMemory.getRoomSpawnMemory(roomName).demandCache;
 }
 
 function getCpuUsed() {
@@ -1211,7 +1191,7 @@ function getDesiredTechWork(room) {
         desiredWork = Math.min(desiredWork, 4);
     }
 
-    var upgradeRush = Memory.settings && Memory.settings.upgradeRush === true;
+    var upgradeRush = HiveMemory.getConfig('upgrade').upgradeRush === true;
     var constructionDemand = getCachedLocalConstructionDemand(room);
     var constructionSites = constructionDemand.totalSites || 0;
 
@@ -1935,8 +1915,7 @@ function getArtificerBuildDemand(room) {
         mode = 'remote-repair';
     }
 
-    var upgradeRush = Memory.settings &&
-        Memory.settings.upgradeRush === true;
+    var upgradeRush = HiveMemory.getConfig('upgrade').upgradeRush === true;
 
     if (upgradeRush) {
         var emergencyRepairWork = repairDemand.emergencyTargets > 0 ?
@@ -2202,7 +2181,7 @@ function getMyUsername(room) {
         }
     }
 
-    return Memory.username || null;
+    return HiveMemory.ensure().identity.username || null;
 }
 
 function getControllerOwnerUsername(controllerMemory) {
@@ -3303,8 +3282,7 @@ function getFreighterCarryDemand(room) {
     var desiredCarryParts = baseLocalCarry + remoteBaseCarry + backlogBonus + ageBonus;
 
     if (
-        Memory.settings &&
-        Memory.settings.upgradeRush === true &&
+        HiveMemory.getConfig('upgrade').upgradeRush === true &&
         getControllerContainerEnergy(room) < 1000
     ) {
         var desiredTechWork = getDesiredTechWork(room);
@@ -3655,7 +3633,7 @@ function runEmergencyPlanning(room, report, context) {
 
 function cleanDefenseQueue(roomName, demand) {
     var queue = spawnManager.getSpawnQueue(roomName) || [];
-    var independentCombat = HiveMemory.ensure().settings.independentCombat !== false;
+    var independentCombat = HiveMemory.getConfig('combat').independentCombat !== false;
     var desired = {
         Ronin: independentCombat ? demand.desiredMelee : 0,
         Volley: independentCombat ? demand.desiredRanged : 0,
@@ -3688,7 +3666,7 @@ function requestDefendersForRoom(room, context) {
     if (!room || !demand) return result;
     result.removedStaleRequests = cleanDefenseQueue(room.name, demand);
     if (demand.harmfulHostileCount <= 0) return result;
-    if (HiveMemory.ensure().settings.independentCombat === false) {
+    if (HiveMemory.getConfig('combat').independentCombat === false) {
         result.independentCombatDisabled = true;
         return result;
     }
@@ -3734,7 +3712,6 @@ function requestDefendersForRoom(room, context) {
 }
 
 function saveSpawnGovernorDebug(context) {
-    var roomMemory = ensureRoomMemory(context.roomName);
     var policy = context.spawnPolicy;
     var cpuUsed = getCpuUsed() - context.cpuStart;
 
@@ -3742,7 +3719,7 @@ function saveSpawnGovernorDebug(context) {
     context.demandCache.roleBodyPartTotals = context.bodyPartsByRole;
     context.demandCache.queuedRoleBodyPartTotals = context.queuedBodyPartsByRole;
 
-    roomMemory.spawnGovernor = {
+    HiveMemory.getRoomSpawnMemory(context.roomName).governor = {
         tick: Game.time,
         fullPlan: context.fullPlan,
         skippedForCpu: context.skippedForCpu,

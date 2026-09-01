@@ -2,10 +2,10 @@
   "name": "sushi-screeps",
   "private": true,
   "scripts": {
-    "test": "node test/run.js && node test/phase2.js && node test/phase3.js && node test/phase4.js && node test/phase5.js && node test/phase6.js && node test/phase7.js && node test/phase8.js && node test/phase9.js && node test/economy.js",
+    "test": "node test/run.js && node test/phase2.js && node test/phase3.js && node test/phase4.js && node test/phase5.js && node test/phase6.js && node test/phase7.js && node test/phase8.js && node test/phase9.js && node test/economy.js && node test/memory-schema.js",
     "test:season11": "node test.Season11.js",
     "validate:graph": "node test/module-graph.js",
     "validate:movement": "node test/movement-audit.js",
-    "validate": "node test/run.js && node test/phase2.js && node test/phase3.js && node test/phase4.js && node test/phase5.js && node test/phase6.js && node test/phase7.js && node test/phase8.js && node test/phase9.js && node test/economy.js && node test/module-graph.js && node test/movement-audit.js && node test.Season11.js"
+    "validate": "node test/run.js && node test/phase2.js && node test/phase3.js && node test/phase4.js && node test/phase5.js && node test/phase6.js && node test/phase7.js && node test/phase8.js && node test/phase9.js && node test/economy.js && node test/memory-schema.js && node test/module-graph.js && node test/movement-audit.js && node test.Season11.js"
   }
 }

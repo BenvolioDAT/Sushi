@@ -23,6 +23,7 @@ var travel = require('utility.Travel.Creep');
 var CombatMath = require('Combat.Math');
 var CombatPolicy = require('Combat.Policy');
 var ThreatLedger = require('Combat.ThreatLedger');
+var HiveMemory = require('HiveMind.Memory');
 
 var WarRoom = {};
 
@@ -59,7 +60,7 @@ var WAR_ROOM_ATTACK_FLAG_NAME = 'WarRoom_Attack';
  * - ignore all other visible rooms
  * - find the best hostile creep or hostile structure
  * - create or move one shared attack flag
- * - remember the active threat in Memory.WarRoom.activeThreat
+ * - remember the active threat in Memory.hive.warRoom.activeThreat
  * - remove old memory and the flag after the threat is stale
  */
 WarRoom.run = function() {
@@ -116,9 +117,7 @@ WarRoom.run = function() {
  * Make sure the WarRoom memory object exists before reading or writing it.
  */
 WarRoom.ensureMemory = function() {
-    if(!Memory.WarRoom) {
-        Memory.WarRoom = {};
-    }
+    HiveMemory.ensure().warRoom;
 };
 
 /*
@@ -356,7 +355,7 @@ WarRoom.saveActiveThreat = function(threat, type) {
         };
     }
 
-    Memory.WarRoom.activeThreat = activeThreat;
+    HiveMemory.ensure().warRoom.activeThreat = activeThreat;
 };
 
 /*
@@ -384,7 +383,7 @@ WarRoom.placeAttackFlag = function(threat) {
 WarRoom.forgetStaleThreat = function() {
     WarRoom.ensureMemory();
 
-    var activeThreat = Memory.WarRoom.activeThreat;
+    var activeThreat = HiveMemory.ensure().warRoom.activeThreat;
 
     if(!activeThreat || activeThreat.lastSeen === undefined) {
         return false;
@@ -394,7 +393,7 @@ WarRoom.forgetStaleThreat = function() {
         return false;
     }
 
-    delete Memory.WarRoom.activeThreat;
+    delete HiveMemory.ensure().warRoom.activeThreat;
 
     var flag = Game.flags[WAR_ROOM_ATTACK_FLAG_NAME];
 
@@ -439,8 +438,9 @@ WarRoom.getTargetRoomName = function(creep) {
         return sharedFlag.pos.roomName;
     }
 
-    if(Memory.WarRoom && Memory.WarRoom.activeThreat && Memory.WarRoom.activeThreat.roomName) {
-        return Memory.WarRoom.activeThreat.roomName;
+    var activeThreat = HiveMemory.ensure().warRoom.activeThreat;
+    if(activeThreat && activeThreat.roomName) {
+        return activeThreat.roomName;
     }
 
     return null;

@@ -24,6 +24,7 @@
  * creep.travelTo(target, options)
  */
 require('Traveler');
+var HiveMemory = require('HiveMind.Memory');
 
 var ROUTE_CACHE_TTL = 10000;
 var ROUTE_CACHE_CLEANUP_INTERVAL = 750;
@@ -186,21 +187,13 @@ function moveOffExit(creep) {
 /**
  * Read Sushi's movement feature switch.
  *
- * Default is enabled. Set Memory.settings.useTrafficManager = false in the
+ * Default is enabled. Set Memory.config.general.useTrafficManager = false in the
  * console if traffic movement causes trouble and Sushi should use direct moves.
  *
  * @returns {boolean}
  */
 function shouldUseTrafficManager() {
-    if (!Memory.settings) {
-        Memory.settings = {};
-    }
-
-    if (Memory.settings.useTrafficManager === undefined) {
-        Memory.settings.useTrafficManager = true;
-    }
-
-    return Memory.settings.useTrafficManager !== false;
+    return HiveMemory.getConfig('general').useTrafficManager !== false;
 }
 
 function ensureRoomMemory(roomName) {

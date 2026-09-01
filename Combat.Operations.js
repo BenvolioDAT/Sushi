@@ -33,7 +33,7 @@ function ownerName(subject) {
 function operationDirective(operation) {
     if (operation.manualDirective === true) return true;
     return !!(operation.type === 'CONTEST_REACTOR' && operation.season11 &&
-        Memory.season11 && Memory.season11.config && Memory.season11.config.recapture === true);
+        HiveMemory.getConfig('season11').recapture === true);
 }
 
 function roomSnapshot(operation) {

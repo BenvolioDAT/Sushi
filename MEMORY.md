@@ -1,0 +1,168 @@
+# Sushi Memory Architecture
+
+> **Every Sushi-specific top-level Memory key must represent a major domain.
+> New subsystems must use the existing schema rather than creating new root keys.**
+
+This document records the schema audit performed before the version 8 migration
+and the target architecture used by current code.
+
+## Pre-v8 audit: original tree
+
+```text
+Memory
+├── creeps                         Screeps conventional creep state
+├── rooms                          persistent room records and mixed debug/live data
+│   └── <roomName>
+│       ├── roomName, lastScanned, controller, sources, Mineral
+│       ├── spawnQueue, spawnDemandCache, spawnGovernor
+│       ├── extractor*, freighter*, artificer*, tech* debug counters
+│       ├── structurePlanner, roadPlanner, remotePlanner
+│       ├── routeCache, economyDistanceCache, avoid
+│       ├── defenseSummary, RepairStructure, ArtificerRepair*
+│       ├── scoutIntel, lastScanTick
+│       └── freighterSpawnStockpilePos, expansionSpawnGovernor
+├── hive
+│   ├── schemaVersion
+│   ├── settings                   mixed empire configuration
+│   ├── operations, squads, players, threats, demands, counters
+│   ├── resources, season
+│   └── economy.rooms              complete live economy snapshots
+├── settings                       mixed UI, CPU, pixel, upgrade and behavior config
+├── cpuPolicy                      CPU/spawn-planning policy
+├── cpuStatus                      persisted current/debug CPU sample
+├── spawnPolicy                    spawn governor policy
+├── season11                       Season 11 config plus persistent operation/intel state
+├── expansion                      persistent expansion operation state
+├── WarRoom                        legacy active-threat state
+├── stats                          periodically persisted CPU telemetry history
+├── username                       cached player identity
+├── firstSpawnRoom                 legacy home-room hint
+└── empire                         legacy Traveler hostile-room migration input only
+```
+
+### Audit classification
+
+- **Configuration:** `settings`, `cpuPolicy`, `spawnPolicy`, `hive.settings`,
+  and `season11.config`/mode.
+- **Empire/Hive state:** operations, squads, players, threats, demands, counters,
+  resources, expansion state, WarRoom threat state, player identity, Season 11
+  assignments/reactors/alerts/stats.
+- **Room state:** source/controller/mineral knowledge, planner state, remote
+  relationships, spawn queues, repair coordination and room intel.
+- **Creep state:** `Memory.creeps` and `Creep.memory`; these remain conventional.
+- **CPU status/history:** `cpuStatus` and `stats.cpu`.
+- **Caches:** room route cache and economy path-distance cache; planner route
+  data is owned by its planner.
+- **Intel:** scout intel, source/controller/mineral records, remote planner intel,
+  threats and Season 11 unseen-room intel.
+- **Ephemeral data that should not be persistent:** complete economy snapshots,
+  current WORK/CARRY, spawn fill, current structure energy, backlog, link state,
+  spawn pressure, and several room demand/debug counters.
+- **Legacy/unknown:** `firstSpawnRoom`; `empire.hostileRooms` is an already
+  documented one-way compatibility input. Unknown custom fields must survive
+  migration even when Sushi does not interpret them.
+
+## Target/final tree
+
+```text
+Memory
+├── meta
+│   ├── schemaVersion
+│   ├── migratedAt
+│   └── lastMigration
+├── config
+│   ├── general
+│   ├── cpu
+│   ├── spawn
+│   ├── economy
+│   ├── upgrade
+│   ├── combat
+│   ├── resources
+│   ├── season11
+│   ├── visuals
+│   └── pixels
+├── hive
+│   ├── homeRooms                  inspector mirror synchronized from TickIndex
+│   ├── operations, squads, players, threats, demands, counters
+│   ├── resources, season, expansion, warRoom
+│   ├── telemetry
+│   └── identity
+├── cpu
+│   └── status                     small persisted mode/debug history
+├── rooms
+│   └── <roomName>
+│       ├── identity
+│       ├── economy                hysteresis/trend state only
+│       ├── spawn
+│       │   ├── queue
+│       │   ├── demandCache
+│       │   └── governor
+│       ├── sources, controller, Mineral
+│       ├── structurePlanner, roadPlanner, remotePlanner
+│       ├── scoutIntel and existing room-scoped defense/logistics records
+│       └── cache
+│           └── economyDistances     versioned source/dropoff distances
+└── creeps                         Screeps conventional root
+```
+
+Screeps conventional roots such as `spawns`, `flags`, and `powerCreeps` remain
+valid when the engine or user code needs them.
+
+## Runtime truth versus persistence
+
+`Game` and the once-per-tick `HiveMind.Index` are authoritative for what is true
+now: ownership, spawns, creeps, structures, energy, body parts and hostiles.
+Memory stores configuration, relationships, history, hysteresis, unseen-room
+intel, operations and caches whose recomputation is materially expensive.
+
+The current economy snapshot lives in heap for the current tick. Room Memory
+keeps only state-machine hysteresis, reason, last liquid-energy sample and the
+energy-trend EMA needed after a global reset.
+
+The widely used `structurePlanner`, `roadPlanner`, `remotePlanner`, source,
+defense, repair, and scout-intel shapes intentionally remain room-scoped in
+their existing locations. Moving them would touch many stable readers without
+removing transient data or preventing top-level drift. New room data should use
+an existing room domain; this decision is not permission to add new root keys.
+
+## Room identity
+
+- **HOME:** visible owned controller and at least one owned Spawn.
+- **OWNED_BOOTSTRAP:** visible owned controller without an owned Spawn.
+- **REMOTE:** assigned by remote planning to a parent Home Room.
+- **INTEL:** a persistent room record without a stronger current relationship.
+
+`Memory.hive.homeRooms` is a human-readable mirror. `TickIndex.ownedSpawnRooms`
+remains authoritative and the mirror is synchronized from it each tick.
+
+## Schema migration
+
+`HiveMind.Memory.migrate()` runs at the start of `Tick.Bootstrap`, before normal
+systems. The explicit `migrate7To8()` step creates the new value before deleting
+a legacy value, preserves already-valid new-schema values, and is safe to rerun
+after a global reset. The version marker is written only after the step returns
+successfully. A malformed room record is isolated rather than replacing
+unrelated Memory.
+
+## Configuration and CPU
+
+All Sushi configuration is canonical under `Memory.config`; use
+`HiveMind.Memory.getConfig(domain)`. Persistent CPU mode/debug history is under
+`Memory.cpu.status`. Current detailed CPU pressure remains heap-first.
+
+## Console Memory map
+
+The read-only map is manually requested with:
+
+```js
+MemorySchema.map()
+```
+
+It does not pathfind or write Memory.
+
+## Adding fields
+
+Prefer an existing domain and use the schema accessors for top-level data.
+Direct `Creep.memory` and straightforward room-domain access are acceptable.
+Do not persist a copy of a `Game` object or create a new Sushi root for a single
+subsystem.

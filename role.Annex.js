@@ -4,6 +4,7 @@
  * target instead. Normal remote mining rooms still use reserve mode.
  */
 var travel = require('utility.Travel.Creep');
+var HiveMemory = require('HiveMind.Memory');
 
 var ANNEX_PATH_STYLE = {
     stroke: '#b366ff'
@@ -208,23 +209,25 @@ function signExpansionController(creep, controller) {
 }
 
 function markExpansionClaimed(targetRoomName) {
-    if (!Memory.expansion || Memory.expansion.targetRoom !== targetRoomName) {
+    var expansion = HiveMemory.ensure().expansion;
+    if (expansion.targetRoom !== targetRoomName) {
         return;
     }
 
-    Memory.expansion.state = 'placeSpawn';
-    Memory.expansion.claimedAt = Memory.expansion.claimedAt || Game.time;
-    Memory.expansion.blockReason = null;
+    expansion.state = 'placeSpawn';
+    expansion.claimedAt = expansion.claimedAt || Game.time;
+    expansion.blockReason = null;
 }
 
 function blockExpansion(targetRoomName, reason) {
-    if (!Memory.expansion || Memory.expansion.targetRoom !== targetRoomName) {
+    var expansion = HiveMemory.ensure().expansion;
+    if (expansion.targetRoom !== targetRoomName) {
         return;
     }
 
-    Memory.expansion.state = 'blocked';
-    Memory.expansion.blockReason = reason;
-    Memory.expansion.lastUpdated = Game.time;
+    expansion.state = 'blocked';
+    expansion.blockReason = reason;
+    expansion.lastUpdated = Game.time;
 }
 
 function getMyUsername(creep) {
@@ -232,7 +235,7 @@ function getMyUsername(creep) {
         return creep.owner.username;
     }
 
-    return Memory.username || null;
+    return HiveMemory.ensure().identity.username || null;
 }
 
 function idleNearHome(creep) {

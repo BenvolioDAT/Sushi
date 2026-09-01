@@ -29,7 +29,7 @@ function ensurePlayer(username) {
 
 function decayedIncidentScore(player, tick = Game.time) {
     if (!player || !player.incidentScore || player.lastIncidentTick === null) return 0;
-    const settings = HiveMemory.ensure().settings.diplomacy;
+    const settings = HiveMemory.getConfig('combat').diplomacy;
     const halfLife = Math.max(1, settings.incidentHalfLife || 5000);
     return player.incidentScore * Math.pow(0.5, Math.max(0, tick - player.lastIncidentTick) / halfLife);
 }
@@ -40,7 +40,7 @@ function getClassification(subject) {
     if (NPC_PLAYERS.has(username)) return CLASSIFICATIONS.NPC;
     const player = ensurePlayer(username);
     if (player.manual) return player.classification;
-    const threshold = HiveMemory.ensure().settings.diplomacy.hostileThreshold || 100;
+    const threshold = HiveMemory.getConfig('combat').diplomacy.hostileThreshold || 100;
     return decayedIncidentScore(player) >= threshold ? CLASSIFICATIONS.HOSTILE : CLASSIFICATIONS.NEUTRAL;
 }
 
