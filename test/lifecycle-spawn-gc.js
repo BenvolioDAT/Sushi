@@ -124,15 +124,70 @@ test('colony lifecycle separates maturity, economy, and alert overlays', () => {
     assert.strictEqual(state.economy, 'STABLE');
     assert.ok(state.unmet.includes('waiting for extensions'));
     assert.strictEqual(state.alert, 'PEACE');
+    assert.strictEqual(state.state, 'GROWTH');
+    assert.strictEqual(state.stateSince, Game.time);
+    assert.strictEqual(state.updatedTick, Game.time);
+    assert.match(state.debugReason, /Initialized GROWTH/);
+});
+
+test('colony lifecycle uses guarded adjacent progress and bounded milestone timeout state', () => {
+    reset();
+    const room = makeRoom('W1N1', 8);
+    spawn(room);
+    Memory.rooms.W1N1.economy = { state: 'STABLE' };
+    const memory = fresh('HiveMind.Memory.js');
+    memory.getConfig('lifecycle').hysteresisTicks = 1;
+    memory.getConfig('lifecycle').milestoneTimeout = 2;
+    let colony = fresh('HiveMind.ColonyState.js');
+    let state = colony.update(room);
+    assert.strictEqual(state.lifecycle, 'BOOTSTRAP');
+    assert.strictEqual(colony.transition(Memory.rooms.W1N1.colony, 'MATURE', 'invalid jump'), false);
+
+    addCore(room);
+    Game.time++;
+    delete global.__sushiTickIndex;
+    state = colony.update(room);
+    assert.strictEqual(state.lifecycle, 'BOOTSTRAP');
+    Game.time++;
+    delete global.__sushiTickIndex;
+    state = colony.update(room);
+    assert.strictEqual(state.lifecycle, 'GROWTH');
+    assert.match(state.debugReason, /workforce floor established/i);
+    Game.time++;
+    delete global.__sushiTickIndex;
+    state = colony.update(room);
+    assert.strictEqual(state.lifecycle, 'DEVELOPMENT');
+    Game.time++;
+    delete global.__sushiTickIndex;
+    state = colony.update(room);
+    assert.strictEqual(state.lifecycle, 'MATURE');
+
+    const growthRoom = makeRoom('W2N2', 2);
+    spawn(growthRoom);
+    addCore(growthRoom);
+    delete global.__sushiTickIndex;
+    state = colony.update(growthRoom);
+    assert.strictEqual(state.milestoneTimedOut, false);
+    Game.time += 2;
+    delete global.__sushiTickIndex;
+    state = colony.update(growthRoom);
+    assert.strictEqual(state.milestoneTimedOut, true);
+    assert.ok(state.unmet.includes('waiting for extensions'));
 });
 
 test('strategy ranking enforces deterministic empire operation budgets', () => {
     reset();
+    const origin = makeRoom('W1N1');
+    spawn(origin);
     const operations = fresh('HiveMind.Operations.js');
     const config = fresh('HiveMind.Memory.js').getConfig('combat').strategy;
     config.maxActiveNonEmergency = 1;
-    const high = operations.create('SCOUT_INTEL', { id: 'a-high', priority: 80, utility: { urgency: 80 } });
-    const low = operations.create('SCOUT_INTEL', { id: 'b-low', priority: 10, utility: { urgency: 10 } });
+    const high = operations.create('SCOUT_INTEL', {
+        id: 'a-high', priority: 80, utility: { urgency: 80 }, targetRoom: 'W8N8', originRoom: origin.name
+    });
+    const low = operations.create('SCOUT_INTEL', {
+        id: 'b-low', priority: 10, utility: { urgency: 10 }, targetRoom: 'W9N9', originRoom: origin.name
+    });
     operations.run([high, low]);
     assert.strictEqual(high.strategyDecision, 'allow');
     assert.strictEqual(low.strategyDecision, 'wait');

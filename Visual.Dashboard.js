@@ -915,12 +915,14 @@ function drawRoomPanel(visual, room, sourceStats, remoteStats, roomCreeps) {
         drawText(visual, 'COLONY ' + colony.lifecycle + ' - ' + colony.objective, x, rowY, lifecycleColor);
         rowY += LINE_HEIGHT;
         var growthPhase = colony.lifecycle === 'BOOTSTRAP' || colony.lifecycle === 'GROWTH';
-        var growthText = !growthPhase ? 'Lifecycle ACTIVE - band ' + colony.priorityBand :
+        var growthText = colony.milestoneTimedOut ?
+            'Milestone STALLED - ' + truncate(colony.unmet && colony.unmet[0] || colony.milestone, 20) :
+            !growthPhase ? 'Lifecycle ACTIVE - band ' + colony.priorityBand :
             colony.growthAllowed ?
                 'Growth ACTIVE - ' + (colony.baselineTechRequired ? 'baseline Tech' : 'floor covered') :
                 'Growth PAUSED - ' + truncate(colony.blockedReason || colony.reason, 21);
         drawText(visual, growthText, x, rowY,
-            !growthPhase || colony.growthAllowed ? COLORS.good : COLORS.warning);
+            colony.milestoneTimedOut || growthPhase && !colony.growthAllowed ? COLORS.warning : COLORS.good);
         rowY += LINE_HEIGHT;
         var floorSuffix = spawnGovernor.mandatoryFloorBypassUsed ? ' +1 floor' : '';
         drawText(visual, 'Governor ' + safeNumber(spawnGovernor.nonCombatTotal) + '/' +

@@ -5,6 +5,16 @@ const Economy = require('HiveMind.Economy');
 const PHASES = Object.freeze({ OWNED_NO_SPAWN: 'OWNED_NO_SPAWN', BOOTSTRAP: 'BOOTSTRAP', GROWTH: 'GROWTH', DEVELOPMENT: 'DEVELOPMENT', MATURE: 'MATURE' });
 const ALERTS = Object.freeze({ PEACE: 'PEACE', THREATENED: 'THREATENED', SIEGE: 'SIEGE' });
 const PRIORITY_BANDS = Object.freeze({ EMERGENCY: 0, CORE: 1, BASELINE_GROWTH: 2, DEVELOPMENT: 3, STRATEGIC: 4 });
+const TRANSITIONS = Object.freeze({
+    OWNED_NO_SPAWN: new Set([PHASES.BOOTSTRAP]),
+    BOOTSTRAP: new Set([PHASES.OWNED_NO_SPAWN, PHASES.GROWTH]),
+    GROWTH: new Set([PHASES.OWNED_NO_SPAWN, PHASES.BOOTSTRAP, PHASES.DEVELOPMENT]),
+    DEVELOPMENT: new Set([PHASES.OWNED_NO_SPAWN, PHASES.BOOTSTRAP, PHASES.GROWTH, PHASES.MATURE]),
+    MATURE: new Set([PHASES.OWNED_NO_SPAWN, PHASES.BOOTSTRAP, PHASES.DEVELOPMENT])
+});
+const ORDERED_PHASES = Object.freeze([
+    PHASES.OWNED_NO_SPAWN, PHASES.BOOTSTRAP, PHASES.GROWTH, PHASES.DEVELOPMENT, PHASES.MATURE
+]);
 const COMBAT_ROLES = new Set(['Ronin', 'Volley', 'Cleric']);
 
 function roleOf(item) { return item && (item.role || item.memory && item.memory.role) || null; }
@@ -101,6 +111,42 @@ function rawLifecycle(room, summary) {
     return PHASES.MATURE;
 }
 
+function transition(record, nextState, reason) {
+    if (!record || !ORDERED_PHASES.includes(nextState)) return false;
+    const current = record.lifecycle || record.state || record.phase;
+    if (!current || current === nextState) return false;
+    const allowed = TRANSITIONS[current];
+    if (!allowed || !allowed.has(nextState)) return false;
+    record.lifecycle = nextState;
+    record.phase = nextState;
+    record.state = nextState;
+    record.lifecycleSince = Game.time;
+    record.stateSince = Game.time;
+    record.updatedTick = Game.time;
+    record.debugReason = reason || `${current} -> ${nextState}`;
+    return true;
+}
+
+function nextLifecycleStep(current, proposed) {
+    if (current === proposed) return current;
+    if (proposed === PHASES.OWNED_NO_SPAWN || proposed === PHASES.BOOTSTRAP) return proposed;
+    const currentIndex = ORDERED_PHASES.indexOf(current);
+    const proposedIndex = ORDERED_PHASES.indexOf(proposed);
+    if (currentIndex < 0 || proposedIndex < 0) return proposed;
+    return ORDERED_PHASES[currentIndex + Math.sign(proposedIndex - currentIndex)];
+}
+
+function transitionReason(room, from, to, summary) {
+    const rcl = room.controller && room.controller.level || 0;
+    if (to === PHASES.OWNED_NO_SPAWN) return 'Owned room has no spawn';
+    if (to === PHASES.BOOTSTRAP) return `Core workforce floor missing at RCL${rcl}`;
+    if (from === PHASES.BOOTSTRAP && to === PHASES.GROWTH) return 'Core workforce floor established';
+    if (to === PHASES.DEVELOPMENT) return `RCL${rcl} core workforce established`;
+    if (to === PHASES.MATURE) return 'RCL8 colony reached mature lifecycle';
+    if (to === PHASES.GROWTH && summary) return `RCL${rcl} growth requirements active`;
+    return `${from} -> ${to}`;
+}
+
 function decide(room, economy, summary, lifecycle, alert) {
     const rcl = room.controller && room.controller.level || 0;
     const floorReachable = !economy.bootstrap || economy.bootstrap.floorReachable !== false;
@@ -168,23 +214,48 @@ function update(room) {
     if (!memory.colony || typeof memory.colony !== 'object') memory.colony = {};
     const record = memory.colony;
     const holdTicks = Math.max(1, HiveMemory.getConfig('lifecycle').hysteresisTicks || 5);
-    let lifecycle = record.lifecycle || record.phase || proposed;
+    let lifecycle = record.lifecycle || record.state || record.phase || proposed;
+    if (!ORDERED_PHASES.includes(lifecycle)) lifecycle = proposed;
+    if (!record.lifecycle && !record.state && !record.phase) {
+        record.lifecycle = lifecycle;
+        record.phase = lifecycle;
+        record.state = lifecycle;
+        record.lifecycleSince = Game.time;
+        record.stateSince = Game.time;
+        record.updatedTick = Game.time;
+        record.debugReason = `Initialized ${lifecycle} lifecycle`;
+    }
     if (proposed !== lifecycle) {
         if (record.pendingLifecycle !== proposed) { record.pendingLifecycle = proposed; record.pendingSince = Game.time; }
         const urgent = proposed === PHASES.OWNED_NO_SPAWN || proposed === PHASES.BOOTSTRAP;
         if (urgent || Game.time - record.pendingSince >= holdTicks) {
-            lifecycle = proposed;
-            record.lifecycleSince = Game.time;
-            delete record.pendingLifecycle;
-            delete record.pendingSince;
+            const nextState = nextLifecycleStep(lifecycle, proposed);
+            if (transition(record, nextState, transitionReason(room, lifecycle, nextState, summary))) {
+                lifecycle = nextState;
+                if (lifecycle === proposed) {
+                    delete record.pendingLifecycle;
+                    delete record.pendingSince;
+                }
+                else record.pendingSince = Game.time - holdTicks;
+            }
         }
     }
     else { delete record.pendingLifecycle; delete record.pendingSince; }
     if (record.lifecycleSince === undefined) record.lifecycleSince = Game.time;
-    for (const obsolete of ['pendingPhase', 'stateStartTick', 'stateChangedAt', 'updatedTick',
-        'milestoneTimedOut', 'milestoneSince']) delete record[obsolete];
+    if (record.stateSince === undefined) record.stateSince = record.lifecycleSince;
+    if (record.updatedTick === undefined) record.updatedTick = record.stateSince;
+    if (!record.debugReason) record.debugReason = `Initialized ${lifecycle} lifecycle`;
+    record.lifecycle = lifecycle;
+    record.phase = lifecycle;
+    record.state = lifecycle;
+    for (const obsolete of ['pendingPhase', 'stateStartTick', 'stateChangedAt']) delete record[obsolete];
     const decision = decide(room, economy, summary, lifecycle, alert);
     const milestone = milestoneFor(room, lifecycle);
+    if (record.milestone !== milestone.milestone || record.milestoneSince === undefined) {
+        record.milestoneSince = Game.time;
+    }
+    const milestoneTimeout = Math.max(1, HiveMemory.getConfig('lifecycle').milestoneTimeout || 1500);
+    const milestoneTimedOut = milestone.unmet.length > 0 && Game.time - record.milestoneSince >= milestoneTimeout;
     const stable = {
         lifecycle, phase: lifecycle, lifecycleSince: record.lifecycleSince, rcl: room.controller.level || 0,
         objective: decision.objective, priorityBand: decision.priorityBand, growthAllowed: decision.growthAllowed,
@@ -194,7 +265,8 @@ function update(room) {
         governorNonCombat: decision.governorNonCombat, alert, economy: economy.state,
         controllerDowngradeTicks: decision.controllerDowngradeTicks,
         protectedStockpileEnergy: decision.protectedStockpileEnergy,
-        milestone: milestone.milestone, requirements: milestone.requirements, unmet: milestone.unmet
+        milestone: milestone.milestone, milestoneSince: record.milestoneSince, milestoneTimedOut,
+        requirements: milestone.requirements, unmet: milestone.unmet
     };
     for (const [key, value] of Object.entries(stable)) setIfChanged(record, key, value);
     return { ...record };
@@ -206,4 +278,7 @@ function run() {
 }
 function get(roomName) { return Memory.rooms && Memory.rooms[roomName] && Memory.rooms[roomName].colony || null; }
 
-module.exports = { PHASES, ALERTS, PRIORITY_BANDS, run, update, get, plannedSummary, rawLifecycle, decide, milestoneFor };
+module.exports = {
+    PHASES, ALERTS, PRIORITY_BANDS, TRANSITIONS,
+    run, update, get, transition, plannedSummary, rawLifecycle, decide, milestoneFor
+};

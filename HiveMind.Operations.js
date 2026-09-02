@@ -2,6 +2,7 @@ const HiveMemory = require('HiveMind.Memory');
 const Utility = require('HiveMind.Utility');
 const DemandBoard = require('Spawn.DemandBoard');
 const Economy = require('HiveMind.Economy');
+const TickIndex = require('HiveMind.Index');
 
 const TYPES = Object.freeze([
     'DEFEND_OWNED_ROOM', 'DEFEND_REMOTE', 'RECOVER_ROOM', 'EXPAND',
@@ -17,6 +18,18 @@ const TRANSITIONS = {
     ACTIVE: new Set(['RECOVERING', 'COMPLETE', 'ABORTED']),
     RECOVERING: new Set(['ACTIVE', 'COMPLETE', 'ABORTED'])
 };
+const ROOM_TARGET_TYPES = new Set([
+    'DEFEND_OWNED_ROOM', 'DEFEND_REMOTE', 'RECOVER_ROOM', 'EXPAND',
+    'MINE_REMOTE', 'SCOUT_INTEL', 'FORTIFY', 'ATTACK_PLAYER', 'RAID_REMOTE',
+    'HARVEST_THORIUM', 'SUPPLY_REACTOR', 'HOLD_REACTOR', 'CAPTURE_REACTOR', 'CONTEST_REACTOR'
+]);
+const OWNED_ORIGIN_TYPES = new Set([
+    'DEFEND_REMOTE', 'RECOVER_ROOM', 'EXPAND', 'MINE_REMOTE', 'FORTIFY',
+    'PRODUCE_BOOSTS', 'ATTACK_PLAYER', 'RAID_REMOTE', 'HARVEST_THORIUM',
+    'SUPPLY_REACTOR', 'HOLD_REACTOR', 'CAPTURE_REACTOR', 'CONTEST_REACTOR'
+]);
+const VISIBLE_TARGET_TYPES = new Set(['DEFEND_OWNED_ROOM', 'DEFEND_REMOTE', 'RECOVER_ROOM', 'FORTIFY']);
+const OFFENSIVE_TYPES = new Set(['ATTACK_PLAYER', 'RAID_REMOTE', 'CONTEST_REACTOR']);
 
 function makeId(type, options) {
     if (options.id) return options.id;
@@ -60,7 +73,7 @@ function transition(operationOrId, nextState, reason, guard = () => true) {
     const operation = typeof operationOrId === 'string' ? get(operationOrId) : operationOrId;
     if (!operation || TERMINAL_STATES.has(operation.state) || !guard(operation)) return false;
     const allowed = TRANSITIONS[operation.state];
-    if (allowed && !allowed.has(nextState)) return false;
+    if (!allowed || !allowed.has(nextState)) return false;
     operation.state = nextState;
     operation.stateStartTick = Game.time;
     operation.updatedTick = Game.time;
@@ -113,12 +126,73 @@ function syncExpansion() {
     return operation;
 }
 
+function hasOwnedSpawn(roomName) {
+    return !!roomName && (TickIndex.get().ownedSpawnsByRoom.get(roomName) || []).length > 0;
+}
+
+function hasExecutionAssignment(operation) {
+    return (operation.assignedCreeps || []).length > 0 || (operation.assignedSquads || []).length > 0;
+}
+
+function hasScoutPlan(operation) {
+    if (operation.type === 'SCOUT_INTEL') return true;
+    if ((operation.desiredCapabilities || {}).vision > 0) return true;
+    return (operation.spawnDemands || []).some(demand => demand &&
+        (demand.role === 'Scout' || demand.memory && demand.memory.role === 'Scout'));
+}
+
+function typePrerequisiteDecision(operation) {
+    if (ROOM_TARGET_TYPES.has(operation.type) && !operation.targetRoom) {
+        return { decision: 'wait', reason: `${operation.type} requires a target room` };
+    }
+    const target = operation.targetRoom && Game.rooms && Game.rooms[operation.targetRoom];
+    if (VISIBLE_TARGET_TYPES.has(operation.type) && !target) {
+        return { decision: 'wait', reason: `${operation.type} requires current target-room visibility` };
+    }
+    if (operation.type === 'DEFEND_OWNED_ROOM' &&
+        (!target || !target.controller || !target.controller.my)) {
+        return { decision: 'abort', reason: 'Owned-room defense target is not an owned visible room' };
+    }
+    const originName = operation.originRoom || operation.respondingColony;
+    if (OWNED_ORIGIN_TYPES.has(operation.type)) {
+        const origin = originName && Game.rooms && Game.rooms[originName];
+        if (!origin || !origin.controller || !origin.controller.my) {
+            return { decision: 'wait', reason: `${operation.type} requires a visible owned origin room` };
+        }
+    }
+    const needsSpawn = (operation.spawnDemands || []).length > 0 ||
+        OFFENSIVE_TYPES.has(operation.type) ||
+        ['DEFEND_REMOTE', 'RECOVER_ROOM', 'EXPAND', 'SCOUT_INTEL'].includes(operation.type);
+    if (needsSpawn && !hasExecutionAssignment(operation) && !hasOwnedSpawn(originName)) {
+        return { decision: 'wait', reason: `${operation.type} requires spawn capability or an existing assignment` };
+    }
+    if (operation.requiresVisibility === true && !target && !hasScoutPlan(operation)) {
+        return { decision: 'wait', reason: `${operation.type} requires visibility or a scout demand` };
+    }
+    if (OFFENSIVE_TYPES.has(operation.type)) {
+        if (operation.manualDirective !== true) {
+            return { decision: 'wait', reason: `${operation.type} requires an explicit offensive directive` };
+        }
+        const assessment = operation.offensiveAssessment;
+        if (!assessment || assessment.tick !== Game.time || assessment.code !== 'APPROVED' ||
+            assessment.allowed !== true || assessment.viable !== true) {
+            return { decision: 'wait', reason: `${operation.type} requires a current approved diplomacy and viability assessment` };
+        }
+        if (!assessment.metrics || assessment.metrics.retreatRouteAvailable !== true) {
+            return { decision: 'wait', reason: `${operation.type} requires a viable retreat route` };
+        }
+    }
+    if (operation.type === 'PRODUCE_BOOSTS' && !originName) {
+        return { decision: 'wait', reason: 'PRODUCE_BOOSTS requires an owned production room' };
+    }
+    return { decision: 'allow', reason: `${operation.type} type prerequisites accepted` };
+}
+
 function prerequisiteDecision(operation, budgets) {
     const emergency = operation.type === 'DEFEND_OWNED_ROOM';
     if (operation.timeoutTick && Game.time > operation.timeoutTick) return { decision: 'abort', reason: 'Operation timed out' };
-    if (['ATTACK_PLAYER', 'RAID_REMOTE', 'CONTEST_REACTOR'].includes(operation.type) && operation.policyApproved !== true) {
-        return { decision: 'wait', reason: 'Waiting for explicit policy and viability approval' };
-    }
+    const typeDecision = typePrerequisiteDecision(operation);
+    if (typeDecision.decision !== 'allow') return typeDecision;
     const origin = operation.originRoom && Game.rooms[operation.originRoom];
     if (!emergency && operation.spawnDemands && operation.spawnDemands.length &&
         (!origin || !origin.controller || !origin.controller.my)) {
@@ -141,7 +215,8 @@ function prerequisiteDecision(operation, budgets) {
         budgets.empireUsed++;
         budgets.byColony[colony] = (budgets.byColony[colony] || 0) + 1;
     }
-    return { decision: 'allow', reason: emergency ? 'Emergency owned-room defense' : 'Prerequisites and strategy budget accepted' };
+    return { decision: 'allow', reason: emergency ? 'Emergency owned-room defense prerequisites accepted' :
+        `${typeDecision.reason}; strategy budget accepted` };
 }
 
 function runOperation(operation, budgets) {
@@ -164,8 +239,7 @@ function runOperation(operation, budgets) {
 
 function emitDemands() {
     for (const operation of Object.values(HiveMemory.ensure().operations)) {
-        if (!operation || TERMINAL_STATES.has(operation.state) ||
-            operation.strategyDecision && operation.strategyDecision !== 'allow') continue;
+        if (!operation || TERMINAL_STATES.has(operation.state) || operation.strategyDecision !== 'allow') continue;
         for (const specification of operation.spawnDemands || []) {
             const demand = DemandBoard.emit({
                 ...specification,
@@ -211,5 +285,5 @@ function run(ranked) {
 
 module.exports = {
     TYPES, create, get, transition, abort, rescore,
-    syncExpansion, emitDemands, cleanup, prerequisiteDecision, run
+    syncExpansion, emitDemands, cleanup, typePrerequisiteDecision, prerequisiteDecision, run
 };

@@ -118,6 +118,59 @@ test('operation transitions are guarded and timeouts abort safely', function() {
     assert.strictEqual(operation.debugReason, 'Operation timed out');
 });
 
+test('operation activation requires type-specific identity, origin, and spawn capability', function() {
+    reset();
+    const operations = fresh('HiveMind.Operations.js');
+    const expansion = operations.create('EXPAND', {
+        id: 'expand:W9N9', targetRoom: 'W9N9',
+        spawnDemands: [{ role: 'Annex', count: 1, bodyRequirements: { body: [CLAIM, MOVE] } }]
+    });
+    operations.run([expansion]);
+    assert.strictEqual(expansion.state, 'PENDING');
+    assert.strictEqual(expansion.strategyDecision, 'wait');
+    assert.match(expansion.strategyReason, /owned origin/i);
+    assert.strictEqual(fresh('Spawn.DemandBoard.js').getDemands().length, 0);
+
+    const origin = room('W1N1');
+    addSpawn('Spawn1', origin);
+    expansion.originRoom = origin.name;
+    expansion.respondingColony = origin.name;
+    delete global.__sushiTickIndex;
+    operations.run([expansion]);
+    assert.strictEqual(expansion.state, 'ACTIVE');
+    assert.match(expansion.debugReason, /EXPAND type prerequisites accepted/);
+});
+
+test('offensive activation rejects stale approval and requires a current retreat assessment', function() {
+    reset();
+    const origin = room('W1N1');
+    addSpawn('Spawn1', origin);
+    const operations = fresh('HiveMind.Operations.js');
+    const offense = operations.create('ATTACK_PLAYER', {
+        id: 'attack:W2N2', originRoom: origin.name, targetRoom: 'W2N2'
+    });
+    offense.manualDirective = true;
+    offense.policyApproved = true;
+    let result = operations.typePrerequisiteDecision(offense);
+    assert.strictEqual(result.decision, 'wait');
+    assert.match(result.reason, /current approved diplomacy/i);
+    offense.offensiveAssessment = {
+        tick: Game.time, code: 'APPROVED', allowed: true, viable: true,
+        metrics: { retreatRouteAvailable: true }
+    };
+    delete global.__sushiTickIndex;
+    result = operations.typePrerequisiteDecision(offense);
+    assert.strictEqual(result.decision, 'allow');
+});
+
+test('unknown operation states cannot bypass the transition map', function() {
+    reset();
+    const operations = fresh('HiveMind.Operations.js');
+    const operation = { id: 'broken', state: 'UNKNOWN' };
+    assert.strictEqual(operations.transition(operation, 'ACTIVE', 'must reject'), false);
+    assert.strictEqual(operation.state, 'UNKNOWN');
+});
+
 test('equivalent spawn demands merge instead of multiplying', function() {
     reset();
     const board = fresh('Spawn.DemandBoard.js');
@@ -210,12 +263,17 @@ test('Expansion emits shared demands without pushing its queue directly', functi
 
 test('operation demand emission records stable demand IDs', function() {
     reset();
+    const origin = room('W2N2');
+    const target = room('W1N1');
+    addSpawn('Spawn1', origin);
     const operations = fresh('HiveMind.Operations.js');
     const operation = operations.create('RECOVER_ROOM', {
-        id: 'recover:W1N1', targetRoom: 'W1N1', originRoom: 'W2N2', priority: 90,
+        id: 'recover:W1N1', targetRoom: target.name, originRoom: origin.name, priority: 90,
         spawnDemands: [{ role: 'Pioneer', count: 2, bodyRequirements: { body: [WORK, CARRY, MOVE] } }]
     });
-    operations.emitDemands();
+    delete global.__sushiTickIndex;
+    operations.run([operation]);
+    assert.strictEqual(operation.state, 'ACTIVE');
     assert.deepStrictEqual(operation.spawnDemandIds, ['recover:W1N1:Pioneer']);
     const demand = fresh('Spawn.DemandBoard.js').getDemands()[0];
     assert.strictEqual(demand.operationId, operation.id);

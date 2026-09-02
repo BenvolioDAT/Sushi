@@ -137,7 +137,10 @@ an existing room domain; this decision is not permission to add new root keys.
 priority band, independent `PEACE`/`THREATENED`/`SIEGE` alert, growth gate and
 blocked reason, baseline Tech floor/work, next mandatory role, compact core
 floor counts, controller downgrade ticks, protected-stockpile total, and small
-milestone summary. Fields are assigned only when their values change; current
+milestone summary. The compatibility aliases `state`/`phase` mirror `lifecycle`;
+`stateSince`, `updatedTick`, and `debugReason` change only on lifecycle transitions,
+while `milestoneSince` and `milestoneTimedOut` bound stalled-objective diagnostics.
+Fields are assigned only when their values change; current
 objects and scans still rebuild through `HiveMind.Index`.
 
 Spawn queue entries carry a stable `requestId`, `producer`, `category`,
