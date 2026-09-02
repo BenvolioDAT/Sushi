@@ -110,6 +110,11 @@ function runPermittedWork(creep, spend) {
         return;
     }
 
+    if(spend.criticalInfrastructure && buildLocalConstruction(creep, true)) {
+        setTask(creep, 'BUILD_LOCAL', 'critical local construction permitted');
+        return;
+    }
+
     if(spend.construction && tryRepairWork(creep, false)) {
         setTask(creep, 'REPAIR', 'normal maintenance permitted');
         return;
@@ -159,6 +164,7 @@ function collectForNextTask(creep, spend) {
 function chooseNextTask(creep, spend) {
     if(spend.emergencyFill) return {name: 'EMERGENCY_FILL'};
     if(spend.criticalMaintenance && hasRepairWork(creep.room, true)) return {name: 'CRITICAL_REPAIR'};
+    if(spend.criticalInfrastructure && hasLocalConstructionWork(creep, true)) return {name: 'BUILD_LOCAL'};
     if(spend.construction && hasRepairWork(creep.room, false)) return {name: 'REPAIR'};
     if(spend.construction && hasLocalConstructionWork(creep)) return {name: 'BUILD_LOCAL'};
     if(spend.remote && (getRememberedRemoteWorkTarget(creep) || findRemoteInfrastructureTarget(creep))) {
@@ -188,6 +194,7 @@ function getSpendingPolicy(creep, homeRoomName) {
         emergencyFill: !!emergencyFillTarget,
         emergencyFillTarget: emergencyFillTarget,
         criticalMaintenance: Economy.canSpend(homeRoomName, 'criticalMaintenance'),
+        criticalInfrastructure: Economy.canSpend(homeRoomName, 'criticalInfrastructure'),
         construction: Economy.canSpend(homeRoomName, 'construction'),
         remote: Economy.canSpend(homeRoomName, 'remote')
     };
@@ -628,7 +635,7 @@ function useEnergyTarget(creep, target) {
     return false;
 }
 
-function buildLocalConstruction(creep) {
+function buildLocalConstruction(creep, importantOnly) {
     var homeRoomName = getHomeRoomName(creep);
 
     if(homeRoomName && creep.room.name !== homeRoomName) {
@@ -647,11 +654,12 @@ function buildLocalConstruction(creep) {
      * A new higher-priority site can still override a remembered lower-priority
      * site so important structures are not delayed.
      */
-    if(target && !hasHigherPriorityConstructionSite(creep, target)) {
+    if(target && (!importantOnly || isImportantConstructionSite(target)) &&
+        !hasHigherPriorityConstructionSite(creep, target, importantOnly)) {
         return buildTarget(creep, target);
     }
 
-    target = findBestLocalConstructionSite(creep);
+    target = findBestLocalConstructionSite(creep, importantOnly);
 
     if(!target) {
         clearBuildTarget(creep);
@@ -662,11 +670,24 @@ function buildLocalConstruction(creep) {
     return buildTarget(creep, target);
 }
 
-function hasLocalConstructionWork(creep) {
+function hasLocalConstructionWork(creep, importantOnly) {
     var homeRoomName = getHomeRoomName(creep);
     if(homeRoomName && creep.room.name !== homeRoomName) return false;
     var sites = creep.room.find(FIND_MY_CONSTRUCTION_SITES);
-    return !!(sites && sites.length > 0);
+    if(!sites || sites.length === 0) return false;
+    if(!importantOnly) return true;
+    return sites.some(isImportantConstructionSite);
+}
+
+function isImportantConstructionSite(site) {
+    if(!site) return false;
+    return site.structureType === STRUCTURE_SPAWN ||
+        site.structureType === STRUCTURE_EXTENSION ||
+        site.structureType === STRUCTURE_TOWER ||
+        site.structureType === STRUCTURE_STORAGE ||
+        site.structureType === STRUCTURE_CONTAINER ||
+        site.structureType === STRUCTURE_LINK ||
+        site.structureType === STRUCTURE_TERMINAL;
 }
 
 function getConstructionSitePriority(site) {
@@ -701,11 +722,12 @@ function getRememberedBuildTarget(creep) {
     return target;
 }
 
-function hasHigherPriorityConstructionSite(creep, currentTarget) {
+function hasHigherPriorityConstructionSite(creep, currentTarget, importantOnly) {
     var currentPriority = getConstructionSitePriority(currentTarget);
     var sites = creep.room.find(FIND_MY_CONSTRUCTION_SITES);
 
     for(var i = 0; i < sites.length; i++) {
+        if(importantOnly && !isImportantConstructionSite(sites[i])) continue;
         if(getConstructionSitePriority(sites[i]) > currentPriority) {
             return true;
         }
@@ -714,7 +736,7 @@ function hasHigherPriorityConstructionSite(creep, currentTarget) {
     return false;
 }
 
-function findBestLocalConstructionSite(creep) {
+function findBestLocalConstructionSite(creep, importantOnly) {
     var sites = creep.room.find(FIND_MY_CONSTRUCTION_SITES);
 
     if(!sites || sites.length === 0) {
@@ -725,6 +747,10 @@ function findBestLocalConstructionSite(creep) {
     var bestPrioritySites = [];
 
     for(var i = 0; i < sites.length; i++) {
+        if(!isValidLocalConstructionSite(creep, sites[i]) ||
+            importantOnly && !isImportantConstructionSite(sites[i])) {
+            continue;
+        }
         var priority = getConstructionSitePriority(sites[i]);
 
         if(priority > highestPriority) {
@@ -736,6 +762,12 @@ function findBestLocalConstructionSite(creep) {
     }
 
     return creep.pos.findClosestByPath(bestPrioritySites) || bestPrioritySites[0];
+}
+
+function isValidLocalConstructionSite(creep, site) {
+    return !!(site && site.pos && site.pos.roomName === getHomeRoomName(creep) &&
+        site.progress !== undefined && site.progressTotal !== undefined &&
+        site.progress < site.progressTotal && site.my !== false);
 }
 
 function rememberBuildTarget(creep, target) {

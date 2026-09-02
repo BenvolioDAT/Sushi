@@ -1961,6 +1961,11 @@ function getArtificerBuildDemand(room) {
     var hasCriticalWork = criticalSites > 0 ||
         remoteDemand.containerConstructionSites > 0 ||
         repairDemand.emergencyTargets > 0;
+    var economyCategory = repairDemand.emergencyTargets > 0 ? 'criticalMaintenance' :
+        criticalSites > 0 ? 'criticalInfrastructure' :
+        constructionDemand.totalSites > 0 || repairDemand.targets > 0 ? 'construction' :
+        remoteDemand.constructionSites > 0 || remoteDemand.repairTargets > 0 ? 'remote' :
+        'construction';
 
     if (room.storage && !hasCriticalWork) {
         if (storageEnergy < ARTIFICER_CRITICAL_STORAGE_ENERGY) {
@@ -2007,6 +2012,7 @@ function getArtificerBuildDemand(room) {
         remoteConstructionSites: remoteDemand.constructionSites,
         remoteRepairTargets: remoteDemand.repairTargets,
         hasCriticalWork: hasCriticalWork,
+        economyCategory: economyCategory,
         mode: mode
     };
 }
@@ -2072,10 +2078,13 @@ function requestDynamicArtificersForRoom(room, demandOverride, options) {
         return result;
     }
 
+    var requestEconomyCategory = demand.economyCategory ||
+        (demand.hasCriticalWork ? 'criticalMaintenance' : 'construction');
+
     /* Add one request per tick; queued WORK prevents repeated over-requesting. */
     var addResult = addSpawnRequest(room.name, {
         role: 'Artificer',
-        economyCategory: demand.hasCriticalWork ? 'criticalMaintenance' : 'construction',
+        economyCategory: requestEconomyCategory,
         body: body,
         requestedWorkParts: requestedWork,
         maxWorkParts: requestedWork,
@@ -2083,7 +2092,7 @@ function requestDynamicArtificersForRoom(room, demandOverride, options) {
         memory: {
             role: 'Artificer',
             homeRoom: room.name,
-            criticalMaintenance: demand.hasCriticalWork === true
+            criticalMaintenance: requestEconomyCategory === 'criticalMaintenance'
         },
         requestedAt: Game.time
     }, options);

@@ -115,9 +115,11 @@ test('idle powered Artificer upgrades when no repair or construction exists', ()
 test('critical repair preempts controller fallback', () => {
     const world = reset();
     const target = addRepair(world);
+    addSite(world, 'critical-build', STRUCTURE_EXTENSION);
     const creep = addArtificer(world);
     fresh('role.Artificer.js').run(creep);
     assert.strictEqual(creep.lastRepair, target);
+    assert.strictEqual(creep.builds, 0);
     assert.strictEqual(creep.upgrades, 0);
     assert.strictEqual(creep.memory.artificerTask, 'CRITICAL_REPAIR');
 });
@@ -129,6 +131,86 @@ test('important local construction preempts fallback when construction is permit
     fresh('role.Artificer.js').run(creep);
     assert.strictEqual(creep.lastBuild, site);
     assert.strictEqual(creep.upgrades, 0);
+});
+
+test('Artificer demand classifies important local construction as critical infrastructure', () => {
+    const world = reset('RECOVERY');
+    addSite(world, 'classified-extension', STRUCTURE_EXTENSION);
+    const demand = fresh('spawn.request.manager.js').getArtificerBuildDemand(world.room);
+    assert.strictEqual(demand.economyCategory, 'criticalInfrastructure');
+    assert.strictEqual(fresh('HiveMind.Economy.js').canSpend(world.room.name, demand.economyCategory), true);
+    Memory.rooms[world.room.name].economy.state = 'SURVIVAL';
+    assert.strictEqual(fresh('HiveMind.Economy.js').canSpend(world.room.name, demand.economyCategory), false);
+});
+
+test('RECOVERY permits important local construction but still blocks routine construction', () => {
+    const importantWorld = reset('RECOVERY');
+    const importantSite = addSite(importantWorld, 'extension-site', STRUCTURE_EXTENSION);
+    const builder = addArtificer(importantWorld, 'recovery-builder');
+    fresh('role.Artificer.js').run(builder);
+    assert.strictEqual(builder.lastBuild, importantSite);
+    assert.strictEqual(builder.memory.artificerTask, 'BUILD_LOCAL');
+
+    const routineWorld = reset('RECOVERY');
+    addSite(routineWorld, 'road-site', STRUCTURE_ROAD);
+    const guarded = addArtificer(routineWorld, 'recovery-guarded');
+    fresh('role.Artificer.js').run(guarded);
+    assert.strictEqual(guarded.builds, 0);
+
+    const survivalWorld = reset('SURVIVAL', 1);
+    addSite(survivalWorld, 'survival-extension', STRUCTURE_EXTENSION);
+    const survivalGuarded = addArtificer(survivalWorld, 'survival-guarded');
+    fresh('role.Artificer.js').run(survivalGuarded);
+    assert.strictEqual(survivalGuarded.builds, 0);
+});
+
+test('routine repair does not preempt important local construction', () => {
+    const world = reset();
+    const road = addRepair(world, 'damaged-road', STRUCTURE_ROAD);
+    const site = addSite(world, 'tower-site', STRUCTURE_TOWER);
+    const creep = addArtificer(world);
+    fresh('role.Artificer.js').run(creep);
+    assert.strictEqual(creep.lastBuild, site);
+    assert.strictEqual(creep.lastRepair, undefined);
+    assert.strictEqual(creep.memory.artificerTask, 'BUILD_LOCAL');
+    assert.strictEqual(road.hits < road.hitsMax, true);
+});
+
+test('empty Artificer collects energy for important RECOVERY construction', () => {
+    const world = reset('RECOVERY');
+    addSite(world, 'spawn-site', STRUCTURE_SPAWN);
+    const container = addObject(world, {
+        id: 'energy-container', structureType: STRUCTURE_CONTAINER,
+        store: { [RESOURCE_ENERGY]: 500, getUsedCapacity: () => 500 },
+        pos: new RoomPosition(19, 20, world.room.name)
+    });
+    world.room.structures.push(container);
+    const creep = addArtificer(world, 'empty-builder', 0);
+    let withdrawn = null;
+    creep.withdraw = target => { withdrawn = target; return OK; };
+    fresh('role.Artificer.js').run(creep);
+    assert.strictEqual(creep.memory.artificerNextTask, 'BUILD_LOCAL');
+    assert.strictEqual(withdrawn, container);
+});
+
+test('completed and invalid remembered build targets are cleared', () => {
+    const completedWorld = reset();
+    const completed = addSite(completedWorld, 'completed-site', STRUCTURE_EXTENSION);
+    completed.progress = completed.progressTotal;
+    const replacement = addSite(completedWorld, 'replacement-site', STRUCTURE_EXTENSION);
+    const resumed = addArtificer(completedWorld, 'resumed-builder');
+    resumed.memory.buildTargetId = completed.id;
+    fresh('role.Artificer.js').run(resumed);
+    assert.strictEqual(resumed.lastBuild, replacement);
+    assert.strictEqual(resumed.memory.buildTargetId, replacement.id);
+
+    const invalidWorld = reset();
+    const invalid = addSite(invalidWorld, 'invalid-site', STRUCTURE_EXTENSION);
+    const rejected = addArtificer(invalidWorld, 'rejected-builder');
+    rejected.memory.buildTargetId = invalid.id;
+    rejected.build = () => ERR_INVALID_TARGET;
+    fresh('role.Artificer.js').run(rejected);
+    assert.strictEqual(rejected.memory.buildTargetId, undefined);
 });
 
 test('blocked remote spending clears and does not select remembered remote work', () => {
