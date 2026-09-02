@@ -1885,9 +1885,11 @@ function getLivingArtificerWorkCoverage(roomName) {
         unavailable: 0
     };
     var creeps = TickIndex.get().creepsByHomeRoom.get(roomName) || [];
+    var countedNames = {};
 
     for(var i = 0; i < creeps.length; i++) {
         var creep = creeps[i];
+        if(creep && creep.name) countedNames[creep.name] = true;
         if(!creep || !creep.memory || creep.memory.role !== 'Artificer' ||
             !isHealthyForReplacement(creep, 'Artificer')) {
             continue;
@@ -1900,6 +1902,47 @@ function getLivingArtificerWorkCoverage(roomName) {
             else coverage.living[category] += work;
         }
         else coverage.unavailable += work;
+    }
+
+    /*
+     * A just-started creep can be absent from Game.creeps (and therefore the
+     * per-tick index) after its queue request has been consumed. The spawn's
+     * live spawning state is authoritative; Memory contributes only the role,
+     * home, category, and final scalar WORK count saved by spawn.manager.
+     */
+    var spawns = Game.spawns || {};
+    for(var spawnName in spawns) {
+        if(!spawns.hasOwnProperty(spawnName)) continue;
+        var spawn = spawns[spawnName];
+        var spawningName = spawn && spawn.spawning && spawn.spawning.name;
+        if(!spawningName || countedNames[spawningName] || !spawn.room ||
+            spawn.room.name !== roomName) {
+            continue;
+        }
+        countedNames[spawningName] = true;
+
+        var spawningCreep = Game.creeps && Game.creeps[spawningName];
+        var spawningMemory = spawningCreep && spawningCreep.memory ||
+            Memory.creeps && Memory.creeps[spawningName];
+        if(!spawningMemory || spawningMemory.role !== 'Artificer' ||
+            (spawningMemory.homeRoom || spawn.room.name) !== roomName) {
+            continue;
+        }
+
+        var savedSpawningWork = spawningMemory.artificerSpawnWorkParts;
+        var spawningWork = spawningCreep ?
+            getCreepActiveBodyParts(spawningCreep, WORK) :
+            (typeof savedSpawningWork === 'number' && isFinite(savedSpawningWork) ?
+                Math.min(50, Math.max(0, Math.floor(savedSpawningWork))) : 0);
+        if(spawningWork <= 0) continue;
+
+        var spawningCategory = getArtificerCreepWorkCategory(
+            spawningCreep || { memory: spawningMemory, spawning: true }
+        );
+        if(spawningCategory && coverage.spawning.hasOwnProperty(spawningCategory)) {
+            coverage.spawning[spawningCategory] += spawningWork;
+        }
+        else coverage.unavailable += spawningWork;
     }
 
     return coverage;
@@ -1935,7 +1978,9 @@ function getArtificerBuildDemand(room) {
         return {
             desiredWork: 0,
             livingWork: 0,
+            spawningWork: 0,
             queuedWork: 0,
+            totalArtificerWork: 0,
             missingWork: 0,
             localBuildProgressRemaining: 0,
             localConstructionSites: 0,
@@ -2143,11 +2188,13 @@ function getArtificerBuildDemand(room) {
         ARTIFICER_MAX_DESIRED_WORK,
         Math.ceil(desiredWork)
     ));
-    var livingWork = countLivingRoleBodyParts(room.name, 'Artificer', WORK);
-    var queuedWork = countQueuedRoleBodyParts(room.name, 'Artificer', WORK);
     workByEconomyCategory = limitArtificerCategoryWork(workByEconomyCategory, desiredWork);
     var livingWorkCoverage = getLivingArtificerWorkCoverage(room.name);
     var queuedWorkByEconomyCategory = getQueuedArtificerWorkByCategory(room.name);
+    var livingWork = sumArtificerCategoryWork(livingWorkCoverage.living) +
+        livingWorkCoverage.flexible + livingWorkCoverage.unavailable;
+    var spawningWork = sumArtificerCategoryWork(livingWorkCoverage.spawning);
+    var queuedWork = sumArtificerCategoryWork(queuedWorkByEconomyCategory);
     var missingWorkByEconomyCategory = getMissingArtificerWorkByCategory(
         workByEconomyCategory,
         livingWorkCoverage,
@@ -2161,7 +2208,9 @@ function getArtificerBuildDemand(room) {
     return {
         desiredWork: desiredWork,
         livingWork: livingWork,
+        spawningWork: spawningWork,
         queuedWork: queuedWork,
+        totalArtificerWork: livingWork + spawningWork + queuedWork,
         missingWork: missingWork,
         localBuildProgressRemaining: localBuildProgressRemaining,
         localConstructionSites: constructionDemand.totalSites || 0,

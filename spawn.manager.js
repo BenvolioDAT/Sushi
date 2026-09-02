@@ -557,6 +557,20 @@ function runRoom(roomName) {
     }
 
     /*
+     * A successful spawn is removed from the queue before the new creep is
+     * guaranteed to appear in Game.creeps. Keep the final affordable body's
+     * WORK count with the ordinary scalar creep memory so Artificer demand can
+     * account for that in-progress production through spawn.spawning.name.
+     */
+    if (request.role === 'Artificer') {
+        request.memory = request.memory || {};
+        request.memory.artificerSpawnWorkParts = countBodyParts(request.body, WORK);
+        if (!request.memory.artificerWorkCategory && request.economyCategory) {
+            request.memory.artificerWorkCategory = request.economyCategory;
+        }
+    }
+
+    /*
      * spawn.spawnCreep is the Screeps API call that starts spawning a creep.
      * The body controls parts, creepName is the unique name, and memory becomes
      * the new creep's creep.memory when it exists.

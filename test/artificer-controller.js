@@ -287,7 +287,6 @@ test('living, spawning, and queued Artificer WORK covers only its assigned categ
     setArtificerWork(addArtificer(world, 'maintenance-worker'), 'criticalMaintenance', 1);
     setArtificerWork(addArtificer(world, 'infrastructure-worker'), 'criticalInfrastructure', 2);
     setArtificerWork(addArtificer(world, 'construction-worker'), 'construction', 1);
-    setArtificerWork(addArtificer(world, 'remote-worker'), 'remote', 1);
     const spawning = setArtificerWork(
         addArtificer(world, 'spawning-infrastructure'),
         'criticalInfrastructure',
@@ -297,6 +296,15 @@ test('living, spawning, and queued Artificer WORK covers only its assigned categ
     Game.spawns.Spawn1 = {
         name: 'Spawn1', my: true, room: world.room,
         spawning: { name: spawning.name }, pos: new RoomPosition(25, 25, world.room.name)
+    };
+    Memory.creeps['spawning-remote'] = {
+        role: 'Artificer', homeRoom: world.room.name,
+        artificerWorkCategory: 'remote', artificerSpawnWorkParts: 1
+    };
+    Game.spawns.Spawn2 = {
+        name: 'Spawn2', my: true, room: world.room,
+        spawning: { name: 'spawning-remote' },
+        pos: new RoomPosition(26, 25, world.room.name)
     };
     Memory.rooms[world.room.name].spawn.queue.push(
         {
@@ -314,13 +322,13 @@ test('living, spawning, and queued Artificer WORK covers only its assigned categ
         criticalMaintenance: 1,
         criticalInfrastructure: 2,
         construction: 1,
-        remote: 1
+        remote: 0
     });
     assert.deepStrictEqual(demand.spawningWorkByEconomyCategory, {
         criticalMaintenance: 0,
         criticalInfrastructure: 2,
         construction: 0,
-        remote: 0
+        remote: 1
     });
     assert.deepStrictEqual(demand.queuedWorkByEconomyCategory, {
         criticalMaintenance: 0,
@@ -336,6 +344,114 @@ test('living, spawning, and queued Artificer WORK covers only its assigned categ
     });
     assert.strictEqual(demand.missingWork, 5);
     assert.strictEqual(demand.economyCategory, 'criticalMaintenance');
+});
+
+test('started Artificer remains categorized after its request leaves the queue', () => {
+    const world = reset('STABLE');
+    addRepair(world, 'spawning-critical-repair', STRUCTURE_SPAWN);
+    const requests = fresh('spawn.request.manager.js');
+    const initialDemand = requests.getArtificerBuildDemand(world.room);
+    const requested = requests.requestDynamicArtificersForRoom(world.room, initialDemand);
+    assert.strictEqual(requested.ok, true);
+    assert.strictEqual(requested.economyCategory, 'criticalMaintenance');
+
+    let startedBody = null;
+    let startedName = null;
+    const spawn = {
+        name: 'Spawn1', my: true, room: world.room, spawning: null,
+        pos: new RoomPosition(25, 25, world.room.name),
+        spawnCreep(body, name, options) {
+            startedBody = body.slice();
+            startedName = name;
+            Memory.creeps[name] = Object.assign({}, options.memory);
+            this.spawning = { name };
+            return OK;
+        }
+    };
+    Game.spawns.Spawn1 = spawn;
+
+    const result = fresh('spawn.manager.js').runRoom(world.room.name);
+    assert.strictEqual(result.ok, true);
+    assert.strictEqual(Memory.rooms[world.room.name].spawn.queue.length, 0);
+    assert.strictEqual(spawn.spawning.name, startedName);
+    const startedWork = workParts(startedBody);
+    assert.ok(startedWork > 0);
+    assert.strictEqual(Memory.creeps[startedName].artificerSpawnWorkParts, startedWork);
+
+    Game.time++;
+    delete global.__sushiTickIndex;
+    const spawningDemand = fresh('spawn.request.manager.js').getArtificerBuildDemand(world.room);
+    assert.strictEqual(
+        spawningDemand.spawningWorkByEconomyCategory.criticalMaintenance,
+        startedWork
+    );
+    assert.strictEqual(spawningDemand.missingWorkByEconomyCategory.criticalMaintenance, 0);
+    assert.strictEqual(spawningDemand.spawningWork, startedWork);
+    assert.strictEqual(spawningDemand.totalArtificerWork, startedWork);
+    const duplicate = requests.requestDynamicArtificersForRoom(world.room, spawningDemand);
+    assert.strictEqual(duplicate.requested, 0);
+    assert.strictEqual(Memory.rooms[world.room.name].spawn.queue.length, 0);
+
+    const startedMemory = Memory.creeps[startedName];
+    const visible = addArtificer(world, startedName);
+    visible.memory = startedMemory;
+    Memory.creeps[startedName] = startedMemory;
+    visible.body = startedBody.map(type => ({ type, hits: 100 }));
+    visible.spawning = true;
+    Game.time++;
+    delete global.__sushiTickIndex;
+    const visibleDemand = fresh('spawn.request.manager.js').getArtificerBuildDemand(world.room);
+    assert.strictEqual(
+        visibleDemand.spawningWorkByEconomyCategory.criticalMaintenance,
+        startedWork
+    );
+    assert.strictEqual(visibleDemand.spawningWork, startedWork);
+    assert.strictEqual(visibleDemand.totalArtificerWork, startedWork);
+
+    spawn.spawning = null;
+    visible.spawning = false;
+    Game.time++;
+    delete global.__sushiTickIndex;
+    const completedDemand = fresh('spawn.request.manager.js').getArtificerBuildDemand(world.room);
+    assert.strictEqual(
+        completedDemand.livingWorkByEconomyCategory.criticalMaintenance,
+        startedWork
+    );
+    assert.strictEqual(completedDemand.spawningWork, 0);
+    assert.strictEqual(completedDemand.totalArtificerWork, startedWork);
+});
+
+test('inactive or invalid Artificer spawn metadata does not suppress replacement demand', () => {
+    const world = reset('STABLE');
+    addRepair(world, 'replacement-critical-repair', STRUCTURE_SPAWN);
+    Memory.creeps.finishedArtificer = {
+        role: 'Artificer', homeRoom: world.room.name,
+        artificerWorkCategory: 'criticalMaintenance', artificerSpawnWorkParts: 2
+    };
+    Memory.creeps.invalidSpawn = {
+        role: 'Artificer', homeRoom: world.room.name,
+        artificerWorkCategory: 'criticalMaintenance', artificerSpawnWorkParts: 'invalid'
+    };
+    Game.spawns.Spawn1 = {
+        name: 'Spawn1', my: true, room: world.room,
+        spawning: { name: 'invalidSpawn' },
+        pos: new RoomPosition(25, 25, world.room.name)
+    };
+
+    let demand = fresh('spawn.request.manager.js').getArtificerBuildDemand(world.room);
+    assert.strictEqual(demand.spawningWorkByEconomyCategory.criticalMaintenance, 0);
+    assert.strictEqual(demand.missingWorkByEconomyCategory.criticalMaintenance, 2);
+
+    Game.spawns.Spawn1.spawning = { name: 'finishedArtificer' };
+    demand = fresh('spawn.request.manager.js').getArtificerBuildDemand(world.room);
+    assert.strictEqual(demand.missingWorkByEconomyCategory.criticalMaintenance, 0);
+
+    Game.spawns.Spawn1.spawning = null;
+    Game.time++;
+    delete global.__sushiTickIndex;
+    demand = fresh('spawn.request.manager.js').getArtificerBuildDemand(world.room);
+    assert.strictEqual(demand.spawningWorkByEconomyCategory.criticalMaintenance, 0);
+    assert.strictEqual(demand.missingWorkByEconomyCategory.criticalMaintenance, 2);
 });
 
 test('an Artificer assigned to remote work does not cover critical local work', () => {
