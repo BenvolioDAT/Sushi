@@ -1808,6 +1808,72 @@ function getCountScaledWork(count, baseWork, mediumAt, highAt, maxWork) {
     return Math.min(maxWork, work);
 }
 
+var ARTIFICER_ECONOMY_CATEGORIES = [
+    'criticalMaintenance',
+    'criticalInfrastructure',
+    'construction',
+    'remote'
+];
+
+function emptyArtificerCategoryWork() {
+    return {
+        criticalMaintenance: 0,
+        criticalInfrastructure: 0,
+        construction: 0,
+        remote: 0
+    };
+}
+
+function limitArtificerCategoryWork(workByCategory, desiredWork) {
+    var limited = emptyArtificerCategoryWork();
+    var remaining = desiredWork;
+
+    for(var i = 0; i < ARTIFICER_ECONOMY_CATEGORIES.length; i++) {
+        var category = ARTIFICER_ECONOMY_CATEGORIES[i];
+        limited[category] = Math.min(remaining, Math.max(0, workByCategory[category] || 0));
+        remaining -= limited[category];
+    }
+
+    if(remaining > 0) limited.construction += remaining;
+    return limited;
+}
+
+function getQueuedArtificerWorkByCategory(roomName) {
+    var queued = emptyArtificerCategoryWork();
+    var queue = spawnManager.getSpawnQueue(roomName) || [];
+
+    for(var i = 0; i < queue.length; i++) {
+        var request = queue[i];
+        if(getRequestRole(request) !== 'Artificer') continue;
+        var category = request.economyCategory || request.category || 'construction';
+        if(!queued.hasOwnProperty(category)) category = 'construction';
+        queued[category] += countBodyParts(request.body || [], WORK);
+    }
+
+    return queued;
+}
+
+function getMissingArtificerWorkByCategory(workByCategory, livingWork, queuedByCategory) {
+    var missing = emptyArtificerCategoryWork();
+    var remainingLivingWork = livingWork;
+
+    for(var i = 0; i < ARTIFICER_ECONOMY_CATEGORIES.length; i++) {
+        var category = ARTIFICER_ECONOMY_CATEGORIES[i];
+        var desired = workByCategory[category] || 0;
+        var livingCoverage = Math.min(desired, remainingLivingWork);
+        remainingLivingWork -= livingCoverage;
+        missing[category] = Math.max(0, desired - livingCoverage - (queuedByCategory[category] || 0));
+    }
+
+    return missing;
+}
+
+function sumArtificerCategoryWork(workByCategory) {
+    return ARTIFICER_ECONOMY_CATEGORIES.reduce(function(total, category) {
+        return total + (workByCategory[category] || 0);
+    }, 0);
+}
+
 /** Calculate live Artificer WORK demand from local and visible remote work. */
 function getArtificerBuildDemand(room) {
     if (!room) {
@@ -1918,6 +1984,21 @@ function getArtificerBuildDemand(room) {
     var desiredWork = localBuildWork + repairWork +
         remoteContainerBuildWork + remoteRoadBuildWork +
         remoteContainerRepairWork + remoteRoadRepairWork;
+    var criticalRepairWork = getCountScaledWork(
+        repairDemand.emergencyTargets,
+        2,
+        5,
+        15,
+        6
+    );
+    var workByEconomyCategory = emptyArtificerCategoryWork();
+    workByEconomyCategory.criticalMaintenance = Math.min(repairWork, criticalRepairWork);
+    workByEconomyCategory.criticalInfrastructure = criticalBuildWork;
+    workByEconomyCategory.construction =
+        (criticalBuildWork > 0 ? 0 : localBuildWork) +
+        repairWork - workByEconomyCategory.criticalMaintenance;
+    workByEconomyCategory.remote = remoteContainerBuildWork + remoteRoadBuildWork +
+        remoteContainerRepairWork + remoteRoadRepairWork;
     var mode = 'idle';
 
     if (criticalSites > 0) {
@@ -1953,6 +2034,20 @@ function getArtificerBuildDemand(room) {
         desiredWork = criticalBuildWork + remoteContainerBuildWork +
             remoteContainerRepairWork + emergencyRepairWork +
             Math.floor(reducedWork / 2);
+        var reducedWorkBudget = Math.floor(reducedWork / 2);
+        var reducedLocalWork = Math.min(
+            reducedWorkBudget,
+            regularBuildWork + lowPriorityBuildWork
+        );
+        workByEconomyCategory.criticalMaintenance = Math.min(
+            emergencyRepairWork,
+            criticalRepairWork
+        );
+        workByEconomyCategory.criticalInfrastructure = criticalBuildWork;
+        workByEconomyCategory.construction = reducedLocalWork +
+            emergencyRepairWork - workByEconomyCategory.criticalMaintenance;
+        workByEconomyCategory.remote = remoteContainerBuildWork +
+            remoteContainerRepairWork + reducedWorkBudget - reducedLocalWork;
         mode = desiredWork > 0 ? 'upgrade-rush-' + mode : 'upgrade-rush';
     }
 
@@ -1961,11 +2056,6 @@ function getArtificerBuildDemand(room) {
     var hasCriticalWork = criticalSites > 0 ||
         remoteDemand.containerConstructionSites > 0 ||
         repairDemand.emergencyTargets > 0;
-    var economyCategory = repairDemand.emergencyTargets > 0 ? 'criticalMaintenance' :
-        criticalSites > 0 ? 'criticalInfrastructure' :
-        constructionDemand.totalSites > 0 || repairDemand.targets > 0 ? 'construction' :
-        remoteDemand.constructionSites > 0 || remoteDemand.repairTargets > 0 ? 'remote' :
-        'construction';
 
     if (room.storage && !hasCriticalWork) {
         if (storageEnergy < ARTIFICER_CRITICAL_STORAGE_ENERGY) {
@@ -2000,12 +2090,23 @@ function getArtificerBuildDemand(room) {
     ));
     var livingWork = countLivingRoleBodyParts(room.name, 'Artificer', WORK);
     var queuedWork = countQueuedRoleBodyParts(room.name, 'Artificer', WORK);
+    workByEconomyCategory = limitArtificerCategoryWork(workByEconomyCategory, desiredWork);
+    var queuedWorkByEconomyCategory = getQueuedArtificerWorkByCategory(room.name);
+    var missingWorkByEconomyCategory = getMissingArtificerWorkByCategory(
+        workByEconomyCategory,
+        livingWork,
+        queuedWorkByEconomyCategory
+    );
+    var missingWork = sumArtificerCategoryWork(missingWorkByEconomyCategory);
+    var economyCategory = ARTIFICER_ECONOMY_CATEGORIES.find(function(category) {
+        return missingWorkByEconomyCategory[category] > 0;
+    }) || 'construction';
 
     return {
         desiredWork: desiredWork,
         livingWork: livingWork,
         queuedWork: queuedWork,
-        missingWork: Math.max(0, desiredWork - livingWork - queuedWork),
+        missingWork: missingWork,
         localBuildProgressRemaining: localBuildProgressRemaining,
         localConstructionSites: constructionDemand.totalSites || 0,
         repairTargets: repairDemand.targets,
@@ -2013,6 +2114,8 @@ function getArtificerBuildDemand(room) {
         remoteRepairTargets: remoteDemand.repairTargets,
         hasCriticalWork: hasCriticalWork,
         economyCategory: economyCategory,
+        workByEconomyCategory: workByEconomyCategory,
+        missingWorkByEconomyCategory: missingWorkByEconomyCategory,
         mode: mode
     };
 }
@@ -2057,7 +2160,8 @@ function requestDynamicArtificersForRoom(room, demandOverride, options) {
         livingWork: demand.livingWork,
         queuedWork: demand.queuedWork,
         missingWork: demand.missingWork,
-        mode: demand.mode
+        mode: demand.mode,
+        economyCategory: null
     };
 
     saveArtificerDemandDebug(room.name, demand);
@@ -2066,10 +2170,16 @@ function requestDynamicArtificersForRoom(room, demandOverride, options) {
         return result;
     }
 
-    var body = creepBodyConfig.getArtificerBodyForWork(
-        room,
-        demand.missingWork
-    );
+    var requestEconomyCategory = ARTIFICER_ECONOMY_CATEGORIES.find(function(category) {
+        return demand.missingWorkByEconomyCategory &&
+            demand.missingWorkByEconomyCategory[category] > 0;
+    }) || demand.economyCategory ||
+        (demand.hasCriticalWork ? 'criticalMaintenance' : 'construction');
+    var categoryMissingWork = demand.missingWorkByEconomyCategory ?
+        demand.missingWorkByEconomyCategory[requestEconomyCategory] : demand.missingWork;
+    result.economyCategory = requestEconomyCategory;
+
+    var body = creepBodyConfig.getArtificerBodyForWork(room, categoryMissingWork);
     var requestedWork = countBodyParts(body, WORK);
 
     if (!body || requestedWork <= 0) {
@@ -2078,12 +2188,10 @@ function requestDynamicArtificersForRoom(room, demandOverride, options) {
         return result;
     }
 
-    var requestEconomyCategory = demand.economyCategory ||
-        (demand.hasCriticalWork ? 'criticalMaintenance' : 'construction');
-
     /* Add one request per tick; queued WORK prevents repeated over-requesting. */
     var addResult = addSpawnRequest(room.name, {
         role: 'Artificer',
+        demandId: 'Artificer:' + requestEconomyCategory,
         economyCategory: requestEconomyCategory,
         body: body,
         requestedWorkParts: requestedWork,
@@ -2103,15 +2211,20 @@ function requestDynamicArtificersForRoom(room, demandOverride, options) {
         return result;
     }
 
-    demand.queuedWork += requestedWork;
-    demand.missingWork = Math.max(
-        0,
-        demand.desiredWork - demand.livingWork - demand.queuedWork
-    );
+    if(addResult.requested > 0) {
+        demand.queuedWork += requestedWork;
+        demand.missingWork = Math.max(0, demand.missingWork - requestedWork);
+        if(demand.missingWorkByEconomyCategory) {
+            demand.missingWorkByEconomyCategory[requestEconomyCategory] = Math.max(
+                0,
+                demand.missingWorkByEconomyCategory[requestEconomyCategory] - requestedWork
+            );
+        }
+    }
     saveArtificerDemandDebug(room.name, demand);
 
-    result.requested = 1;
-    result.requestedWork = requestedWork;
+    result.requested = addResult.requested;
+    result.requestedWork = addResult.requested > 0 ? requestedWork : 0;
     result.queuedWork = demand.queuedWork;
     result.missingWork = demand.missingWork;
     return result;

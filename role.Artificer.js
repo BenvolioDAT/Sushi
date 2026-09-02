@@ -58,6 +58,7 @@ var roleArtificer = {
 
         var homeRoomName = creep.memory.homeRoom || creep.room.name;
         var spend = getSpendingPolicy(creep, homeRoomName);
+        getRememberedBuildTarget(creep, spend);
 
         if (!spend.remote) {
             clearRemoteWorkTarget(creep);
@@ -648,6 +649,7 @@ function buildLocalConstruction(creep, importantOnly) {
      * only after the local room has no construction work.
      */
     var target = getRememberedBuildTarget(creep);
+    var ignoredTargetIds = {};
 
     /*
      * buildTargetId helps the Artificer stay focused on one construction site.
@@ -656,10 +658,11 @@ function buildLocalConstruction(creep, importantOnly) {
      */
     if(target && (!importantOnly || isImportantConstructionSite(target)) &&
         !hasHigherPriorityConstructionSite(creep, target, importantOnly)) {
-        return buildTarget(creep, target);
+        if(buildTarget(creep, target)) return true;
+        ignoredTargetIds[target.id] = true;
     }
 
-    target = findBestLocalConstructionSite(creep, importantOnly);
+    target = findBestLocalConstructionSite(creep, importantOnly, ignoredTargetIds);
 
     if(!target) {
         clearBuildTarget(creep);
@@ -675,8 +678,11 @@ function hasLocalConstructionWork(creep, importantOnly) {
     if(homeRoomName && creep.room.name !== homeRoomName) return false;
     var sites = creep.room.find(FIND_MY_CONSTRUCTION_SITES);
     if(!sites || sites.length === 0) return false;
-    if(!importantOnly) return true;
-    return sites.some(isImportantConstructionSite);
+    return sites.some(function(site) {
+        return isValidLocalConstructionSite(creep, site) &&
+            (!importantOnly || isImportantConstructionSite(site)) &&
+            isConstructionSiteReachable(creep, site);
+    });
 }
 
 function isImportantConstructionSite(site) {
@@ -698,7 +704,7 @@ function getConstructionSitePriority(site) {
     return STRUCTURE_BUILD_PRIORITY[site.structureType] || 0;
 }
 
-function getRememberedBuildTarget(creep) {
+function getRememberedBuildTarget(creep, spend) {
     if(!creep.memory.buildTargetId) {
         return null;
     }
@@ -713,7 +719,9 @@ function getRememberedBuildTarget(creep) {
         target.progress === undefined ||
         target.progressTotal === undefined ||
         target.progress >= target.progressTotal ||
-        target.my === false
+        target.my === false ||
+        spend && !isConstructionSitePermitted(target, spend) ||
+        !isConstructionSiteReachable(creep, target)
     ) {
         clearBuildTarget(creep);
         return null;
@@ -722,13 +730,27 @@ function getRememberedBuildTarget(creep) {
     return target;
 }
 
+function isConstructionSitePermitted(site, spend) {
+    if(!site || !spend) return false;
+    return !!(spend.construction ||
+        spend.criticalInfrastructure && isImportantConstructionSite(site));
+}
+
+function isConstructionSiteReachable(creep, site) {
+    if(!creep || !creep.pos || !site || !site.pos) return false;
+    if(creep.pos.inRangeTo(site, 3)) return true;
+    return creep.pos.findClosestByPath([site], {range: 3, ignoreCreeps: true}) === site;
+}
+
 function hasHigherPriorityConstructionSite(creep, currentTarget, importantOnly) {
     var currentPriority = getConstructionSitePriority(currentTarget);
     var sites = creep.room.find(FIND_MY_CONSTRUCTION_SITES);
 
     for(var i = 0; i < sites.length; i++) {
         if(importantOnly && !isImportantConstructionSite(sites[i])) continue;
-        if(getConstructionSitePriority(sites[i]) > currentPriority) {
+        if(getConstructionSitePriority(sites[i]) > currentPriority &&
+            isValidLocalConstructionSite(creep, sites[i]) &&
+            isConstructionSiteReachable(creep, sites[i])) {
             return true;
         }
     }
@@ -736,32 +758,46 @@ function hasHigherPriorityConstructionSite(creep, currentTarget, importantOnly) 
     return false;
 }
 
-function findBestLocalConstructionSite(creep, importantOnly) {
+function findBestLocalConstructionSite(creep, importantOnly, ignoredTargetIds) {
     var sites = creep.room.find(FIND_MY_CONSTRUCTION_SITES);
 
     if(!sites || sites.length === 0) {
         return null;
     }
 
-    var highestPriority = -1;
-    var bestPrioritySites = [];
+    var sitesByPriority = {};
+    var priorities = [];
 
     for(var i = 0; i < sites.length; i++) {
         if(!isValidLocalConstructionSite(creep, sites[i]) ||
-            importantOnly && !isImportantConstructionSite(sites[i])) {
+            importantOnly && !isImportantConstructionSite(sites[i]) ||
+            ignoredTargetIds && ignoredTargetIds[sites[i].id]) {
             continue;
         }
         var priority = getConstructionSitePriority(sites[i]);
 
-        if(priority > highestPriority) {
-            highestPriority = priority;
-            bestPrioritySites = [sites[i]];
-        } else if(priority === highestPriority) {
-            bestPrioritySites.push(sites[i]);
+        if(!sitesByPriority[priority]) {
+            sitesByPriority[priority] = [];
+            priorities.push(priority);
         }
+        sitesByPriority[priority].push(sites[i]);
     }
 
-    return creep.pos.findClosestByPath(bestPrioritySites) || bestPrioritySites[0];
+    priorities.sort(function(a, b) { return b - a; });
+
+    for(var priorityIndex = 0; priorityIndex < priorities.length; priorityIndex++) {
+        var candidates = sitesByPriority[priorities[priorityIndex]];
+        var inRange = candidates.filter(function(site) {
+            return creep.pos.inRangeTo(site, 3);
+        });
+        if(inRange.length > 0) {
+            return creep.pos.findClosestByRange(inRange) || inRange[0];
+        }
+        var reachable = creep.pos.findClosestByPath(candidates, {range: 3, ignoreCreeps: true});
+        if(reachable) return reachable;
+    }
+
+    return null;
 }
 
 function isValidLocalConstructionSite(creep, site) {
@@ -782,12 +818,17 @@ function buildTarget(creep, target) {
     var result = creep.build(target);
 
     if(result === ERR_NOT_IN_RANGE) {
-        utilityTravelCreep.move(creep, target, {
+        var moveResult = utilityTravelCreep.move(creep, target, {
             range: 3,
             visualizePathStyle: {
                 stroke: '#ffffff'
             }
         });
+        if(moveResult === ERR_NO_PATH || moveResult === ERR_NOT_FOUND ||
+            moveResult === ERR_INVALID_TARGET || moveResult === ERR_INVALID_ARGS) {
+            clearBuildTarget(creep);
+            return false;
+        }
         return true;
     }
 

@@ -104,6 +104,10 @@ function addRepair(world, id = 'repair', type = STRUCTURE_SPAWN) {
     return target;
 }
 
+function workParts(body) {
+    return (body || []).filter(part => part === WORK || part && part.type === WORK).length;
+}
+
 test('idle powered Artificer upgrades when no repair or construction exists', () => {
     const world = reset();
     const creep = addArtificer(world);
@@ -141,6 +145,98 @@ test('Artificer demand classifies important local construction as critical infra
     assert.strictEqual(fresh('HiveMind.Economy.js').canSpend(world.room.name, demand.economyCategory), true);
     Memory.rooms[world.room.name].economy.state = 'SURVIVAL';
     assert.strictEqual(fresh('HiveMind.Economy.js').canSpend(world.room.name, demand.economyCategory), false);
+});
+
+test('mixed critical repair and construction demand stays separated by economy category', () => {
+    const world = reset('RECOVERY');
+    addRepair(world, 'critical-repair', STRUCTURE_SPAWN);
+    addSite(world, 'critical-site', STRUCTURE_EXTENSION);
+    const requests = fresh('spawn.request.manager.js');
+    const demand = requests.getArtificerBuildDemand(world.room);
+    assert.ok(demand.workByEconomyCategory.criticalMaintenance > 0);
+    assert.ok(demand.workByEconomyCategory.criticalInfrastructure > 0);
+    assert.strictEqual(fresh('HiveMind.Economy.js').canSpend(world.room.name, 'criticalMaintenance'), true);
+    assert.strictEqual(fresh('HiveMind.Economy.js').canSpend(world.room.name, 'criticalInfrastructure'), true);
+
+    const first = requests.requestDynamicArtificersForRoom(world.room, demand);
+    assert.strictEqual(first.economyCategory, 'criticalMaintenance');
+    const maintenanceRequest = Memory.rooms[world.room.name].spawn.queue[0];
+    assert.strictEqual(maintenanceRequest.economyCategory, 'criticalMaintenance');
+    assert.strictEqual(maintenanceRequest.memory.criticalMaintenance, true);
+    assert.ok(workParts(maintenanceRequest.body) <= demand.workByEconomyCategory.criticalMaintenance);
+
+    const refreshed = requests.getArtificerBuildDemand(world.room);
+    const second = requests.requestDynamicArtificersForRoom(world.room, refreshed);
+    assert.strictEqual(second.economyCategory, 'criticalInfrastructure');
+    assert.deepStrictEqual(
+        Memory.rooms[world.room.name].spawn.queue.map(request => request.economyCategory).sort(),
+        ['criticalInfrastructure', 'criticalMaintenance']
+    );
+    const infrastructureRequest = Memory.rooms[world.room.name].spawn.queue.find(
+        request => request.economyCategory === 'criticalInfrastructure'
+    );
+    assert.strictEqual(infrastructureRequest.memory.criticalMaintenance, false);
+
+    const survivalWorld = reset('SURVIVAL');
+    addRepair(survivalWorld, 'survival-critical-repair', STRUCTURE_SPAWN);
+    addSite(survivalWorld, 'survival-critical-site', STRUCTURE_EXTENSION);
+    const survivalRequests = fresh('spawn.request.manager.js');
+    const survivalDemand = survivalRequests.getArtificerBuildDemand(survivalWorld.room);
+    const admitted = survivalRequests.requestDynamicArtificersForRoom(
+        survivalWorld.room,
+        survivalDemand
+    );
+    assert.strictEqual(admitted.ok, true);
+    assert.strictEqual(admitted.economyCategory, 'criticalMaintenance');
+    const remaining = survivalRequests.getArtificerBuildDemand(survivalWorld.room);
+    const blocked = survivalRequests.requestDynamicArtificersForRoom(survivalWorld.room, remaining);
+    assert.strictEqual(blocked.ok, false);
+    assert.strictEqual(blocked.economyCategory, 'criticalInfrastructure');
+    assert.match(blocked.reason, /SURVIVAL|criticalInfrastructure/i);
+    assert.strictEqual(Memory.rooms[survivalWorld.room.name].spawn.queue.length, 1);
+});
+
+test('critical construction cannot classify or unlock normal and remote demand', () => {
+    const world = reset('RECOVERY');
+    addSite(world, 'critical-site', STRUCTURE_EXTENSION);
+    addSite(world, 'normal-site', STRUCTURE_ROAD);
+    const requests = fresh('spawn.request.manager.js');
+    const localDemand = requests.getArtificerBuildDemand(world.room);
+    assert.strictEqual(localDemand.economyCategory, 'criticalInfrastructure');
+    assert.ok(localDemand.workByEconomyCategory.criticalInfrastructure > 0);
+    assert.strictEqual(localDemand.workByEconomyCategory.construction, 0);
+
+    const mixed = {
+        desiredWork: 4, livingWork: 0, queuedWork: 0, missingWork: 4,
+        workByEconomyCategory: {
+            criticalMaintenance: 0, criticalInfrastructure: 2,
+            construction: 0, remote: 2
+        },
+        missingWorkByEconomyCategory: {
+            criticalMaintenance: 0, criticalInfrastructure: 2,
+            construction: 0, remote: 2
+        },
+        mode: 'mixed-test'
+    };
+    const critical = requests.requestDynamicArtificersForRoom(world.room, mixed);
+    assert.strictEqual(critical.economyCategory, 'criticalInfrastructure');
+    assert.ok(workParts(Memory.rooms[world.room.name].spawn.queue[0].body) <= 2);
+
+    mixed.queuedWork = critical.requestedWork;
+    mixed.missingWork = 2;
+    mixed.missingWorkByEconomyCategory.criticalInfrastructure = 0;
+    const remote = requests.requestDynamicArtificersForRoom(world.room, mixed);
+    assert.strictEqual(remote.ok, false);
+    assert.strictEqual(remote.economyCategory, 'remote');
+    assert.match(remote.reason, /RECOVERY|remote/i);
+    assert.strictEqual(Memory.rooms[world.room.name].spawn.queue.length, 1);
+
+    const normalWorld = reset('RECOVERY');
+    addSite(normalWorld, 'normal-only-site', STRUCTURE_ROAD);
+    const normalDemand = fresh('spawn.request.manager.js').getArtificerBuildDemand(normalWorld.room);
+    assert.strictEqual(normalDemand.economyCategory, 'construction');
+    assert.ok(normalDemand.workByEconomyCategory.construction > 0);
+    assert.strictEqual(fresh('HiveMind.Economy.js').canSpend(normalWorld.room.name, 'construction'), false);
 });
 
 test('RECOVERY permits important local construction but still blocks routine construction', () => {
@@ -193,7 +289,7 @@ test('empty Artificer collects energy for important RECOVERY construction', () =
     assert.strictEqual(withdrawn, container);
 });
 
-test('completed and invalid remembered build targets are cleared', () => {
+test('completed remembered build target is replaced', () => {
     const completedWorld = reset();
     const completed = addSite(completedWorld, 'completed-site', STRUCTURE_EXTENSION);
     completed.progress = completed.progressTotal;
@@ -204,13 +300,76 @@ test('completed and invalid remembered build targets are cleared', () => {
     assert.strictEqual(resumed.lastBuild, replacement);
     assert.strictEqual(resumed.memory.buildTargetId, replacement.id);
 
-    const invalidWorld = reset();
-    const invalid = addSite(invalidWorld, 'invalid-site', STRUCTURE_EXTENSION);
-    const rejected = addArtificer(invalidWorld, 'rejected-builder');
-    rejected.memory.buildTargetId = invalid.id;
-    rejected.build = () => ERR_INVALID_TARGET;
-    fresh('role.Artificer.js').run(rejected);
-    assert.strictEqual(rejected.memory.buildTargetId, undefined);
+});
+
+test('destroyed, wrong-room, and non-owned remembered targets are replaced', () => {
+    for (const invalidKind of ['destroyed', 'wrong-room', 'non-owned']) {
+        const world = reset();
+        const replacement = addSite(world, `${invalidKind}-replacement`, STRUCTURE_EXTENSION);
+        const creep = addArtificer(world, `${invalidKind}-builder`);
+        creep.memory.buildTargetId = `${invalidKind}-target`;
+        if (invalidKind !== 'destroyed') {
+            addObject(world, {
+                id: creep.memory.buildTargetId, structureType: STRUCTURE_EXTENSION,
+                my: invalidKind !== 'non-owned', progress: 0, progressTotal: 100,
+                pos: new RoomPosition(21, 20, invalidKind === 'wrong-room' ? 'W9N9' : world.room.name)
+            });
+        }
+        fresh('role.Artificer.js').run(creep);
+        assert.strictEqual(creep.lastBuild, replacement);
+        assert.strictEqual(creep.memory.buildTargetId, replacement.id);
+    }
+});
+
+test('unreachable remembered target is cleared and a reachable replacement is selected', () => {
+    const world = reset();
+    const unreachable = addSite(world, 'unreachable-tower', STRUCTURE_TOWER);
+    const replacement = addSite(world, 'reachable-extension', STRUCTURE_EXTENSION);
+    unreachable.pos = new RoomPosition(35, 35, world.room.name);
+    replacement.pos = new RoomPosition(30, 30, world.room.name);
+    const creep = addArtificer(world, 'pathing-builder');
+    creep.memory.buildTargetId = unreachable.id;
+    creep.pos.findClosestByPath = kind => {
+        if (!Array.isArray(kind)) return null;
+        return kind.find(site => site.id === replacement.id) || null;
+    };
+    fresh('role.Artificer.js').run(creep);
+    assert.strictEqual(creep.lastBuild, replacement);
+    assert.strictEqual(creep.memory.buildTargetId, replacement.id);
+});
+
+test('rejected remembered target is not immediately reselected over a valid replacement', () => {
+    const world = reset();
+    const rejectedTarget = addSite(world, 'rejected-site', STRUCTURE_EXTENSION);
+    const replacement = addSite(world, 'usable-site', STRUCTURE_EXTENSION);
+    const creep = addArtificer(world, 'rejected-builder');
+    creep.memory.buildTargetId = rejectedTarget.id;
+    creep.build = target => {
+        if (target === rejectedTarget) return ERR_INVALID_TARGET;
+        creep.lastBuild = target;
+        return OK;
+    };
+    fresh('role.Artificer.js').run(creep);
+    assert.strictEqual(creep.lastBuild, replacement);
+    assert.strictEqual(creep.memory.buildTargetId, replacement.id);
+});
+
+test('remembered target is preserved when valid and cleared when no longer permitted', () => {
+    const stableWorld = reset();
+    const remembered = addSite(stableWorld, 'remembered-road', STRUCTURE_ROAD);
+    const stable = addArtificer(stableWorld, 'stable-builder');
+    stable.memory.buildTargetId = remembered.id;
+    fresh('role.Artificer.js').run(stable);
+    assert.strictEqual(stable.lastBuild, remembered);
+    assert.strictEqual(stable.memory.buildTargetId, remembered.id);
+
+    const recoveryWorld = reset('RECOVERY');
+    const blocked = addSite(recoveryWorld, 'blocked-road', STRUCTURE_ROAD);
+    const recovery = addArtificer(recoveryWorld, 'recovery-builder');
+    recovery.memory.buildTargetId = blocked.id;
+    fresh('role.Artificer.js').run(recovery);
+    assert.strictEqual(recovery.builds, 0);
+    assert.strictEqual(recovery.memory.buildTargetId, undefined);
 });
 
 test('blocked remote spending clears and does not select remembered remote work', () => {
