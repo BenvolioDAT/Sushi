@@ -19,6 +19,7 @@ function reset(state = 'STABLE', spawnFill = 1) {
     mocks.installGlobals({ limit: 100, tickLimit: 500, bucket: 10000, getUsed: () => 0 });
     mocks.clearLocalModules();
     delete global.__sushiArtificerControllerHelpers;
+    delete global.__sushiArtificerReachability;
     const objects = {};
     Game.getObjectById = id => objects[id] || null;
     const room = {
@@ -106,6 +107,43 @@ function addRepair(world, id = 'repair', type = STRUCTURE_SPAWN) {
 
 function workParts(body) {
     return (body || []).filter(part => part === WORK || part && part.type === WORK).length;
+}
+
+function setArtificerWork(creep, category, count, spawning = false) {
+    creep.memory.artificerWorkCategory = category;
+    creep.memory.artificerTask = category === 'criticalMaintenance' ? 'CRITICAL_REPAIR' :
+        category === 'criticalInfrastructure' ? 'BUILD_LOCAL' :
+        category === 'remote' ? 'BUILD_REMOTE' : 'REPAIR';
+    creep.body = Array.from({ length: count }, () => ({ type: WORK, hits: 100 }))
+        .concat([{ type: CARRY, hits: 100 }, { type: MOVE, hits: 100 }]);
+    creep.spawning = spawning;
+    return creep;
+}
+
+function addRemoteConstruction(world, id = 'remote-road', type = STRUCTURE_ROAD) {
+    const roomName = 'W1N2';
+    const site = {
+        id, structureType: type, my: true, progress: 0, progressTotal: 100,
+        pos: new RoomPosition(20, 20, roomName)
+    };
+    Game.map.describeExits = room => room === world.room.name ? { [TOP]: roomName } : {};
+    Memory.rooms[world.room.name].remotePlanner = {
+        lastRun: Game.time, pathVersion: 1, activeSourceIds: ['remote-source'], remotes: {},
+        sourceInfos: {
+            'remote-source': {
+                sourceId: 'remote-source', roomName, parentRoomName: world.room.name,
+                active: true, distance: 20
+            }
+        }
+    };
+    Game.rooms[roomName] = {
+        name: roomName,
+        find(kind, options) {
+            const values = kind === FIND_MY_CONSTRUCTION_SITES ? [site] : [];
+            return options && options.filter ? values.filter(options.filter) : values;
+        }
+    };
+    return site;
 }
 
 test('idle powered Artificer upgrades when no repair or construction exists', () => {
@@ -239,6 +277,106 @@ test('critical construction cannot classify or unlock normal and remote demand',
     assert.strictEqual(fresh('HiveMind.Economy.js').canSpend(normalWorld.room.name, 'construction'), false);
 });
 
+test('living, spawning, and queued Artificer WORK covers only its assigned category', () => {
+    const world = reset('STABLE');
+    addRepair(world, 'accounting-critical', STRUCTURE_SPAWN);
+    for (let i = 0; i < 4; i++) addRepair(world, `accounting-road-${i}`, STRUCTURE_ROAD);
+    addSite(world, 'accounting-extension', STRUCTURE_EXTENSION);
+    addRemoteConstruction(world);
+
+    setArtificerWork(addArtificer(world, 'maintenance-worker'), 'criticalMaintenance', 1);
+    setArtificerWork(addArtificer(world, 'infrastructure-worker'), 'criticalInfrastructure', 2);
+    setArtificerWork(addArtificer(world, 'construction-worker'), 'construction', 1);
+    setArtificerWork(addArtificer(world, 'remote-worker'), 'remote', 1);
+    const spawning = setArtificerWork(
+        addArtificer(world, 'spawning-infrastructure'),
+        'criticalInfrastructure',
+        2,
+        true
+    );
+    Game.spawns.Spawn1 = {
+        name: 'Spawn1', my: true, room: world.room,
+        spawning: { name: spawning.name }, pos: new RoomPosition(25, 25, world.room.name)
+    };
+    Memory.rooms[world.room.name].spawn.queue.push(
+        {
+            role: 'Artificer', economyCategory: 'construction', body: [WORK, CARRY, MOVE],
+            memory: { role: 'Artificer', homeRoom: world.room.name, artificerWorkCategory: 'construction' }
+        },
+        {
+            role: 'Artificer', economyCategory: 'remote', body: [WORK, CARRY, MOVE],
+            memory: { role: 'Artificer', homeRoom: world.room.name, artificerWorkCategory: 'remote' }
+        }
+    );
+
+    const demand = fresh('spawn.request.manager.js').getArtificerBuildDemand(world.room);
+    assert.deepStrictEqual(demand.livingWorkByEconomyCategory, {
+        criticalMaintenance: 1,
+        criticalInfrastructure: 2,
+        construction: 1,
+        remote: 1
+    });
+    assert.deepStrictEqual(demand.spawningWorkByEconomyCategory, {
+        criticalMaintenance: 0,
+        criticalInfrastructure: 2,
+        construction: 0,
+        remote: 0
+    });
+    assert.deepStrictEqual(demand.queuedWorkByEconomyCategory, {
+        criticalMaintenance: 0,
+        criticalInfrastructure: 0,
+        construction: 1,
+        remote: 1
+    });
+    assert.deepStrictEqual(demand.missingWorkByEconomyCategory, {
+        criticalMaintenance: 1,
+        criticalInfrastructure: 4,
+        construction: 0,
+        remote: 0
+    });
+    assert.strictEqual(demand.missingWork, 5);
+    assert.strictEqual(demand.economyCategory, 'criticalMaintenance');
+});
+
+test('an Artificer assigned to remote work does not cover critical local work', () => {
+    const world = reset('RECOVERY');
+    addRepair(world, 'uncovered-critical', STRUCTURE_SPAWN);
+    const remote = setArtificerWork(
+        addArtificer(world, 'committed-remote'),
+        'remote',
+        4
+    );
+    assert.strictEqual(remote.memory.artificerTask, 'BUILD_REMOTE');
+    const demand = fresh('spawn.request.manager.js').getArtificerBuildDemand(world.room);
+    assert.strictEqual(demand.livingWorkByEconomyCategory.remote, 4);
+    assert.strictEqual(demand.missingWorkByEconomyCategory.criticalMaintenance, 2);
+    assert.strictEqual(demand.economyCategory, 'criticalMaintenance');
+});
+
+test('flexible Artificer WORK avoids overspawning while emergency work remains unavailable', () => {
+    const flexibleWorld = reset('STABLE');
+    addRepair(flexibleWorld, 'flexible-critical', STRUCTURE_SPAWN);
+    const flexible = addArtificer(flexibleWorld, 'flexible-worker');
+    flexible.body = [
+        { type: WORK, hits: 100 }, { type: WORK, hits: 100 },
+        { type: CARRY, hits: 100 }, { type: MOVE, hits: 100 }
+    ];
+    flexible.memory.artificerTask = 'UPGRADE_FALLBACK';
+    const covered = fresh('spawn.request.manager.js').getArtificerBuildDemand(flexibleWorld.room);
+    assert.strictEqual(covered.flexibleLivingWork, 2);
+    assert.strictEqual(covered.missingWorkByEconomyCategory.criticalMaintenance, 0);
+    assert.strictEqual(covered.missingWork, 0);
+
+    const emergencyWorld = reset('SURVIVAL', 0.1);
+    addRepair(emergencyWorld, 'emergency-critical', STRUCTURE_SPAWN);
+    const emergency = addArtificer(emergencyWorld, 'emergency-worker');
+    emergency.body = flexible.body;
+    emergency.memory.artificerTask = 'EMERGENCY_FILL';
+    const unavailable = fresh('spawn.request.manager.js').getArtificerBuildDemand(emergencyWorld.room);
+    assert.strictEqual(unavailable.unavailableLivingWork, 2);
+    assert.strictEqual(unavailable.missingWorkByEconomyCategory.criticalMaintenance, 2);
+});
+
 test('RECOVERY permits important local construction but still blocks routine construction', () => {
     const importantWorld = reset('RECOVERY');
     const importantSite = addSite(importantWorld, 'extension-site', STRUCTURE_EXTENSION);
@@ -336,6 +474,31 @@ test('unreachable remembered target is cleared and a reachable replacement is se
     fresh('role.Artificer.js').run(creep);
     assert.strictEqual(creep.lastBuild, replacement);
     assert.strictEqual(creep.memory.buildTargetId, replacement.id);
+});
+
+test('reachability results avoid repeated pathfinding for the same failed or valid target', () => {
+    for (const reachable of [false, true]) {
+        const world = reset();
+        const site = addSite(world, reachable ? 'cached-valid' : 'cached-unreachable', STRUCTURE_EXTENSION);
+        site.pos = new RoomPosition(35, 35, world.room.name);
+        const creep = addArtificer(world, reachable ? 'cached-valid-builder' : 'cached-failed-builder');
+        creep.memory.buildTargetId = site.id;
+        let pathCalls = 0;
+        creep.pos.findClosestByPath = kind => {
+            if (!Array.isArray(kind)) return null;
+            pathCalls++;
+            return reachable ? site : null;
+        };
+        creep.build = () => ERR_NOT_IN_RANGE;
+        creep.travelTo = () => OK;
+        const role = fresh('role.Artificer.js');
+        role.run(creep);
+        Game.time++;
+        role.run(creep);
+        assert.strictEqual(pathCalls, 1);
+        if (!reachable) assert.strictEqual(creep.memory.buildTargetId, undefined);
+        else assert.strictEqual(creep.memory.buildTargetId, site.id);
+    }
 });
 
 test('rejected remembered target is not immediately reselected over a valid replacement', () => {

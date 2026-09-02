@@ -1853,16 +1853,71 @@ function getQueuedArtificerWorkByCategory(roomName) {
     return queued;
 }
 
-function getMissingArtificerWorkByCategory(workByCategory, livingWork, queuedByCategory) {
+function getArtificerCreepWorkCategory(creep) {
+    var memory = creep && creep.memory || {};
+    if(ARTIFICER_ECONOMY_CATEGORIES.indexOf(memory.artificerWorkCategory) >= 0) {
+        return memory.artificerWorkCategory;
+    }
+    if(memory.artificerTask === 'CRITICAL_REPAIR') return 'criticalMaintenance';
+    if(memory.artificerTask === 'REPAIR') return 'construction';
+    if(memory.artificerTask === 'BUILD_REMOTE') return 'remote';
+    if(memory.artificerTask === 'BUILD_LOCAL') {
+        var target = memory.buildTargetId && Game.getObjectById(memory.buildTargetId);
+        return target && isCriticalArtificerStructureType(target.structureType) ?
+            'criticalInfrastructure' : 'construction';
+    }
+    if(creep && creep.spawning) {
+        if(memory.criticalMaintenance) return 'criticalMaintenance';
+        if(ARTIFICER_ECONOMY_CATEGORIES.indexOf(memory.economyCategory) >= 0) {
+            return memory.economyCategory;
+        }
+        return 'construction';
+    }
+    if(memory.artificerTask === 'EMERGENCY_FILL') return null;
+    return 'flexible';
+}
+
+function getLivingArtificerWorkCoverage(roomName) {
+    var coverage = {
+        living: emptyArtificerCategoryWork(),
+        spawning: emptyArtificerCategoryWork(),
+        flexible: 0,
+        unavailable: 0
+    };
+    var creeps = TickIndex.get().creepsByHomeRoom.get(roomName) || [];
+
+    for(var i = 0; i < creeps.length; i++) {
+        var creep = creeps[i];
+        if(!creep || !creep.memory || creep.memory.role !== 'Artificer' ||
+            !isHealthyForReplacement(creep, 'Artificer')) {
+            continue;
+        }
+        var work = getCreepActiveBodyParts(creep, WORK);
+        var category = getArtificerCreepWorkCategory(creep);
+        if(category === 'flexible') coverage.flexible += work;
+        else if(category && coverage.living.hasOwnProperty(category)) {
+            if(creep.spawning) coverage.spawning[category] += work;
+            else coverage.living[category] += work;
+        }
+        else coverage.unavailable += work;
+    }
+
+    return coverage;
+}
+
+function getMissingArtificerWorkByCategory(workByCategory, livingCoverage, queuedByCategory) {
     var missing = emptyArtificerCategoryWork();
-    var remainingLivingWork = livingWork;
+    var remainingFlexibleWork = livingCoverage.flexible || 0;
 
     for(var i = 0; i < ARTIFICER_ECONOMY_CATEGORIES.length; i++) {
         var category = ARTIFICER_ECONOMY_CATEGORIES[i];
         var desired = workByCategory[category] || 0;
-        var livingCoverage = Math.min(desired, remainingLivingWork);
-        remainingLivingWork -= livingCoverage;
-        missing[category] = Math.max(0, desired - livingCoverage - (queuedByCategory[category] || 0));
+        var categoryCoverage = (livingCoverage.living[category] || 0) +
+            (livingCoverage.spawning[category] || 0);
+        var uncovered = Math.max(0, desired - categoryCoverage - (queuedByCategory[category] || 0));
+        var flexibleCoverage = Math.min(uncovered, remainingFlexibleWork);
+        remainingFlexibleWork -= flexibleCoverage;
+        missing[category] = uncovered - flexibleCoverage;
     }
 
     return missing;
@@ -2091,10 +2146,11 @@ function getArtificerBuildDemand(room) {
     var livingWork = countLivingRoleBodyParts(room.name, 'Artificer', WORK);
     var queuedWork = countQueuedRoleBodyParts(room.name, 'Artificer', WORK);
     workByEconomyCategory = limitArtificerCategoryWork(workByEconomyCategory, desiredWork);
+    var livingWorkCoverage = getLivingArtificerWorkCoverage(room.name);
     var queuedWorkByEconomyCategory = getQueuedArtificerWorkByCategory(room.name);
     var missingWorkByEconomyCategory = getMissingArtificerWorkByCategory(
         workByEconomyCategory,
-        livingWork,
+        livingWorkCoverage,
         queuedWorkByEconomyCategory
     );
     var missingWork = sumArtificerCategoryWork(missingWorkByEconomyCategory);
@@ -2115,6 +2171,11 @@ function getArtificerBuildDemand(room) {
         hasCriticalWork: hasCriticalWork,
         economyCategory: economyCategory,
         workByEconomyCategory: workByEconomyCategory,
+        livingWorkByEconomyCategory: livingWorkCoverage.living,
+        spawningWorkByEconomyCategory: livingWorkCoverage.spawning,
+        flexibleLivingWork: livingWorkCoverage.flexible,
+        unavailableLivingWork: livingWorkCoverage.unavailable,
+        queuedWorkByEconomyCategory: queuedWorkByEconomyCategory,
         missingWorkByEconomyCategory: missingWorkByEconomyCategory,
         mode: mode
     };
@@ -2200,6 +2261,8 @@ function requestDynamicArtificersForRoom(room, demandOverride, options) {
         memory: {
             role: 'Artificer',
             homeRoom: room.name,
+            artificerWorkCategory: requestEconomyCategory,
+            economyCategory: requestEconomyCategory,
             criticalMaintenance: requestEconomyCategory === 'criticalMaintenance'
         },
         requestedAt: Game.time

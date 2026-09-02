@@ -31,6 +31,8 @@ var REMOTE_WORK_EMPTY_SCAN_COOLDOWN = 15;
 var MIN_USEFUL_ENERGY_AMOUNT = 50;
 var HEALTHY_SPAWN_FILL = 0.50;
 var CONTROLLER_DANGER_TICKS = 5000;
+var BUILD_REACHABLE_CACHE_TTL = 25;
+var BUILD_UNREACHABLE_CACHE_TTL = 5;
 
 /*
  * Higher priority structures are chosen before lower priority structures.
@@ -101,44 +103,44 @@ function updateWorkingState(creep) {
 
 function runPermittedWork(creep, spend) {
     if(spend.emergencyFill) {
-        setTask(creep, 'EMERGENCY_FILL', 'economy collapse; refill spawn energy');
+        setTask(creep, 'EMERGENCY_FILL', 'economy collapse; refill spawn energy', null);
         creepUtility.transferEnergy(creep, spend.emergencyFillTarget);
         return;
     }
 
     if(spend.criticalMaintenance && tryRepairWork(creep, true)) {
-        setTask(creep, 'CRITICAL_REPAIR', 'critical maintenance permitted');
+        setTask(creep, 'CRITICAL_REPAIR', 'critical maintenance permitted', 'criticalMaintenance');
         return;
     }
 
     if(spend.criticalInfrastructure && buildLocalConstruction(creep, true)) {
-        setTask(creep, 'BUILD_LOCAL', 'critical local construction permitted');
+        setTask(creep, 'BUILD_LOCAL', 'critical local construction permitted', 'criticalInfrastructure');
         return;
     }
 
     if(spend.construction && tryRepairWork(creep, false)) {
-        setTask(creep, 'REPAIR', 'normal maintenance permitted');
+        setTask(creep, 'REPAIR', 'normal maintenance permitted', 'construction');
         return;
     }
 
     if(spend.construction && buildLocalConstruction(creep)) {
-        setTask(creep, 'BUILD_LOCAL', 'important local construction available');
+        setTask(creep, 'BUILD_LOCAL', 'important local construction available', 'construction');
         return;
     }
 
     if(spend.remote && doRemoteInfrastructureWork(creep)) {
-        setTask(creep, 'BUILD_REMOTE', 'remote infrastructure permitted');
+        setTask(creep, 'BUILD_REMOTE', 'remote infrastructure permitted', 'remote');
         return;
     }
 
     var upgradePolicy = getControllerUpgradePolicy(creep, spend);
     if(upgradePolicy.allowed) {
-        setTask(creep, 'UPGRADE_FALLBACK', upgradePolicy.reason);
+        setTask(creep, 'UPGRADE_FALLBACK', upgradePolicy.reason, null);
         upgradeController(creep);
         return;
     }
 
-    setTask(creep, 'IDLE', upgradePolicy.reason || 'no permitted work');
+    setTask(creep, 'IDLE', upgradePolicy.reason || 'no permitted work', null);
     idleNearBase(creep);
 }
 
@@ -146,13 +148,13 @@ function collectForNextTask(creep, spend) {
     var nextTask = chooseNextTask(creep, spend);
 
     if(nextTask.name === 'IDLE') {
-        setTask(creep, 'IDLE', 'no permitted work or energy use');
+        setTask(creep, 'IDLE', 'no permitted work or energy use', null);
         idleNearBase(creep);
         return;
     }
 
     creep.memory.artificerNextTask = nextTask.name;
-    setTask(creep, 'COLLECT', 'for ' + nextTask.name);
+    setTask(creep, 'COLLECT', 'for ' + nextTask.name, nextTask.category);
 
     if(nextTask.name === 'UPGRADE_FALLBACK') {
         roleTech.getEnergyForTech(creep);
@@ -163,23 +165,33 @@ function collectForNextTask(creep, spend) {
 }
 
 function chooseNextTask(creep, spend) {
-    if(spend.emergencyFill) return {name: 'EMERGENCY_FILL'};
-    if(spend.criticalMaintenance && hasRepairWork(creep.room, true)) return {name: 'CRITICAL_REPAIR'};
-    if(spend.criticalInfrastructure && hasLocalConstructionWork(creep, true)) return {name: 'BUILD_LOCAL'};
-    if(spend.construction && hasRepairWork(creep.room, false)) return {name: 'REPAIR'};
-    if(spend.construction && hasLocalConstructionWork(creep)) return {name: 'BUILD_LOCAL'};
+    if(spend.emergencyFill) return {name: 'EMERGENCY_FILL', category: null};
+    if(spend.criticalMaintenance && hasRepairWork(creep.room, true)) {
+        return {name: 'CRITICAL_REPAIR', category: 'criticalMaintenance'};
+    }
+    if(spend.criticalInfrastructure && hasLocalConstructionWork(creep, true)) {
+        return {name: 'BUILD_LOCAL', category: 'criticalInfrastructure'};
+    }
+    if(spend.construction && hasRepairWork(creep.room, false)) {
+        return {name: 'REPAIR', category: 'construction'};
+    }
+    if(spend.construction && hasLocalConstructionWork(creep)) {
+        return {name: 'BUILD_LOCAL', category: 'construction'};
+    }
     if(spend.remote && (getRememberedRemoteWorkTarget(creep) || findRemoteInfrastructureTarget(creep))) {
-        return {name: 'BUILD_REMOTE'};
+        return {name: 'BUILD_REMOTE', category: 'remote'};
     }
     var upgradePolicy = getControllerUpgradePolicy(creep, spend);
-    if(upgradePolicy.allowed) return {name: 'UPGRADE_FALLBACK'};
-    return {name: 'IDLE'};
+    if(upgradePolicy.allowed) return {name: 'UPGRADE_FALLBACK', category: null};
+    return {name: 'IDLE', category: null};
 }
 
-function setTask(creep, task, reason) {
+function setTask(creep, task, reason, category) {
     creep.memory.artificerTask = task;
     creep.memory.artificerReason = reason;
     creep.memory.artificerDiagnostic = 'Artificer: ' + task + ' — ' + reason;
+    if(category) creep.memory.artificerWorkCategory = category;
+    else delete creep.memory.artificerWorkCategory;
     if(task !== 'COLLECT') delete creep.memory.artificerNextTask;
 }
 
@@ -739,26 +751,65 @@ function isConstructionSitePermitted(site, spend) {
 function isConstructionSiteReachable(creep, site) {
     if(!creep || !creep.pos || !site || !site.pos) return false;
     if(creep.pos.inRangeTo(site, 3)) return true;
-    return creep.pos.findClosestByPath([site], {range: 3, ignoreCreeps: true}) === site;
+    var cached = getCachedConstructionReachability(creep, site);
+    if(cached !== null) return cached;
+    var reachable = creep.pos.findClosestByPath(
+        [site],
+        {range: 3, ignoreCreeps: true}
+    ) === site;
+    cacheConstructionReachability(creep, site, reachable);
+    return reachable;
+}
+
+function getConstructionReachabilityCache() {
+    if(!global.__sushiArtificerReachability) {
+        global.__sushiArtificerReachability = {};
+    }
+    var cache = global.__sushiArtificerReachability;
+    if(Game.time % BUILD_REACHABLE_CACHE_TTL === 0 && cache.__lastCleanup !== Game.time) {
+        cache.__lastCleanup = Game.time;
+        for(var key in cache) {
+            if(key !== '__lastCleanup' && cache[key].expires < Game.time) delete cache[key];
+        }
+    }
+    return cache;
+}
+
+function getConstructionReachabilityKey(creep, site) {
+    return (creep.name || creep.id || 'unknown') + ':' + site.id;
+}
+
+function getCachedConstructionReachability(creep, site) {
+    var entry = getConstructionReachabilityCache()[getConstructionReachabilityKey(creep, site)];
+    if(!entry || entry.expires < Game.time || entry.roomName !== site.pos.roomName ||
+        entry.targetX !== site.pos.x || entry.targetY !== site.pos.y) {
+        return null;
+    }
+    if(!entry.reachable &&
+        (entry.creepX !== creep.pos.x || entry.creepY !== creep.pos.y)) {
+        return null;
+    }
+    return entry.reachable;
+}
+
+function cacheConstructionReachability(creep, site, reachable) {
+    getConstructionReachabilityCache()[getConstructionReachabilityKey(creep, site)] = {
+        reachable: reachable,
+        expires: Game.time + (reachable ? BUILD_REACHABLE_CACHE_TTL : BUILD_UNREACHABLE_CACHE_TTL),
+        roomName: site.pos.roomName,
+        targetX: site.pos.x,
+        targetY: site.pos.y,
+        creepX: creep.pos.x,
+        creepY: creep.pos.y
+    };
 }
 
 function hasHigherPriorityConstructionSite(creep, currentTarget, importantOnly) {
     var currentPriority = getConstructionSitePriority(currentTarget);
-    var sites = creep.room.find(FIND_MY_CONSTRUCTION_SITES);
-
-    for(var i = 0; i < sites.length; i++) {
-        if(importantOnly && !isImportantConstructionSite(sites[i])) continue;
-        if(getConstructionSitePriority(sites[i]) > currentPriority &&
-            isValidLocalConstructionSite(creep, sites[i]) &&
-            isConstructionSiteReachable(creep, sites[i])) {
-            return true;
-        }
-    }
-
-    return false;
+    return !!findBestLocalConstructionSite(creep, importantOnly, null, currentPriority);
 }
 
-function findBestLocalConstructionSite(creep, importantOnly, ignoredTargetIds) {
+function findBestLocalConstructionSite(creep, importantOnly, ignoredTargetIds, minimumPriority) {
     var sites = creep.room.find(FIND_MY_CONSTRUCTION_SITES);
 
     if(!sites || sites.length === 0) {
@@ -775,6 +826,7 @@ function findBestLocalConstructionSite(creep, importantOnly, ignoredTargetIds) {
             continue;
         }
         var priority = getConstructionSitePriority(sites[i]);
+        if(minimumPriority !== undefined && priority <= minimumPriority) continue;
 
         if(!sitesByPriority[priority]) {
             sitesByPriority[priority] = [];
@@ -793,8 +845,28 @@ function findBestLocalConstructionSite(creep, importantOnly, ignoredTargetIds) {
         if(inRange.length > 0) {
             return creep.pos.findClosestByRange(inRange) || inRange[0];
         }
-        var reachable = creep.pos.findClosestByPath(candidates, {range: 3, ignoreCreeps: true});
-        if(reachable) return reachable;
+        var cachedReachable = [];
+        var uncheckedCandidates = [];
+        for(var cacheIndex = 0; cacheIndex < candidates.length; cacheIndex++) {
+            var cached = getCachedConstructionReachability(creep, candidates[cacheIndex]);
+            if(cached === true) cachedReachable.push(candidates[cacheIndex]);
+            else if(cached === null) uncheckedCandidates.push(candidates[cacheIndex]);
+        }
+        if(cachedReachable.length > 0) {
+            return creep.pos.findClosestByRange(cachedReachable) || cachedReachable[0];
+        }
+        if(uncheckedCandidates.length === 0) continue;
+        var reachable = creep.pos.findClosestByPath(
+            uncheckedCandidates,
+            {range: 3, ignoreCreeps: true}
+        );
+        if(reachable) {
+            cacheConstructionReachability(creep, reachable, true);
+            return reachable;
+        }
+        for(var candidateIndex = 0; candidateIndex < uncheckedCandidates.length; candidateIndex++) {
+            cacheConstructionReachability(creep, uncheckedCandidates[candidateIndex], false);
+        }
     }
 
     return null;
@@ -826,6 +898,7 @@ function buildTarget(creep, target) {
         });
         if(moveResult === ERR_NO_PATH || moveResult === ERR_NOT_FOUND ||
             moveResult === ERR_INVALID_TARGET || moveResult === ERR_INVALID_ARGS) {
+            cacheConstructionReachability(creep, target, false);
             clearBuildTarget(creep);
             return false;
         }
@@ -836,6 +909,9 @@ function buildTarget(creep, target) {
         return true;
     }
 
+    if(result === ERR_INVALID_TARGET || result === ERR_NOT_OWNER) {
+        cacheConstructionReachability(creep, target, false);
+    }
     clearBuildTarget(creep);
     return false;
 }
