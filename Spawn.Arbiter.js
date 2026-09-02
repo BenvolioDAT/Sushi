@@ -37,16 +37,34 @@ function admit(roomName, request, options = {}) {
     const context = Context.snapshot(roomName, options.replacementBuffer || 0);
     const existing = context.queue.find(item => item && item.requestId === normalized.requestId);
     if (existing) {
+        const promoteToGrowthFloor = normalized.memory.controllerGrowthFloor === true &&
+            !(existing.memory && existing.memory.controllerGrowthFloor === true);
+        if (promoteToGrowthFloor) {
+            const promotion = Policy.evaluate(room, normalized, context, { ...options, revalidate: true });
+            if (!promotion.allowed) {
+                return { ok: false, requested: 0, role: normalized.role, reason: promotion.reason };
+            }
+            existing.economyCategory = normalized.economyCategory;
+            existing.category = normalized.economyCategory;
+            existing.body = normalized.body;
+            existing.maxWorkParts = normalized.maxWorkParts;
+            existing.priority = Math.max(existing.priority || 0, normalized.priority || 0);
+            existing.memory = { ...existing.memory, ...normalized.memory };
+        }
         existing.refreshTick = Game.time;
         existing.expiresAt = Math.max(existing.expiresAt || 0, normalized.expiresAt);
-        return { ok: true, requested: 0, role: normalized.role, reason: 'stable request already queued', request: existing };
+        return { ok: true, requested: 0, role: normalized.role,
+            reason: promoteToGrowthFloor ? 'existing Tech request promoted to growth floor' : 'stable request already queued',
+            mandatoryFloorBypass: promoteToGrowthFloor && context.nonCombatTotal > Policy.maxCreeps(room, HiveMemory.getConfig('spawn')),
+            request: existing };
     }
     const decision = Policy.evaluate(room, normalized, context, options);
     if (!decision.allowed) return { ok: false, requested: 0, role: normalized.role, reason: decision.reason };
     context.queue.push(normalized);
     context.queue.sort((a, b) => (b.priority || 0) - (a.priority || 0) ||
         (a.requestedAt || 0) - (b.requestedAt || 0) || String(a.requestId).localeCompare(String(b.requestId)));
-    return { ok: true, requested: 1, role: normalized.role, reason: decision.reason, request: normalized };
+    return { ok: true, requested: 1, role: normalized.role, reason: decision.reason,
+        mandatoryFloorBypass: decision.mandatoryFloorBypass === true, request: normalized };
 }
 
 function revalidate(room, request) {

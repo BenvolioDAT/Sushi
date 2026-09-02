@@ -11,13 +11,42 @@
 var creepUtility = require('utility.Creep');
 var travel = require('utility.Travel.Creep');
 var Economy = require('HiveMind.Economy');
+var ColonyState = require('HiveMind.ColonyState');
+var TickIndex = require('HiveMind.Index');
+
+function isBaselineRepresentative(creep, homeRoomName) {
+    if (!global.__sushiBaselineTechRepresentatives ||
+        global.__sushiBaselineTechRepresentatives.tick !== Game.time) {
+        global.__sushiBaselineTechRepresentatives = { tick: Game.time, rooms: {} };
+    }
+    var cache = global.__sushiBaselineTechRepresentatives.rooms;
+    if (cache.hasOwnProperty(homeRoomName)) return cache[homeRoomName] === (creep.name || creep.id);
+    var techs = (TickIndex.get().creepsByHomeRoom.get(homeRoomName) || []).filter(function(unit) {
+        return unit && unit.memory && unit.memory.role === 'Tech' &&
+            (unit.ticksToLive === undefined || unit.ticksToLive > 50);
+    }).sort(function(left, right) {
+        return String(left.name || left.id).localeCompare(String(right.name || right.id));
+    });
+    cache[homeRoomName] = techs.length > 0 ? (techs[0].name || techs[0].id) : null;
+    return cache[homeRoomName] === (creep.name || creep.id);
+}
 
 var roleTech = {
     run: function(creep) {
         var homeRoomName = creep.memory.homeRoom || creep.room.name;
         var controllerEmergency = creep.memory.controllerEmergency === true ||
             creep.room.controller && creep.room.controller.ticksToDowngrade < 5000;
-        if (!Economy.canSpend(homeRoomName, controllerEmergency ? 'criticalController' : 'upgrade')) {
+        var controllerGrowthFloor = creep.memory.controllerGrowthFloor === true;
+        var colony = ColonyState.get(homeRoomName);
+        var baselineRepresentative = !controllerGrowthFloor && colony && colony.growthAllowed &&
+            (colony.lifecycle === 'BOOTSTRAP' || colony.lifecycle === 'GROWTH') &&
+            isBaselineRepresentative(creep, homeRoomName);
+        var floorPolicyActive = (controllerGrowthFloor || baselineRepresentative) && colony &&
+            (colony.lifecycle === 'BOOTSTRAP' || colony.lifecycle === 'GROWTH');
+        var growthStillAllowed = !floorPolicyActive || colony.growthAllowed;
+        var spendCategory = controllerEmergency ? 'controllerSafety' :
+            floorPolicyActive ? 'controllerGrowth' : 'upgradeSurplus';
+        if (!growthStillAllowed || !Economy.canSpend(homeRoomName, spendCategory)) {
             creep.memory.upgrading = false;
             if (creep.store[RESOURCE_ENERGY] > 0) creepUtility.fillRoomEnergy(creep);
             else creepUtility.collectEnergy(creep);
@@ -256,5 +285,9 @@ function findSourceContainerWithEnergy(creep) {
         }
     });
 }
+
+roleTech.findDroppedEnergyForTech = findDroppedEnergyForTech;
+roleTech.getEnergyForTech = getEnergyForTech;
+roleTech.upgradeRoomController = upgradeRoomController;
 
 module.exports = roleTech;

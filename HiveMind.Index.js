@@ -66,6 +66,7 @@ function build() {
         ownedSpawnRooms: [],
         structuresByRoom: new Map(),
         constructionSitesByRoom: new Map(),
+        droppedResourcesByRoom: new Map(),
         hostilesByRoom: new Map(),
         combatHostilesByRoom: new Map(),
         powerCreepsByRoom: new Map(),
@@ -100,6 +101,10 @@ function build() {
         index.constructionSitesByRoom.set(
             room.name,
             safeFind(room, typeof FIND_CONSTRUCTION_SITES !== 'undefined' ? FIND_CONSTRUCTION_SITES : undefined)
+        );
+        index.droppedResourcesByRoom.set(
+            room.name,
+            safeFind(room, typeof FIND_DROPPED_RESOURCES !== 'undefined' ? FIND_DROPPED_RESOURCES : undefined)
         );
         const hostiles = safeFind(room, typeof FIND_HOSTILE_CREEPS !== 'undefined' ? FIND_HOSTILE_CREEPS : undefined);
         index.hostilesByRoom.set(room.name, hostiles);

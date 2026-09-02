@@ -396,6 +396,7 @@ function buildSnapshot(room, previous) {
         },
         replacementRisk,
         remoteCommitments,
+        protectedStockpileEnergy: protectedSpawnStockpileEnergy(room),
         spawnPressure: { queued: queue.length, busy: busySpawns }
     };
 }
@@ -442,6 +443,20 @@ function rawState(snapshot) {
         return { state: STATES.SURPLUS, reason: 'storage reserves high and core economy satisfied' };
     }
     return { state: STATES.STABLE, reason: 'local income and logistics sustainable' };
+}
+
+function protectedSpawnStockpileEnergy(room) {
+    if (!room) return 0;
+    const spawns = TickIndex.get().ownedSpawnsByRoom.get(room.name) || [];
+    if (!spawns.length) return 0;
+    const drops = TickIndex.get().droppedResourcesByRoom.get(room.name) || [];
+    return drops.reduce((sum, resource) => {
+        if (!resource || resource.resourceType !== RESOURCE_ENERGY || !(resource.amount > 0) || !resource.pos) {
+            return sum;
+        }
+        const protectedDrop = spawns.some(spawn => spawn && spawn.pos && resource.pos.getRangeTo(spawn) <= 3);
+        return sum + (protectedDrop ? resource.amount : 0);
+    }, 0);
 }
 
 function applyHysteresis(snapshot, previous) {
@@ -517,6 +532,7 @@ function savePersistent(roomName, snapshot) {
     persistent.lastSampleTick = snapshot.sampleTick;
     persistent.lastLiquidEnergy = snapshot.liquidEnergy;
     persistent.energyTrend = snapshot.energyTrend;
+    persistent.protectedStockpileEnergy = snapshot.protectedStockpileEnergy;
     return persistent;
 }
 
@@ -559,7 +575,11 @@ function categoryForRequest(request) {
         }
         return 'combat';
     }
-    if (role === 'Tech') return memory.controllerEmergency ? 'criticalController' : 'upgrade';
+    if (role === 'Tech') {
+        if (memory.controllerEmergency) return 'controllerSafety';
+        if (memory.controllerGrowthFloor) return 'controllerGrowth';
+        return 'upgradeSurplus';
+    }
     if (role === 'Artificer') return memory.criticalMaintenance ? 'criticalMaintenance' : 'construction';
     if (role === 'Annex' || role === 'Scout' || role === 'Pioneer') return 'expansion';
     if (role === 'MineralMiner' || role === 'ResourceCourier') return 'resources';
@@ -575,11 +595,12 @@ function checkSpend(roomOrName, category) {
         return { allowed: true, reason: 'core economy' };
     }
     if (snapshot.state === STATES.SURVIVAL) {
-        const allowed = category === 'criticalController' || category === 'criticalMaintenance';
+        const allowed = ['controllerSafety', 'criticalController', 'criticalMaintenance'].includes(category);
         return { allowed, reason: allowed ? 'critical survival exception' : 'blocked during SURVIVAL' };
     }
     if (snapshot.state === STATES.RECOVERY) {
-        const allowed = ['defense', 'criticalController', 'criticalMaintenance'].includes(category);
+        const allowed = ['defense', 'controllerSafety', 'criticalController', 'controllerGrowth',
+            'criticalMaintenance', 'criticalInfrastructure'].includes(category);
         return { allowed, reason: allowed ? 'recovery exception' : 'blocked during RECOVERY' };
     }
     return { allowed: true, reason: snapshot.state + ' permits spending' };
@@ -613,5 +634,6 @@ module.exports = {
     shouldBootstrapSelfDeliver,
     buildSnapshot,
     analyzeSourceTransport,
-    sourceReplacementCoverage
+    sourceReplacementCoverage,
+    protectedSpawnStockpileEnergy
 };

@@ -43,6 +43,7 @@ function creep(name, room, role, extra = {}) {
 function addCore(room) {
     creep('foreman', room, 'Foreman');
     creep('extractor', room, 'Extractor');
+    creep('extractor-2', room, 'Extractor');
     creep('freighter', room, 'Freighter');
 }
 

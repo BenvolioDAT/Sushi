@@ -126,15 +126,18 @@ Lifecycle is separate from economy and danger:
 | Phase | Meaning |
 | --- | --- |
 | `OWNED_NO_SPAWN` | Owned controller without an owned Spawn |
-| `BOOTSTRAP` | Spawn exists but harvesting, hauling, filling, or essential worker coverage is not sustainable |
-| `GROWTH` | Sustainable RCL1-RCL4 colony working through critical milestones |
-| `DEVELOPMENT` | RCL5-RCL7 colony adding advanced infrastructure while preserving reserves |
+| `BOOTSTRAP` | Spawn exists, mandatory role floors are incomplete, or the room is still RCL1 |
+| `GROWTH` | RCL2-RCL3 colony building essential structures and controller progress |
+| `DEVELOPMENT` | RCL4-RCL7 colony adding storage, links, and sustainable infrastructure |
 | `MATURE` | RCL8 core economy and infrastructure operating |
 
-`PEACE`, `THREATENED`, and `SIEGE` are alert overlays. Only the small phase,
-alert, milestone, unmet-reason, and hysteresis record persists in
-`Memory.rooms[room].colony`; measurements remain heap-first. The dashboard
-shows phase, alert, and the first blocking milestone reason.
+`PEACE`, `THREATENED`, and `SIEGE` are alert overlays. The lifecycle decision
+also records an objective, enabled priority band, baseline-Tech requirement,
+growth gate, first blocking reason, controller downgrade time, and protected
+spawn-stockpile total. The startup ladder is Foreman, two functioning local
+Extractors, one local Freighter, one minimum-growth Tech, then an Artificer only
+for real construction or critical repair demand. A zero-miner room whose 200
+energy Extractor floor is not recoverable uses the emergency Extractor first.
 
 ## Spawn demand flow
 
@@ -167,6 +170,14 @@ Owned-room squad and quad defenders carry `defenseRequest`, `defendedRoom`, and
 spending. Normal combat defaults to at most half of queue capacity, and defense
 admission preserves the local Extractor/Freighter survival anchor. A siege may
 bypass ordinary queue admission limits but cannot create a zero-income colony.
+
+The priority-band guide is deliberately compact: band 0 is survival and
+owned-room defense; band 1 is mining, local logistics, spawn filling, and
+essential replacement; band 2 is baseline controller growth and critical RCL
+infrastructure; band 3 is construction, remotes, surplus upgrading, and
+economic development; band 4 is expansion, offense, optimization, and optional
+strategy. New systems should select a band before inventing another standalone
+priority policy.
 
 ## Growth release order
 
@@ -496,20 +507,32 @@ Emergency states are entered immediately. Improvement must persist for 12 ticks
 to leave `SURVIVAL`, 40 ticks to leave `RECOVERY`, and 100 ticks to promote from
 `STABLE` to `SURPLUS`. Each promotion advances only one state at a time.
 
-During `SURVIVAL`, the spawn queue prioritizes an affordable local Extractor,
-then minimum hauling, then Foreman. A local Extractor temporarily carries energy
+During `SURVIVAL`, the spawn queue normally starts with Foreman, two local
+Extractors, and minimum hauling. The full-collapse exception prioritizes an
+affordable local Extractor before the no-WORK Foreman. A local Extractor temporarily carries energy
 to spawn/extensions when no local hauling exists. Optional requests remain in
 the queue but the spawn consumer skips them until policy permits them. During
-`RECOVERY`, remotes, expansion, upgrading, construction, resources, special
-operations, and combat preparation stay suppressed. Owned-room defense,
-critical controller protection, and critical maintenance remain available.
+`RECOVERY`, remotes, expansion, surplus upgrading, noncritical construction,
+resources, special operations, and combat preparation stay suppressed.
+Owned-room defense, controller safety, critical maintenance, and exactly one
+baseline `controllerGrowth` Tech remain available after the Foreman/two-miner/
+one-Freighter core floor exists. Additional Tech uses `upgradeSurplus` and stays
+blocked. RCL1 targets one Tech WORK rather than two, producing the affordable
+`WORK/CARRY/MOVE` body. The floor request may exceed the non-combat RCL cap by
+one slot only and is deduplicated through the normal request fingerprint.
+
+The protected spawn-side overflow pile remains owned by worker consumers, not
+Freighters. Its energy is summed from the shared room index scan. A full spawn
+plus overflow supports the baseline-growth explanation and telemetry, but the
+pile is not required for growth and does not bypass a missing core floor.
 
 Remote plans are retained rather than destroyed. Active selection and new
 remote assignments pause during recovery; empty outbound Freighters return
 home, while loaded Freighters finish delivering their cargo.
 
-The room dashboard shows the current economy state/reason plus income, WORK,
-hauling capacity, and backlog.
+The room dashboard shows economy state/reason, lifecycle objective, active or
+blocked growth reason, non-combat governor use (including the one floor slot),
+Tech WORK, protected stockpile energy, and controller downgrade ticks.
 
 ## Console cookbook
 

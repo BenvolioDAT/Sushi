@@ -24,6 +24,8 @@ var SquadController = require('Squad.Controller');
 var HiveMemory = require('HiveMind.Memory');
 var Economy = require('HiveMind.Economy');
 var SpawnArbiter = require('Spawn.Arbiter');
+var ColonyState = require('HiveMind.ColonyState');
+var SpawnContext = require('Spawn.Context');
 
 var RESERVE_DESIRED_TICKS = 4000;
 var RESERVE_SPAWN_AT_TICKS = 2500;
@@ -33,6 +35,7 @@ var TECH_BASE_MAX_DESIRED_WORK = 24;
 var TECH_MAX_DESIRED_WORK = 36;
 var TECH_RCL8_MAX_WORK = 15;
 var TECH_ABSOLUTE_CREEP_CAP = 5;
+var MANDATORY_FLOOR_CAP_ALLOWANCE = 1;
 var ARTIFICER_MAX_DESIRED_WORK = 24;
 var ARTIFICER_LOW_STORAGE_ENERGY = 20000;
 var ARTIFICER_CRITICAL_STORAGE_ENERGY = 5000;
@@ -566,7 +569,8 @@ function buildRoomPlanningContext(room, roomIndex, skipNormalPlanning) {
         idleFreighters: 0,
         healthyLocalExtractors: 0,
         queuedLocalExtractors: queueSummary.queuedLocalExtractors,
-        emergencyMinimumBypassByRole: {}
+        emergencyMinimumBypassByRole: {},
+        mandatoryFloorBypassUsed: false
     };
 
     var indexedCreeps = TickIndex.get().creepsByHomeRoom.get(roomName) || [];
@@ -822,7 +826,8 @@ function addSpawnRequest(roomName, request, options) {
         ok: true,
         role: role,
         requested: result.requested,
-        reason: result.reason
+        reason: result.reason,
+        mandatoryFloorBypass: result.mandatoryFloorBypass === true
     };
 }
 
@@ -1129,6 +1134,15 @@ function getDesiredTechWork(room) {
     var storageEnergy = getStoredEnergy(room.storage);
     var desiredWork;
 
+    if (level === 1) {
+        var rcl1Memory = ensureRoomMemory(room.name);
+        setMemoryValueIfChanged(rcl1Memory, 'techBaseDesiredWork', 1);
+        setMemoryValueIfChanged(rcl1Memory, 'techCpuMultiplier', 1);
+        setMemoryValueIfChanged(rcl1Memory, 'techCpuMode', cpuStatus.mode);
+        setMemoryValueIfChanged(rcl1Memory, 'techBoostReason', 'RCL1 baseline controller growth');
+        return 1;
+    }
+
     if (!room.storage) {
         if (level <= 2) {
             desiredWork = energyCapacity >= 550 ? 4 :
@@ -1370,6 +1384,20 @@ function countQueuedRoleWork(roomName, role) {
     return countQueuedRoleBodyParts(roomName, role, WORK);
 }
 
+function countQueuedControllerFloorWork(roomName) {
+    var queue = spawnManager.getSpawnQueue(roomName) || [];
+    var work = 0;
+    for (var i = 0; i < queue.length; i++) {
+        var request = queue[i];
+        var memory = request && request.memory || {};
+        if (getRequestRole(request) === 'Tech' &&
+            (memory.controllerGrowthFloor === true || memory.controllerEmergency === true)) {
+            work += countBodyParts(request.body || [], WORK);
+        }
+    }
+    return work;
+}
+
 function setMemoryValueIfChanged(target, key, value) {
     if (target[key] !== value) {
         target[key] = value;
@@ -1450,6 +1478,12 @@ function requestTechWorkForRoom(room, demandOverride, options) {
     var plannedTechCreeps = context ? getPlannedRoleCount(context, 'Tech') :
         countHealthyCreeps(room.name, 'Tech', techReplacementLead) +
             countQueuedRequests(room.name, 'Tech');
+    var colony = ColonyState.get(room.name);
+    var emergencyRequest = !!(options && options.emergency);
+    var controllerGrowthFloor = !emergencyRequest && !!(
+        options && options.controllerGrowthFloor === true ||
+        colony && colony.growthAllowed && colony.baselineTechRequired && plannedTechCreeps < 1
+    );
     var result = {
         ok: true,
         role: 'Tech',
@@ -1516,20 +1550,21 @@ function requestTechWorkForRoom(room, demandOverride, options) {
             }
         }
     }
-    requestOptions.allowTechWorkRoleCapBypass = true;
-    requestOptions.absoluteTechCreepCap = TECH_ABSOLUTE_CREEP_CAP;
+    if (controllerGrowthFloor) requestOptions.mandatoryFloorBypass = true;
 
     /* Add exactly one Tech request per tick. Later ticks can fill more WORK. */
     var addResult = addSpawnRequest(room.name, {
         role: 'Tech',
-        economyCategory: options && options.emergency ? 'criticalController' : 'upgrade',
+        economyCategory: emergencyRequest ? 'controllerSafety' :
+            controllerGrowthFloor ? 'controllerGrowth' : 'upgradeSurplus',
         body: body,
         maxWorkParts: requestedWork,
-        priority: PRIORITY.Tech,
+        priority: controllerGrowthFloor ? 50 : PRIORITY.Tech,
         memory: {
             role: 'Tech',
             homeRoom: room.name,
-            controllerEmergency: !!(options && options.emergency)
+            controllerEmergency: emergencyRequest,
+            controllerGrowthFloor: controllerGrowthFloor
         },
         requestedAt: Game.time
     }, requestOptions);
@@ -1547,7 +1582,15 @@ function requestTechWorkForRoom(room, demandOverride, options) {
         return result;
     }
 
-    result.requested = 1;
+    if (addResult.mandatoryFloorBypass) {
+        if (context) context.mandatoryFloorBypassUsed = true;
+        var spawnMemory = HiveMemory.getRoomSpawnMemory(room.name);
+        if (!spawnMemory.governor || typeof spawnMemory.governor !== 'object') spawnMemory.governor = {};
+        spawnMemory.governor.mandatoryFloorBypassUsed = true;
+        spawnMemory.governor.mandatoryFloorAllowance = MANDATORY_FLOOR_CAP_ALLOWANCE;
+    }
+
+    result.requested = addResult.requested;
     result.requestedWork = requestedWork;
     result.queuedWork += requestedWork;
     demand.queuedWork = result.queuedWork;
@@ -1566,7 +1609,7 @@ function requestTechWorkForRoom(room, demandOverride, options) {
         'queued',
         null,
         demand,
-        plannedTechCreeps + 1
+        plannedTechCreeps + (addResult.requested > 0 ? 1 : 0)
     );
 
     return result;
@@ -2907,9 +2950,9 @@ function runStartupBootstrap(room, report) {
      * Startup order:
      * 1. Foreman first.
      * 2. Then two Extractors.
-     * 3. Then two Freighters.
+     * 3. Then one Freighter.
      * 4. Then one Tech.
-     * 5. Then one Artificer.
+     * 5. Then an Artificer only when construction or critical repair demand exists.
      *
      * Important:
      * This checks healthy living creeps first.
@@ -2918,26 +2961,45 @@ function runStartupBootstrap(room, report) {
      */
 
     var economy = Economy.get(room.name);
-    if (!economy || economy.state !== Economy.STATES.SURVIVAL) return false;
+    var colony = ColonyState.get(room.name);
+    if (!economy || !colony || colony.lifecycle !== ColonyState.PHASES.BOOTSTRAP) return false;
 
+    var context = getActiveContext(room.name);
     var emergencyOptions = { emergency: true, bypassRoleCap: true };
-    if (economy.harvest.workActive + economy.harvest.workQueued < 1) {
+    var localMinerCount = context ? context.healthyLocalExtractors + context.queuedLocalExtractors : 0;
+    var floorUnrecoverable = economy.bootstrap && economy.bootstrap.floorReachable === false;
+
+    /* Full-collapse exception: a CARRY/MOVE Foreman cannot recreate harvest income. */
+    if (localMinerCount < 1 && floorUnrecoverable) {
         report.requests.push(requestDynamicExtractorsForRoom(room, 120, null, emergencyOptions));
         return true;
     }
-    if (economy.haul.localCarry + economy.haul.queuedCarry < 1) {
-        report.requests.push(requestDynamicFreightersForRoom(room, 112, null, emergencyOptions));
-        return true;
-    }
-    if (getHealthyRoleCount(room, 'Foreman') < 1) {
+    if (!context || getPlannedRoleCount(context, 'Foreman') < 1) {
         report.requests.push(requestRoleForRoom(room, 'Foreman', 1, 108, emergencyOptions));
         return true;
     }
+    if (localMinerCount < 2) {
+        report.requests.push(requestDynamicExtractorsForRoom(room, 116, null, emergencyOptions));
+        return true;
+    }
+    if (getPlannedRoleCount(context, 'Freighter') < 1) {
+        report.requests.push(requestDynamicFreightersForRoom(room, 112, null, emergencyOptions));
+        return true;
+    }
+    if (colony.baselineTechRequired && colony.growthAllowed) {
+        var livingWork = countLivingRoleWork(room.name, 'Tech');
+        var queuedWork = countQueuedControllerFloorWork(room.name);
+        report.requests.push(requestTechWorkForRoom(room, {
+            desiredWork: colony.baselineTechWork,
+            livingWork: livingWork,
+            queuedWork: queuedWork,
+            missingWork: Math.max(0, colony.baselineTechWork - livingWork - queuedWork)
+        }, { controllerGrowthFloor: true }));
+        return true;
+    }
 
-    /* Stay focused on the dynamic core economy until hysteresis exits SURVIVAL. */
-    report.requests.push(requestDynamicExtractorsForRoom(room, 116, null, emergencyOptions));
-    report.requests.push(requestDynamicFreightersForRoom(room, 110, null, emergencyOptions));
-    return true;
+    /* Mandatory floors are covered; normal demand may scale only where policy permits it. */
+    return false;
 }
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -3568,9 +3630,11 @@ function runEmergencyPlanning(room, report, context) {
 
     var economy = Economy.get(room.name);
     var survival = economy && economy.state === Economy.STATES.SURVIVAL;
+    var unrecoverableMinerFloor = survival && economy.bootstrap &&
+        economy.bootstrap.floorReachable === false;
     var localHarvestPlanned = context.healthyLocalExtractors + context.queuedLocalExtractors > 0;
 
-    if (getPlannedRoleCount(context, 'Foreman') < 1 && (!survival || localHarvestPlanned)) {
+    if (getPlannedRoleCount(context, 'Foreman') < 1 && (!unrecoverableMinerFloor || localHarvestPlanned)) {
         report.requests.push(requestRoleForRoom(
             room,
             'Foreman',
@@ -3589,7 +3653,7 @@ function runEmergencyPlanning(room, report, context) {
             room,
             'Extractor',
             1,
-            survival ? 120 : PRIORITY.Extractor + 10,
+            unrecoverableMinerFloor ? 120 : PRIORITY.Extractor + 10,
             emergencyOptions
         ));
         localHarvestPlanned = true;
@@ -3600,7 +3664,7 @@ function runEmergencyPlanning(room, report, context) {
             room,
             'Freighter',
             1,
-            survival ? 112 : PRIORITY.Freighter + 10,
+            survival ? 85 : PRIORITY.Freighter + 10,
             emergencyOptions
         ));
     }
@@ -3703,6 +3767,11 @@ function saveSpawnGovernorDebug(context) {
     context.demandCache.roleBodyPartTotals = context.bodyPartsByRole;
     context.demandCache.queuedRoleBodyPartTotals = context.queuedBodyPartsByRole;
 
+    var governorContext = SpawnContext.snapshot(context.roomName);
+    var maxCreeps = getMaxCreepsForRoom(context.room, policy);
+    var floorQueued = governorContext.queue.some(function(request) {
+        return request && request.memory && request.memory.controllerGrowthFloor === true;
+    });
     HiveMemory.getRoomSpawnMemory(context.roomName).governor = {
         tick: Game.time,
         fullPlan: context.fullPlan,
@@ -3710,7 +3779,11 @@ function saveSpawnGovernorDebug(context) {
         cpuUsed: Math.round(cpuUsed * 1000) / 1000,
         totalLiving: context.totalLiving,
         totalQueued: context.totalQueued,
-        maxCreeps: getMaxCreepsForRoom(context.room, policy),
+        nonCombatTotal: governorContext.nonCombatTotal,
+        maxCreeps: maxCreeps,
+        mandatoryFloorBypassUsed: context.mandatoryFloorBypassUsed ||
+            (floorQueued && governorContext.nonCombatTotal > maxCreeps),
+        mandatoryFloorAllowance: MANDATORY_FLOOR_CAP_ALLOWANCE,
         queueLength: context.queue ? context.queue.length : 0,
         maxQueueLength: policy.maxQueueLengthPerRoom,
         denied: context.denied

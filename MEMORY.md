@@ -95,8 +95,8 @@ Memory
 ├── rooms
 │   └── <roomName>
 │       ├── identity
-│       ├── economy                hysteresis/trend state only
-│       ├── colony                 lifecycle, alert, milestone and transition reasons
+│       ├── economy                hysteresis/trend state and protected-stockpile total
+│       ├── colony                 lifecycle, objective, growth decision and alert summary
 │       ├── spawn
 │       │   ├── queue
 │       │   ├── demandCache
@@ -120,8 +120,9 @@ Memory stores configuration, relationships, history, hysteresis, unseen-room
 intel, operations and caches whose recomputation is materially expensive.
 
 The current economy snapshot lives in heap for the current tick. Room Memory
-keeps only state-machine hysteresis, reason, last liquid-energy sample and the
-energy-trend EMA needed after a global reset.
+keeps state-machine hysteresis, reason, last liquid-energy sample, the
+energy-trend EMA needed after a global reset, and the small protected spawn-side
+stockpile total used by lifecycle telemetry.
 
 The widely used `structurePlanner`, `roadPlanner`, `remotePlanner`, source,
 defense, repair, and scout-intel shapes intentionally remain room-scoped in
@@ -131,16 +132,24 @@ an existing room domain; this decision is not permission to add new root keys.
 
 ## Lifecycle and queue records
 
-`Memory.rooms[roomName].colony` stores only the lifecycle phase
-(`OWNED_NO_SPAWN`, `BOOTSTRAP`, `GROWTH`, `DEVELOPMENT`, or `MATURE`), its
-independent `PEACE`/`THREATENED`/`SIEGE` alert, RCL, milestone requirements,
-unmet reasons, and bounded transition/hysteresis ticks. Current creep,
-structure, energy, and threat measurements rebuild from heap after reset.
+`Memory.rooms[roomName].colony` stores the lifecycle (`OWNED_NO_SPAWN`,
+`BOOTSTRAP`, `GROWTH`, `DEVELOPMENT`, or `MATURE`), `lifecycleSince`, objective,
+priority band, independent `PEACE`/`THREATENED`/`SIEGE` alert, growth gate and
+blocked reason, baseline Tech floor/work, next mandatory role, compact core
+floor counts, controller downgrade ticks, protected-stockpile total, and small
+milestone summary. Fields are assigned only when their values change; current
+objects and scans still rebuild through `HiveMind.Index`.
 
 Spawn queue entries carry a stable `requestId`, `producer`, `category`,
 `requestedAt`, `refreshTick`, and `expiresAt`. Demand records retain their
 stable id and TTL. Both legacy and DemandBoard producers therefore reconcile
 through one final queue owner.
+
+A baseline Tech queue entry uses `economyCategory: controllerGrowth` and
+`memory.controllerGrowthFloor: true`; controller-loss protection remains
+`memory.controllerEmergency: true` with category `controllerSafety`. Optional
+Tech uses `upgradeSurplus`. `spawn.governor` reports `nonCombatTotal`, the normal
+RCL cap, and whether the bounded `mandatoryFloorBypassUsed` allowance was used.
 
 ## Retention and garbage collection
 

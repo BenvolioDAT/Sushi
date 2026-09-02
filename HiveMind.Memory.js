@@ -168,7 +168,7 @@ function persistentEconomy(snapshot) {
     if (!isObject(snapshot)) return null;
     const result = {};
     const keys = ['state', 'rawState', 'stateSince', 'stateChangedAt', 'healthyTicks',
-        'reason', 'sampleTick', 'liquidEnergy', 'energyTrend'];
+        'reason', 'sampleTick', 'liquidEnergy', 'energyTrend', 'protectedStockpileEnergy'];
     for (const key of keys) {
         if (snapshot[key] === undefined) continue;
         const destination = key === 'sampleTick' ? 'lastSampleTick' :

@@ -829,7 +829,7 @@ function drawRoomPanel(visual, room, sourceStats, remoteStats, roomCreeps) {
     var y = 3.7;
     var width = 18;
     var showRoleCounts = HiveMemory.getConfig('visuals').dashboardShowRoleCounts === true;
-    var height = showRoleCounts ? 19.5 : 17.4;
+    var height = showRoleCounts ? 20.9 : 18.8;
     var controller = room.controller;
     var roomMemory = Memory.rooms && Memory.rooms[room.name];
     var queue = getSpawnQueueInfo(room.name);
@@ -846,6 +846,7 @@ function drawRoomPanel(visual, room, sourceStats, remoteStats, roomCreeps) {
     var freighters = roomCreeps.freighters;
     var economy = Economy.get(room.name);
     var colony = ColonyState.get(room.name);
+    var spawnGovernor = roomMemory && roomMemory.spawn && roomMemory.spawn.governor || {};
     var roles = roomCreeps.roles;
     var hasTechWork = roomMemory && typeof roomMemory.techDesiredWork === 'number';
     var techWorkText = hasTechWork ?
@@ -911,8 +912,21 @@ function drawRoomPanel(visual, room, sourceStats, remoteStats, roomCreeps) {
     if (colony) {
         var lifecycleColor = colony.alert === 'SIEGE' ? COLORS.danger :
             colony.alert === 'THREATENED' ? COLORS.warning : COLORS.good;
-        drawText(visual, colony.phase + ' / ' + colony.alert + ' - ' +
-            truncate(colony.reason, 22), x, rowY, lifecycleColor);
+        drawText(visual, 'COLONY ' + colony.lifecycle + ' - ' + colony.objective, x, rowY, lifecycleColor);
+        rowY += LINE_HEIGHT;
+        var growthPhase = colony.lifecycle === 'BOOTSTRAP' || colony.lifecycle === 'GROWTH';
+        var growthText = !growthPhase ? 'Lifecycle ACTIVE - band ' + colony.priorityBand :
+            colony.growthAllowed ?
+                'Growth ACTIVE - ' + (colony.baselineTechRequired ? 'baseline Tech' : 'floor covered') :
+                'Growth PAUSED - ' + truncate(colony.blockedReason || colony.reason, 21);
+        drawText(visual, growthText, x, rowY,
+            !growthPhase || colony.growthAllowed ? COLORS.good : COLORS.warning);
+        rowY += LINE_HEIGHT;
+        var floorSuffix = spawnGovernor.mandatoryFloorBypassUsed ? ' +1 floor' : '';
+        drawText(visual, 'Governor ' + safeNumber(spawnGovernor.nonCombatTotal) + '/' +
+            safeNumber(spawnGovernor.maxCreeps) + floorSuffix + ' Stock ' +
+            compactNumber(colony.protectedStockpileEnergy) + ' Down ' +
+            compactNumber(colony.controllerDowngradeTicks), x, rowY, COLORS.text);
         rowY += LINE_HEIGHT;
     }
     drawRow(visual, ['Spawn queue', { text: queue.length, color: queue.length > 3 ? COLORS.warning : COLORS.text }], x, rowY, [7, 4]);

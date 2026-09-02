@@ -1,6 +1,7 @@
 const HiveMemory = require('HiveMind.Memory');
 const Economy = require('HiveMind.Economy');
 const ColonyState = require('HiveMind.ColonyState');
+const Context = require('Spawn.Context');
 
 function maxCreeps(room, policy) {
     const rcl = room && room.controller && room.controller.level || 1;
@@ -25,11 +26,21 @@ function evaluate(room, request, context, options = {}) {
     if (!economy.allowed) return { allowed: false, reason: economy.reason };
     const lifecycle = ColonyState.get(room.name);
     const category = Economy.categoryForRequest(request);
-    const protectedWork = ['harvest', 'logistics', 'spawnFill', 'criticalController'].includes(category);
+    const controllerGrowthFloor = category === 'controllerGrowth' && request.memory &&
+        request.memory.controllerGrowthFloor === true;
+    const protectedWork = ['harvest', 'logistics', 'spawnFill', 'controllerSafety',
+        'criticalController', 'controllerGrowth'].includes(category);
+    if (controllerGrowthFloor) {
+        const floorCoveredOnlyByThisRequest = lifecycle && lifecycle.growthAllowed &&
+            lifecycle.baselineTechWork > 0 && (context.byRole.Tech || 0) <= (options.revalidate ? 1 : 0);
+        if (!lifecycle || !lifecycle.growthAllowed ||
+            (!lifecycle.baselineTechRequired && !floorCoveredOnlyByThisRequest)) {
+            return { allowed: false, reason: lifecycle && lifecycle.blockedReason || 'baseline controller growth is not required' };
+        }
+    }
     if (lifecycle && ['OWNED_NO_SPAWN', 'BOOTSTRAP'].includes(lifecycle.phase) && !protectedWork && !isOwnedDefense(request)) {
         return { allowed: false, reason: `blocked during ${lifecycle.phase}` };
     }
-    if (options.revalidate) return { allowed: true, reason: 'revalidated' };
     const policy = HiveMemory.getConfig('spawn');
     if (policy.enabled === false) return { allowed: true, reason: 'spawn policy disabled' };
     const role = request.role || request.memory && request.memory.role;
@@ -50,12 +61,14 @@ function evaluate(room, request, context, options = {}) {
     const survivalBypass = options.emergency === true && options.bypassRoleCap === true && protectedWork;
     const defenseBypass = ownedDefense && request.emergency === true;
     const roleCap = policy.roleCaps && policy.roleCaps[role];
-    const techBypass = role === 'Tech' && options.allowTechWorkRoleCapBypass === true &&
-        (context.byRole[role] || 0) < (options.absoluteTechCreepCap || 5);
-    if (typeof roleCap === 'number' && (context.byRole[role] || 0) >= roleCap && !survivalBypass && !techBypass) {
+    const mandatoryFloorBypass = controllerGrowthFloor && lifecycle && lifecycle.growthAllowed &&
+        (context.byRole.Tech || 0) <= (options.revalidate ? 1 : 0) &&
+        context.nonCombatTotal <= maxCreeps(room, policy) + (options.revalidate ? 1 : 0);
+    if (typeof roleCap === 'number' && (context.byRole[role] || 0) >= roleCap && !survivalBypass && !mandatoryFloorBypass) {
         return { allowed: false, reason: 'role cap reached' };
     }
-    if (context.total >= maxCreeps(room, policy) && !survivalBypass) {
+    if (!Context.isCombatRole(role) && context.nonCombatTotal >= maxCreeps(room, policy) &&
+        !survivalBypass && !mandatoryFloorBypass) {
         return { allowed: false, reason: 'room creep cap reached' };
     }
     if (context.queue.length >= policy.maxQueueLengthPerRoom && !survivalBypass && !defenseBypass) {
@@ -65,7 +78,7 @@ function evaluate(room, request, context, options = {}) {
     if (admitted >= policy.maxNewRequestsPerRoomPerTick && !survivalBypass && !defenseBypass) {
         return { allowed: false, reason: 'new request cap reached' };
     }
-    return { allowed: true, reason: 'admitted' };
+    return { allowed: true, reason: options.revalidate ? 'revalidated' : 'admitted', mandatoryFloorBypass };
 }
 
 module.exports = { evaluate, isOwnedDefense, maxCreeps };
