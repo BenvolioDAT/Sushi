@@ -12,6 +12,8 @@ var creepUtility = require('utility.Creep');
 var utilityTravelCreep = require('utility.Travel.Creep');
 var Economy = require('HiveMind.Economy');
 var HiveMemory = require('HiveMind.Memory');
+var ColonyState = require('HiveMind.ColonyState');
+var roleTech = require('role.Tech');
 
 var MAX_REPAIR_ARTIFICERS = 2;
 
@@ -27,6 +29,8 @@ var REMOTE_WORK_EMPTY_SCAN_COOLDOWN = 15;
 
 /* Small energy amounts remain fallbacks, but larger refills are tried first. */
 var MIN_USEFUL_ENERGY_AMOUNT = 50;
+var HEALTHY_SPAWN_FILL = 0.50;
+var CONTROLLER_DANGER_TICKS = 5000;
 
 /*
  * Higher priority structures are chosen before lower priority structures.
@@ -53,12 +57,18 @@ var roleArtificer = {
         }
 
         var homeRoomName = creep.memory.homeRoom || creep.room.name;
-        if (!Economy.canSpend(homeRoomName, 'construction')) {
+        var spend = getSpendingPolicy(creep, homeRoomName);
+
+        if (!spend.remote) {
             clearRemoteWorkTarget(creep);
-            creep.memory.builderWorking = false;
-            if (creep.store[RESOURCE_ENERGY] > 0) creepUtility.fillRoomEnergy(creep);
-            else creepUtility.collectEnergy(creep);
-            return;
+            if(creep.room.name !== homeRoomName) {
+                setTask(creep, 'IDLE', 'remote spending blocked; returning home');
+                utilityTravelCreep.moveToRoom(creep, homeRoomName, {
+                    range: 22,
+                    visualizePathStyle: {stroke: '#bbbbbb'}
+                });
+                return;
+            }
         }
 
         setupRepairMemory(creep.room);
@@ -66,20 +76,14 @@ var roleArtificer = {
 
         updateWorkingState(creep);
 
-        /*
-         * If there is repair work, only 2 Artificers get repair-worker slots.
-         * The 3rd Artificer keeps building.
-         */
-        if(hasRepairWork(creep.room)) {
-            claimRepairWorkerSlot(creep);
-        } else {
+        if(!hasRepairWork(creep.room)) {
             clearRepairDuty(creep);
         }
 
         if(creep.memory.builderWorking) {
-            repairBuildRemoteBuildOrUpgrade(creep);
+            runPermittedWork(creep, spend);
         } else {
-            collectEnergyForArtificer(creep);
+            collectForNextTask(creep, spend);
         }
     }
 };
@@ -94,30 +98,105 @@ function updateWorkingState(creep) {
     }
 }
 
-function repairBuildRemoteBuildOrUpgrade(creep) {
-    /*
-     * Repair comes before building, but only if this Artificer has one of the
-     * 2 repair-worker slots.
-     */
-    if(isRepairWorker(creep)) {
-        if(repairClaimedTarget(creep)) {
-            return;
-        }
-    }
-
-    /*
-     * If this Artificer is not a repair worker, or there is no repair target
-     * available, do normal Artificer work.
-     */
-    if(buildLocalConstruction(creep)) {
+function runPermittedWork(creep, spend) {
+    if(spend.emergencyFill) {
+        setTask(creep, 'EMERGENCY_FILL', 'economy collapse; refill spawn energy');
+        creepUtility.transferEnergy(creep, spend.emergencyFillTarget);
         return;
     }
 
-    if(doRemoteInfrastructureWork(creep)) {
+    if(spend.criticalMaintenance && tryRepairWork(creep, true)) {
+        setTask(creep, 'CRITICAL_REPAIR', 'critical maintenance permitted');
         return;
     }
 
-    upgradeController(creep);
+    if(spend.construction && tryRepairWork(creep, false)) {
+        setTask(creep, 'REPAIR', 'normal maintenance permitted');
+        return;
+    }
+
+    if(spend.construction && buildLocalConstruction(creep)) {
+        setTask(creep, 'BUILD_LOCAL', 'important local construction available');
+        return;
+    }
+
+    if(spend.remote && doRemoteInfrastructureWork(creep)) {
+        setTask(creep, 'BUILD_REMOTE', 'remote infrastructure permitted');
+        return;
+    }
+
+    var upgradePolicy = getControllerUpgradePolicy(creep, spend);
+    if(upgradePolicy.allowed) {
+        setTask(creep, 'UPGRADE_FALLBACK', upgradePolicy.reason);
+        upgradeController(creep);
+        return;
+    }
+
+    setTask(creep, 'IDLE', upgradePolicy.reason || 'no permitted work');
+    idleNearBase(creep);
+}
+
+function collectForNextTask(creep, spend) {
+    var nextTask = chooseNextTask(creep, spend);
+
+    if(nextTask.name === 'IDLE') {
+        setTask(creep, 'IDLE', 'no permitted work or energy use');
+        idleNearBase(creep);
+        return;
+    }
+
+    creep.memory.artificerNextTask = nextTask.name;
+    setTask(creep, 'COLLECT', 'for ' + nextTask.name);
+
+    if(nextTask.name === 'UPGRADE_FALLBACK') {
+        roleTech.getEnergyForTech(creep);
+        return;
+    }
+
+    collectEnergyForArtificer(creep);
+}
+
+function chooseNextTask(creep, spend) {
+    if(spend.emergencyFill) return {name: 'EMERGENCY_FILL'};
+    if(spend.criticalMaintenance && hasRepairWork(creep.room, true)) return {name: 'CRITICAL_REPAIR'};
+    if(spend.construction && hasRepairWork(creep.room, false)) return {name: 'REPAIR'};
+    if(spend.construction && hasLocalConstructionWork(creep)) return {name: 'BUILD_LOCAL'};
+    if(spend.remote && (getRememberedRemoteWorkTarget(creep) || findRemoteInfrastructureTarget(creep))) {
+        return {name: 'BUILD_REMOTE'};
+    }
+    var upgradePolicy = getControllerUpgradePolicy(creep, spend);
+    if(upgradePolicy.allowed) return {name: 'UPGRADE_FALLBACK'};
+    return {name: 'IDLE'};
+}
+
+function setTask(creep, task, reason) {
+    creep.memory.artificerTask = task;
+    creep.memory.artificerReason = reason;
+    creep.memory.artificerDiagnostic = 'Artificer: ' + task + ' — ' + reason;
+    if(task !== 'COLLECT') delete creep.memory.artificerNextTask;
+}
+
+function getSpendingPolicy(creep, homeRoomName) {
+    var economy = Economy.get(homeRoomName);
+    var survival = economy && economy.state === Economy.STATES.SURVIVAL;
+    var spawnFill = economy && typeof economy.spawnFill === 'number' ? economy.spawnFill :
+        creep.room.energyCapacityAvailable > 0 ? creep.room.energyAvailable / creep.room.energyCapacityAvailable : 1;
+    var emergencyFillTarget = survival && spawnFill < HEALTHY_SPAWN_FILL ?
+        creepUtility.findClosestSpawnOrExtensionNeedingEnergy(creep) : null;
+    return {
+        economy: economy,
+        emergencyFill: !!emergencyFillTarget,
+        emergencyFillTarget: emergencyFillTarget,
+        criticalMaintenance: Economy.canSpend(homeRoomName, 'criticalMaintenance'),
+        construction: Economy.canSpend(homeRoomName, 'construction'),
+        remote: Economy.canSpend(homeRoomName, 'remote')
+    };
+}
+
+function tryRepairWork(creep, criticalOnly) {
+    if(!hasRepairWork(creep.room, criticalOnly)) return false;
+    if(!claimRepairWorkerSlot(creep)) return false;
+    return repairClaimedTarget(creep, criticalOnly);
 }
 
 function setupRepairMemory(room) {
@@ -258,7 +337,7 @@ function isRepairWorker(creep) {
     return !!workers[creep.name];
 }
 
-function hasRepairWork(room) {
+function hasRepairWork(room, criticalOnly) {
     var roomMemory = Memory.rooms[room.name];
     var repairList = roomMemory[REPAIR_LIST_MEMORY_KEY];
 
@@ -269,7 +348,7 @@ function hasRepairWork(room) {
     for(var i = 0; i < repairList.length; i++) {
         var target = Game.getObjectById(repairList[i]);
 
-        if(target && structureNeedsRepair(target)) {
+        if(target && structureNeedsRepair(target) && repairClassMatches(target, criticalOnly)) {
             return true;
         }
     }
@@ -277,21 +356,22 @@ function hasRepairWork(room) {
     return false;
 }
 
-function repairClaimedTarget(creep) {
+function repairClaimedTarget(creep, criticalOnly) {
     /*
      * First try to keep repairing the target this creep already picked.
      * This makes the Artificer stay on one job until it is done.
      */
     var oldTarget = getRememberedRepairTarget(creep);
 
-    if(oldTarget) {
+    if(oldTarget && repairClassMatches(oldTarget, criticalOnly)) {
         return repairTarget(creep, oldTarget);
     }
+    if(oldTarget) releaseRepairTarget(creep);
 
     /*
      * No remembered target, so claim a new one from room memory.
      */
-    var newTarget = claimNewRepairTarget(creep);
+    var newTarget = claimNewRepairTarget(creep, criticalOnly);
 
     if(newTarget) {
         return repairTarget(creep, newTarget);
@@ -338,7 +418,7 @@ function getRememberedRepairTarget(creep) {
     return null;
 }
 
-function claimNewRepairTarget(creep) {
+function claimNewRepairTarget(creep, criticalOnly) {
     var roomMemory = Memory.rooms[creep.room.name];
     var repairList = roomMemory[REPAIR_LIST_MEMORY_KEY];
     var claims = roomMemory[REPAIR_CLAIMS_MEMORY_KEY];
@@ -359,6 +439,10 @@ function claimNewRepairTarget(creep) {
             continue;
         }
 
+        if(!repairClassMatches(target, criticalOnly)) {
+            continue;
+        }
+
         /*
          * If another Artificer already claimed this target, skip it.
          */
@@ -376,6 +460,22 @@ function claimNewRepairTarget(creep) {
     }
 
     return null;
+}
+
+function isCriticalRepairStructure(structure) {
+    if(!structure) return false;
+    return structure.structureType === STRUCTURE_SPAWN ||
+        structure.structureType === STRUCTURE_EXTENSION ||
+        structure.structureType === STRUCTURE_TOWER ||
+        structure.structureType === STRUCTURE_STORAGE ||
+        structure.structureType === STRUCTURE_CONTAINER ||
+        structure.structureType === STRUCTURE_LINK ||
+        structure.structureType === STRUCTURE_TERMINAL;
+}
+
+function repairClassMatches(target, criticalOnly) {
+    if(criticalOnly === undefined) return true;
+    return isCriticalRepairStructure(target) === criticalOnly;
 }
 
 function releaseRepairTarget(creep) {
@@ -562,6 +662,13 @@ function buildLocalConstruction(creep) {
     return buildTarget(creep, target);
 }
 
+function hasLocalConstructionWork(creep) {
+    var homeRoomName = getHomeRoomName(creep);
+    if(homeRoomName && creep.room.name !== homeRoomName) return false;
+    var sites = creep.room.find(FIND_MY_CONSTRUCTION_SITES);
+    return !!(sites && sites.length > 0);
+}
+
 function getConstructionSitePriority(site) {
     if(!site || !site.structureType) {
         return 0;
@@ -675,6 +782,104 @@ function upgradeController(creep) {
 
     if(creep.room.controller && creep.upgradeController(creep.room.controller) === ERR_NOT_IN_RANGE) {
         utilityTravelCreep.move(creep, creep.room.controller, {visualizePathStyle: {stroke: '#ffffff'}});
+    }
+}
+
+function getControllerUpgradePolicy(creep, spend) {
+    var homeRoomName = getHomeRoomName(creep);
+    var economy = spend.economy;
+    var state = economy && economy.state;
+    var controllerDanger = !!(creep.room.controller &&
+        creep.room.controller.ticksToDowngrade < CONTROLLER_DANGER_TICKS);
+
+    if(controllerDanger && Economy.canSpend(homeRoomName, 'controllerSafety')) {
+        return {allowed: true, category: 'controllerSafety', reason: 'controller downgrade safety'};
+    }
+
+    if(state === Economy.STATES.SURVIVAL) {
+        return {allowed: false, reason: 'SURVIVAL blocks normal controller energy'};
+    }
+
+    var colony = ColonyState.get(homeRoomName);
+    var baselinePhase = colony && (colony.lifecycle === 'BOOTSTRAP' || colony.lifecycle === 'GROWTH');
+    if(baselinePhase && !essentialEconomySatisfied(creep, economy, colony)) {
+        return {allowed: false, reason: 'essential economy needs are not satisfied'};
+    }
+
+    if(state === Economy.STATES.RECOVERY) {
+        if(!recoveryUpgradeConditionsMet(creep, economy)) {
+            return {allowed: false, reason: 'RECOVERY controller helper conditions not met'};
+        }
+        if(hasHealthyTech(homeRoomName)) {
+            return {allowed: false, reason: 'Tech owns baseline controller progress'};
+        }
+        if(!Economy.canSpend(homeRoomName, 'controllerGrowth')) {
+            return {allowed: false, reason: 'controller-growth spending blocked'};
+        }
+        if(!claimRecoveryControllerHelper(creep, homeRoomName)) {
+            return {allowed: false, reason: 'RECOVERY controller helper already assigned'};
+        }
+        return {allowed: true, category: 'controllerGrowth', reason: 'temporary RECOVERY baseline progress'};
+    }
+
+    var category = baselinePhase ? 'controllerGrowth' : 'upgradeSurplus';
+    if(!Economy.canSpend(homeRoomName, category)) {
+        return {allowed: false, reason: category + ' spending blocked'};
+    }
+
+    return {allowed: true, category: category, reason: 'no permitted repair or construction'};
+}
+
+function essentialEconomySatisfied(creep, economy, colony) {
+    if(colony && colony.coreFloor && colony.coreFloor.complete === false) return false;
+    if(!economy) return true;
+    if(economy.harvest && typeof economy.harvest.workActive === 'number' && economy.harvest.workActive <= 0) {
+        return false;
+    }
+    if(economy.haul && typeof economy.haul.localCarry === 'number' && economy.haul.localCarry < 1) {
+        return false;
+    }
+    return !hasImmediateOwnedRoomThreat(creep.room.name);
+}
+
+function recoveryUpgradeConditionsMet(creep, economy) {
+    if(!economy || !economy.harvest || !(economy.harvest.workActive > 0)) return false;
+    if(!economy.haul || !(economy.haul.localCarry >= 1)) return false;
+    if(hasImmediateOwnedRoomThreat(creep.room.name)) return false;
+    return typeof economy.spawnFill === 'number' && economy.spawnFill >= HEALTHY_SPAWN_FILL;
+}
+
+function hasImmediateOwnedRoomThreat(roomName) {
+    var threat = HiveMemory.ensure().threats[roomName];
+    return !!(threat && threat.harmfulHostileCount > 0);
+}
+
+function hasHealthyTech(homeRoomName) {
+    for(var creepName in Game.creeps) {
+        if(!Game.creeps.hasOwnProperty(creepName)) continue;
+        var unit = Game.creeps[creepName];
+        if(!unit || !unit.memory || unit.memory.role !== 'Tech') continue;
+        var unitHome = unit.memory.homeRoom || unit.room && unit.room.name;
+        if(unitHome === homeRoomName && (unit.ticksToLive === undefined || unit.ticksToLive > 50)) return true;
+    }
+    return false;
+}
+
+function claimRecoveryControllerHelper(creep, homeRoomName) {
+    if(!global.__sushiArtificerControllerHelpers ||
+        global.__sushiArtificerControllerHelpers.tick !== Game.time) {
+        global.__sushiArtificerControllerHelpers = {tick: Game.time, rooms: {}};
+    }
+    var helpers = global.__sushiArtificerControllerHelpers.rooms;
+    var identity = creep.name || creep.id;
+    if(!helpers[homeRoomName]) helpers[homeRoomName] = identity;
+    return helpers[homeRoomName] === identity;
+}
+
+function idleNearBase(creep) {
+    var anchor = creep.room.storage || creep.pos.findClosestByPath(FIND_MY_SPAWNS);
+    if(anchor && creep.pos.getRangeTo(anchor) > 2) {
+        utilityTravelCreep.move(creep, anchor, {visualizePathStyle: {stroke: '#bbbbbb'}});
     }
 }
 
