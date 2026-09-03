@@ -5,6 +5,8 @@ const TickIndex = require('HiveMind.Index');
 const CombatPolicy = require('Combat.Policy');
 const SquadController = require('Squad.Controller');
 const Season11 = require('Logic.Season11');
+const DemandBoard = require('Spawn.DemandBoard');
+const Economy = require('HiveMind.Economy');
 
 const STATES = Object.freeze([
     'DISCOVERING', 'SELECTING', 'MUSTERING', 'CLAIMING', 'HARVESTING',
@@ -33,6 +35,7 @@ const TRANSITIONS = {
 const DELIVERY_WINDOW = 100;
 const MAX_DELIVERY_EVENTS = 100;
 const SCORE_INTERVAL = 17;
+const MAINTENANCE_LEASE_TICKS = 3;
 
 function now() {
     return typeof Game !== 'undefined' && Number.isFinite(Game.time) ? Game.time : 0;
@@ -234,7 +237,8 @@ function matchingReactorRank(memory, reactor) {
 
 function assignCreeps(operation) {
     const index = TickIndex.get();
-    const direct = index.creepsByOperationId.get(operation.id) || [];
+    const direct = index.allCreeps.filter(creep =>
+        creep && creep.memory && creep.memory.operationId === operation.id);
     const assignmentKey = operation.id.startsWith('season11:') ? operation.id.slice(9) : null;
     const legacy = assignmentKey ? index.allCreeps.filter(creep =>
         creep && creep.memory && creep.memory.season11AssignmentKey === assignmentKey) : [];
@@ -247,23 +251,37 @@ function rangeBetween(a, b) {
     return Math.max(Math.abs(a.x - b.x), Math.abs(a.y - b.y));
 }
 
-function findSeason11MaintenanceTarget(assignment, memory) {
+function ownedVisibleRoom(roomName) {
+    const room = roomName && Game.rooms && Game.rooms[roomName];
+    return room && room.controller && room.controller.my ? room : null;
+}
+
+function roomHasHostiles(room) {
+    return !!(room && typeof FIND_HOSTILE_CREEPS !== 'undefined' &&
+        typeof room.find === 'function' && (room.find(FIND_HOSTILE_CREEPS) || []).length > 0);
+}
+
+function findSeason11MaintenanceTarget(assignment, memory, preferredTargetId) {
     if (!assignment || assignment.ready !== true || assignment.depleted === true ||
-        !(Number(assignment.remaining) > 0) || assignment.homeRoom !== assignment.roomName) return null;
-    const room = Game.rooms && Game.rooms[assignment.roomName];
+        !(Number(assignment.remaining) > 0) || !ownedVisibleRoom(assignment.homeRoom)) return null;
+    const room = ownedVisibleRoom(assignment.roomName);
     const intel = memory.rooms && memory.rooms[assignment.roomName];
-    if (!room || !room.controller || !room.controller.my || intel && (intel.threatParts || 0) > 0 ||
+    const homeRoom = ownedVisibleRoom(assignment.homeRoom);
+    if (!room || roomHasHostiles(homeRoom) || intel && (intel.threatParts || 0) > 0 ||
         typeof FIND_STRUCTURES === 'undefined') return null;
+    if (roomHasHostiles(room)) return null;
     const structures = room.find(FIND_STRUCTURES) || [];
     const staging = assignment.stagingId && Game.getObjectById(assignment.stagingId);
     const mineral = assignment.mineralId && Game.getObjectById(assignment.mineralId);
     const candidates = structures.filter(structure => {
-        if (!structure || !structure.pos || structure.my === false ||
+        if (!structure || !structure.pos || structure.pos.roomName !== assignment.roomName || structure.my === false ||
             !(structure.hits < structure.hitsMax)) return false;
         if (structure.structureType === STRUCTURE_CONTAINER) {
-            return structure.id === assignment.stagingId && structure.hits < structure.hitsMax * 0.80;
+            return structure.id === assignment.stagingId &&
+                (structure.id === preferredTargetId || structure.hits < structure.hitsMax * 0.80);
         }
-        if (structure.structureType !== STRUCTURE_ROAD || structure.hits >= structure.hitsMax * 0.60) return false;
+        if (structure.structureType !== STRUCTURE_ROAD ||
+            structure.id !== preferredTargetId && structure.hits >= structure.hitsMax * 0.60) return false;
         return rangeBetween(structure.pos, mineral && mineral.pos) <= 5 ||
             rangeBetween(structure.pos, staging && staging.pos) <= 5;
     });
@@ -274,6 +292,118 @@ function findSeason11MaintenanceTarget(assignment, memory) {
             String(a.id).localeCompare(String(b.id));
     });
     return candidates[0] || null;
+}
+
+function maintenanceDemandId(operationId) {
+    return `${operationId}:maintenance`;
+}
+
+function clearMaintenanceMemory(creep, operationId) {
+    if (!creep || !creep.memory || creep.memory.operationId !== operationId) return;
+    const demandId = maintenanceDemandId(operationId);
+    if (creep.memory.demandId === demandId) delete creep.memory.demandId;
+    delete creep.memory.operationId;
+    delete creep.memory.season11Maintenance;
+    delete creep.memory.season11SupportRoom;
+    delete creep.memory.season11RepairTargetId;
+    delete creep.memory.remoteWorkTargetId;
+    delete creep.memory.remoteWorkRoomName;
+    delete creep.memory.remoteWorkX;
+    delete creep.memory.remoteWorkY;
+    delete creep.memory.remoteWorkType;
+    delete creep.memory.remoteWorkHomeRoom;
+    delete creep.memory.remoteWorkNextScan;
+}
+
+function artificerHomeRoom(creep) {
+    return creep && creep.memory && (creep.memory.homeRoom || creep.memory.home) ||
+        creep && creep.room && creep.room.name || null;
+}
+
+function hasRequiredArtificerParts(creep) {
+    if (!Array.isArray(creep.body)) return true;
+    const live = type => creep.body.some(part => part && part.type === type && part.hits !== 0);
+    return live(WORK) && live(CARRY) && live(MOVE);
+}
+
+function isCompatibleMaintenanceArtificer(creep, assignment) {
+    if (!creep || creep.spawning || !creep.name || !creep.memory ||
+        creep.memory.role !== 'Artificer' || artificerHomeRoom(creep) !== assignment.homeRoom ||
+        !ownedVisibleRoom(assignment.homeRoom) || roomHasHostiles(creep.room) ||
+        !hasRequiredArtificerParts(creep)) return false;
+    const replacementLead = (Array.isArray(creep.body) ? creep.body.length * 3 : 0) +
+        Math.max(25, (Number(assignment.routeDistance) || 0) * 50);
+    return creep.ticksToLive === undefined || creep.ticksToLive > replacementLead;
+}
+
+function configureMaintenanceCreep(creep, operation, assignment, target) {
+    const memory = creep.memory;
+    memory.operationId = operation.id;
+    memory.demandId = maintenanceDemandId(operation.id);
+    memory.season11Maintenance = true;
+    memory.season11SupportRoom = assignment.roomName;
+    memory.season11RepairTargetId = target.id;
+    memory.remoteWorkTargetId = target.id;
+    memory.remoteWorkRoomName = assignment.roomName;
+    memory.remoteWorkX = target.pos.x;
+    memory.remoteWorkY = target.pos.y;
+    memory.remoteWorkType = target.structureType === STRUCTURE_CONTAINER ?
+        'repairRemoteContainer' : 'repairRemoteRoad';
+    memory.remoteWorkHomeRoom = assignment.homeRoom;
+    delete memory.remoteWorkNextScan;
+}
+
+function reconcileMaintenanceLease(operation, assignment, target) {
+    const previous = operation.season11MaintenanceLease;
+    const creeps = TickIndex.get().allCreeps.slice().sort((a, b) =>
+        String(a && a.name).localeCompare(String(b && b.name)));
+    let owner = null;
+
+    const spendingAllowed = target && Economy.canSpend(assignment.homeRoom, 'remote');
+    if (spendingAllowed) {
+        owner = creeps.find(creep => isCompatibleMaintenanceArtificer(creep, assignment) &&
+            creep.memory.operationId === operation.id && creep.memory.season11Maintenance === true) || null;
+        if (!owner) {
+            owner = creeps.find(creep => isCompatibleMaintenanceArtificer(creep, assignment) &&
+                !creep.memory.operationId && creep.memory.artificerTask === 'IDLE') || null;
+        }
+    }
+
+    for (const creep of creeps) {
+        if (creep !== owner && creep && creep.memory &&
+            creep.memory.operationId === operation.id && creep.memory.season11Maintenance === true) {
+            clearMaintenanceMemory(creep, operation.id);
+        }
+    }
+
+    if (!target || !owner) {
+        operation.season11MaintenanceLease = null;
+        return null;
+    }
+
+    configureMaintenanceCreep(owner, operation, assignment, target);
+    operation.season11MaintenanceLease = {
+        creepName: owner.name,
+        targetId: target.id,
+        acquiredTick: previous && previous.creepName === owner.name && previous.targetId === target.id ?
+            previous.acquiredTick : now(),
+        expiresTick: now() + MAINTENANCE_LEASE_TICKS
+    };
+    return owner;
+}
+
+function cancelMaintenanceDemand(operation) {
+    const demandId = maintenanceDemandId(operation.id);
+    DemandBoard.cancel(demandId);
+    if (Array.isArray(operation.spawnDemandIds)) {
+        operation.spawnDemandIds = operation.spawnDemandIds.filter(id => id !== demandId);
+    }
+}
+
+function retireMaintenanceJob(operation) {
+    reconcileMaintenanceLease(operation, {}, null);
+    operation.season11MaintenanceTarget = null;
+    cancelMaintenanceDemand(operation);
 }
 
 function syncMiningOperations(memory, diagnostics, activeIds) {
@@ -296,7 +426,10 @@ function syncMiningOperations(memory, diagnostics, activeIds) {
             threatParts: memory.rooms[assignment.roomName] && memory.rooms[assignment.roomName].threatParts,
             depleted
         });
-        const maintenanceTarget = findSeason11MaintenanceTarget(assignment, memory);
+        const existingOperation = HiveMemory.ensure().operations[id];
+        const preferredTargetId = existingOperation && existingOperation.season11MaintenanceLease &&
+            existingOperation.season11MaintenanceLease.targetId;
+        const maintenanceTarget = findSeason11MaintenanceTarget(assignment, memory, preferredTargetId);
         const maintenanceNeeded = !!maintenanceTarget;
         const operation = createOrUpdate('HARVEST_THORIUM', {
             id,
@@ -320,6 +453,7 @@ function syncMiningOperations(memory, diagnostics, activeIds) {
                 role: 'Artificer',
                 count: 1,
                 priority: 32,
+                economyCategory: 'remote',
                 validUntil: now() + 2,
                 targetRoom: assignment.roomName,
                 memory: {
@@ -346,6 +480,8 @@ function syncMiningOperations(memory, diagnostics, activeIds) {
             workType: maintenanceTarget.structureType === STRUCTURE_CONTAINER ?
                 'repairRemoteContainer' : 'repairRemoteRoad'
         } : null;
+        reconcileMaintenanceLease(operation, assignment, maintenanceTarget);
+        if (!maintenanceTarget) cancelMaintenanceDemand(operation);
         applyUtility(operation, calculation);
         assignCreeps(operation);
         activeIds.add(id);
@@ -488,6 +624,16 @@ function retireMissing(activeIds) {
             transition(operation, 'COMPLETE', 'Season assignment remained invalid for 250 ticks');
         }
         operation.spawnDemands = [];
+        retireMaintenanceJob(operation);
+    }
+}
+
+function retireInactiveMaintenanceJobs() {
+    for (const operation of Object.values(HiveMemory.ensure().operations)) {
+        if (!operation || !operation.season11 ||
+            (!operation.season11MaintenanceLease && !operation.season11MaintenanceTarget)) continue;
+        operation.spawnDemands = [];
+        retireMaintenanceJob(operation);
     }
 }
 
@@ -539,6 +685,7 @@ function run(diagnostics) {
     const memory = Season11.ensureMemory();
     const snapshot = diagnostics || Season11.getDiagnostics();
     if (!Season11.isApiAvailable() || !snapshot.operating) {
+        retireInactiveMaintenanceJobs();
         return { enabled: false, reason: 'Season API unavailable or operation mode inactive' };
     }
     ensureSeasonMemory();

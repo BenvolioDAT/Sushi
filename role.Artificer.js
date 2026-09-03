@@ -59,6 +59,10 @@ var roleArtificer = {
         }
 
         var homeRoomName = creep.memory.homeRoom || creep.room.name;
+        if(creep.memory.season11Maintenance && !getSeason11OperationMaintenanceTarget(creep)) {
+            clearRemoteWorkTarget(creep);
+            clearSeason11MaintenanceAssignment(creep);
+        }
         var spend = getSpendingPolicy(creep, homeRoomName);
         getRememberedBuildTarget(creep, spend);
 
@@ -1109,12 +1113,17 @@ function travelToRememberedRemoteWorkPosition(creep) {
     }
 
     if(creep.memory.remoteWorkX === undefined || creep.memory.remoteWorkY === undefined) {
-        utilityTravelCreep.moveToRoom(creep, roomName, {range: 22, visualizePathStyle: {stroke: '#ffffff'}});
+        utilityTravelCreep.moveToRoom(creep, roomName, {
+            range: 22,
+            allowHostile: creep.memory.season11Maintenance ? false : undefined,
+            visualizePathStyle: {stroke: '#ffffff'}
+        });
         return true;
     }
 
     utilityTravelCreep.move(creep, new RoomPosition(creep.memory.remoteWorkX, creep.memory.remoteWorkY, roomName), {
         range: 3,
+        allowHostile: creep.memory.season11Maintenance ? false : undefined,
         visualizePathStyle: {
             stroke: '#ffffff'
         }
@@ -1180,19 +1189,37 @@ function findRemoteInfrastructureTarget(creep) {
 function getSeason11OperationMaintenanceTarget(creep) {
     var operation = creep.memory.operationId &&
         HiveMemory.ensure().operations[creep.memory.operationId];
-    return operation && operation.season11 === true ? operation.season11MaintenanceTarget : null;
+    var lease = operation && operation.season11MaintenanceLease;
+    var target = operation && operation.season11MaintenanceTarget;
+    return operation && operation.season11 === true && target && lease &&
+        lease.creepName === creep.name && lease.targetId === target.id &&
+        lease.expiresTick >= Game.time ? target : null;
 }
 
 function isSafeSeason11MaintenanceTarget(creep, target) {
     var roomName = creep.memory.season11SupportRoom;
     if(!roomName || !target || !target.pos || target.pos.roomName !== roomName ||
-        target.my === false || !remoteStructureNeedsRepair(target) ||
+        target.my === false || !(target.hits < target.hitsMax) ||
         target.structureType !== STRUCTURE_CONTAINER && target.structureType !== STRUCTURE_ROAD) return false;
+    var homeRoomName = getHomeRoomName(creep);
+    var homeRoom = Game.rooms && Game.rooms[homeRoomName];
+    if(!homeRoom || !homeRoom.controller || !homeRoom.controller.my) return false;
+    if(typeof FIND_HOSTILE_CREEPS !== 'undefined' && typeof homeRoom.find === 'function' &&
+        (homeRoom.find(FIND_HOSTILE_CREEPS) || []).length > 0) return false;
     var room = Game.rooms && Game.rooms[roomName];
     if(!room || !room.controller || !room.controller.my) return false;
     if(typeof FIND_HOSTILE_CREEPS !== 'undefined' && typeof room.find === 'function' &&
         (room.find(FIND_HOSTILE_CREEPS) || []).length > 0) return false;
     return true;
+}
+
+function clearSeason11MaintenanceAssignment(creep) {
+    if(!creep.memory.season11Maintenance) return;
+    delete creep.memory.operationId;
+    delete creep.memory.demandId;
+    delete creep.memory.season11Maintenance;
+    delete creep.memory.season11SupportRoom;
+    delete creep.memory.season11RepairTargetId;
 }
 
 function rememberRemoteWorkTarget(creep, target, workType) {

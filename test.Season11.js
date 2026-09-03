@@ -61,6 +61,7 @@ function resetWorld() {
     Season11.resetCacheForTests();
     Season11Operations.resetForTests();
     delete global.__sushiDemandBoard;
+    delete global.__sushiTickIndex;
     delete global.__sushiResourceJobs;
 }
 
@@ -355,11 +356,14 @@ test('aging thresholds use total Thorium on the tile', function() {
         look: function() { return [
             { creep: { name: 'carrier', store: { T: 90 } } },
             { resource: { id: 'drop', resourceType: 'T', amount: 10 } },
+            { mineral: { id: 'thorium-mineral', mineralType: 'T', mineralAmount: 900, store: { T: 5000 } } },
+            { mineral: { id: 'thorium-mineral', mineralType: 'T', mineralAmount: 900 } },
+            { mineral: { id: 'other-mineral', mineralType: 'O', mineralAmount: 5000, store: { T: 5000 } } },
             { structure: { id: 'road', store: {} } }
         ]; }
     });
-    assert.strictEqual(tile.total, 100);
-    assert.strictEqual(tile.multiplier, 2);
+    assert.strictEqual(tile.total, 1000);
+    assert.strictEqual(tile.multiplier, 3);
     assert.strictEqual(tile.observable, true);
 });
 
@@ -401,39 +405,97 @@ test('known Season 11 rooms are included in observer priorities', function() {
     assert.ok(!ResourceObserver.priorityRooms('W1N1').includes('W5N5'));
 });
 
-test('Season 11 maintenance demand requires visible safe repair work', function() {
+test('Season 11 maintenance leases an idle home Artificer across owned rooms', function() {
     resetWorld();
     enableSeasonApi();
     var memory = Season11.ensureMemory();
-    memory.rooms.W1N1 = { roomName: 'W1N1', threatParts: 0 };
-    var mineral = { id: 'thorium', pos: { x: 10, y: 10, roomName: 'W1N1' } };
+    memory.rooms.W2N2 = { roomName: 'W2N2', threatParts: 0 };
+    var mineral = { id: 'thorium', pos: { x: 10, y: 10, roomName: 'W2N2' } };
     var staging = {
         id: 'staging', my: true, structureType: STRUCTURE_CONTAINER, hits: 700, hitsMax: 1000,
-        pos: { x: 11, y: 10, roomName: 'W1N1' }
+        pos: { x: 11, y: 10, roomName: 'W2N2' }
     };
     var road = {
         id: 'road', my: true, structureType: STRUCTURE_ROAD, hits: 500, hitsMax: 1000,
-        pos: { x: 12, y: 10, roomName: 'W1N1' }
+        pos: { x: 12, y: 10, roomName: 'W2N2' }
     };
-    Game.rooms.W1N1 = {
-        name: 'W1N1', controller: { my: true },
-        find: function() { return [road, staging]; }
+    Game.rooms.W1N1 = { name: 'W1N1', controller: { my: true } };
+    Game.rooms.W2N2 = {
+        name: 'W2N2', controller: { my: true },
+        find: function(kind) { return kind === FIND_HOSTILE_CREEPS ? [] : [road, staging]; }
     };
-    Game.getObjectById = function(id) { return id === 'thorium' ? mineral : id === 'staging' ? staging : null; };
+    Game.getObjectById = function(id) {
+        return id === 'thorium' ? mineral : id === 'staging' ? staging : id === 'road' ? road : null;
+    };
+    function idleArtificer(name) {
+        return {
+            name: name, room: Game.rooms.W1N1, ticksToLive: 1000,
+            body: [{ type: WORK, hits: 100 }, { type: CARRY, hits: 100 }, { type: MOVE, hits: 100 }],
+            memory: { role: 'Artificer', homeRoom: 'W1N1', artificerTask: 'IDLE' }
+        };
+    }
+    Game.creeps.beta = idleArtificer('beta');
+    Game.creeps.alpha = idleArtificer('alpha');
     var assignment = {
-        roomName: 'W1N1', homeRoom: 'W1N1', mineralId: 'thorium', stagingId: 'staging',
+        roomName: 'W2N2', homeRoom: 'W1N1', mineralId: 'thorium', stagingId: 'staging',
         ready: true, depleted: false, remaining: 100
     };
     assert.strictEqual(Season11Operations.findSeason11MaintenanceTarget(assignment, memory), staging);
-    memory.assignments.mining.W1N1 = Object.assign({ key: 'mine:W1N1', routeDistance: 1 }, assignment);
+    memory.assignments.mining.W2N2 = Object.assign({ key: 'mine:W2N2', routeDistance: 1 }, assignment);
     Season11Operations.run({ operating: true, selectedReactor: null, knownThoriumRemaining: 100 });
-    var operation = Memory.hive.operations['season11:mine:W1N1'];
+    var operation = Memory.hive.operations['season11:mine:W2N2'];
     assert.strictEqual(operation.season11MaintenanceTarget.id, 'staging');
+    assert.strictEqual(operation.season11MaintenanceLease.creepName, 'alpha');
+    assert.strictEqual(Game.creeps.alpha.memory.operationId, 'season11:mine:W2N2');
+    assert.strictEqual(Game.creeps.alpha.memory.demandId, 'season11:mine:W2N2:maintenance');
+    assert.strictEqual(Game.creeps.alpha.memory.season11RepairTargetId, 'staging');
+    assert.strictEqual(Game.creeps.alpha.memory.season11SupportRoom, 'W2N2');
     assert.strictEqual(operation.spawnDemands[0].memory.remoteWorkTargetId, 'staging');
-    assert.strictEqual(operation.spawnDemands[0].memory.season11SupportRoom, 'W1N1');
-    memory.rooms.W1N1.threatParts = 1;
+    assert.strictEqual(Game.creeps.alpha.memory.remoteWorkTargetId, 'staging');
+    assert.strictEqual(Game.creeps.alpha.memory.remoteWorkRoomName, 'W2N2');
+    assert.strictEqual(Game.creeps.alpha.memory.remoteWorkX, 11);
+    assert.strictEqual(Game.creeps.alpha.memory.remoteWorkY, 10);
+    assert.strictEqual(Game.creeps.beta.memory.operationId, undefined, 'only one Artificer owns the target');
+
+    staging.hits = 900;
+    Game.time++;
+    delete global.__sushiTickIndex;
+    Season11Operations.run({ operating: true, selectedReactor: null, knownThoriumRemaining: 100 });
+    assert.strictEqual(operation.season11MaintenanceTarget.id, 'staging', 'lease continues until fully repaired');
+
+    delete Game.creeps.alpha;
+    staging.hits = staging.hitsMax;
+    Game.time++;
+    delete global.__sushiTickIndex;
+    Season11Operations.run({ operating: true, selectedReactor: null, knownThoriumRemaining: 100 });
+    assert.strictEqual(operation.season11MaintenanceTarget.id, 'road');
+    assert.strictEqual(operation.season11MaintenanceLease.creepName, 'beta');
+    assert.strictEqual(Game.creeps.beta.memory.remoteWorkTargetId, 'road');
+
+    Game.creeps.beta.ticksToLive = 1;
+    Game.time++;
+    delete global.__sushiTickIndex;
+    Season11Operations.run({ operating: true, selectedReactor: null, knownThoriumRemaining: 100 });
+    assert.strictEqual(operation.season11MaintenanceLease, null, 'invalid owner releases the lease');
+    assert.strictEqual(operation.spawnDemands.length, 1, 'missing owner preserves replacement demand');
+    assert.strictEqual(Game.creeps.beta.memory.operationId, undefined);
+
+    road.hits = road.hitsMax;
+    Game.time++;
+    delete global.__sushiTickIndex;
+    Season11Operations.run({ operating: true, selectedReactor: null, knownThoriumRemaining: 100 });
+    assert.strictEqual(operation.season11MaintenanceTarget, null);
+    assert.strictEqual(operation.season11MaintenanceLease, null);
+    assert.strictEqual(operation.spawnDemands.length, 0);
+    assert.strictEqual(Game.creeps.beta.memory.operationId, undefined);
+    assert.ok(!DemandBoard.getDemands().some(function(demand) {
+        return demand.id === 'season11:mine:W2N2:maintenance';
+    }));
+
+    road.hits = 500;
+    memory.rooms.W2N2.threatParts = 1;
     assert.strictEqual(Season11Operations.findSeason11MaintenanceTarget(assignment, memory), null);
-    memory.rooms.W1N1.threatParts = 0;
+    memory.rooms.W2N2.threatParts = 0;
     assignment.ready = false;
     assert.strictEqual(Season11Operations.findSeason11MaintenanceTarget(assignment, memory), null);
 });

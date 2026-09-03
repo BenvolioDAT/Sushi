@@ -1202,12 +1202,17 @@ function observeTileThorium(pos, fallbackAmount) {
     var seen = {};
     for (var i = 0; i < entries.length; i++) {
         var entry = entries[i] || {};
-        var target = entry.resource || entry.creep || entry.structure || entry.tombstone || entry.ruin;
+        var target = entry.resource || entry.mineral || entry.creep || entry.structure || entry.tombstone || entry.ruin;
         if (!target) continue;
         var key = target.id || target.name || ('entry:' + i);
         if (seen[key]) continue;
         seen[key] = true;
-        if (target.resourceType === thorium) total += Math.max(0, Number(target.amount) || 0);
+        if (target.mineralType !== undefined) {
+            if (target.mineralType === thorium) {
+                total += Math.max(0, Number(target.mineralAmount) || 0);
+            }
+        }
+        else if (target.resourceType === thorium) total += Math.max(0, Number(target.amount) || 0);
         else total += getStoreAmount(target, thorium);
     }
     return { total: total, multiplier: thoriumAgingMultiplier(total), observable: true, source: 'tileLook' };
