@@ -7,6 +7,12 @@ const Links = require('Resource.Links');
 const Labs = require('Resource.Labs');
 const Terminals = require('Resource.Terminals');
 const Observers = require('Resource.Observer');
+const Season11Adapter = require('Season11.Adapter');
+
+function isDedicatedThorium(resourceType) {
+    const thorium = Season11Adapter.resourceType();
+    return Season11Adapter.isAvailable() && thorium !== null && resourceType === thorium;
+}
 
 function jobBoard() {
     if (!global.__sushiResourceJobs || global.__sushiResourceJobs.tick !== Game.time) {
@@ -33,6 +39,7 @@ function addJobs(jobs) {
     const board = jobBoard();
     for (const job of jobs || []) {
         if (!job || !job.id || !job.sourceId || !job.targetId || job.amount <= 0) continue;
+        if (isDedicatedThorium(job.resourceType)) continue;
         const existing = board.jobs.get(job.id);
         board.jobs.set(job.id, existing ? {
             ...existing, ...job,
@@ -62,10 +69,11 @@ function getJobForCreep(creep) {
     const board = jobBoard();
     const remembered = creep.memory.resourceJobId && board.jobs.get(creep.memory.resourceJobId);
     if (remembered && remembered.roomName === creep.room.name && Game.getObjectById(remembered.sourceId) &&
-        Game.getObjectById(remembered.targetId)) return remembered;
+        Game.getObjectById(remembered.targetId) && !isDedicatedThorium(remembered.resourceType)) return remembered;
     delete creep.memory.resourceJobId;
     const reservations = currentReservations();
-    const selected = jobsForRoom(creep.room.name).find(job => (reservations.get(job.id) || 0) === 0 &&
+    const selected = jobsForRoom(creep.room.name).find(job => !isDedicatedThorium(job.resourceType) &&
+        (reservations.get(job.id) || 0) === 0 &&
         Game.getObjectById(job.sourceId) && Game.getObjectById(job.targetId)) || null;
     if (selected) creep.memory.resourceJobId = selected.id;
     return selected;
@@ -124,7 +132,34 @@ function needsCourier(roomName) {
     const hive = HiveMemory.ensure();
     const lab = hive.resources.labs[roomName];
     const mineral = hive.resources.rooms[roomName] && hive.resources.rooms[roomName].mineral;
-    return !!(lab && (lab.state !== 'IDLE' || lab.reactionGoal) || mineral && mineral.active);
+    return !!(lab && (lab.state !== 'IDLE' || lab.reactionGoal) ||
+        mineral && mineral.active && !isDedicatedThorium(mineral.mineralType));
+}
+
+function scrubGenericThoriumDemands() {
+    if (!Season11Adapter.isAvailable()) return 0;
+    const thorium = Season11Adapter.resourceType();
+    let removed = 0;
+    for (const demand of DemandBoard.getDemands()) {
+        if (!demand || !['MineralMiner', 'ResourceCourier'].includes(demand.role)) continue;
+        const memory = demand.memory || {};
+        const mineralRoom = demand.operationId && demand.operationId.indexOf('mineral:') === 0;
+        const roomName = demand.originRoom || demand.targetRoom;
+        const saved = roomName && HiveMemory.ensure().resources.rooms[roomName];
+        const savedMineral = saved && saved.mineral;
+        const genericMineralDemand = mineralRoom && (memory.mineralType === thorium ||
+            savedMineral && savedMineral.mineralType === thorium);
+        const resourceOnlyCourier = demand.id === `resource:${roomName}:ResourceCourier` &&
+            savedMineral && savedMineral.mineralType === thorium && !needsCourierWithoutMineral(roomName);
+        if (memory.mineralType !== thorium && !genericMineralDemand && !resourceOnlyCourier) continue;
+        if (DemandBoard.cancel(demand.id)) removed++;
+    }
+    return removed;
+}
+
+function needsCourierWithoutMineral(roomName) {
+    const lab = HiveMemory.ensure().resources.labs[roomName];
+    return !!(lab && (lab.state !== 'IDLE' || lab.reactionGoal));
 }
 
 function emitCourierDemand(roomName) {
@@ -146,6 +181,7 @@ function emitCourierDemand(roomName) {
 
 function plan() {
     const settings = HiveMemory.getConfig('resources');
+    scrubGenericThoriumDemands();
     if (settings.enabled === false) return { enabled: false };
     syncBoostRequests();
     const schedule = scheduleState();
@@ -206,5 +242,6 @@ module.exports = {
     getJobForCreep,
     clearJob,
     syncBoostRequests,
-    emitCourierDemand
+    emitCourierDemand,
+    scrubGenericThoriumDemands
 };

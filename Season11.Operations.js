@@ -108,15 +108,24 @@ function normalizeDistance(distance, scale = 5) {
     return Utility.normalize(Number.isFinite(distance) ? distance * scale : 100);
 }
 
-function agingMetrics(routeDistance, cargo = 100) {
+function agingMetrics(routeDistance, tileThorium) {
     const routeTiles = Math.max(0, Number(routeDistance) || 0) * 50;
-    const agingMultiplier = 1 + Math.max(0, Math.floor(Math.log10(Math.max(1, cargo))));
-    const effectiveLifetime = Math.max(1, Math.floor(1500 / agingMultiplier));
-    const estimatedLoadedLifeUsed = Math.min(effectiveLifetime, routeTiles) * agingMultiplier;
+    const estimate = Number.isFinite(tileThorium) ? {
+        total: Math.max(0, Math.floor(tileThorium)),
+        multiplier: Season11.thoriumAgingMultiplier(tileThorium),
+        observable: true,
+        source: 'providedTileTotal'
+    } : Season11.observeTileThorium(null);
+    const agingMultiplier = estimate.multiplier;
+    const agingFactor = Math.max(1, agingMultiplier);
+    const effectiveLifetime = Math.max(1, Math.floor(1500 / agingFactor));
+    const estimatedLoadedLifeUsed = Math.min(effectiveLifetime, routeTiles) * agingFactor;
     const agingLoss = Utility.normalize(estimatedLoadedLifeUsed / 15);
     return {
         routeTiles,
         agingMultiplier,
+        agingThorium: estimate.total,
+        agingEstimateSource: estimate.source,
         effectiveLifetime,
         estimatedLoadedLifeUsed,
         agingLoss,
@@ -130,7 +139,7 @@ function utilityFor(context = {}) {
     const continuousWork = Math.max(0, Number(context.continuousWork) || 0);
     const scoreRate = Season11.scoreRate(continuousWork);
     const distance = Number.isFinite(context.routeDistance) ? context.routeDistance : null;
-    const aging = agingMetrics(distance, context.cargo || 100);
+    const aging = agingMetrics(distance, context.tileThorium);
     const threat = Math.max(0, Number(context.threatParts) || 0);
     const maintenance = Utility.normalize((distance || 0) * 3 + aging.agingLoss * 0.25);
     const continuity = Utility.normalize(scoreRate * 18 + Math.log10(continuousWork + 1) * 12);
@@ -153,6 +162,8 @@ function utilityFor(context = {}) {
             routeDistance: distance,
             routeTiles: aging.routeTiles,
             agingMultiplier: aging.agingMultiplier,
+            agingThorium: aging.agingThorium,
+            agingEstimateSource: aging.agingEstimateSource,
             effectiveLoadedLifetime: aging.effectiveLifetime,
             estimatedAgingLoss: aging.agingLoss,
             routeMaintenanceCost: maintenance,

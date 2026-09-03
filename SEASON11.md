@@ -115,6 +115,7 @@ Important defaults:
 | `reactorSafetyStock` | 150 | Desired Reactor buffer for diagnostics/planning |
 | `starvationWarningTicks` | 200 | Emergency hauling and `STARVING` threshold |
 | `haulerSafetyMargin` | 1.25 | Throughput headroom |
+| `agingFallbackThorium` | 1,000 | Conservative tile total when route tiles are unobservable |
 | `maxHaulersPerRoute` | 4 | Per-route seasonal hauler cap |
 | `claimCooldown` | 500 | Minimum delay between claimant request cycles |
 | `recapture` | `false` | Do not automatically steal back a captured Reactor |
@@ -154,11 +155,16 @@ capacity, `continuousWork`, hostiles, and last-seen tick.
 
 Mining rank order is:
 
-1. confirmed observed Thorium remaining;
-2. legal accessibility and a cached route;
-3. route/hauling distance;
-4. hostile and competition risk;
+1. fresh safety/ownership intel and legal route accessibility;
+2. hostile and competition risk;
+3. observed finite Thorium remaining weighted by observed density;
+4. route/hauling distance;
 5. the northern room coordinate as a final tie-breaker.
+
+Equal-distance Scout and Observer candidates also use northern position as a
+secondary preference while Season 11 is detectable. Distance, room status,
+unreachable cooldowns, stale-intel urgency, and hostile/accessibility gates stay
+authoritative, so geographic preference cannot by itself launch an unsafe trip.
 
 Only a visible player-owned room with an active extractor and a safe staging
 store becomes `READY`. Large unowned deposits remain intelligence, but they do
@@ -190,11 +196,16 @@ player's Reactor. No season code uses `Game.market`, portals, or direct
 `creep.move`/`moveTo`; all three roles use `utility.Travel.Creep`, leaving final
 movement ownership to the traffic manager.
 
-Hauler demand uses route length, expected carry capacity, the one-Thorium-per-
-tick Reactor consumption, a safety margin, and effective loaded lifetime. The
-effective lifetime accounts for logarithmic Thorium aging. Routes whose loaded
-travel estimate cannot fit inside that lifetime are rejected with `NO ROUTE`.
-Replacement requests include spawn time, route lead, and safety margin.
+Hauler demand uses route length, hauling throughput, the one-Thorium-per-tick
+Reactor consumption, a safety margin, and effective loaded lifetime. Aging uses
+`Math.floor(Math.log10(totalThoriumOnTile))`: live haulers inspect and record the
+total Thorium on their current tile. Future route tiles cannot be observed, so
+planning uses the conservative `agingFallbackThorium` setting (1,000 by
+default), never creep carry capacity. This is only a safety/replacement model;
+the AI does not attempt to control the engine's aging mechanic. Routes whose
+loaded travel estimate cannot fit inside that lifetime are rejected with `NO
+ROUTE`. Replacement requests include spawn time, aging-adjusted route lead, and
+safety margin.
 
 Terminals can serve as owned staging stores, but this subsystem does not call
 `terminal.send`; therefore it cannot accidentally send to another player.

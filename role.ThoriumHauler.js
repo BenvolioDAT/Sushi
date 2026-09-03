@@ -65,9 +65,14 @@ var roleThoriumHauler = {
             Game.getObjectById(creep.memory.season11StagingId) : null;
         var reactor = typeof Game.getObjectById === 'function' ?
             Game.getObjectById(creep.memory.season11ReactorId) : null;
+        var reactorRecord = Season11.ensureMemory().reactors[creep.memory.season11ReactorId];
         var sourceRoom = creep.memory.season11SourceRoom;
         var reactorRoom = creep.memory.season11ReactorRoom;
         var carried = Season11.getStoreAmount(creep, resourceType);
+        var tileAging = Season11.observeTileThorium(creep.pos);
+        creep.memory.season11ObservedTileThorium = tileAging.total;
+        creep.memory.season11AgingMultiplier = tileAging.multiplier;
+        creep.memory.season11AgingEstimateSource = tileAging.source;
 
         if (!staging) {
             Season11.noteRouteFailure(creep.room.name, sourceRoom,
@@ -76,7 +81,7 @@ var roleThoriumHauler = {
         }
 
         /* Never feed an unclaimed or stolen Reactor. Bring cargo back safely. */
-        if (reactor && reactor.my !== true) {
+        if ((reactor && reactor.my !== true) || (!reactor && reactorRecord && reactorRecord.my !== true)) {
             if (carried > 0) {
                 returnCargo(creep, staging, resourceType);
             }

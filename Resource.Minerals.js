@@ -1,6 +1,17 @@
 const HiveMemory = require('HiveMind.Memory');
 const TickIndex = require('HiveMind.Index');
 const DemandBoard = require('Spawn.DemandBoard');
+const Season11Adapter = require('Season11.Adapter');
+
+function isDedicatedThorium(resourceType) {
+    const thorium = Season11Adapter.resourceType();
+    return Season11Adapter.isAvailable() && thorium !== null && resourceType === thorium;
+}
+
+function cancelGenericDemands(roomName) {
+    DemandBoard.cancel(`mineral:${roomName}:MineralMiner`);
+    DemandBoard.cancel(`mineral:${roomName}:ResourceCourier`);
+}
 
 function stateFor(roomName) {
     const rooms = HiveMemory.ensure().resources.rooms;
@@ -52,6 +63,7 @@ function observe(room) {
     const container = mineralContainer(room.name, mineral);
     const depleted = mineral.mineralAmount <= 0;
     const constrained = !hasDepositCapacity(room, mineral.mineralType);
+    const seasonal = isDedicatedThorium(mineral.mineralType);
     state.mineral = {
         id: mineral.id,
         mineralType: mineral.mineralType,
@@ -64,19 +76,25 @@ function observe(room) {
         containerId: container && container.id || null,
         depleted,
         storageConstrained: constrained,
-        active: !!extractor && !depleted && !constrained,
+        active: !seasonal && !!extractor && !depleted && !constrained,
+        seasonalDedicated: seasonal,
         lastSeen: Game.time,
-        debugReason: !extractor ? 'Waiting for planned extractor' :
+        debugReason: seasonal ? 'Thorium reserved for the dedicated Season 11 pipeline' :
+            !extractor ? 'Waiting for planned extractor' :
             depleted ? 'Mineral depleted until regeneration' :
                 constrained ? 'Storage and terminal constrained' : 'Mineral extraction active'
     };
+    if (seasonal) cancelGenericDemands(room.name);
     state.updatedTick = Game.time;
     return state;
 }
 
 function emitDemands(room, state) {
     const mineral = state && state.mineral;
-    if (!mineral) return [];
+    if (!mineral || isDedicatedThorium(mineral.mineralType)) {
+        if (room && room.name) cancelGenericDemands(room.name);
+        return [];
+    }
     const operationId = `mineral:${room.name}`;
     const demands = [];
     if (mineral.active) {
@@ -103,7 +121,7 @@ function emitDemands(room, state) {
 
 function jobs(room, state) {
     const mineral = state && state.mineral;
-    if (!mineral || !mineral.containerId) return [];
+    if (!mineral || isDedicatedThorium(mineral.mineralType) || !mineral.containerId) return [];
     const container = Game.getObjectById(mineral.containerId);
     const stored = container && amount(container.store, mineral.mineralType);
     if (!stored) return [];
@@ -128,4 +146,7 @@ function plan() {
     return report;
 }
 
-module.exports = { stateFor, mineralInRoom, extractorFor, mineralContainer, observe, emitDemands, jobs, plan };
+module.exports = {
+    stateFor, mineralInRoom, extractorFor, mineralContainer, observe, emitDemands, jobs, plan,
+    isDedicatedThorium, cancelGenericDemands
+};

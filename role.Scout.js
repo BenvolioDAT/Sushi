@@ -398,7 +398,9 @@ function chooseNextScoutRoom(creep) {
                 roomRecord.distance < bestNeverScanned.distance ||
                 (
                     roomRecord.distance === bestNeverScanned.distance &&
-                    roomName < bestNeverScanned.roomName
+                    (Season11.scoutPriority(roomName) > Season11.scoutPriority(bestNeverScanned.roomName) ||
+                        Season11.scoutPriority(roomName) === Season11.scoutPriority(bestNeverScanned.roomName) &&
+                        roomName < bestNeverScanned.roomName)
                 )
             ) {
                 bestNeverScanned = roomRecord;
@@ -412,7 +414,9 @@ function chooseNextScoutRoom(creep) {
             roomRecord.lastScanTick < oldestScanned.lastScanTick ||
             (
                 roomRecord.lastScanTick === oldestScanned.lastScanTick &&
-                roomRecord.distance < oldestScanned.distance
+                (roomRecord.distance < oldestScanned.distance ||
+                    roomRecord.distance === oldestScanned.distance &&
+                    Season11.scoutPriority(roomName) > Season11.scoutPriority(oldestScanned.roomName))
             )
         ) {
             oldestScanned = roomRecord;

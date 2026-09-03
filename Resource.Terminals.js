@@ -1,6 +1,7 @@
 const HiveMemory = require('HiveMind.Memory');
 const Economy = require('HiveMind.Economy');
 const TickIndex = require('HiveMind.Index');
+const Season11Adapter = require('Season11.Adapter');
 
 const ENERGY_RESERVE = 20000;
 const MIN_SEND = 100;
@@ -18,6 +19,7 @@ function amount(store, resourceType) {
 
 function requestTransfer(input) {
     if (!input || !input.fromRoom || !input.toRoom || input.fromRoom === input.toRoom || !input.resourceType) return null;
+    if (isDedicatedThorium(input.resourceType)) return null;
     const resources = HiveMemory.ensure().resources;
     const id = input.id || `terminal:${input.fromRoom}:${input.toRoom}:${input.resourceType}`;
     const transfer = {
@@ -41,6 +43,10 @@ function resourceKeys(store) {
     return Object.keys(store).filter(key => typeof store[key] === 'number' && store[key] > 0 && key !== RESOURCE_ENERGY);
 }
 
+function isDedicatedThorium(resourceType) {
+    return Season11Adapter.isAvailable() && resourceType === Season11Adapter.resourceType();
+}
+
 function reservedAmount(roomName, resourceType) {
     const mineralPerPart = typeof LAB_BOOST_MINERAL === 'number' ? LAB_BOOST_MINERAL : 30;
     let reserved = 0;
@@ -62,6 +68,7 @@ function planBalance() {
     const types = new Set();
     for (const room of rooms) for (const type of resourceKeys(room.terminal.store)) types.add(type);
     for (const type of Array.from(types).sort()) {
+        if (isDedicatedThorium(type)) continue;
         const donors = rooms.filter(room => amount(room.terminal.store, type) > BALANCE_HIGH + reservedAmount(room.name, type))
             .sort((a, b) => amount(b.terminal.store, type) - amount(a.terminal.store, type) || a.name.localeCompare(b.name));
         const receivers = rooms.filter(room => amount(room.terminal.store, type) < BALANCE_LOW)
@@ -81,6 +88,9 @@ function planBalance() {
 
 function validate(transfer) {
     if (!transfer || transfer.validUntil < Game.time) return { ok: false, reason: 'expired' };
+    if (isDedicatedThorium(transfer.resourceType)) {
+        return { ok: false, reason: 'Thorium is reserved for the Season 11 Reactor pipeline' };
+    }
     const from = Game.rooms[transfer.fromRoom];
     const to = Game.rooms[transfer.toRoom];
     if (!from || !to || !from.controller || !from.controller.my || !to.controller || !to.controller.my) {
@@ -106,7 +116,8 @@ function run() {
     for (const transfer of queue) {
         const check = validate(transfer);
         if (!check.ok) {
-            if (check.reason === 'expired' || check.reason === 'both rooms must be mine and visible') delete resources.transfers[transfer.id];
+            if (check.reason === 'expired' || check.reason === 'both rooms must be mine and visible' ||
+                check.reason === 'Thorium is reserved for the Season 11 Reactor pipeline') delete resources.transfers[transfer.id];
             report.push({ id: transfer.id, result: null, reason: check.reason });
             continue;
         }
@@ -120,4 +131,4 @@ function run() {
     return report;
 }
 
-module.exports = { requestTransfer, planBalance, validate, run, amount, terminalRooms, reservedAmount };
+module.exports = { requestTransfer, planBalance, validate, run, amount, terminalRooms, reservedAmount, isDedicatedThorium };

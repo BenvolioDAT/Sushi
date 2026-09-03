@@ -40,6 +40,7 @@ var DEFAULT_CONFIG = {
     starvationWarningTicks: 200,
     haulerSafetyMargin: 1.25,
     haulerReplacementMargin: 100,
+    agingFallbackThorium: 1000,
     maxHaulersPerRoute: 4,
     claimCooldown: 500,
     recapture: false,
@@ -417,7 +418,8 @@ function observeRoom(room, homeRoomName, force) {
     }
 
     if (thorium) {
-        var remaining = Math.max(0, Number(thorium.mineralAmount) || 0);
+        var wasDepleted = !!(roomIntel.thorium && roomIntel.thorium.depleted);
+        var remaining = wasDepleted ? 0 : Math.max(0, Number(thorium.mineralAmount) || 0);
         roomIntel.thorium = {
             id: thorium.id,
             x: thorium.pos ? thorium.pos.x : null,
@@ -689,6 +691,11 @@ function northernTieBreaker(roomName) {
     return match[3] === 'N' ? amount : -amount;
 }
 
+function scoutPriority(roomName) {
+    if (!isObserving()) return 0;
+    return northernTieBreaker(roomName);
+}
+
 function rankMiningTargets() {
     var memory = ensureMemory();
     var targets = [];
@@ -712,34 +719,50 @@ function rankMiningTargets() {
             roomIntel.controllerOwner !== myUsername;
         var reservedByOther = roomIntel.controllerReservation &&
             roomIntel.controllerReservation !== myUsername;
-        var accessible = !!home && !ownedByOther && !reservedByOther &&
-            (roomIntel.threatParts || 0) === 0;
+        var intelAge = Math.max(0, getTime() - (roomIntel.lastSeen || 0));
+        var completeSafetyIntel = typeof roomIntel.hostileCreeps === 'number' &&
+            typeof roomIntel.hostileStructures === 'number' && typeof roomIntel.threatParts === 'number';
+        var fresh = !!roomIntel.lastSeen && intelAge <= memory.config.intelMaxAge;
+        var accessible = !!home && !ownedByOther && !reservedByOther && fresh && completeSafetyIntel &&
+            roomIntel.hostileCreeps === 0 && roomIntel.hostileStructures === 0 && roomIntel.threatParts === 0;
         var routeDistance = home ? home.distance : null;
+        var density = typeof thorium.density === 'number' && isFinite(thorium.density) ?
+            Math.max(0, thorium.density) : null;
+        var yieldScore = thorium.remaining * (1 + (density === null ? 0 : Math.min(10, density) * 0.1));
 
         targets.push({
             roomName: roomName,
             mineralId: thorium.id,
             remaining: thorium.remaining,
-            density: thorium.density,
+            density: density,
             depleted: false,
             accessible: accessible,
             homeRoom: home ? home.roomName : null,
             routeDistance: routeDistance,
             hostileCreeps: roomIntel.hostileCreeps || 0,
             threatParts: roomIntel.threatParts || 0,
+            intelAge: intelAge,
+            intelFresh: fresh,
             northernTieBreaker: northernTieBreaker(roomName),
-            score: (thorium.remaining * 1000000) - hostilePenalty -
+            yieldScore: yieldScore,
+            score: (accessible ? 1000000000000 : 0) + (yieldScore * 1000000) - hostilePenalty -
                 ((routeDistance === null ? 1000 : routeDistance) * 1000) +
                 northernTieBreaker(roomName)
         });
     }
 
     targets.sort(function(a, b) {
-        if (b.remaining !== a.remaining) {
-            return b.remaining - a.remaining;
-        }
         if (a.accessible !== b.accessible) {
             return a.accessible ? -1 : 1;
+        }
+        if (a.threatParts !== b.threatParts) {
+            return a.threatParts - b.threatParts;
+        }
+        if (b.yieldScore !== a.yieldScore) {
+            return b.yieldScore - a.yieldScore;
+        }
+        if (b.remaining !== a.remaining) {
+            return b.remaining - a.remaining;
         }
         if (a.routeDistance !== b.routeDistance) {
             if (a.routeDistance === null) {
@@ -749,9 +772,6 @@ function rankMiningTargets() {
                 return -1;
             }
             return a.routeDistance - b.routeDistance;
-        }
-        if (a.threatParts !== b.threatParts) {
-            return a.threatParts - b.threatParts;
         }
         if (b.northernTieBreaker !== a.northernTieBreaker) {
             return b.northernTieBreaker - a.northernTieBreaker;
@@ -1161,6 +1181,38 @@ function scoreRate(continuousWork) {
     return work > 0 ? 1 + Math.floor(Math.log10(work)) : 0;
 }
 
+function thoriumAgingMultiplier(totalThoriumOnTile) {
+    var total = Math.max(0, Math.floor(Number(totalThoriumOnTile) || 0));
+    return total > 0 ? Math.max(0, Math.floor(Math.log10(total))) : 0;
+}
+
+function observeTileThorium(pos, fallbackAmount) {
+    var fallback = Math.max(1, Math.floor(Number(fallbackAmount) ||
+        Number(ensureMemory().config.agingFallbackThorium) || 1000));
+    var thorium = getThoriumResourceType();
+    if (!thorium || !pos || typeof pos.look !== 'function') {
+        return { total: fallback, multiplier: thoriumAgingMultiplier(fallback), observable: false, source: 'conservativeFallback' };
+    }
+    var entries;
+    try { entries = pos.look() || []; }
+    catch (error) {
+        return { total: fallback, multiplier: thoriumAgingMultiplier(fallback), observable: false, source: 'conservativeFallback' };
+    }
+    var total = 0;
+    var seen = {};
+    for (var i = 0; i < entries.length; i++) {
+        var entry = entries[i] || {};
+        var target = entry.resource || entry.creep || entry.structure || entry.tombstone || entry.ruin;
+        if (!target) continue;
+        var key = target.id || target.name || ('entry:' + i);
+        if (seen[key]) continue;
+        seen[key] = true;
+        if (target.resourceType === thorium) total += Math.max(0, Number(target.amount) || 0);
+        else total += getStoreAmount(target, thorium);
+    }
+    return { total: total, multiplier: thoriumAgingMultiplier(total), observable: true, source: 'tileLook' };
+}
+
 function estimateStarvation(reactorThorium, deliveryEta) {
     var ticksUntilEmpty = Math.max(0, Math.floor(Number(reactorThorium) || 0));
     var eta = typeof deliveryEta === 'number' && isFinite(deliveryEta) ?
@@ -1201,7 +1253,9 @@ function getAssignmentCount(assignmentKey, includeQueued) {
             }
             var spawnTime = Array.isArray(creep.body) ?
                 creep.body.length * 3 : 0;
-            var replacementLead = spawnTime + routeDistance +
+            var observedAging = Math.max(1, Number(creep.memory.season11AgingMultiplier) ||
+                thoriumAgingMultiplier(ensureMemory().config.agingFallbackThorium));
+            var replacementLead = spawnTime + (routeDistance * observedAging) +
                 ensureMemory().config.haulerReplacementMargin;
             if (creep.ticksToLive === undefined ||
                 creep.ticksToLive > replacementLead) {
@@ -1309,9 +1363,12 @@ function makeHaulerPlan(homeRoom, assignment, reactor, emergency) {
         Math.ceil((routeTiles * 2 *
             ensureMemory().config.haulerSafetyMargin) / 50)));
     var expectedCarryCapacity = requestedCarryParts * 50;
-    var thoriumAging = Math.floor(Math.log10(expectedCarryCapacity));
+    /* Future route tiles are not observable during planning. A deliberately
+       conservative configured amount is used; carry capacity is not a proxy. */
+    var agingEstimate = observeTileThorium(null, ensureMemory().config.agingFallbackThorium);
+    var thoriumAging = agingEstimate.multiplier;
     var effectiveLifetime = Math.max(1,
-        Math.floor(1500 / (1 + Math.max(0, thoriumAging))));
+        Math.floor(1500 / Math.max(1, thoriumAging)));
     if (routeTiles + ensureMemory().config.haulerReplacementMargin >=
         effectiveLifetime) {
         setAlert('NO ROUTE', assignment.roomName + ' -> ' +
@@ -1340,7 +1397,10 @@ function makeHaulerPlan(homeRoom, assignment, reactor, emergency) {
             season11StagingId: assignment.stagingId,
             season11ReactorId: reactor.id,
             season11ReactorRoom: reactor.roomName,
-            season11RouteDistance: routeTiles
+            season11RouteDistance: routeTiles,
+            season11AgingThorium: agingEstimate.total,
+            season11AgingMultiplier: thoriumAging,
+            season11AgingEstimateSource: agingEstimate.source
         },
         homeRoom: homeRoom
     };
@@ -1531,6 +1591,9 @@ function getDiagnostics() {
     var haulers = 0;
     var claimers = 0;
     var nextEta = null;
+    var maximumObservedTileThorium = 0;
+    var maximumAgingMultiplier = 0;
+    var agingFallbackCreeps = 0;
     var seenStores = {};
 
     for (var roomName in memory.rooms) {
@@ -1581,6 +1644,11 @@ function getDiagnostics() {
         }
         else if (creep.memory.role === 'ThoriumHauler') {
             haulers++;
+            maximumObservedTileThorium = Math.max(maximumObservedTileThorium,
+                Number(creep.memory.season11ObservedTileThorium) || 0);
+            maximumAgingMultiplier = Math.max(maximumAgingMultiplier,
+                Number(creep.memory.season11AgingMultiplier) || 0);
+            if (creep.memory.season11AgingEstimateSource === 'conservativeFallback') agingFallbackCreeps++;
             var eta = creep.memory.season11DeliveryEta;
             if (typeof eta === 'number' &&
                 getTime() - (creep.memory.season11EtaTick || 0) <= 2 &&
@@ -1639,6 +1707,12 @@ function getDiagnostics() {
         claimers: claimers,
         selectedReactor: reactorInfo,
         nextDeliveryEta: nextEta,
+        aging: {
+            maximumObservedTileThorium: maximumObservedTileThorium,
+            maximumMultiplier: maximumAgingMultiplier,
+            fallbackCreeps: agingFallbackCreeps,
+            fallbackThorium: memory.config.agingFallbackThorium
+        },
         alerts: alerts,
         rankedMiningTargets: memory.assignments.rankedMiningTargets || [],
         rankedReactors: memory.assignments.rankedReactors || [],
@@ -1745,6 +1819,7 @@ module.exports = {
     setMode: setMode,
     configure: configure,
     getScoutRadius: getScoutRadius,
+    scoutPriority: scoutPriority,
     getThoriumResourceType: getThoriumResourceType,
     getReactorFindConstant: getReactorFindConstant,
     getRouteDistance: getRouteDistance,
@@ -1755,6 +1830,8 @@ module.exports = {
     clearReactorSelection: clearReactorSelection,
     cleanupStaleIntel: cleanupStaleIntel,
     scoreRate: scoreRate,
+    thoriumAgingMultiplier: thoriumAgingMultiplier,
+    observeTileThorium: observeTileThorium,
     estimateStarvation: estimateStarvation,
     calculateHaulerDemand: calculateHaulerDemand,
     getAssignmentCount: getAssignmentCount,
