@@ -321,24 +321,28 @@ test('living, spawning, and queued Artificer WORK covers only its assigned categ
     assert.deepStrictEqual(demand.livingWorkByEconomyCategory, {
         criticalMaintenance: 1,
         criticalInfrastructure: 2,
+        remoteBootstrap: 0,
         construction: 1,
         remote: 0
     });
     assert.deepStrictEqual(demand.spawningWorkByEconomyCategory, {
         criticalMaintenance: 0,
         criticalInfrastructure: 2,
+        remoteBootstrap: 0,
         construction: 0,
         remote: 1
     });
     assert.deepStrictEqual(demand.queuedWorkByEconomyCategory, {
         criticalMaintenance: 0,
         criticalInfrastructure: 0,
+        remoteBootstrap: 0,
         construction: 1,
         remote: 1
     });
     assert.deepStrictEqual(demand.missingWorkByEconomyCategory, {
         criticalMaintenance: 1,
         criticalInfrastructure: 4,
+        remoteBootstrap: 0,
         construction: 0,
         remote: 0
     });

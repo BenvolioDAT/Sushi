@@ -829,7 +829,7 @@ function drawRoomPanel(visual, room, sourceStats, remoteStats, roomCreeps) {
     var y = 3.7;
     var width = 18;
     var showRoleCounts = HiveMemory.getConfig('visuals').dashboardShowRoleCounts === true;
-    var height = showRoleCounts ? 20.9 : 18.8;
+    var height = showRoleCounts ? 23.7 : 21.6;
     var controller = room.controller;
     var roomMemory = Memory.rooms && Memory.rooms[room.name];
     var queue = getSpawnQueueInfo(room.name);
@@ -908,13 +908,29 @@ function drawRoomPanel(visual, room, sourceStats, remoteStats, roomCreeps) {
         drawText(visual, 'Haul ' + economy.haul.localCarry + '/' + economy.haul.requiredCarry +
             ' backlog ' + compactNumber(economy.haul.backlog), x, rowY, COLORS.text);
         rowY += LINE_HEIGHT;
+        if (economy.growth) {
+            var growth = economy.growth;
+            drawText(visual, growth.mode + ' - ' + truncate(growth.blockedReason, 20), x, rowY,
+                growth.mode === 'RECOVERY' ? COLORS.warning : COLORS.good);
+            rowY += LINE_HEIGHT;
+            drawText(visual, 'Net ' + round(growth.estimatedNetIncome, 1) + '/t  Upgrade ' +
+                round(growth.controllerBudget, 1) + '/t', x, rowY, COLORS.text);
+            rowY += LINE_HEIGHT;
+            drawText(visual, 'Reserve ' + compactNumber(growth.storedEnergy) + '/' +
+                compactNumber(growth.reserveTarget) + ' excess ' + compactNumber(growth.energyAboveReserve),
+                x, rowY, growth.energyAboveReserve > 0 ? COLORS.good : COLORS.warning);
+            rowY += LINE_HEIGHT;
+            drawText(visual, 'Remote ' + growth.remote.activeSources + '/' + growth.remote.candidateSources +
+                ' backlog ' + compactNumber(growth.remote.backlog), x, rowY, COLORS.text);
+            rowY += LINE_HEIGHT;
+        }
     }
     if (colony) {
         var lifecycleColor = colony.alert === 'SIEGE' ? COLORS.danger :
             colony.alert === 'THREATENED' ? COLORS.warning : COLORS.good;
         drawText(visual, 'COLONY ' + colony.lifecycle + ' - ' + colony.objective, x, rowY, lifecycleColor);
         rowY += LINE_HEIGHT;
-        var growthPhase = colony.lifecycle === 'BOOTSTRAP' || colony.lifecycle === 'GROWTH';
+        var growthPhase = controller && controller.level < 8;
         var growthText = colony.milestoneTimedOut ?
             'Milestone STALLED - ' + truncate(colony.unmet && colony.unmet[0] || colony.milestone, 20) :
             !growthPhase ? 'Lifecycle ACTIVE - band ' + colony.priorityBand :

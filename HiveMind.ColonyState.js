@@ -174,7 +174,8 @@ function decide(room, economy, summary, lifecycle, alert) {
     const coreBlockedReason = blockedReason;
     const controllerDanger = !!(room.controller && room.controller.ticksToDowngrade < 5000);
     const baselineTechWork = rcl >= 1 && rcl < 8 ? 1 : 0;
-    const baselinePhase = lifecycle === PHASES.BOOTSTRAP || lifecycle === PHASES.GROWTH;
+    /* RCL1-7 are all growth phases; DEVELOPMENT changes infrastructure, not the controller objective. */
+    const baselinePhase = rcl >= 1 && rcl < 8;
     let growthAllowed = baselinePhase && !blockedReason && economy.state !== Economy.STATES.SURVIVAL;
     if (alert === ALERTS.SIEGE) { growthAllowed = false; blockedReason = 'owned-room defense emergency'; }
     if (Game.cpu && Game.cpu.bucket < 1000) { growthAllowed = false; blockedReason = 'CPU bucket too low'; }

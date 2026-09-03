@@ -39,10 +39,10 @@ var roleTech = {
         var controllerGrowthFloor = creep.memory.controllerGrowthFloor === true;
         var colony = ColonyState.get(homeRoomName);
         var baselineRepresentative = !controllerGrowthFloor && colony && colony.growthAllowed &&
-            (colony.lifecycle === 'BOOTSTRAP' || colony.lifecycle === 'GROWTH') &&
+            colony.rcl < 8 &&
             isBaselineRepresentative(creep, homeRoomName);
         var floorPolicyActive = (controllerGrowthFloor || baselineRepresentative) && colony &&
-            (colony.lifecycle === 'BOOTSTRAP' || colony.lifecycle === 'GROWTH');
+            colony.rcl < 8;
         var growthStillAllowed = !floorPolicyActive || colony.growthAllowed;
         var spendCategory = controllerEmergency ? 'controllerSafety' :
             floorPolicyActive ? 'controllerGrowth' : 'upgradeSurplus';

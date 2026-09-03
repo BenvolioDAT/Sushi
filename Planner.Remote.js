@@ -25,8 +25,6 @@ var LOW_BUCKET_SKIP = 1000;
 var CPU_BUFFER = 3;
 var MAX_ACTIVE_REMOTE_SOURCES = 4;
 var MAX_REMOTE_DISTANCE = 150;
-var SOURCE_WORK_TARGET = 6;
-var ESTIMATED_MINER_BODY_COST = 550;
 var ESTIMATED_CARRY_COST_PER_PART = 100;
 var CONTAINER_OR_DROP_LOSS = 0.05;
 var ROAD_REPAIR_COST_PER_TILE = 0.003;
@@ -341,7 +339,11 @@ function scoreRemoteSource(homeRoomName, sourceId) {
     }
 
     var minerLifetime = Math.max(1, CREEP_LIFE_TIME - distance);
-    var minerCostPerTick = ESTIMATED_MINER_BODY_COST / minerLifetime;
+    var harvestPower = typeof HARVEST_POWER === 'number' ? HARVEST_POWER : 2;
+    var requiredWork = Math.max(1, Math.ceil(effectiveEnergyPerTick / harvestPower));
+    var minerBodyCost = requiredWork * BODYPART_COST[WORK] +
+        Math.ceil(requiredWork / 2) * BODYPART_COST[MOVE] + BODYPART_COST[CARRY];
+    var minerCostPerTick = minerBodyCost / minerLifetime;
     var carryPartsNeeded = Math.ceil((effectiveEnergyPerTick * distance * 2) / CARRY_CAPACITY);
     var haulerCostPerTick = (carryPartsNeeded * ESTIMATED_CARRY_COST_PER_PART) / CREEP_LIFE_TIME;
     var roadCost = distance * ROAD_REPAIR_COST_PER_TILE;
@@ -353,7 +355,9 @@ function scoreRemoteSource(homeRoomName, sourceId) {
     info.effectiveEnergyPerTick = round3(effectiveEnergyPerTick);
     info.energyPerTick = info.grossEnergyPerTick;
     info.netIncome = round3(netIncome);
-    info.spawnUsage = round3((ESTIMATED_MINER_BODY_COST / CREEP_LIFE_TIME) + haulerCostPerTick);
+    info.requiredWork = requiredWork;
+    info.estimatedMinerBodyCost = minerBodyCost;
+    info.spawnUsage = round3((minerBodyCost / CREEP_LIFE_TIME) + haulerCostPerTick);
     info.score = round3(netIncome - (distance / 1000));
     info.rejectReason = info.score > 0 ? null : 'negative net income';
 
@@ -459,7 +463,7 @@ function shouldUseRemoteSource(homeRoomName, sourceId, ignoreScore) {
     var planner = ensurePlannerMemory(homeRoomName);
     var info = planner.sourceInfos[sourceId];
 
-    if (!Economy.canSpend(homeRoomName, 'remote')) {
+    if (!Economy.canSpend(homeRoomName, 'remoteIncome')) {
         if (info) info.rejectReason = 'home economy recovery';
         return false;
     }
@@ -1041,8 +1045,10 @@ function rescorePlanner(homeRoomName) {
 function selectActiveSources(homeRoomName) {
     var planner = ensurePlannerMemory(homeRoomName);
     var candidates = [];
+    var homeRoom = Game.rooms[homeRoomName];
+    var economy = Economy.get(homeRoomName);
 
-    if (!Economy.canSpend(homeRoomName, 'remote')) {
+    if (!Economy.canSpend(homeRoomName, 'remoteIncome')) {
         for (var blockedId in planner.sourceInfos) {
             if (planner.sourceInfos.hasOwnProperty(blockedId) && planner.sourceInfos[blockedId]) {
                 planner.sourceInfos[blockedId].active = false;
@@ -1083,10 +1089,27 @@ function selectActiveSources(homeRoomName) {
         return a.sourceId < b.sourceId ? -1 : 1;
     });
 
-    planner.activeSourceIds = [];
-    for (var i = 0; i < candidates.length && i < MAX_ACTIVE_REMOTE_SOURCES; i++) {
-        candidates[i].active = true;
-        planner.activeSourceIds.push(candidates[i].sourceId);
+    var rcl = homeRoom && homeRoom.controller && homeRoom.controller.level || 1;
+    var levelCap = rcl < 2 ? 0 : rcl === 2 ? 2 : MAX_ACTIVE_REMOTE_SOURCES;
+    var previousActive = planner.activeSourceIds.filter(function(id) {
+        return candidates.some(function(candidate) { return candidate.sourceId === id; });
+    });
+    var ramp = getRemoteRampStatus(homeRoomName, previousActive, economy);
+    var targetCount = Math.min(levelCap, previousActive.length + (ramp.ready ? 1 : 0));
+    if (previousActive.length === 0 && levelCap > 0 && ramp.ready) targetCount = 1;
+    var selected = previousActive.slice(0, targetCount);
+    for (var i = 0; i < candidates.length && selected.length < targetCount; i++) {
+        if (selected.indexOf(candidates[i].sourceId) < 0) selected.push(candidates[i].sourceId);
+    }
+    planner.activeSourceIds = selected;
+    planner.rampReason = ramp.reason;
+    planner.rampReady = ramp.ready;
+    for (i = 0; i < selected.length; i++) {
+        var selectedInfo = planner.sourceInfos[selected[i]];
+        if (!selectedInfo) continue;
+        selectedInfo.active = true;
+        selectedInfo.roadEligible = remoteRoadInvestmentReady(homeRoomName, selectedInfo, economy);
+        if (Game.rooms[selectedInfo.roomName]) utility.planSourceContainers(selectedInfo.roomName, selectedInfo.sourceId);
     }
 
     for (var remoteRoomName in planner.remotes) {
@@ -1097,6 +1120,50 @@ function selectActiveSources(homeRoomName) {
         var remoteInfo = planner.remotes[remoteRoomName];
         remoteInfo.status = hasActiveSourceInRemote(planner, remoteInfo) ? 'active' : remoteInfo.status;
     }
+}
+
+function getRemoteRampStatus(homeRoomName, activeIds, economy) {
+    var room = Game.rooms[homeRoomName];
+    if (!room || !room.controller || room.controller.level < 2) return { ready: false, reason: 'RCL1_LOCAL_FIRST' };
+    if (!Economy.canSpend(homeRoomName, 'remote')) return { ready: false, reason: 'HOME_ECONOMY_RECOVERY' };
+    if (!economy || !economy.growth) return { ready: false, reason: 'ECONOMY_TELEMETRY_MISSING' };
+    if (economy.growth.spawnPressure >= 0.75) return { ready: false, reason: 'SPAWN_PRESSURE' };
+    if (economy.haul && (economy.haul.localCarry < economy.haul.requiredCarry * 0.85 ||
+        economy.growth.remote.backlog - economy.growth.remote.reservedCarry > 750 ||
+        economy.growth.remote.requiredCarry > economy.growth.remote.availableCarry &&
+            economy.growth.remote.backlog > 250)) {
+        return { ready: false, reason: 'HAUL_SHORTAGE' };
+    }
+    var planner = ensurePlannerMemory(homeRoomName);
+    var queue = Memory.rooms[homeRoomName] && Memory.rooms[homeRoomName].spawn &&
+        Memory.rooms[homeRoomName].spawn.queue || [];
+    for (var i = 0; i < activeIds.length; i++) {
+        var info = planner.sourceInfos[activeIds[i]];
+        if (!info) continue;
+        var assigned = countRemoteAssignedExtractorWork(homeRoomName, info);
+        var pending = countPendingRemoteExtractorRequest(homeRoomName, info, queue);
+        if (assigned.count + pending.count < 1) return { ready: false, reason: 'REMOTE_MINER_PENDING' };
+        var sourceMemory = Memory.rooms[info.roomName] && Memory.rooms[info.roomName].sources &&
+            Memory.rooms[info.roomName].sources[info.sourceId];
+        if (!sourceMemory || !sourceMemory.containerId && !sourceMemory.containerPlanned) {
+            return { ready: false, reason: 'REMOTE_CONTAINER_PENDING' };
+        }
+        if (!sourceMemory.haul || sourceMemory.haul.lastSeen < Game.time - 100) {
+            return { ready: false, reason: 'REMOTE_HAUL_UNPROVEN' };
+        }
+    }
+    return { ready: true, reason: activeIds.length ? 'LOGISTICS_READY_FOR_NEXT_SOURCE' : 'FIRST_PROFITABLE_SOURCE' };
+}
+
+function remoteRoadInvestmentReady(homeRoomName, info, economy) {
+    if (!info || !info.active || info.netIncome <= 0 || !economy || economy.state === Economy.STATES.RECOVERY) return false;
+    var sourceMemory = Memory.rooms[info.roomName] && Memory.rooms[info.roomName].sources &&
+        Memory.rooms[info.roomName].sources[info.sourceId];
+    var controller = Memory.rooms[info.roomName] && Memory.rooms[info.roomName].controller;
+    var reserved = controller && controller.reservation && controller.reservation.username === getMyUsername();
+    var haulOperational = sourceMemory && sourceMemory.haul && sourceMemory.haul.lastSeen >= Game.time - 100;
+    return !!(sourceMemory && sourceMemory.containerId && haulOperational && reserved &&
+        economy.growth && economy.growth.energyAboveReserve > 0 && economy.growth.controllerBudget >= 1);
 }
 
 function hasActiveSourceInRemote(planner, remoteInfo) {
@@ -1347,7 +1414,7 @@ function getRemoteSourcePosition(homeRoomName, sourceId) {
 
 
 function getActiveRemoteSourcesForHome(homeRoomName) {
-    if (!Economy.canSpend(homeRoomName, 'remote')) return [];
+    if (!Economy.canSpend(homeRoomName, 'remoteIncome')) return [];
     var planner = ensurePlannerMemory(homeRoomName);
     var activeSources = [];
 
@@ -1471,11 +1538,17 @@ function getRemoteExtractorDemand(homeRoomName, extractorBody, queue) {
 
         var assigned = countRemoteAssignedExtractorWork(homeRoomName, sourceInfo);
         var queued = countPendingRemoteExtractorRequest(homeRoomName, sourceInfo, queue);
-        var plannedCount = assigned.count + queued.count;
-        var plannedWork = assigned.work + queued.work;
+        var wantedWork = Math.max(1, Math.ceil(
+            (sourceInfo.effectiveEnergyPerTick || sourceInfo.grossEnergyPerTick || 10) /
+            (typeof HARVEST_POWER === 'number' ? HARVEST_POWER : 2)
+        ));
 
-        // Capacity is creep count only: one assigned or queued Extractor per source.
-        if (plannedCount >= 1) {
+        /*
+         * Keep one steady miner. A newly reserved source may briefly queue one
+         * handoff replacement when its old unreserved miner is undersized.
+         */
+        if (queued.count >= 1 ||
+            (assigned.count >= 1 && assigned.work >= wantedWork) || assigned.count >= 2) {
             continue;
         }
 
@@ -1489,10 +1562,7 @@ function getRemoteExtractorDemand(homeRoomName, extractorBody, queue) {
             assignedWork: assigned.work,
             queuedCount: queued.count,
             queuedWork: queued.work,
-            wantedWork: Math.max(1, Math.ceil(
-                (sourceInfo.effectiveEnergyPerTick || sourceInfo.grossEnergyPerTick || 10) /
-                (typeof HARVEST_POWER !== 'undefined' ? HARVEST_POWER : 2)
-            )),
+            wantedWork: wantedWork,
             bodyWork: countBodyParts(extractorBody, WORK)
         });
     }

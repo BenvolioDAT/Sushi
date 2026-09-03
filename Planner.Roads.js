@@ -461,7 +461,7 @@ function addRemoteRoadsFromRemotePlanner(homeRoomName, planSets, prioritySets) {
         var sourceId = remotePlanner.activeSourceIds[i];
         var sourceInfo = remotePlanner.sourceInfos[sourceId];
 
-        if (!sourceInfo || !sourceInfo.active || !sourceInfo.roadCoords) {
+        if (!sourceInfo || !sourceInfo.active || !sourceInfo.roadEligible || !sourceInfo.roadCoords) {
             continue;
         }
 

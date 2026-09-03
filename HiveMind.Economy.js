@@ -13,6 +13,13 @@ const STATE_RANK = Object.freeze({ SURVIVAL: 0, RECOVERY: 1, STABLE: 2, SURPLUS:
 const EXIT_TICKS = Object.freeze({ SURVIVAL: 12, RECOVERY: 40, STABLE: 100 });
 const CORE_ROLES = new Set(['Extractor', 'Freighter', 'Foreman']);
 const COMBAT_ROLES = new Set(['Ronin', 'Volley', 'Cleric']);
+const GROWTH_MODES = Object.freeze({
+    MINIMUM: 'GROWTH_MINIMUM',
+    NORMAL: 'GROWTH_NORMAL',
+    AGGRESSIVE: 'GROWTH_AGGRESSIVE',
+    RECOVERY: 'RECOVERY',
+    CONTROLLER_EMERGENCY: 'CONTROLLER_EMERGENCY'
+});
 
 function energyIn(target) {
     if (!target || !target.store) return 0;
@@ -31,6 +38,157 @@ function activeParts(creep, type) {
 function bodyParts(body, type) {
     return (body || []).reduce((total, part) => total +
         ((part === type || part && part.type === type) ? 1 : 0), 0);
+}
+
+function bodyCost(body) {
+    return (body || []).reduce((total, part) => {
+        const type = part && part.type || part;
+        return total + (typeof BODYPART_COST !== 'undefined' && BODYPART_COST[type] || 0);
+    }, 0);
+}
+
+function roleReplacementCost(creeps, role, predicate) {
+    let cost = 0;
+    for (const creep of creeps) {
+        if (!creep || !creep.memory || creep.memory.role !== role || predicate && !predicate(creep)) continue;
+        cost = Math.max(cost, bodyCost(creep.body));
+    }
+    return cost;
+}
+
+function remoteEconomy(roomName) {
+    const roomMemory = Memory.rooms && Memory.rooms[roomName];
+    const planner = roomMemory && roomMemory.remotePlanner;
+    const sourceInfos = planner && planner.sourceInfos || {};
+    const activeIds = planner && Array.isArray(planner.activeSourceIds) ? planner.activeSourceIds : [];
+    let gross = 0;
+    let net = 0;
+    let backlog = 0;
+    let reservedCarry = 0;
+    let reservedSources = 0;
+    let unreservedSources = 0;
+    let requiredCarry = 0;
+    let oldestHaulAge = 0;
+    for (const id of activeIds) {
+        const info = sourceInfos[id];
+        if (!info || !info.active) continue;
+        gross += Math.max(0, info.effectiveEnergyPerTick || 0);
+        net += Math.max(0, info.netIncome || 0);
+        const sourceMemory = Memory.rooms && Memory.rooms[info.roomName] &&
+            Memory.rooms[info.roomName].sources && Memory.rooms[info.roomName].sources[id];
+        const haul = sourceMemory && sourceMemory.haul;
+        backlog += haul && Math.max(0, haul.amount || 0) || 0;
+        reservedCarry += haul && Math.max(0, haul.reservedCarry || 0) || 0;
+        if (haul && haul.lastSeen > 0) oldestHaulAge = Math.max(oldestHaulAge, Game.time - haul.lastSeen);
+        const carryCapacity = typeof CARRY_CAPACITY === 'number' ? CARRY_CAPACITY : 50;
+        requiredCarry += Math.ceil(Math.max(0, info.effectiveEnergyPerTick || 0) *
+            Math.max(1, info.distance || 1) * 2 / carryCapacity);
+        const controller = Memory.rooms && Memory.rooms[info.roomName] && Memory.rooms[info.roomName].controller;
+        if (controller && controller.reservation && controller.reservation.username) reservedSources++;
+        else unreservedSources++;
+    }
+    return { gross, net, backlog, reservedCarry, activeSources: activeIds.length,
+        candidateSources: Object.keys(sourceInfos).filter(id => sourceInfos[id] && sourceInfos[id].score > 0).length,
+        reservedSources, unreservedSources, requiredCarry, oldestHaulAge };
+}
+
+/*
+ * Reserve one realistic replacement wave, not an arbitrary warehouse tier.
+ * The per-tick budget below separately pays long-run replacement depreciation;
+ * this stockpile protects the spawn against timing overlap and emergencies.
+ */
+function buildGrowthPolicy(room, snapshot, creeps, spawns) {
+    const rcl = room.controller && room.controller.level || 1;
+    const capacity = Math.max(300, room.energyCapacityAvailable || 300);
+    const localMiner = roleReplacementCost(creeps, 'Extractor', creep => isLocalExtractor(creep, room.name)) ||
+        Math.min(capacity, 550);
+    const remoteMiner = roleReplacementCost(creeps, 'Extractor', creep => !isLocalExtractor(creep, room.name));
+    const freighter = roleReplacementCost(creeps, 'Freighter') || Math.min(capacity, 600);
+    const foreman = roleReplacementCost(creeps, 'Foreman') || Math.min(capacity, 400);
+    const tech = roleReplacementCost(creeps, 'Tech') || Math.min(capacity, 300);
+    const remoteCycle = remoteMiner > 0 ? remoteMiner + freighter : 0;
+    const threat = HiveMemory.ensure().threats[room.name];
+    const defenseBuffer = threat && threat.harmfulHostileCount > 0 ? capacity * 2 :
+        (rcl >= 4 ? capacity : Math.ceil(capacity * 0.5));
+    const reserveTarget = Math.ceil((foreman + localMiner + freighter + tech + remoteCycle + defenseBuffer) / 100) * 100;
+    const storedEnergy = snapshot.storageEnergy + snapshot.terminalEnergy + snapshot.energyAvailable;
+    const energyAboveReserve = Math.max(0, storedEnergy - reserveTarget);
+    const remote = remoteEconomy(room.name);
+    remote.availableCarry = Math.max(snapshot.haul.remoteCarry || 0,
+        Math.max(0, (snapshot.haul.activeCarry || 0) - (snapshot.haul.requiredCarry || 0)));
+    const localGross = snapshot.harvest.actualOrEstimatedIncome || 0;
+    const grossIncome = localGross + remote.gross;
+    const economicCreeps = creeps.filter(creep => creep && creep.memory &&
+        ['Extractor', 'Freighter', 'Foreman', 'Annex'].includes(creep.memory.role));
+    const replacementCostPerTick = economicCreeps.reduce((sum, creep) => {
+        const life = creep.memory.role === 'Annex' && typeof CREEP_CLAIM_LIFE_TIME !== 'undefined' ?
+            CREEP_CLAIM_LIFE_TIME : (typeof CREEP_LIFE_TIME !== 'undefined' ? CREEP_LIFE_TIME : 1500);
+        return sum + bodyCost(creep.body) / Math.max(1, life);
+    }, 0);
+    const infrastructureBudget = grossIncome * (rcl <= 3 ? 0.12 : 0.08);
+    const sustainableNetIncome = Math.max(0, grossIncome - replacementCostPerTick - infrastructureBudget);
+    const queue = Memory.rooms && Memory.rooms[room.name] && Memory.rooms[room.name].spawn &&
+        Memory.rooms[room.name].spawn.queue || [];
+    const spawnPressure = Math.min(1, (queue.length + snapshot.spawnPressure.busy * 0.5) /
+        Math.max(2, spawns.length * 4));
+    const controllerEmergency = room.controller && room.controller.ticksToDowngrade < 5000;
+    const localHealthy = snapshot.harvest.workActive >= Math.max(1, snapshot.harvest.workRequired * 0.9);
+    const haulingHealthy = snapshot.haul.localCarry >= snapshot.haul.requiredCarry * 0.85 &&
+        snapshot.haul.backlog <= Math.max(500, snapshot.haul.activeCarry * 75);
+    let mode = GROWTH_MODES.NORMAL;
+    let blockedReason = 'CONTROLLER_GROWTH_ACTIVE';
+    let utilization = 0.5;
+    if (controllerEmergency) {
+        mode = GROWTH_MODES.CONTROLLER_EMERGENCY;
+        utilization = 0.75;
+        blockedReason = 'CONTROLLER_EMERGENCY';
+    }
+    else if (snapshot.state === STATES.SURVIVAL || !localHealthy) {
+        mode = GROWTH_MODES.RECOVERY;
+        utilization = 0;
+        blockedReason = 'LOCAL_HARVEST_SHORTAGE';
+    }
+    else if (threat && threat.harmfulHostileCount > 0) {
+        mode = GROWTH_MODES.RECOVERY;
+        utilization = 0;
+        blockedReason = 'DEFENSE_EMERGENCY';
+    }
+    else if (!haulingHealthy) {
+        mode = GROWTH_MODES.MINIMUM;
+        utilization = 0.2;
+        blockedReason = 'HAUL_SHORTAGE';
+    }
+    else if (spawnPressure >= 0.75) {
+        mode = GROWTH_MODES.MINIMUM;
+        utilization = 0.25;
+        blockedReason = 'SPAWN_PRESSURE';
+    }
+    else if (energyAboveReserve <= 0 && rcl > 1) {
+        mode = GROWTH_MODES.MINIMUM;
+        utilization = snapshot.energyTrend >= 0 ? 0.25 : 0.1;
+        blockedReason = 'ENERGY_BELOW_RESERVE';
+    }
+    else if (energyAboveReserve >= reserveTarget || snapshot.energyTrend >= sustainableNetIncome * 0.2) {
+        mode = GROWTH_MODES.AGGRESSIVE;
+        utilization = 0.7;
+    }
+    utilization *= 1 - (spawnPressure * 0.4);
+    let budget = sustainableNetIncome * utilization;
+    if (rcl === 1 && localHealthy) budget = Math.max(1, budget);
+    if (rcl >= 1 && rcl < 8 && mode !== GROWTH_MODES.RECOVERY) budget = Math.max(1, budget);
+    if (rcl >= 8) budget = Math.min(15, budget);
+    return {
+        mode, blockedReason, reserveTarget, storedEnergy, energyAboveReserve,
+        localGrossIncome: Math.round(localGross * 100) / 100,
+        remoteGrossIncome: Math.round(remote.gross * 100) / 100,
+        estimatedNetIncome: Math.round(sustainableNetIncome * 100) / 100,
+        replacementCostPerTick: Math.round(replacementCostPerTick * 100) / 100,
+        infrastructureBudget: Math.round(infrastructureBudget * 100) / 100,
+        controllerBudget: Math.round(budget * 100) / 100,
+        affordableWork: Math.max(rcl < 8 && mode !== GROWTH_MODES.RECOVERY ? 1 : 0, Math.floor(budget)),
+        spawnPressure: Math.round(spawnPressure * 100) / 100,
+        remote
+    };
 }
 
 function isLocalExtractor(creep, roomName) {
@@ -349,7 +507,7 @@ function buildSnapshot(room, previous) {
     const floorReachable = energyAvailable >= extractorFloor || selfDeliverWork > 0 ||
         energyAvailable + recoverableStoredEnergy >= extractorFloor;
 
-    return {
+    const snapshot = {
         roomName: room.name,
         sampleTick: Game.time,
         state: previous && previous.state || STATES.RECOVERY,
@@ -399,6 +557,8 @@ function buildSnapshot(room, previous) {
         protectedStockpileEnergy: protectedSpawnStockpileEnergy(room),
         spawnPressure: { queued: queue.length, busy: busySpawns }
     };
+    snapshot.growth = buildGrowthPolicy(room, snapshot, creeps, spawns);
+    return snapshot;
 }
 
 function rawState(snapshot) {
@@ -533,6 +693,7 @@ function savePersistent(roomName, snapshot) {
     persistent.lastLiquidEnergy = snapshot.liquidEnergy;
     persistent.energyTrend = snapshot.energyTrend;
     persistent.protectedStockpileEnergy = snapshot.protectedStockpileEnergy;
+    persistent.growth = snapshot.growth;
     return persistent;
 }
 
@@ -600,7 +761,11 @@ function checkSpend(roomOrName, category) {
     }
     if (snapshot.state === STATES.RECOVERY) {
         const allowed = ['defense', 'controllerSafety', 'criticalController', 'controllerGrowth',
-            'criticalMaintenance', 'criticalInfrastructure'].includes(category);
+            'criticalMaintenance', 'criticalInfrastructure', 'remoteIncome', 'remoteBootstrap'].includes(category);
+        if ((category === 'remoteIncome' || category === 'remoteBootstrap') &&
+            snapshot.harvest && snapshot.harvest.workActive < Math.max(1, snapshot.harvest.workRequired * 0.9)) {
+            return { allowed: false, reason: 'local harvest must recover before remote income spending' };
+        }
         return { allowed, reason: allowed ? 'recovery exception' : 'blocked during RECOVERY' };
     }
     return { allowed: true, reason: snapshot.state + ' permits spending' };
@@ -622,6 +787,7 @@ function shouldBootstrapSelfDeliver(roomOrName) {
 
 module.exports = {
     STATES,
+    GROWTH_MODES,
     run,
     updateRoom,
     get,

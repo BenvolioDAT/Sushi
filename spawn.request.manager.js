@@ -130,6 +130,8 @@ var PRIORITY = {
     MineralMiner: 32,
     ResourceCourier: 48
 };
+var ANNEX_INITIAL_PRIORITY = 64;
+var ANNEX_MAINTENANCE_PRIORITY = 18;
 
 /*
  * Extra safety ticks.
@@ -974,25 +976,6 @@ function getControllerContainerEnergy(room) {
     return energy;
 }
 
-function getActiveRemoteNetIncome(roomName) {
-    var activeSources = RemotePlanner.getActiveRemoteSourcesForHome(roomName);
-    var income = 0;
-
-    if (!activeSources) {
-        return income;
-    }
-
-    for (var i = 0; i < activeSources.length; i++) {
-        var netIncome = activeSources[i] && activeSources[i].netIncome;
-
-        if (typeof netIncome === 'number' && netIncome > 0) {
-            income += netIncome;
-        }
-    }
-
-    return income;
-}
-
 function isFreshCacheEntry(entry, interval) {
     return !!(
         entry &&
@@ -1131,7 +1114,6 @@ function getDesiredTechWork(room) {
     var cpuStatus = cpuStatusUtility.getCpuStatus();
     var level = room.controller.level || 1;
     var energyCapacity = room.energyCapacityAvailable || 300;
-    var storageEnergy = getStoredEnergy(room.storage);
     var desiredWork;
 
     if (level === 1) {
@@ -1143,51 +1125,14 @@ function getDesiredTechWork(room) {
         return 1;
     }
 
-    if (!room.storage) {
-        if (level <= 2) {
-            desiredWork = energyCapacity >= 550 ? 4 :
-                energyCapacity >= 400 ? 3 : 2;
-        }
-        else if (level <= 4) {
-            desiredWork = energyCapacity >= 800 ? 6 : 4;
-        }
-        else {
-            /* A high-RCL room without storage is probably recovering. */
-            desiredWork = energyCapacity >= 1300 ? 6 : 4;
-        }
-    }
-    else if (storageEnergy < 20000) {
-        desiredWork = 4;
-    }
-    else if (storageEnergy < 50000) {
-        desiredWork = 6;
-    }
-    else if (storageEnergy < 100000) {
-        desiredWork = 9;
-    }
-    else if (storageEnergy < 200000) {
-        desiredWork = 14;
-    }
-    else {
-        desiredWork = 20;
-    }
+    var economy = Economy.get(room.name);
+    var growth = economy && economy.growth;
+    desiredWork = growth && typeof growth.affordableWork === 'number' ? growth.affordableWork :
+        (level <= 2 ? 2 : energyCapacity >= 800 ? 5 : 3);
 
-    if (getControllerContainerEnergy(room) >= 1000) {
-        desiredWork++;
-    }
-
-    /* Each 5 net remote energy/tick adds one WORK, up to four. */
-    var remoteBonus = Math.min(4, Math.floor(getActiveRemoteNetIncome(room.name) / 5));
-    desiredWork += remoteBonus;
-
-    if (!room.storage) {
-        desiredWork = Math.min(desiredWork, 8);
-    }
-
-    /* A nearly empty storage is a recovery state even if remotes look strong. */
-    if (room.storage && storageEnergy < 5000) {
-        desiredWork = Math.min(desiredWork, 4);
-    }
+    /* A fueled controller container reduces delivery loss, but never invents income. */
+    if (growth && getControllerContainerEnergy(room) >= 1000 &&
+        growth.energyAboveReserve > 0) desiredWork++;
 
     var upgradeRush = HiveMemory.getConfig('upgrade').upgradeRush === true;
     var constructionDemand = getCachedLocalConstructionDemand(room);
@@ -1201,9 +1146,7 @@ function getDesiredTechWork(room) {
             desiredWork = Math.ceil(desiredWork * 0.75);
         }
     }
-    else {
-        desiredWork = Math.ceil(desiredWork * 1.35);
-    }
+    else desiredWork = Math.ceil(desiredWork * 1.15);
 
     if (room.controller.ticksToDowngrade < TECH_DOWNGRADE_DANGER_TICKS) {
         var emergencyMinimum = energyCapacity >= 550 ? 5 : 2;
@@ -1219,7 +1162,7 @@ function getDesiredTechWork(room) {
         Math.min(desiredWork, TECH_BASE_MAX_DESIRED_WORK)
     );
     var cpuMultiplier = 1;
-    var boostReason = 'normal CPU demand';
+    var boostReason = growth ? growth.mode + ': ' + growth.blockedReason : 'economy snapshot unavailable';
     var context = getActiveContext(room.name);
     var essentialEconomyReady = true;
 
@@ -1239,8 +1182,8 @@ function getDesiredTechWork(room) {
     else if (cpuStatus.bucket < settings.cpuUpgradeMinimumBucket) {
         boostReason = 'CPU bucket below upgrade threshold';
     }
-    else if (!room.storage || storageEnergy < settings.cpuUpgradeMinimumStorage) {
-        boostReason = 'room energy reserve is recovering';
+    else if (growth && growth.energyAboveReserve <= 0) {
+        boostReason = growth.blockedReason;
     }
     else if (!essentialEconomyReady) {
         boostReason = 'essential economy roles are not ready';
@@ -1266,12 +1209,17 @@ function getDesiredTechWork(room) {
         cpuMultiplier = 1 +
             ((maximumMultiplier - 1) * cpuScale * (0.75 + (0.25 * bucketScale)));
         cpuMultiplier = Math.round(cpuMultiplier * 100) / 100;
-        boostReason = cpuMultiplier > 1 ? 'healthy CPU and room economy' :
+        boostReason = cpuMultiplier > 1 ? (growth ? growth.mode : 'healthy CPU and room economy') :
             'CPU limit does not provide extra capacity';
     }
 
     desiredWork = Math.ceil(baseDesiredWork * cpuMultiplier);
-    desiredWork = Math.max(2, Math.min(desiredWork, TECH_MAX_DESIRED_WORK));
+    if (growth) {
+        var economicWorkCap = Math.max(level < 8 && growth.mode !== 'RECOVERY' ? 1 : 0,
+            growth.affordableWork + (getControllerContainerEnergy(room) >= 1000 && growth.energyAboveReserve > 0 ? 1 : 0));
+        desiredWork = Math.min(desiredWork, economicWorkCap);
+    }
+    desiredWork = Math.max(level < 8 ? 1 : 0, Math.min(desiredWork, TECH_MAX_DESIRED_WORK));
 
     /* RCL 8 controllers accept at most 15 normal upgrade energy per tick. */
     if (level === 8) {
@@ -1811,6 +1759,7 @@ function getCountScaledWork(count, baseWork, mediumAt, highAt, maxWork) {
 var ARTIFICER_ECONOMY_CATEGORIES = [
     'criticalMaintenance',
     'criticalInfrastructure',
+    'remoteBootstrap',
     'construction',
     'remote'
 ];
@@ -1819,6 +1768,7 @@ function emptyArtificerCategoryWork() {
     return {
         criticalMaintenance: 0,
         criticalInfrastructure: 0,
+        remoteBootstrap: 0,
         construction: 0,
         remote: 0
     };
@@ -2097,8 +2047,8 @@ function getArtificerBuildDemand(room) {
     workByEconomyCategory.construction =
         (criticalBuildWork > 0 ? 0 : localBuildWork) +
         repairWork - workByEconomyCategory.criticalMaintenance;
-    workByEconomyCategory.remote = remoteContainerBuildWork + remoteRoadBuildWork +
-        remoteContainerRepairWork + remoteRoadRepairWork;
+    workByEconomyCategory.remoteBootstrap = remoteContainerBuildWork + remoteContainerRepairWork;
+    workByEconomyCategory.remote = remoteRoadBuildWork + remoteRoadRepairWork;
     var mode = 'idle';
 
     if (criticalSites > 0) {
@@ -2146,8 +2096,8 @@ function getArtificerBuildDemand(room) {
         workByEconomyCategory.criticalInfrastructure = criticalBuildWork;
         workByEconomyCategory.construction = reducedLocalWork +
             emergencyRepairWork - workByEconomyCategory.criticalMaintenance;
-        workByEconomyCategory.remote = remoteContainerBuildWork +
-            remoteContainerRepairWork + reducedWorkBudget - reducedLocalWork;
+        workByEconomyCategory.remoteBootstrap = remoteContainerBuildWork + remoteContainerRepairWork;
+        workByEconomyCategory.remote = reducedWorkBudget - reducedLocalWork;
         mode = desiredWork > 0 ? 'upgrade-rush-' + mode : 'upgrade-rush';
     }
 
@@ -2344,7 +2294,7 @@ function requestDynamicArtificersForRoom(room, demandOverride, options) {
 
 
 function requestRemoteExtractorsForRoom(room, extractorBody, priority, maxRequests, options) {
-    if (!room || !Economy.canSpend(room, 'remote')) {
+    if (!room || !Economy.canSpend(room, 'remoteIncome')) {
         return { ok: true, role: 'Extractor', requested: 0, reason: 'Remote mining blocked by economy policy' };
     }
     var queue = spawnManager.getSpawnQueue(room.name);
@@ -2381,6 +2331,7 @@ function requestRemoteExtractorsForRoom(room, extractorBody, priority, maxReques
          */
         var addResult = addSpawnRequest(room.name, {
             role: 'Extractor',
+            economyCategory: 'remoteIncome',
             body: remoteBody,
             requestedWorkParts: countBodyParts(remoteBody, WORK),
             maxWorkParts: countBodyParts(remoteBody, WORK),
@@ -2611,15 +2562,19 @@ function requestAnnexForRoom(room) {
             continue;
         }
 
+        var initialReservation = !reservation || reservation.username !== myUsername ||
+            !(reservation.ticksToEnd > 0);
         var addResult = addSpawnRequest(room.name, {
             role: 'Annex',
             body: annexBody,
-            priority: PRIORITY.Annex,
+            priority: initialReservation ? ANNEX_INITIAL_PRIORITY : ANNEX_MAINTENANCE_PRIORITY,
+            economyCategory: initialReservation ? 'remoteIncome' : 'expansion',
             memory: {
                 role: 'Annex',
                 homeRoom: room.name,
                 targetRoom: remoteRoomName,
-                annexMode: 'reserve'
+                annexMode: 'reserve',
+                initialReservation: initialReservation
             },
             requestedAt: Game.time
         });
@@ -3423,7 +3378,7 @@ function getSourceMiningDemand(room) {
     var extractorBody = creepBodyConfig.getBody('Extractor', room);
     var bodyWork = Math.max(1, countBodyParts(extractorBody, WORK));
     var localSources = ensureVisibleLocalSourceMemories(room);
-    var remoteAllowed = room && Economy.canSpend(room, 'remote');
+    var remoteAllowed = room && Economy.canSpend(room, 'remoteIncome');
     var activeRemoteSources = remoteAllowed ?
         RemotePlanner.getActiveRemoteSourcesForHome(room.name) : [];
     var desiredWork = 0;
@@ -3523,7 +3478,7 @@ function getFreighterCarryDemand(room) {
     var baseLocalCarry = economy ? economy.haul.requiredCarry :
         (energyCapacity >= 800 ? 8 : energyCapacity >= 550 ? 6 : 4);
 
-    var remoteAllowed = room && Economy.canSpend(room, 'remote');
+    var remoteAllowed = room && Economy.canSpend(room, 'remoteIncome');
     var activeSources = remoteAllowed ?
         RemotePlanner.getActiveRemoteSourcesForHome(room.name) : [];
     var remoteBacklog = 0;

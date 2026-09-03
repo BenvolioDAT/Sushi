@@ -89,7 +89,7 @@ function collectEnergy(creep) {
      */
     var hadRemoteJob = creep.memory.freighterJob === 'remote';
 
-    if (hadRemoteJob && !Economy.canSpend(creep.memory.homeRoom, 'remote')) {
+    if (hadRemoteJob && !Economy.canSpend(creep.memory.homeRoom, 'remoteIncome')) {
         RemotePlanner.clearRemoteFreighterMemory(creep);
         if (creep.store[RESOURCE_ENERGY] > 0) {
             creep.memory.FreighterWorking = true;

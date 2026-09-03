@@ -154,6 +154,19 @@ A baseline Tech queue entry uses `economyCategory: controllerGrowth` and
 Tech uses `upgradeSurplus`. `spawn.governor` reports `nonCombatTotal`, the normal
 RCL cap, and whether the bounded `mandatoryFloorBypassUsed` allowance was used.
 
+`Memory.rooms[roomName].economy.growth` is a compact diagnostic snapshot of the
+authoritative growth calculation: mode/reason, local and remote income, estimated
+net income, replacement and infrastructure allowances, reserve target, energy
+above reserve, controller budget, spawn pressure, and aggregate remote counts.
+No live objects or paths are stored there. Remote planner source records add only
+small derived fields (`requiredWork`, estimated miner cost, road eligibility),
+plus a planner-level ramp decision/reason.
+
+Spawn requests for proven remote income use `remoteIncome`; Artificer demand for
+active-source container construction/repair uses `remoteBootstrap`. Reservation
+requests record the small boolean `initialReservation` so initial and maintenance
+priority remain visible and deterministic.
+
 ## Retention and garbage collection
 
 `Memory.config.memoryGC` owns cadence, work budget, and retention periods. The

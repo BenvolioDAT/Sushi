@@ -5,6 +5,7 @@
  */
 var travel = require('utility.Travel.Creep');
 var HiveMemory = require('HiveMind.Memory');
+var RemotePlanner = require('Planner.Remote');
 
 var ANNEX_PATH_STYLE = {
     stroke: '#b366ff'
@@ -105,6 +106,9 @@ var roleAnnex = {
         }
 
         creep.memory.annexState = 'reserving';
+        if (Game.time % 25 === 0) {
+            RemotePlanner.scoreRemoteRoom(creep.memory.homeRoom, targetRoomName);
+        }
 
         /* Signing is secondary: the reservation intent is always issued first. */
         if ((!controller.sign || controller.sign.text !== ANNEX_SIGN) && creep.pos.inRangeTo(controller, 1)) {

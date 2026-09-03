@@ -66,7 +66,9 @@ var roleArtificer = {
         var spend = getSpendingPolicy(creep, homeRoomName);
         getRememberedBuildTarget(creep, spend);
 
-        if (!spend.remote) {
+        var rememberedBootstrap = creep.memory.remoteWorkType === 'buildRemoteContainer' ||
+            creep.memory.remoteWorkType === 'repairRemoteContainer';
+        if (!spend.remote && (!spend.remoteBootstrap || !rememberedBootstrap)) {
             clearRemoteWorkTarget(creep);
             if(creep.room.name !== homeRoomName) {
                 setTask(creep, 'IDLE', 'remote spending blocked; returning home');
@@ -132,6 +134,11 @@ function runPermittedWork(creep, spend) {
         return;
     }
 
+    if(spend.remoteBootstrap && doRemoteBootstrapWork(creep)) {
+        setTask(creep, 'BUILD_REMOTE', 'active remote income container permitted', 'remoteBootstrap');
+        return;
+    }
+
     if(spend.remote && doRemoteInfrastructureWork(creep)) {
         setTask(creep, 'BUILD_REMOTE', 'remote infrastructure permitted', 'remote');
         return;
@@ -182,6 +189,9 @@ function chooseNextTask(creep, spend) {
     if(spend.construction && hasLocalConstructionWork(creep)) {
         return {name: 'BUILD_LOCAL', category: 'construction'};
     }
+    if(spend.remoteBootstrap && (getRememberedRemoteBootstrapTarget(creep) || findRemoteBootstrapTarget(creep))) {
+        return {name: 'BUILD_REMOTE', category: 'remoteBootstrap'};
+    }
     if(spend.remote && (getRememberedRemoteWorkTarget(creep) || findRemoteInfrastructureTarget(creep))) {
         return {name: 'BUILD_REMOTE', category: 'remote'};
     }
@@ -213,6 +223,7 @@ function getSpendingPolicy(creep, homeRoomName) {
         criticalMaintenance: Economy.canSpend(homeRoomName, 'criticalMaintenance'),
         criticalInfrastructure: Economy.canSpend(homeRoomName, 'criticalInfrastructure'),
         construction: Economy.canSpend(homeRoomName, 'construction'),
+        remoteBootstrap: Economy.canSpend(homeRoomName, 'remoteBootstrap'),
         remote: Economy.canSpend(homeRoomName, 'remote')
     };
 }
@@ -954,7 +965,7 @@ function getControllerUpgradePolicy(creep, spend) {
     }
 
     var colony = ColonyState.get(homeRoomName);
-    var baselinePhase = colony && (colony.lifecycle === 'BOOTSTRAP' || colony.lifecycle === 'GROWTH');
+    var baselinePhase = colony && colony.rcl >= 1 && colony.rcl < 8;
     if(baselinePhase && !essentialEconomySatisfied(creep, economy, colony)) {
         return {allowed: false, reason: 'essential economy needs are not satisfied'};
     }
@@ -1054,6 +1065,31 @@ function doRemoteInfrastructureWork(creep) {
 
     doBuildOrRepairTarget(creep, target, creep.memory.remoteWorkType);
     return true;
+}
+
+function doRemoteBootstrapWork(creep) {
+    var target = getRememberedRemoteBootstrapTarget(creep) || findRemoteBootstrapTarget(creep);
+    if (!target) return false;
+    doBuildOrRepairTarget(creep, target, creep.memory.remoteWorkType);
+    return true;
+}
+
+function getRememberedRemoteBootstrapTarget(creep) {
+    if (creep.memory.remoteWorkType !== 'buildRemoteContainer' &&
+        creep.memory.remoteWorkType !== 'repairRemoteContainer') return null;
+    return getRememberedRemoteWorkTarget(creep);
+}
+
+function findRemoteBootstrapTarget(creep) {
+    var remoteRooms = getActiveRemoteRoomNames(getHomeRoomName(creep));
+    var target = findBestRemoteConstructionSite(creep, remoteRooms, STRUCTURE_CONTAINER);
+    if (target) {
+        rememberRemoteWorkTarget(creep, target, 'buildRemoteContainer');
+        return target;
+    }
+    target = findBestRemoteRepairTarget(creep, remoteRooms, STRUCTURE_CONTAINER);
+    if (target) rememberRemoteWorkTarget(creep, target, 'repairRemoteContainer');
+    return target;
 }
 
 function getRememberedRemoteWorkTarget(creep) {

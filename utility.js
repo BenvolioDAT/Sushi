@@ -406,7 +406,7 @@ function createSourceFlagsFromMemory(creep) {
  * @param {string} roomName
  * @returns {object}
  */
-function planSourceContainers(roomName) {
+function planSourceContainers(roomName, targetSourceId) {
     /*
      * This planner runs from main.js every few ticks. It reads source scan
      * memory and may write container planning fields back into each source.
@@ -462,6 +462,9 @@ function planSourceContainers(roomName) {
         var sourceMemory = sourceMemoryById[sourceId];
 
         if (!sourceMemory) {
+            continue;
+        }
+        if (targetSourceId && (sourceMemory.id || sourceId) !== targetSourceId) {
             continue;
         }
 

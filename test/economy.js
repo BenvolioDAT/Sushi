@@ -106,6 +106,8 @@ test('F excess CARRY cannot hide a harvesting deficit', function() {
 test('G remote spending is suppressed during home recovery', function() {
     Memory.rooms.W1N1 = { economy: snapshot({ state: 'RECOVERY' }) };
     assert.strictEqual(Economy.canSpend('W1N1', 'remote'), false);
+    assert.strictEqual(Economy.canSpend('W1N1', 'remoteBootstrap'), true);
+    assert.strictEqual(Economy.canSpend('W1N1', 'remoteIncome'), true);
 });
 
 test('H discretionary combat demand cannot consume recovery energy', function() {

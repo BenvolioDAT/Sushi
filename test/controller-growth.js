@@ -281,4 +281,77 @@ test('siege alert pauses baseline growth while owned-room defense remains policy
     assert.match(colony.blockedReason, /defense/i);
 });
 
+test('RCL4 DEVELOPMENT remains a controller-growth phase', () => {
+    reset();
+    const room = makeRoom('W5N8', 4);
+    addCreep(room, 'foreman', 'Foreman', [CARRY, MOVE]);
+    addCreep(room, 'extractor-a', 'Extractor', [WORK, WORK, MOVE]);
+    addCreep(room, 'extractor-b', 'Extractor', [WORK, WORK, MOVE]);
+    addCreep(room, 'freighter', 'Freighter', [CARRY, CARRY, MOVE]);
+    Memory.rooms[room.name].economy.state = 'STABLE';
+    const colony = refreshColony(room);
+    assert.strictEqual(colony.lifecycle, 'DEVELOPMENT');
+    assert.strictEqual(colony.growthAllowed, true);
+    assert.strictEqual(colony.baselineTechWork, 1);
+});
+
+test('RCL4 baseline Tech keeps upgrading through moderate RECOVERY', () => {
+    reset();
+    const room = makeRoom('W5N8', 4);
+    addCreep(room, 'foreman', 'Foreman', [CARRY, MOVE]);
+    addCreep(room, 'extractor-a', 'Extractor', [WORK, WORK, MOVE]);
+    addCreep(room, 'extractor-b', 'Extractor', [WORK, WORK, MOVE]);
+    addCreep(room, 'freighter', 'Freighter', [CARRY, CARRY, MOVE]);
+    const tech = addCreep(room, 'tech', 'Tech', [WORK, CARRY, MOVE], { controllerGrowthFloor: true });
+    tech.store = { [RESOURCE_ENERGY]: 50, getUsedCapacity: () => 50, getFreeCapacity: () => 0 };
+    let upgraded = false;
+    tech.upgradeController = () => { upgraded = true; return OK; };
+    refreshColony(room);
+    fresh('role.Tech.js').run(tech);
+    assert.strictEqual(upgraded, true);
+});
+
+test('RCL4 Tech WORK follows the economic budget instead of the old 25k storage tier', () => {
+    reset();
+    const room = makeRoom('W5N8', 4);
+    room.storage = { store: { [RESOURCE_ENERGY]: 25000, getUsedCapacity: () => 25000 } };
+    Memory.rooms[room.name].economy.state = 'STABLE';
+    Memory.rooms[room.name].economy.growth = {
+        mode: 'GROWTH_AGGRESSIVE', blockedReason: 'CONTROLLER_GROWTH_ACTIVE',
+        affordableWork: 14, energyAboveReserve: 15000
+    };
+    delete global.__sushiEconomy;
+    const desired = fresh('spawn.request.manager.js').getDesiredTechWork(room);
+    assert.ok(desired > 6, 'healthy 25k storage room should exceed the old six-WORK tier');
+    assert.ok(desired <= 14, 'CPU policy must not exceed the economic WORK budget');
+});
+
+test('remote miner demand grows from unreserved to reserved source output', () => {
+    reset();
+    const room = makeRoom('W5N8', 3);
+    Memory.rooms[room.name].economy.state = 'STABLE';
+    Game.map.describeExits = name => name === room.name ? { 1: 'W5N9' } : { 5: room.name };
+    Memory.rooms.W5N9 = { sources: { remoteSource: { id: 'remoteSource' } } };
+    Memory.rooms[room.name].remotePlanner = {
+        pathVersion: 1, activeSourceIds: ['remoteSource'], remotes: {},
+        sourceInfos: { remoteSource: {
+            sourceId: 'remoteSource', roomName: 'W5N9', parentRoomName: room.name,
+            active: true, effectiveEnergyPerTick: 5, grossEnergyPerTick: 10,
+            distance: 40, numOpen: 1, score: 4, netIncome: 4
+        } }
+    };
+    delete global.__sushiEconomy;
+    let planner = fresh('Planner.Remote.js');
+    let demand = planner.getRemoteExtractorDemand(room.name, [WORK, WORK, WORK, WORK, WORK, CARRY, MOVE], []);
+    assert.strictEqual(demand[0].wantedWork, 3);
+
+    addCreep(room, 'remote-miner', 'Extractor', [WORK, WORK, WORK, CARRY, MOVE], {
+        remoteMining: true, sourceRoom: 'W5N9', targetRoom: 'W5N9',
+        sourceId: 'remoteSource', targetSourceId: 'remoteSource'
+    });
+    Memory.rooms[room.name].remotePlanner.sourceInfos.remoteSource.effectiveEnergyPerTick = 10;
+    demand = planner.getRemoteExtractorDemand(room.name, [WORK, WORK, WORK, WORK, WORK, CARRY, MOVE], []);
+    assert.strictEqual(demand[0].wantedWork, 5);
+});
+
 console.log(`Controller-growth regression tests passed: ${passed}`);

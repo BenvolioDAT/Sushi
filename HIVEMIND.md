@@ -636,6 +636,31 @@ Memory.config.visuals.showRemoteRoomDashboard = false
 Memory.config.visuals.showStructurePlanner = false
 ```
 
+## RCL growth economy
+
+`HiveMind.Economy` computes the authoritative RCL1-7 growth policy from observed
+local and active-remote income, current economic creep replacement depreciation,
+an infrastructure allowance, spawn pressure, hauling health, threat state, and a
+dynamic replacement reserve. `spawn.request.manager` converts the resulting
+`growth.controllerBudget` into Tech WORK demand; storage tiers are not a second
+controller-demand algorithm.
+
+Remote mining ramps one profitable source at a time. A further source requires
+the existing source to have miner coverage, a container or container plan,
+recent hauling evidence, adequate CARRY, and available spawn capacity. Active
+remote miners and source containers use the `remoteIncome` and
+`remoteBootstrap` spending categories, so moderate RECOVERY can preserve income.
+Optional remote roads remain `remote` spending and require a built container,
+working hauling, reservation, stable economy, and a funded growth budget.
+
+Inspect the live policy with:
+
+```js
+require('HiveMind.Economy').get('W1N1').growth
+require('HiveMind.Telemetry').getView().growth.W1N1
+Memory.rooms.W1N1.remotePlanner.rampReason
+```
+
 Configure Reactor selection/recapture and boost production:
 
 ```js
