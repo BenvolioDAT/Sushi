@@ -1059,6 +1059,14 @@ function getRememberedRemoteWorkTarget(creep) {
 
     var roomName = creep.memory.remoteWorkRoomName;
 
+    if(creep.memory.season11Maintenance) {
+        var currentMaintenance = getSeason11OperationMaintenanceTarget(creep);
+        if(!currentMaintenance || currentMaintenance.id !== creep.memory.remoteWorkTargetId) {
+            clearRemoteWorkTarget(creep);
+            return null;
+        }
+    }
+
     var target = Game.getObjectById(creep.memory.remoteWorkTargetId);
 
     if(!target) {
@@ -1071,6 +1079,11 @@ function getRememberedRemoteWorkTarget(creep) {
             clearRemoteWorkTarget(creep);
         }
 
+        return null;
+    }
+
+    if(creep.memory.season11Maintenance && !isSafeSeason11MaintenanceTarget(creep, target)) {
+        clearRemoteWorkTarget(creep);
         return null;
     }
 
@@ -1114,6 +1127,19 @@ function findRemoteInfrastructureTarget(creep) {
         return null;
     }
 
+    if(creep.memory.season11Maintenance) {
+        var maintenance = getSeason11OperationMaintenanceTarget(creep);
+        var seasonTarget = maintenance && Game.getObjectById(maintenance.id);
+        if(seasonTarget && isSafeSeason11MaintenanceTarget(creep, seasonTarget)) {
+            creep.memory.season11RepairTargetId = maintenance.id;
+            creep.memory.season11SupportRoom = maintenance.roomName;
+            rememberRemoteWorkTarget(creep, seasonTarget, maintenance.workType);
+            return seasonTarget;
+        }
+        creep.memory.remoteWorkNextScan = Game.time + REMOTE_WORK_EMPTY_SCAN_COOLDOWN;
+        return null;
+    }
+
     var homeRoomName = getHomeRoomName(creep);
     var remoteRooms = getActiveRemoteRoomNames(homeRoomName);
     var target;
@@ -1149,6 +1175,24 @@ function findRemoteInfrastructureTarget(creep) {
 
     creep.memory.remoteWorkNextScan = Game.time + REMOTE_WORK_EMPTY_SCAN_COOLDOWN;
     return null;
+}
+
+function getSeason11OperationMaintenanceTarget(creep) {
+    var operation = creep.memory.operationId &&
+        HiveMemory.ensure().operations[creep.memory.operationId];
+    return operation && operation.season11 === true ? operation.season11MaintenanceTarget : null;
+}
+
+function isSafeSeason11MaintenanceTarget(creep, target) {
+    var roomName = creep.memory.season11SupportRoom;
+    if(!roomName || !target || !target.pos || target.pos.roomName !== roomName ||
+        target.my === false || !remoteStructureNeedsRepair(target) ||
+        target.structureType !== STRUCTURE_CONTAINER && target.structureType !== STRUCTURE_ROAD) return false;
+    var room = Game.rooms && Game.rooms[roomName];
+    if(!room || !room.controller || !room.controller.my) return false;
+    if(typeof FIND_HOSTILE_CREEPS !== 'undefined' && typeof room.find === 'function' &&
+        (room.find(FIND_HOSTILE_CREEPS) || []).length > 0) return false;
+    return true;
 }
 
 function rememberRemoteWorkTarget(creep, target, workType) {
@@ -1327,7 +1371,11 @@ function doBuildOrRepairTarget(creep, target, workType) {
     }
 
     if(result === ERR_NOT_IN_RANGE) {
-        utilityTravelCreep.move(creep, target, {range: 3, visualizePathStyle: {stroke: '#ffffff'}});
+        utilityTravelCreep.move(creep, target, {
+            range: 3,
+            allowHostile: creep.memory.season11Maintenance ? false : undefined,
+            visualizePathStyle: {stroke: '#ffffff'}
+        });
     }
 }
 

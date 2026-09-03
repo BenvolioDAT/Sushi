@@ -30,7 +30,15 @@ function season11Staging(creep) {
     const assignments = Season11.ensureMemory().assignments.mining || {};
     const local = assignments[creep.room.name] || Object.values(assignments)
         .find(item => item && item.roomName === (creep.memory.homeRoom || creep.room.name));
-    return local && local.stagingId && Game.getObjectById(local.stagingId) || null;
+    const staging = local && local.stagingId && Game.getObjectById(local.stagingId) || null;
+    const roomName = staging && staging.pos && staging.pos.roomName;
+    const room = roomName && Game.rooms && Game.rooms[roomName];
+    const validType = staging && [STRUCTURE_CONTAINER, STRUCTURE_STORAGE, STRUCTURE_TERMINAL]
+        .includes(staging.structureType);
+    return staging && validType && staging.store && staging.my !== false && roomName === local.roomName &&
+        room && room.controller && room.controller.my &&
+        (typeof staging.store.getFreeCapacity !== 'function' || staging.store.getFreeCapacity(Season11.getThoriumResourceType()) > 0) ?
+        staging : null;
 }
 
 function run(creep) {

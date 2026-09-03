@@ -19,12 +19,14 @@ global.STRUCTURE_EXTRACTOR = 'extractor';
 global.STRUCTURE_CONTAINER = 'container';
 global.STRUCTURE_STORAGE = 'storage';
 global.STRUCTURE_TERMINAL = 'terminal';
+global.STRUCTURE_ROAD = 'road';
 global.Creep = function() {};
 var Season11 = require('./Logic.Season11');
 var Season11Operations = require('./Season11.Operations');
 var ResourceMinerals = require('./Resource.Minerals');
 var ResourceManager = require('./Resource.Manager');
 var ResourceTerminals = require('./Resource.Terminals');
+var ResourceObserver = require('./Resource.Observer');
 var DemandBoard = require('./Spawn.DemandBoard');
 
 var passed = 0;
@@ -201,14 +203,76 @@ test('legacy generic Thorium miner migrates only into a ready Season 11 assignme
     var memory = Season11.ensureMemory();
     memory.assignments.mining.W1N1 = {
         key: 'mine:W1N1', roomName: 'W1N1', mineralId: 'thorium',
-        stagingId: 'staging', routeDistance: 1
+        stagingId: 'staging', routeDistance: 1, remaining: 100, ready: true, depleted: false
     };
+    Game.rooms.W1N1 = { name: 'W1N1', controller: { my: true } };
+    var staging = {
+        id: 'staging', my: true, structureType: STRUCTURE_CONTAINER,
+        pos: { roomName: 'W1N1' }, store: { getFreeCapacity: function() { return 1000; } }
+    };
+    Game.getObjectById = function(id) { return id === 'staging' ? staging : null; };
     var role = require('./role.MineralMiner');
     var creep = { room: { name: 'W1N1' }, memory: { role: 'MineralMiner', mineralId: 'thorium' } };
-    assert.strictEqual(role.migrateThoriumMiner(creep, { id: 'thorium', mineralType: 'T' }), true);
+    assert.strictEqual(role.migrateThoriumMiner(creep, {
+        id: 'thorium', mineralType: 'T', pos: { roomName: 'W1N1' }
+    }), true);
     assert.strictEqual(creep.memory.role, 'ThoriumMiner');
     assert.strictEqual(creep.memory.season11StagingId, 'staging');
     assert.strictEqual(creep.memory.mineralId, undefined);
+});
+
+test('legacy Thorium migration rejects stale, depleted, and not-ready assignments', function() {
+    resetWorld();
+    enableSeasonApi();
+    var memory = Season11.ensureMemory();
+    Game.rooms.W1N1 = { name: 'W1N1', controller: { my: true } };
+    var staging = {
+        id: 'staging', my: true, structureType: STRUCTURE_CONTAINER,
+        pos: { roomName: 'W1N1' }, store: { getFreeCapacity: function() { return 1000; } }
+    };
+    Game.getObjectById = function(id) { return id === 'staging' ? staging : null; };
+    var role = require('./role.MineralMiner');
+    function attempt(overrides, mineralId) {
+        memory.assignments.mining = { W1N1: Object.assign({
+            key: 'mine:W1N1', roomName: 'W1N1', mineralId: 'thorium', stagingId: 'staging',
+            routeDistance: 1, remaining: 100, ready: true, depleted: false
+        }, overrides) };
+        var creep = { room: Game.rooms.W1N1, memory: { role: 'MineralMiner', mineralId: mineralId || 'thorium' } };
+        return role.migrateThoriumMiner(creep, {
+            id: mineralId || 'thorium', mineralType: 'T', pos: { roomName: 'W1N1' }
+        });
+    }
+    assert.strictEqual(attempt({ mineralId: 'old-thorium' }, 'thorium'), false, 'stale mineral id');
+    assert.strictEqual(attempt({ remaining: 0, depleted: true }), false, 'depleted assignment');
+    assert.strictEqual(attempt({ ready: false }), false, 'not-ready assignment');
+    assert.strictEqual(attempt({ stagingId: 'missing' }), false, 'invalid staging');
+});
+
+test('rejected legacy Thorium cargo retires and returns only to owned storage', function() {
+    resetWorld();
+    enableSeasonApi();
+    global.OK = 0;
+    global.ERR_NOT_IN_RANGE = -9;
+    var transfers = 0;
+    var storage = {
+        id: 'storage', my: true, structureType: STRUCTURE_STORAGE,
+        pos: { roomName: 'W1N1' }, store: { getFreeCapacity: function() { return 1000; } }
+    };
+    var room = { name: 'W1N1', controller: { my: true }, storage: storage };
+    Game.rooms.W1N1 = room;
+    var mineral = { id: 'thorium', mineralType: 'T', mineralAmount: 100, pos: {} };
+    Game.getObjectById = function(id) { return id === 'thorium' ? mineral : id === 'storage' ? storage : null; };
+    var creep = {
+        spawning: false, room: room, store: { T: 25 },
+        memory: { role: 'MineralMiner', mineralId: 'thorium', mineralType: 'T', demandId: 'old', operationId: 'old', resourceJobId: 'old' },
+        transfer: function(target, resource) { transfers++; assert.strictEqual(target, storage); assert.strictEqual(resource, 'T'); return OK; }
+    };
+    require('./role.MineralMiner').run(creep);
+    assert.strictEqual(creep.memory.role, 'ResourceCourier');
+    assert.strictEqual(transfers, 1);
+    assert.strictEqual(creep.memory.demandId, undefined);
+    assert.strictEqual(creep.memory.operationId, undefined);
+    assert.strictEqual(creep.memory.resourceJobId, undefined);
 });
 
 test('stale generic Thorium miner without a live target retires into safe logistics', function() {
@@ -299,21 +363,79 @@ test('aging thresholds use total Thorium on the tile', function() {
     assert.strictEqual(tile.observable, true);
 });
 
-test('aging fallback is conservative and independent of carry capacity', function() {
+test('aging fallback is explicitly estimated and independent of carry capacity', function() {
     resetWorld();
     enableSeasonApi();
     Season11.ensureMemory().config.agingFallbackThorium = 1000;
     var fallback = Season11.observeTileThorium(null);
     assert.deepStrictEqual({ total: fallback.total, multiplier: fallback.multiplier, source: fallback.source },
-        { total: 1000, multiplier: 3, source: 'conservativeFallback' });
+        { total: 1000, multiplier: 3, source: 'fallbackEstimate' });
     var exact = Season11Operations.agingMetrics(2, 10);
     var planned = Season11Operations.agingMetrics(2);
     assert.strictEqual(exact.agingMultiplier, 1);
     assert.strictEqual(exact.agingEstimateSource, 'providedTileTotal');
     assert.strictEqual(planned.agingMultiplier, 3);
-    assert.strictEqual(planned.agingEstimateSource, 'conservativeFallback');
+    assert.strictEqual(planned.agingEstimateSource, 'fallbackEstimate');
     var source = fs.readFileSync(path.join(__dirname, 'Logic.Season11.js'), 'utf8');
     assert.strictEqual(source.indexOf('Math.log10(expectedCarryCapacity)'), -1);
+});
+
+test('live route Thorium observations replace the configured aging fallback', function() {
+    resetWorld();
+    enableSeasonApi();
+    Game.creeps.hauler = { memory: {
+        role: 'ThoriumHauler', season11SourceRoom: 'W1N1', season11ReactorId: 'reactor',
+        season11ObservedTileThorium: 99, season11AgingEstimateSource: 'tileLook'
+    } };
+    var estimate = Season11.getRouteAgingEstimate({ roomName: 'W1N1' }, { id: 'reactor' });
+    assert.deepStrictEqual({ total: estimate.total, multiplier: estimate.multiplier, source: estimate.source },
+        { total: 99, multiplier: 1, source: 'liveRouteObservation' });
+});
+
+test('known Season 11 rooms are included in observer priorities', function() {
+    resetWorld();
+    enableSeasonApi();
+    Season11.ensureMemory().rooms.W5N5 = { roomName: 'W5N5', lastSeen: Game.time };
+    assert.ok(ResourceObserver.priorityRooms('W1N1').includes('W5N5'));
+    delete global.FIND_REACTORS;
+    assert.ok(!ResourceObserver.priorityRooms('W1N1').includes('W5N5'));
+});
+
+test('Season 11 maintenance demand requires visible safe repair work', function() {
+    resetWorld();
+    enableSeasonApi();
+    var memory = Season11.ensureMemory();
+    memory.rooms.W1N1 = { roomName: 'W1N1', threatParts: 0 };
+    var mineral = { id: 'thorium', pos: { x: 10, y: 10, roomName: 'W1N1' } };
+    var staging = {
+        id: 'staging', my: true, structureType: STRUCTURE_CONTAINER, hits: 700, hitsMax: 1000,
+        pos: { x: 11, y: 10, roomName: 'W1N1' }
+    };
+    var road = {
+        id: 'road', my: true, structureType: STRUCTURE_ROAD, hits: 500, hitsMax: 1000,
+        pos: { x: 12, y: 10, roomName: 'W1N1' }
+    };
+    Game.rooms.W1N1 = {
+        name: 'W1N1', controller: { my: true },
+        find: function() { return [road, staging]; }
+    };
+    Game.getObjectById = function(id) { return id === 'thorium' ? mineral : id === 'staging' ? staging : null; };
+    var assignment = {
+        roomName: 'W1N1', homeRoom: 'W1N1', mineralId: 'thorium', stagingId: 'staging',
+        ready: true, depleted: false, remaining: 100
+    };
+    assert.strictEqual(Season11Operations.findSeason11MaintenanceTarget(assignment, memory), staging);
+    memory.assignments.mining.W1N1 = Object.assign({ key: 'mine:W1N1', routeDistance: 1 }, assignment);
+    Season11Operations.run({ operating: true, selectedReactor: null, knownThoriumRemaining: 100 });
+    var operation = Memory.hive.operations['season11:mine:W1N1'];
+    assert.strictEqual(operation.season11MaintenanceTarget.id, 'staging');
+    assert.strictEqual(operation.spawnDemands[0].memory.remoteWorkTargetId, 'staging');
+    assert.strictEqual(operation.spawnDemands[0].memory.season11SupportRoom, 'W1N1');
+    memory.rooms.W1N1.threatParts = 1;
+    assert.strictEqual(Season11Operations.findSeason11MaintenanceTarget(assignment, memory), null);
+    memory.rooms.W1N1.threatParts = 0;
+    assignment.ready = false;
+    assert.strictEqual(Season11Operations.findSeason11MaintenanceTarget(assignment, memory), null);
 });
 
 function installRankingWorld() {

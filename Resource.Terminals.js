@@ -44,6 +44,9 @@ function resourceKeys(store) {
 }
 
 function isDedicatedThorium(resourceType) {
+    /* Intentional Season 11 policy: generic terminal logistics never move
+       Thorium, even between owned terminals. Staging and Reactor supply remain
+       exclusively under the dedicated creep pipeline. */
     return Season11Adapter.isAvailable() && resourceType === Season11Adapter.resourceType();
 }
 

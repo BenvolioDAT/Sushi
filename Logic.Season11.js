@@ -1191,12 +1191,12 @@ function observeTileThorium(pos, fallbackAmount) {
         Number(ensureMemory().config.agingFallbackThorium) || 1000));
     var thorium = getThoriumResourceType();
     if (!thorium || !pos || typeof pos.look !== 'function') {
-        return { total: fallback, multiplier: thoriumAgingMultiplier(fallback), observable: false, source: 'conservativeFallback' };
+        return { total: fallback, multiplier: thoriumAgingMultiplier(fallback), observable: false, source: 'fallbackEstimate' };
     }
     var entries;
     try { entries = pos.look() || []; }
     catch (error) {
-        return { total: fallback, multiplier: thoriumAgingMultiplier(fallback), observable: false, source: 'conservativeFallback' };
+        return { total: fallback, multiplier: thoriumAgingMultiplier(fallback), observable: false, source: 'fallbackEstimate' };
     }
     var total = 0;
     var seen = {};
@@ -1353,6 +1353,31 @@ function makeClaimerPlan(homeRoom, reactor) {
     };
 }
 
+function getRouteAgingEstimate(assignment, reactor) {
+    var maximumObserved = null;
+    var creeps = TickIndex.get().allCreeps;
+    for (var i = 0; i < creeps.length; i++) {
+        var creep = creeps[i];
+        var creepMemory = creep && creep.memory;
+        if (!creepMemory || creepMemory.role !== 'ThoriumHauler' ||
+            creepMemory.season11SourceRoom !== assignment.roomName ||
+            creepMemory.season11ReactorId !== reactor.id ||
+            creepMemory.season11AgingEstimateSource !== 'tileLook') continue;
+        var observed = Number(creepMemory.season11ObservedTileThorium);
+        if (isFinite(observed) && observed >= 0 &&
+            (maximumObserved === null || observed > maximumObserved)) maximumObserved = observed;
+    }
+    if (maximumObserved !== null) {
+        return {
+            total: maximumObserved,
+            multiplier: thoriumAgingMultiplier(maximumObserved),
+            observable: true,
+            source: 'liveRouteObservation'
+        };
+    }
+    return observeTileThorium(null, ensureMemory().config.agingFallbackThorium);
+}
+
 function makeHaulerPlan(homeRoom, assignment, reactor, emergency) {
     var routeRooms = getRouteDistance(assignment.roomName, reactor.roomName);
     if (routeRooms === null) {
@@ -1363,9 +1388,11 @@ function makeHaulerPlan(homeRoom, assignment, reactor, emergency) {
         Math.ceil((routeTiles * 2 *
             ensureMemory().config.haulerSafetyMargin) / 50)));
     var expectedCarryCapacity = requestedCarryParts * 50;
-    /* Future route tiles are not observable during planning. A deliberately
-       conservative configured amount is used; carry capacity is not a proxy. */
-    var agingEstimate = observeTileThorium(null, ensureMemory().config.agingFallbackThorium);
+    /* Reuse the highest current live observation from this route when one is
+       available. Otherwise use the configured estimate; carry capacity is not
+       a proxy for tile Thorium. Live Season 11 observations are required to
+       tune this fallback for the shard. */
+    var agingEstimate = getRouteAgingEstimate(assignment, reactor);
     var thoriumAging = agingEstimate.multiplier;
     var effectiveLifetime = Math.max(1,
         Math.floor(1500 / Math.max(1, thoriumAging)));
@@ -1648,7 +1675,7 @@ function getDiagnostics() {
                 Number(creep.memory.season11ObservedTileThorium) || 0);
             maximumAgingMultiplier = Math.max(maximumAgingMultiplier,
                 Number(creep.memory.season11AgingMultiplier) || 0);
-            if (creep.memory.season11AgingEstimateSource === 'conservativeFallback') agingFallbackCreeps++;
+            if (creep.memory.season11AgingEstimateSource === 'fallbackEstimate') agingFallbackCreeps++;
             var eta = creep.memory.season11DeliveryEta;
             if (typeof eta === 'number' &&
                 getTime() - (creep.memory.season11EtaTick || 0) <= 2 &&
@@ -1834,6 +1861,7 @@ module.exports = {
     observeTileThorium: observeTileThorium,
     estimateStarvation: estimateStarvation,
     calculateHaulerDemand: calculateHaulerDemand,
+    getRouteAgingEstimate: getRouteAgingEstimate,
     getAssignmentCount: getAssignmentCount,
     getSpawnPlanForRoom: getSpawnPlanForRoom,
     mayClaimReactor: mayClaimReactor,

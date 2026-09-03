@@ -242,6 +242,40 @@ function assignCreeps(operation) {
         .map(creep => creep && creep.name).filter(Boolean))).sort();
 }
 
+function rangeBetween(a, b) {
+    if (!a || !b || a.roomName !== b.roomName) return Infinity;
+    return Math.max(Math.abs(a.x - b.x), Math.abs(a.y - b.y));
+}
+
+function findSeason11MaintenanceTarget(assignment, memory) {
+    if (!assignment || assignment.ready !== true || assignment.depleted === true ||
+        !(Number(assignment.remaining) > 0) || assignment.homeRoom !== assignment.roomName) return null;
+    const room = Game.rooms && Game.rooms[assignment.roomName];
+    const intel = memory.rooms && memory.rooms[assignment.roomName];
+    if (!room || !room.controller || !room.controller.my || intel && (intel.threatParts || 0) > 0 ||
+        typeof FIND_STRUCTURES === 'undefined') return null;
+    const structures = room.find(FIND_STRUCTURES) || [];
+    const staging = assignment.stagingId && Game.getObjectById(assignment.stagingId);
+    const mineral = assignment.mineralId && Game.getObjectById(assignment.mineralId);
+    const candidates = structures.filter(structure => {
+        if (!structure || !structure.pos || structure.my === false ||
+            !(structure.hits < structure.hitsMax)) return false;
+        if (structure.structureType === STRUCTURE_CONTAINER) {
+            return structure.id === assignment.stagingId && structure.hits < structure.hitsMax * 0.80;
+        }
+        if (structure.structureType !== STRUCTURE_ROAD || structure.hits >= structure.hitsMax * 0.60) return false;
+        return rangeBetween(structure.pos, mineral && mineral.pos) <= 5 ||
+            rangeBetween(structure.pos, staging && staging.pos) <= 5;
+    });
+    candidates.sort((a, b) => {
+        const aStaging = a.id === assignment.stagingId ? 0 : 1;
+        const bStaging = b.id === assignment.stagingId ? 0 : 1;
+        return aStaging - bStaging || a.hits / a.hitsMax - b.hits / b.hitsMax ||
+            String(a.id).localeCompare(String(b.id));
+    });
+    return candidates[0] || null;
+}
+
 function syncMiningOperations(memory, diagnostics, activeIds) {
     for (const assignment of Object.values(memory.assignments.mining || {})) {
         if (!assignment || !assignment.key || !assignment.roomName) continue;
@@ -262,7 +296,8 @@ function syncMiningOperations(memory, diagnostics, activeIds) {
             threatParts: memory.rooms[assignment.roomName] && memory.rooms[assignment.roomName].threatParts,
             depleted
         });
-        const maintenanceNeeded = calculation.metrics.routeMaintenanceCost >= 60;
+        const maintenanceTarget = findSeason11MaintenanceTarget(assignment, memory);
+        const maintenanceNeeded = !!maintenanceTarget;
         const operation = createOrUpdate('HARVEST_THORIUM', {
             id,
             state,
@@ -280,17 +315,37 @@ function syncMiningOperations(memory, diagnostics, activeIds) {
                 hauling: stored > 0 || !depleted ? 1 : 0,
                 maintenance: maintenanceNeeded ? 1 : 0
             },
-            spawnDemands: maintenanceNeeded && assignment.homeRoom === assignment.roomName ? [{
+            spawnDemands: maintenanceNeeded ? [{
                 id: `${id}:maintenance`,
                 role: 'Artificer',
                 count: 1,
                 priority: 32,
+                validUntil: now() + 2,
                 targetRoom: assignment.roomName,
-                memory: { season11SupportRoom: assignment.roomName },
-                reason: 'Season 11 road/container maintenance estimate'
+                memory: {
+                    season11Maintenance: true,
+                    season11SupportRoom: assignment.roomName,
+                    season11RepairTargetId: maintenanceTarget.id,
+                    remoteWorkTargetId: maintenanceTarget.id,
+                    remoteWorkRoomName: assignment.roomName,
+                    remoteWorkX: maintenanceTarget.pos.x,
+                    remoteWorkY: maintenanceTarget.pos.y,
+                    remoteWorkType: maintenanceTarget.structureType === STRUCTURE_CONTAINER ?
+                        'repairRemoteContainer' : 'repairRemoteRoad',
+                    remoteWorkHomeRoom: assignment.homeRoom
+                },
+                reason: 'Visible damaged Season 11 route structure'
             }] : [],
             debugReason: reason
         });
+        operation.season11MaintenanceTarget = maintenanceTarget ? {
+            id: maintenanceTarget.id,
+            roomName: assignment.roomName,
+            x: maintenanceTarget.pos.x,
+            y: maintenanceTarget.pos.y,
+            workType: maintenanceTarget.structureType === STRUCTURE_CONTAINER ?
+                'repairRemoteContainer' : 'repairRemoteRoad'
+        } : null;
         applyUtility(operation, calculation);
         assignCreeps(operation);
         activeIds.add(id);
@@ -520,6 +575,7 @@ module.exports = {
     agingMetrics,
     deliveryThroughput,
     noteDelivery,
+    findSeason11MaintenanceTarget,
     run,
     getDashboard,
     resetForTests

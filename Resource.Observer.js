@@ -38,7 +38,8 @@ function priorityRooms(origin) {
     for (const threat of Object.values(hive.threats)) if (threat && threat.roomName) priorities.push(threat.roomName);
     const expansion = HiveMemory.ensure().expansion;
     if (expansion.targetRoom) priorities.push(expansion.targetRoom);
-    const seasonRooms = hive.season && hive.season.rooms || {};
+    const seasonRooms = Season11.isObserving() && hive.season && hive.season.season11 &&
+        hive.season.season11.rooms || {};
     for (const roomName of Object.keys(seasonRooms)) priorities.push(roomName);
     return Array.from(new Set(priorities)).filter(roomName => roomName !== origin &&
         Game.map.getRoomLinearDistance(origin, roomName) <= 10).sort();
