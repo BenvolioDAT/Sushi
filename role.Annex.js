@@ -44,6 +44,17 @@ var roleAnnex = {
             return;
         }
 
+        var homePlanner = Memory.rooms[creep.memory.homeRoom] && Memory.rooms[creep.memory.homeRoom].remotePlanner;
+        if (homePlanner && homePlanner.sourceInfos) {
+            var known = Object.values(homePlanner.sourceInfos).filter(function(info) { return info.roomName === targetRoomName; });
+            if (known.length && !known.some(function(info) {
+                return info.active && info.operational !== false && (!info.route || info.route.valid !== false);
+            })) {
+                creep.memory.annexState = 'waitingForRemoteRoute';
+                RemotePlanner.retreatRemoteCreep(creep, creep.memory.homeRoom);
+                return;
+            }
+        }
         var targetRoom = Game.rooms[targetRoomName];
         if (!targetRoom) {
             creep.memory.annexState = 'movingToTargetRoom';

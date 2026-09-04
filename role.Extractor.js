@@ -30,6 +30,8 @@ var roleExtractor = {
          * Keep source container planning fresh for this room. This may read
          * Memory.rooms[roomName].sources and write container planning fields.
          */
+        if (creep.memory.remoteMining && creep.memory.sourceId &&
+            RemotePlanner.moveExtractorAlongRemotePath(creep, creep.memory.homeRoom, creep.memory.sourceId)) return;
         utility.planSourceContainers(creep.room.name);
 
         // A Veinseeker is a basic source miner. It remembers one source if it can.
@@ -39,6 +41,8 @@ var roleExtractor = {
          */
         var source = utilityCreep.getAssignedSource(creep);
         //var source = getAssignedSource(creep);
+        if (source && !isHomeRoomSource(creep, source) &&
+            RemotePlanner.moveExtractorAlongRemotePath(creep, creep.memory.homeRoom, source.id)) return;
         if(source && isHomeRoomSource(creep, source)) {
             delete creep.memory.remoteMining;
         }
@@ -184,6 +188,9 @@ function getRemoteAssignedSourceResult(creep) {
         };
     }
 
+    if (RemotePlanner.moveExtractorAlongRemotePath(creep, creep.memory.homeRoom, remoteInfo.sourceId)) {
+        return { source: null, moved: true };
+    }
     var source = Game.getObjectById(remoteInfo.sourceId);
 
     if (source) {

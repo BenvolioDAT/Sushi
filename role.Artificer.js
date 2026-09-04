@@ -1092,7 +1092,36 @@ function findRemoteBootstrapTarget(creep) {
     return target;
 }
 
+function remoteWorkRouteAvailable(creep, roomName, target) {
+    if (creep.memory.season11Maintenance) return true;
+    var home = Memory.rooms[getHomeRoomName(creep)];
+    var planner = home && home.remotePlanner;
+    if (!planner || !planner.sourceInfos) return true;
+    var sources = Object.values(planner.sourceInfos).filter(function(info) { return info.roomName === roomName; });
+    var position = target && target.pos;
+    if (!position && creep.memory.remoteWorkRoomName === roomName && creep.memory.remoteWorkX !== undefined) {
+        position = { x: creep.memory.remoteWorkX, y: creep.memory.remoteWorkY, roomName: roomName };
+    }
+    if (position) {
+        var packed = position.x + position.y * 50;
+        var matching = sources.filter(function(info) {
+            var coords = info.roadCoords && info.roadCoords[roomName] || [];
+            return coords.indexOf(packed) >= 0 || (info.containerCoord !== undefined &&
+                Math.max(Math.abs(info.containerCoord % 50 - position.x),
+                    Math.abs(Math.floor(info.containerCoord / 50) - position.y)) <= 2);
+        });
+        if (matching.length) sources = matching;
+    }
+    return !sources.length || sources.some(function(info) {
+        return info.active && info.operational !== false && (!info.route || info.route.valid !== false);
+    });
+}
+
 function getRememberedRemoteWorkTarget(creep) {
+    if (!remoteWorkRouteAvailable(creep, creep.memory.remoteWorkRoomName)) {
+        clearRemoteWorkTarget(creep);
+        return null;
+    }
     if(!creep.memory.remoteWorkTargetId) {
         return null;
     }
@@ -1142,6 +1171,10 @@ function getRememberedRemoteWorkTarget(creep) {
 
 
 function travelToRememberedRemoteWorkPosition(creep) {
+    if (!remoteWorkRouteAvailable(creep, creep.memory.remoteWorkRoomName)) {
+        clearRemoteWorkTarget(creep);
+        return false;
+    }
     var roomName = creep.memory.remoteWorkRoomName;
 
     if(!creep.memory.remoteWorkTargetId || !roomName || creep.room.name === roomName) {
@@ -1305,6 +1338,7 @@ function getActiveRemoteRoomNames(homeRoomName) {
     for(var i = 0; i < planner.activeSourceIds.length; i++) {
         var sourceId = planner.activeSourceIds[i];
         var sourceInfo = planner.sourceInfos[sourceId];
+        if (sourceInfo && (sourceInfo.operational === false || (sourceInfo.route && sourceInfo.route.valid === false))) continue;
         var remoteRoomName = getRemoteRoomNameFromSourceInfo(sourceInfo, homeRoomName);
 
         if(!remoteRoomName || remoteRoomName === homeRoomName || seen[remoteRoomName] || !Game.rooms[remoteRoomName]) {
@@ -1383,7 +1417,9 @@ function findBestRemoteTarget(creep, remoteRooms, roomTargetFinder) {
             continue;
         }
 
-        var targets = roomTargetFinder(room);
+        var targets = (roomTargetFinder(room) || []).filter(function(target) {
+            return remoteWorkRouteAvailable(creep, roomName, target);
+        });
 
         if(!targets || targets.length === 0) {
             continue;
@@ -1568,6 +1604,7 @@ function findClosestActiveRemoteSource(creep) {
     for(var i = 0; i < planner.activeSourceIds.length; i++) {
         var sourceId = planner.activeSourceIds[i];
         var sourceInfo = planner.sourceInfos[sourceId];
+        if (sourceInfo && (sourceInfo.operational === false || (sourceInfo.route && sourceInfo.route.valid === false))) continue;
         var sourceRoomName = getRemoteRoomNameFromSourceInfo(sourceInfo, homeRoomName);
 
         if(sourceRoomName !== creep.room.name) {
@@ -1709,4 +1746,5 @@ function isIgnoredEnergyTarget(target, ignoredTargetIds) {
     return !!(target && target.id && ignoredTargetIds && ignoredTargetIds[target.id]);
 }
 
+roleArtificer._test = { getRememberedRemoteWorkTarget: getRememberedRemoteWorkTarget, remoteWorkRouteAvailable: remoteWorkRouteAvailable };
 module.exports = roleArtificer;

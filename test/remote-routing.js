@@ -131,13 +131,18 @@ test('6 observed slow trips increase blended ETA', () => {
     reset();
     const info = installRoute();
     const planner = fresh('Planner.Remote.js');
-    const creep = { memory: { homeRoom: 'W1N1' } };
+    const creep = { memory: { homeRoom: 'W1N1', role: 'Freighter' }, pos: new RoomPosition(25, 25, 'W1N1') };
     const before = planner.getRouteTravelEstimate(info, [CARRY, CARRY, MOVE], true).roundTripTicks;
     for (let i = 0; i < 5; i++) {
+        creep.pos = new RoomPosition(25, 25, 'W1N1');
         planner.startRemoteTrip(creep, info);
         Game.time += 40;
+        creep.pos = new RoomPosition(11, 10, 'W1N2');
         planner.recordRemoteTripLeg(creep, 'OUTBOUND');
+        creep.memory.remoteTrip.direction = 'RETURN';
+        creep.memory.remoteTrip.returnStartedAt = Game.time;
         Game.time += 50;
+        creep.pos = new RoomPosition(25, 25, 'W1N1');
         planner.recordRemoteTripLeg(creep, 'RETURN');
     }
     const after = planner.getRouteTravelEstimate(info, [CARRY, CARRY, MOVE], true).roundTripTicks;

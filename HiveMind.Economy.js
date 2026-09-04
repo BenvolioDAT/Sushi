@@ -122,7 +122,7 @@ function remoteEconomy(roomName) {
     let provenSources = 0;
     for (const id of activeIds) {
         const info = sourceInfos[id];
-        if (!info || !info.active) continue;
+        if (!info || !info.active || info.operational === false || (info.route && info.route.valid === false)) continue;
         const sourceMemory = Memory.rooms && Memory.rooms[info.roomName] &&
             Memory.rooms[info.roomName].sources && Memory.rooms[info.roomName].sources[id];
         const evidence = remoteIncomeEvidence(roomName, info, sourceMemory);
