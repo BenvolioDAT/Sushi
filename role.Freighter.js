@@ -251,6 +251,8 @@ function clearPickupMemory(creep) {
 }
 
 function finishRemotePickup(creep) {
+    creep.memory.remoteDeliveryRoom = creep.memory.pickupRoom;
+    creep.memory.remoteDeliverySourceId = creep.memory.pickupSourceId;
     RemotePlanner.releaseRemoteFreighterReservation(creep);
     delete creep.memory.pickupRoom;
     delete creep.memory.pickupSourceId;
@@ -259,6 +261,14 @@ function finishRemotePickup(creep) {
     delete creep.memory.freighterReservedCarry;
     delete creep.memory.freighterReservedUntil;
     creep.memory.freighterJob = 'remoteDelivery';
+}
+
+function recordRemoteDelivery(creep) {
+    var roomName = creep.memory.remoteDeliveryRoom;
+    var sourceId = creep.memory.remoteDeliverySourceId;
+    var sourceMemory = roomName && sourceId && Memory.rooms && Memory.rooms[roomName] &&
+        Memory.rooms[roomName].sources && Memory.rooms[roomName].sources[sourceId];
+    if (sourceMemory && sourceMemory.haul) sourceMemory.haul.lastDeliveryAt = Game.time;
 }
 
 
@@ -1072,6 +1082,7 @@ function deliverRemoteEnergy(creep) {
          * Freighters when normal home delivery targets cannot receive energy.
          */
         if(deliverToSpawnStockpile(creep) && creep.store[RESOURCE_ENERGY] === 0) {
+            recordRemoteDelivery(creep);
             RemotePlanner.clearRemoteFreighterMemory(creep);
         }
         return;
@@ -1081,6 +1092,7 @@ function deliverRemoteEnergy(creep) {
 
     if(result === OK) {
         if(creep.store[RESOURCE_ENERGY] === 0) {
+            recordRemoteDelivery(creep);
             RemotePlanner.clearRemoteFreighterMemory(creep);
         }
         return;

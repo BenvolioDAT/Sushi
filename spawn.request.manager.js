@@ -29,7 +29,6 @@ var SpawnContext = require('Spawn.Context');
 
 var RESERVE_DESIRED_TICKS = 4000;
 var RESERVE_SPAWN_AT_TICKS = 2500;
-var ANNEX_LIVING_MIN_TTL = 100;
 var TECH_DOWNGRADE_DANGER_TICKS = 5000;
 var TECH_BASE_MAX_DESIRED_WORK = 24;
 var TECH_MAX_DESIRED_WORK = 36;
@@ -132,6 +131,14 @@ var PRIORITY = {
 };
 var ANNEX_INITIAL_PRIORITY = 64;
 var ANNEX_MAINTENANCE_PRIORITY = 18;
+var ANNEX_CONTINUITY_PRIORITY = 45;
+var ARTIFICER_PRIORITY_BY_CATEGORY = {
+    criticalMaintenance: 75,
+    criticalInfrastructure: 65,
+    remoteBootstrap: 50,
+    construction: 20,
+    remote: 12
+};
 
 /*
  * Extra safety ticks.
@@ -1135,18 +1142,7 @@ function getDesiredTechWork(room) {
         growth.energyAboveReserve > 0) desiredWork++;
 
     var upgradeRush = HiveMemory.getConfig('upgrade').upgradeRush === true;
-    var constructionDemand = getCachedLocalConstructionDemand(room);
-    var constructionSites = constructionDemand.totalSites || 0;
-
-    if (!upgradeRush) {
-        if (constructionSites >= 25) {
-            desiredWork = Math.ceil(desiredWork * 0.5);
-        }
-        else if (constructionSites >= 10) {
-            desiredWork = Math.ceil(desiredWork * 0.75);
-        }
-    }
-    else desiredWork = Math.ceil(desiredWork * 1.15);
+    if (upgradeRush) desiredWork = Math.ceil(desiredWork * 1.15);
 
     if (room.controller.ticksToDowngrade < TECH_DOWNGRADE_DANGER_TICKS) {
         var emergencyMinimum = energyCapacity >= 550 ? 5 : 2;
@@ -1187,12 +1183,6 @@ function getDesiredTechWork(room) {
     }
     else if (!essentialEconomyReady) {
         boostReason = 'essential economy roles are not ready';
-    }
-    else if (!upgradeRush && constructionDemand.criticalSites > 0) {
-        boostReason = 'critical construction reserves energy';
-    }
-    else if (!upgradeRush && constructionSites >= 10) {
-        boostReason = 'construction backlog reserves energy';
     }
     else {
         var maximumMultiplier = Math.max(
@@ -2256,7 +2246,7 @@ function requestDynamicArtificersForRoom(room, demandOverride, options) {
         body: body,
         requestedWorkParts: requestedWork,
         maxWorkParts: requestedWork,
-        priority: PRIORITY.Artificer,
+        priority: ARTIFICER_PRIORITY_BY_CATEGORY[requestEconomyCategory] || PRIORITY.Artificer,
         memory: {
             role: 'Artificer',
             homeRoom: room.name,
@@ -2431,9 +2421,31 @@ function isLivingAnnexForHome(creep, homeRoomName) {
         creep &&
         creep.memory &&
         creep.memory.role === 'Annex' &&
-        creep.memory.homeRoom === homeRoomName &&
-        (creep.ticksToLive === undefined || creep.ticksToLive > ANNEX_LIVING_MIN_TTL)
+        creep.memory.homeRoom === homeRoomName
     );
+}
+
+function getAnnexReplacementLeadTicks(room, remoteRoomName, activeSources, annexBody) {
+    var routeDistance = 0;
+    for (var i = 0; i < activeSources.length; i++) {
+        var info = activeSources[i];
+        if (!info || info.roomName !== remoteRoomName) continue;
+        routeDistance = Math.max(routeDistance, info.distance || 0);
+        var sourceMemory = Memory.rooms && Memory.rooms[remoteRoomName] &&
+            Memory.rooms[remoteRoomName].sources && Memory.rooms[remoteRoomName].sources[info.sourceId];
+        var controllerMemory = Memory.rooms && Memory.rooms[remoteRoomName] &&
+            Memory.rooms[remoteRoomName].controller;
+        if (sourceMemory && sourceMemory.pos && controllerMemory && controllerMemory.pos) {
+            routeDistance = Math.max(routeDistance, (info.distance || 0) + Math.max(
+                Math.abs(sourceMemory.pos.x - controllerMemory.pos.x),
+                Math.abs(sourceMemory.pos.y - controllerMemory.pos.y)
+            ));
+        }
+    }
+    if (routeDistance <= 0 && Game.map && typeof Game.map.getRoomLinearDistance === 'function') {
+        routeDistance = Math.max(1, Game.map.getRoomLinearDistance(room.name, remoteRoomName)) * 50;
+    }
+    return annexBody.length * 3 + Math.max(25, routeDistance) + REPLACEMENT_BUFFER_TICKS.Annex;
 }
 
 function isQueuedAnnexForHome(request, homeRoomName) {
@@ -2500,12 +2512,8 @@ function requestAnnexForRoom(room) {
         }
     }
 
-    /* DESIRED_COUNTS.Annex is a max cap, not a fixed desired count. */
+    /* DESIRED_COUNTS.Annex is a portfolio cap; an expiring creep may overlap its replacement. */
     var totalPlannedAnnexes = livingAnnexes.length + queuedAnnexes.length;
-    if (totalPlannedAnnexes >= DESIRED_COUNTS.Annex) {
-        result.reason = 'Annex max cap reached';
-        return result;
-    }
 
     var myUsername = getMyUsername(room);
     var seenRemoteRooms = {};
@@ -2536,45 +2544,52 @@ function requestAnnexForRoom(room) {
             continue;
         }
 
-        if (
-            reservation &&
-            reservation.username === myUsername &&
-            reservation.ticksToEnd >= RESERVE_SPAWN_AT_TICKS
-        ) {
-            continue;
-        }
-
-        var duplicate = false;
+        var targetLivingAnnex = null;
         for (var livingIndex = 0; livingIndex < livingAnnexes.length; livingIndex++) {
             if (livingAnnexes[livingIndex].memory.targetRoom === remoteRoomName) {
-                duplicate = true;
+                targetLivingAnnex = livingAnnexes[livingIndex];
                 break;
             }
         }
 
-        for (var queuedIndex = 0; !duplicate && queuedIndex < queuedAnnexes.length; queuedIndex++) {
+        var targetQueued = false;
+        for (var queuedIndex = 0; queuedIndex < queuedAnnexes.length; queuedIndex++) {
             if (queuedAnnexes[queuedIndex].memory.targetRoom === remoteRoomName) {
-                duplicate = true;
+                targetQueued = true;
+                break;
             }
         }
-
-        if (duplicate) {
-            continue;
-        }
-
         var initialReservation = !reservation || reservation.username !== myUsername ||
             !(reservation.ticksToEnd > 0);
+        var replacementLead = getAnnexReplacementLeadTicks(
+            room, remoteRoomName, activeSources, annexBody
+        );
+        var replacementDue = !!(targetLivingAnnex &&
+            targetLivingAnnex.ticksToLive !== undefined &&
+            targetLivingAnnex.ticksToLive <= replacementLead);
+        var claimParts = countBodyParts(annexBody, CLAIM);
+        var reservationSpawnAt = claimParts <= 1 ? replacementLead : RESERVE_SPAWN_AT_TICKS;
+
+        if (targetQueued || targetLivingAnnex && !replacementDue) continue;
+        if (replacementDue && claimParts > 1 && reservation &&
+            reservation.username === myUsername && reservation.ticksToEnd >= RESERVE_SPAWN_AT_TICKS) continue;
+        if (!targetLivingAnnex && !initialReservation && reservation.ticksToEnd >= reservationSpawnAt) continue;
+        if (totalPlannedAnnexes - (replacementDue ? 1 : 0) >= DESIRED_COUNTS.Annex) continue;
+
         var addResult = addSpawnRequest(room.name, {
             role: 'Annex',
             body: annexBody,
-            priority: initialReservation ? ANNEX_INITIAL_PRIORITY : ANNEX_MAINTENANCE_PRIORITY,
+            priority: initialReservation ? ANNEX_INITIAL_PRIORITY :
+                claimParts <= 1 ? ANNEX_CONTINUITY_PRIORITY : ANNEX_MAINTENANCE_PRIORITY,
             economyCategory: initialReservation ? 'remoteIncome' : 'expansion',
             memory: {
                 role: 'Annex',
                 homeRoom: room.name,
                 targetRoom: remoteRoomName,
                 annexMode: 'reserve',
-                initialReservation: initialReservation
+                initialReservation: initialReservation,
+                replacementLeadTicks: replacementLead,
+                claimParts: claimParts
             },
             requestedAt: Game.time
         });
@@ -2587,6 +2602,8 @@ function requestAnnexForRoom(room) {
 
         result.requested = 1;
         result.targetRoom = remoteRoomName;
+        result.spawnAtTicks = reservationSpawnAt;
+        result.replacementLeadTicks = replacementLead;
         return result;
     }
 

@@ -32,6 +32,8 @@ var MAX_PATH_ROOMS = 8;
 var MAX_PATH_OPS = 12000;
 var HAUL_RESERVATION_TICKS = 25;
 var EXTRACTOR_REPLACEMENT_BUFFER_TICKS = 30;
+var REMOTE_REBALANCE_COOLDOWN = 500;
+var REMOTE_REBALANCE_MIN_GAIN = 0.75;
 
 function run() {
     if (!Memory.rooms) {
@@ -1089,8 +1091,7 @@ function selectActiveSources(homeRoomName) {
         return a.sourceId < b.sourceId ? -1 : 1;
     });
 
-    var rcl = homeRoom && homeRoom.controller && homeRoom.controller.level || 1;
-    var levelCap = rcl < 2 ? 0 : rcl === 2 ? 2 : MAX_ACTIVE_REMOTE_SOURCES;
+    var levelCap = getEffectiveRemoteSourceCap(homeRoom, economy);
     var previousActive = planner.activeSourceIds.filter(function(id) {
         return candidates.some(function(candidate) { return candidate.sourceId === id; });
     });
@@ -1101,7 +1102,9 @@ function selectActiveSources(homeRoomName) {
     for (var i = 0; i < candidates.length && selected.length < targetCount; i++) {
         if (selected.indexOf(candidates[i].sourceId) < 0) selected.push(candidates[i].sourceId);
     }
+    rebalanceRemotePortfolio(homeRoomName, planner, candidates, selected, ramp);
     planner.activeSourceIds = selected;
+    planner.effectiveSourceCap = levelCap;
     planner.rampReason = ramp.reason;
     planner.rampReady = ramp.ready;
     for (i = 0; i < selected.length; i++) {
@@ -1120,6 +1123,71 @@ function selectActiveSources(homeRoomName) {
         var remoteInfo = planner.remotes[remoteRoomName];
         remoteInfo.status = hasActiveSourceInRemote(planner, remoteInfo) ? 'active' : remoteInfo.status;
     }
+}
+
+function getEffectiveRemoteSourceCap(homeRoom, economy) {
+    var rcl = homeRoom && homeRoom.controller && homeRoom.controller.level || 1;
+    if (rcl < 2) return 0;
+    if (rcl === 2) return 2;
+    if (rcl === 3) return MAX_ACTIVE_REMOTE_SOURCES;
+    if (!economy || !economy.growth ||
+        (economy.state !== Economy.STATES.STABLE && economy.state !== Economy.STATES.SURPLUS)) {
+        return MAX_ACTIVE_REMOTE_SOURCES;
+    }
+    var growth = economy.growth;
+    var remote = growth.remote || {};
+    var threats = HiveMemory.ensure().threats[homeRoom.name];
+    var backlog = Math.max(0, (remote.backlog || 0) - (remote.reservedCarry || 0));
+    var logisticsProven = (remote.activeSources || 0) === 0 ||
+        remote.provenSources >= remote.activeSources && backlog <= 500 &&
+        (remote.requiredCarry || 0) <= (remote.availableCarry || 0);
+    if (growth.spawnPressure > 0.45 || economy.replacementRisk > 0 || !logisticsProven ||
+        (threats && threats.harmfulHostileCount > 0) ||
+        (Game.cpu && Game.cpu.bucket !== undefined && Game.cpu.bucket < 5000)) {
+        return MAX_ACTIVE_REMOTE_SOURCES;
+    }
+    var spawns = typeof homeRoom.find === 'function' ? homeRoom.find(FIND_MY_SPAWNS) || [] : [];
+    if (spawns.length === 0) {
+        for (var spawnName in Game.spawns) {
+            if (Game.spawns[spawnName] && Game.spawns[spawnName].room === homeRoom) spawns.push(Game.spawns[spawnName]);
+        }
+    }
+    var rclAllowance = rcl >= 8 ? 4 : rcl >= 7 ? 3 : rcl >= 6 ? 2 : 1;
+    var spawnAllowance = Math.max(1, spawns.length);
+    return MAX_ACTIVE_REMOTE_SOURCES + Math.min(rclAllowance, spawnAllowance);
+}
+
+function remoteSwitchingCost(homeRoomName, info) {
+    var sourceMemory = Memory.rooms && Memory.rooms[info.roomName] &&
+        Memory.rooms[info.roomName].sources && Memory.rooms[info.roomName].sources[info.sourceId];
+    var cost = REMOTE_REBALANCE_MIN_GAIN;
+    if (sourceMemory && sourceMemory.containerId) cost += 0.6;
+    if (countRemoteAssignedExtractorWork(homeRoomName, info).count > 0) cost += 0.5;
+    if (sourceMemory && sourceMemory.haul && sourceMemory.haul.lastSeen >= Game.time - 100) cost += 0.4;
+    var controller = Memory.rooms && Memory.rooms[info.roomName] && Memory.rooms[info.roomName].controller;
+    if (controller && controller.reservation && controller.reservation.username === getMyUsername()) cost += 0.25;
+    return cost;
+}
+
+function rebalanceRemotePortfolio(homeRoomName, planner, candidates, selected, ramp) {
+    if (!ramp.ready || selected.length === 0 ||
+        planner.lastRebalanceAt && Game.time - planner.lastRebalanceAt < REMOTE_REBALANCE_COOLDOWN) return;
+    var selectedInfos = selected.map(function(id) { return planner.sourceInfos[id]; }).filter(Boolean);
+    var inactive = candidates.filter(function(info) { return selected.indexOf(info.sourceId) < 0; });
+    if (inactive.length === 0) return;
+    selectedInfos.sort(function(a, b) { return a.score - b.score; });
+    var incumbent = selectedInfos[0];
+    var challenger = inactive[0];
+    var requiredGain = remoteSwitchingCost(homeRoomName, incumbent);
+    if (!incumbent || challenger.score < incumbent.score + requiredGain) return;
+    selected[selected.indexOf(incumbent.sourceId)] = challenger.sourceId;
+    planner.lastRebalanceAt = Game.time;
+    planner.lastRebalance = {
+        from: incumbent.sourceId,
+        to: challenger.sourceId,
+        gain: round3(challenger.score - incumbent.score),
+        requiredGain: round3(requiredGain)
+    };
 }
 
 function getRemoteRampStatus(homeRoomName, activeIds, economy) {
@@ -1686,6 +1754,8 @@ function clearRemoteFreighterMemory(creep) {
     delete creep.memory.pickupTargetType;
     delete creep.memory.freighterReservedCarry;
     delete creep.memory.freighterReservedUntil;
+    delete creep.memory.remoteDeliveryRoom;
+    delete creep.memory.remoteDeliverySourceId;
 
     /* Remove fields written by the previous remote Freighter implementation. */
     delete creep.memory.remoteFreighting;
@@ -1964,6 +2034,8 @@ module.exports = {
     generateRemotePlan: generateRemotePlan,
     scoreRemoteRoom: scoreRemoteRoom,
     scoreRemoteSource: scoreRemoteSource,
+    selectActiveSources: selectActiveSources,
+    getEffectiveRemoteSourceCap: getEffectiveRemoteSourceCap,
     getBestRemoteSourceForExtractor: getBestRemoteSourceForExtractor,
     getActiveRemoteSourcesForHome: getActiveRemoteSourcesForHome,
     getRemoteExtractorDemand: getRemoteExtractorDemand,

@@ -829,7 +829,7 @@ function drawRoomPanel(visual, room, sourceStats, remoteStats, roomCreeps) {
     var y = 3.7;
     var width = 18;
     var showRoleCounts = HiveMemory.getConfig('visuals').dashboardShowRoleCounts === true;
-    var height = showRoleCounts ? 23.7 : 21.6;
+    var height = showRoleCounts ? 24.4 : 22.3;
     var controller = room.controller;
     var roomMemory = Memory.rooms && Memory.rooms[room.name];
     var queue = getSpawnQueueInfo(room.name);
@@ -910,18 +910,31 @@ function drawRoomPanel(visual, room, sourceStats, remoteStats, roomCreeps) {
         rowY += LINE_HEIGHT;
         if (economy.growth) {
             var growth = economy.growth;
+            var progressTelemetry = Memory.hive && Memory.hive.telemetry &&
+                Memory.hive.telemetry.growth && Memory.hive.telemetry.growth[room.name] || {};
+            var actualUpgrade = safeNumber(progressTelemetry.rollingRate);
+            var upgradeUtilization = growth.controllerBudget > 0 ?
+                Math.round(actualUpgrade / growth.controllerBudget * 100) : 0;
+            var upgradeRemaining = controller ? Math.max(0,
+                safeNumber(controller.progressTotal) - safeNumber(controller.progress)) : 0;
+            var upgradeEta = actualUpgrade > 0 ? Math.ceil(upgradeRemaining / actualUpgrade) : null;
             drawText(visual, growth.mode + ' - ' + truncate(growth.blockedReason, 20), x, rowY,
                 growth.mode === 'RECOVERY' ? COLORS.warning : COLORS.good);
             rowY += LINE_HEIGHT;
-            drawText(visual, 'Net ' + round(growth.estimatedNetIncome, 1) + '/t  Upgrade ' +
+            drawText(visual, 'Net ' + round(growth.estimatedNetIncome, 1) + '/t  Upgrade plan ' +
                 round(growth.controllerBudget, 1) + '/t', x, rowY, COLORS.text);
+            rowY += LINE_HEIGHT;
+            drawText(visual, 'Upgrade actual ' + round(actualUpgrade, 1) + '/t  ' +
+                upgradeUtilization + '%  ETA ' + (upgradeEta === null ? '-' : compactNumber(upgradeEta)),
+                x, rowY, actualUpgrade > 0 ? COLORS.text : COLORS.warning);
             rowY += LINE_HEIGHT;
             drawText(visual, 'Reserve ' + compactNumber(growth.storedEnergy) + '/' +
                 compactNumber(growth.reserveTarget) + ' excess ' + compactNumber(growth.energyAboveReserve),
                 x, rowY, growth.energyAboveReserve > 0 ? COLORS.good : COLORS.warning);
             rowY += LINE_HEIGHT;
             drawText(visual, 'Remote ' + growth.remote.activeSources + '/' + growth.remote.candidateSources +
-                ' backlog ' + compactNumber(growth.remote.backlog), x, rowY, COLORS.text);
+                ' plan/proven ' + round(growth.remote.plannedIncome, 1) + '/' +
+                round(growth.remote.provenIncome, 1) + '/t', x, rowY, COLORS.text);
             rowY += LINE_HEIGHT;
         }
     }

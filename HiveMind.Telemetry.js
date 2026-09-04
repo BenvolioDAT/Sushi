@@ -34,6 +34,7 @@ function finish() {
     telemetry.total = Math.max(0, getUsed() - telemetry.start);
     telemetry.bucket = Game.cpu && Game.cpu.bucket;
     telemetry.mode = cpuStatus.persistCurrent().mode;
+    sampleControllerProgress();
 
     const settings = HiveMemory.getConfig('cpu').telemetry;
     const interval = Math.max(10, settings.persistInterval || 100);
@@ -42,6 +43,39 @@ function finish() {
         console.log('Sushi CPU', JSON.stringify(getView()));
     }
     return telemetry;
+}
+
+function sampleControllerProgress() {
+    const telemetryMemory = HiveMemory.ensure().telemetry;
+    if (!telemetryMemory.growth || typeof telemetryMemory.growth !== 'object') telemetryMemory.growth = {};
+    for (const roomName in Game.rooms) {
+        const room = Game.rooms[roomName];
+        if (!room || !room.controller || !room.controller.my) continue;
+        const controller = room.controller;
+        const previous = telemetryMemory.growth[roomName];
+        const current = {
+            tick: Game.time,
+            level: controller.level || 0,
+            progress: controller.progress || 0,
+            rollingRate: previous && previous.rollingRate || 0,
+            samples: previous && previous.samples || 0
+        };
+        if (previous && previous.level === current.level && current.progress >= previous.progress) {
+            const elapsed = Math.max(1, Game.time - previous.tick);
+            const instantRate = (current.progress - previous.progress) / elapsed;
+            const alpha = previous.samples < 10 ? 0.25 : 0.1;
+            current.rollingRate = previous.samples > 0 ?
+                previous.rollingRate + (instantRate - previous.rollingRate) * alpha : instantRate;
+            current.samples = Math.min(1000, previous.samples + 1);
+        }
+        else if (previous && previous.level !== current.level) {
+            /* A level-up resets progress; preserve the EMA instead of sampling a negative delta. */
+            current.transitionAt = Game.time;
+            current.samples = previous.samples;
+        }
+        current.rollingRate = Math.round(current.rollingRate * 100) / 100;
+        telemetryMemory.growth[roomName] = current;
+    }
 }
 
 function persistRolling(telemetry) {
@@ -73,16 +107,30 @@ function getView() {
         const policy = economy && economy.growth;
         const roomMemory = Memory.rooms && Memory.rooms[roomName] || {};
         if (!policy) continue;
+        const growthMemory = HiveMemory.ensure().telemetry.growth || {};
+        const progressTelemetry = growthMemory[roomName] || {};
+        const actualRate = progressTelemetry.rollingRate || 0;
+        const progressRemaining = Math.max(0,
+            (room.controller.progressTotal || 0) - (room.controller.progress || 0));
         growth[roomName] = {
             rcl: room.controller.level || 0,
             controllerProgress: room.controller.progress || 0,
             controllerProgressTotal: room.controller.progressTotal || 0,
             estimatedUpgradePerTick: policy.controllerBudget,
+            plannedUpgradePerTick: policy.controllerBudget,
+            actualControllerProgressPerTick: actualRate,
+            rollingUpgradeRate: actualRate,
+            controllerUtilization: policy.controllerBudget > 0 ?
+                Math.round(actualRate / policy.controllerBudget * 100) : 0,
+            estimatedTicksToNextRcl: actualRate > 0 ? Math.ceil(progressRemaining / actualRate) : null,
             livingTechWork: roomMemory.techLivingWork || 0,
             queuedTechWork: roomMemory.techQueuedWork || 0,
             desiredTechWork: roomMemory.techDesiredWork === undefined ? policy.affordableWork : roomMemory.techDesiredWork,
             localGrossIncome: policy.localGrossIncome,
             remoteGrossIncome: policy.remoteGrossIncome,
+            plannedRemoteIncome: policy.remote.plannedIncome,
+            provenRemoteIncome: policy.remote.provenIncome,
+            provenRemoteSources: policy.remote.provenSources,
             estimatedNetIncome: policy.estimatedNetIncome,
             safeReserveTarget: policy.reserveTarget,
             storedEnergy: policy.storedEnergy,
@@ -110,4 +158,4 @@ function getView() {
     };
 }
 
-module.exports = { startTick, measure, finish, getView };
+module.exports = { startTick, measure, finish, getView, sampleControllerProgress };

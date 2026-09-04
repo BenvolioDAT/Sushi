@@ -56,6 +56,54 @@ function roleReplacementCost(creeps, role, predicate) {
     return cost;
 }
 
+function isRemoteMinerForSource(creep, roomName, info) {
+    const memory = creep && creep.memory || {};
+    const sourceId = memory.sourceId || memory.targetSourceId || memory.assignedSource;
+    return memory.role === 'Extractor' && memory.remoteMining === true &&
+        memory.homeRoom === roomName && sourceId === info.sourceId;
+}
+
+function remoteIncomeEvidence(roomName, info, sourceMemory) {
+    const planned = Math.max(0, info.effectiveEnergyPerTick || 0);
+    const harvestPower = typeof HARVEST_POWER === 'number' ? HARVEST_POWER : 2;
+    let presentWork = 0;
+    let stationedWork = 0;
+    let hauling = false;
+    const sourcePos = sourceMemory && sourceMemory.pos;
+    for (const creepName in Game.creeps) {
+        const creep = Game.creeps[creepName];
+        if (isRemoteMinerForSource(creep, roomName, info) && !creep.spawning &&
+            creep.pos && creep.pos.roomName === info.roomName) {
+            const work = activeParts(creep, WORK);
+            presentWork += work;
+            if (!sourcePos || typeof creep.pos.getRangeTo !== 'function' ||
+                creep.pos.getRangeTo(sourcePos.x, sourcePos.y) <= 1) stationedWork += work;
+        }
+        const memory = creep && creep.memory || {};
+        if (memory.role === 'Freighter' && memory.homeRoom === roomName &&
+            (memory.pickupSourceId === info.sourceId ||
+                memory.freighterJob === 'remote' && memory.pickupRoom === info.roomName)) hauling = true;
+    }
+    const haul = sourceMemory && sourceMemory.haul;
+    const observedRecently = !!(haul && haul.lastSeen >= Game.time - 100 &&
+        ((haul.amount || 0) > 0 || haul.lastAdvertisedAt >= Game.time - 100));
+    const deliveredRecently = !!(haul && haul.lastDeliveryAt >=
+        Game.time - Math.max(100, (info.distance || 1) * 3));
+    const workIncome = Math.min(planned, stationedWork * harvestPower);
+    let realized = 0;
+    if (workIncome > 0 && observedRecently) realized = workIncome * (deliveredRecently ? 1 : hauling ? 0.6 : 0.4);
+    else if (presentWork > 0) realized = Math.min(planned, presentWork * harvestPower) * 0.25;
+    return {
+        planned,
+        realized: Math.round(realized * 1000) / 1000,
+        presentWork,
+        stationedWork,
+        observedRecently,
+        deliveredRecently,
+        hauling
+    };
+}
+
 function remoteEconomy(roomName) {
     const roomMemory = Memory.rooms && Memory.rooms[roomName];
     const planner = roomMemory && roomMemory.remotePlanner;
@@ -69,13 +117,21 @@ function remoteEconomy(roomName) {
     let unreservedSources = 0;
     let requiredCarry = 0;
     let oldestHaulAge = 0;
+    let plannedIncome = 0;
+    let provenIncome = 0;
+    let provenSources = 0;
     for (const id of activeIds) {
         const info = sourceInfos[id];
         if (!info || !info.active) continue;
-        gross += Math.max(0, info.effectiveEnergyPerTick || 0);
-        net += Math.max(0, info.netIncome || 0);
         const sourceMemory = Memory.rooms && Memory.rooms[info.roomName] &&
             Memory.rooms[info.roomName].sources && Memory.rooms[info.roomName].sources[id];
+        const evidence = remoteIncomeEvidence(roomName, info, sourceMemory);
+        plannedIncome += evidence.planned;
+        provenIncome += evidence.realized;
+        gross += evidence.realized;
+        net += evidence.planned > 0 ? Math.max(0, info.netIncome || 0) *
+            (evidence.realized / evidence.planned) : 0;
+        if (evidence.planned > 0 && evidence.realized >= evidence.planned * 0.8) provenSources++;
         const haul = sourceMemory && sourceMemory.haul;
         backlog += haul && Math.max(0, haul.amount || 0) || 0;
         reservedCarry += haul && Math.max(0, haul.reservedCarry || 0) || 0;
@@ -87,15 +143,65 @@ function remoteEconomy(roomName) {
         if (controller && controller.reservation && controller.reservation.username) reservedSources++;
         else unreservedSources++;
     }
-    return { gross, net, backlog, reservedCarry, activeSources: activeIds.length,
+    return { gross, net, plannedIncome, provenIncome, provenSources,
+        backlog, reservedCarry, activeSources: activeIds.length,
         candidateSources: Object.keys(sourceInfos).filter(id => sourceInfos[id] && sourceInfos[id].score > 0).length,
         reservedSources, unreservedSources, requiredCarry, oldestHaulAge };
 }
 
+function queuedCriticalReplacementCost(queue, roomName) {
+    return (queue || []).reduce((largest, request) => {
+        const memory = request && request.memory || {};
+        const role = request && (request.role || memory.role);
+        const localMiner = role === 'Extractor' && memory.remoteMining !== true &&
+            (!memory.sourceRoom || memory.sourceRoom === roomName);
+        return localMiner || role === 'Freighter' || role === 'Foreman' ?
+            Math.max(largest, bodyCost(request.body)) : largest;
+    }, 0);
+}
+
+function preStorageReserve(room, snapshot, creeps, spawns, queue, costs) {
+    const capacity = Math.max(300, room.energyCapacityAvailable || 300);
+    const protectedEnergy = Math.max(0, snapshot.protectedStockpileEnergy || 0);
+    const attainable = capacity + protectedEnergy;
+    const localHealthy = snapshot.harvest.workActive >= Math.max(1, snapshot.harvest.workRequired * 0.9);
+    const queuedCritical = queuedCriticalReplacementCost(queue, room.name);
+    const economicSpawnInProgress = spawns.some(spawn => {
+        const spawning = spawn && spawn.spawning;
+        const creep = spawning && Game.creeps[spawning.name];
+        return creep && creep.memory && ['Extractor', 'Freighter', 'Foreman'].includes(creep.memory.role);
+    });
+    let imminent = queuedCritical;
+    if (snapshot.replacementRisk > 0 && !economicSpawnInProgress) {
+        imminent = Math.max(imminent, costs.localMiner, costs.freighter, costs.foreman);
+    }
+    /* Healthy rooms protect a recoverable miner floor plus one refill margin, not every future body. */
+    const recoveryFloor = localHealthy ? 200 : Math.max(200, costs.localMiner);
+    const refillMargin = Math.max(50, Math.round(capacity * 0.1 / 50) * 50);
+    const target = Math.max(recoveryFloor + refillMargin, imminent > 0 ? imminent + refillMargin : 0);
+    return Math.min(attainable, Math.ceil(target / 50) * 50);
+}
+
+function criticalConstruction(room) {
+    const criticalTypes = new Set([
+        STRUCTURE_SPAWN, STRUCTURE_EXTENSION, STRUCTURE_TOWER, STRUCTURE_STORAGE,
+        STRUCTURE_CONTAINER, STRUCTURE_LINK, STRUCTURE_TERMINAL
+    ]);
+    const sites = TickIndex.get().constructionSitesByRoom.get(room.name) || [];
+    let sitesCount = 0;
+    let progressRemaining = 0;
+    for (const site of sites) {
+        if (!site || site.my === false || !criticalTypes.has(site.structureType)) continue;
+        sitesCount++;
+        progressRemaining += Math.max(0, (site.progressTotal || 0) - (site.progress || 0));
+    }
+    return { sites: sitesCount, progressRemaining };
+}
+
 /*
- * Reserve one realistic replacement wave, not an arbitrary warehouse tier.
- * The per-tick budget below separately pays long-run replacement depreciation;
- * this stockpile protects the spawn against timing overlap and emergencies.
+ * Before Storage, protect the next recoverable/imminent failure and leave attainable
+ * growth headroom. Once Storage exists, retain one realistic replacement wave.
+ * Long-run replacement depreciation remains part of the per-tick budget below.
  */
 function buildGrowthPolicy(room, snapshot, creeps, spawns) {
     const rcl = room.controller && room.controller.level || 1;
@@ -110,8 +216,14 @@ function buildGrowthPolicy(room, snapshot, creeps, spawns) {
     const threat = HiveMemory.ensure().threats[room.name];
     const defenseBuffer = threat && threat.harmfulHostileCount > 0 ? capacity * 2 :
         (rcl >= 4 ? capacity : Math.ceil(capacity * 0.5));
-    const reserveTarget = Math.ceil((foreman + localMiner + freighter + tech + remoteCycle + defenseBuffer) / 100) * 100;
-    const storedEnergy = snapshot.storageEnergy + snapshot.terminalEnergy + snapshot.energyAvailable;
+    const queue = Memory.rooms && Memory.rooms[room.name] && Memory.rooms[room.name].spawn &&
+        Memory.rooms[room.name].spawn.queue || [];
+    const hasStorage = !!room.storage;
+    const reserveTarget = hasStorage ?
+        Math.ceil((foreman + localMiner + freighter + tech + remoteCycle + defenseBuffer) / 100) * 100 :
+        preStorageReserve(room, snapshot, creeps, spawns, queue, { localMiner, freighter, foreman });
+    const storedEnergy = snapshot.storageEnergy + snapshot.terminalEnergy + snapshot.energyAvailable +
+        (hasStorage ? 0 : Math.max(0, snapshot.protectedStockpileEnergy || 0));
     const energyAboveReserve = Math.max(0, storedEnergy - reserveTarget);
     const remote = remoteEconomy(room.name);
     remote.availableCarry = Math.max(snapshot.haul.remoteCarry || 0,
@@ -125,10 +237,14 @@ function buildGrowthPolicy(room, snapshot, creeps, spawns) {
             CREEP_CLAIM_LIFE_TIME : (typeof CREEP_LIFE_TIME !== 'undefined' ? CREEP_LIFE_TIME : 1500);
         return sum + bodyCost(creep.body) / Math.max(1, life);
     }, 0);
-    const infrastructureBudget = grossIncome * (rcl <= 3 ? 0.12 : 0.08);
+    const construction = criticalConstruction(room);
+    const baseInfrastructureBudget = grossIncome * (rcl <= 3 ? 0.12 : 0.08);
+    const criticalConstructionBudget = construction.sites > 0 ? Math.min(
+        grossIncome * 0.15,
+        Math.max(1, Math.min(construction.sites * 2, construction.progressRemaining / 1000))
+    ) : 0;
+    const infrastructureBudget = baseInfrastructureBudget + criticalConstructionBudget;
     const sustainableNetIncome = Math.max(0, grossIncome - replacementCostPerTick - infrastructureBudget);
-    const queue = Memory.rooms && Memory.rooms[room.name] && Memory.rooms[room.name].spawn &&
-        Memory.rooms[room.name].spawn.queue || [];
     const spawnPressure = Math.min(1, (queue.length + snapshot.spawnPressure.busy * 0.5) /
         Math.max(2, spawns.length * 4));
     const controllerEmergency = room.controller && room.controller.ticksToDowngrade < 5000;
@@ -168,7 +284,10 @@ function buildGrowthPolicy(room, snapshot, creeps, spawns) {
         utilization = snapshot.energyTrend >= 0 ? 0.25 : 0.1;
         blockedReason = 'ENERGY_BELOW_RESERVE';
     }
-    else if (energyAboveReserve >= reserveTarget || snapshot.energyTrend >= sustainableNetIncome * 0.2) {
+    else if (energyAboveReserve >= reserveTarget ||
+        (!hasStorage && snapshot.spawnFill >= 0.9 &&
+            energyAboveReserve >= Math.max(100, reserveTarget * 0.75)) ||
+        snapshot.energyTrend >= sustainableNetIncome * 0.2) {
         mode = GROWTH_MODES.AGGRESSIVE;
         utilization = 0.7;
     }
@@ -184,6 +303,9 @@ function buildGrowthPolicy(room, snapshot, creeps, spawns) {
         estimatedNetIncome: Math.round(sustainableNetIncome * 100) / 100,
         replacementCostPerTick: Math.round(replacementCostPerTick * 100) / 100,
         infrastructureBudget: Math.round(infrastructureBudget * 100) / 100,
+        criticalConstructionBudget: Math.round(criticalConstructionBudget * 100) / 100,
+        criticalConstructionSites: construction.sites,
+        criticalConstructionProgress: construction.progressRemaining,
         controllerBudget: Math.round(budget * 100) / 100,
         affordableWork: Math.max(rcl < 8 && mode !== GROWTH_MODES.RECOVERY ? 1 : 0, Math.floor(budget)),
         spawnPressure: Math.round(spawnPressure * 100) / 100,
@@ -798,6 +920,8 @@ module.exports = {
     canSpawnRequest,
     categoryForRequest,
     shouldBootstrapSelfDeliver,
+    buildGrowthPolicy,
+    remoteEconomy,
     buildSnapshot,
     analyzeSourceTransport,
     sourceReplacementCoverage,
