@@ -2284,7 +2284,7 @@ function requestDynamicArtificersForRoom(room, demandOverride, options) {
 
 
 function requestRemoteExtractorsForRoom(room, extractorBody, priority, maxRequests, options) {
-    if (!room || !Economy.canSpend(room, 'remoteIncome')) {
+    if (!room || !Economy.canSpend(room, 'remoteMaintenance')) {
         return { ok: true, role: 'Extractor', requested: 0, reason: 'Remote mining blocked by economy policy' };
     }
     var queue = spawnManager.getSpawnQueue(room.name);
@@ -2321,7 +2321,8 @@ function requestRemoteExtractorsForRoom(room, extractorBody, priority, maxReques
          */
         var addResult = addSpawnRequest(room.name, {
             role: 'Extractor',
-            economyCategory: 'remoteIncome',
+            economyCategory: demand.sourceInfo && demand.sourceInfo.state === 'BOOTSTRAPPING' ?
+                'remoteBootstrap' : 'remoteMaintenance',
             body: remoteBody,
             requestedWorkParts: countBodyParts(remoteBody, WORK),
             maxWorkParts: countBodyParts(remoteBody, WORK),
@@ -3395,7 +3396,7 @@ function getSourceMiningDemand(room) {
     var extractorBody = creepBodyConfig.getBody('Extractor', room);
     var bodyWork = Math.max(1, countBodyParts(extractorBody, WORK));
     var localSources = ensureVisibleLocalSourceMemories(room);
-    var remoteAllowed = room && Economy.canSpend(room, 'remoteIncome');
+    var remoteAllowed = room && Economy.canSpend(room, 'remoteMaintenance');
     var activeRemoteSources = remoteAllowed ?
         RemotePlanner.getActiveRemoteSourcesForHome(room.name) : [];
     var desiredWork = 0;
@@ -3495,7 +3496,7 @@ function getFreighterCarryDemand(room) {
     var baseLocalCarry = economy ? economy.haul.requiredCarry :
         (energyCapacity >= 800 ? 8 : energyCapacity >= 550 ? 6 : 4);
 
-    var remoteAllowed = room && Economy.canSpend(room, 'remoteIncome');
+    var remoteAllowed = room && Economy.canSpend(room, 'remoteMaintenance');
     var activeSources = remoteAllowed ?
         RemotePlanner.getActiveRemoteSourcesForHome(room.name) : [];
     var remoteBacklog = 0;
@@ -3527,7 +3528,15 @@ function getFreighterCarryDemand(room) {
     }
 
     var activeRemoteSources = activeSources.length;
-    var remoteBaseCarry = activeRemoteSources * 4;
+    var remoteBaseCarry = activeSources.reduce(function(total, sourceInfo) {
+        var production = Math.max(0, sourceInfo.effectiveEnergyPerTick || sourceInfo.grossEnergyPerTick || 0);
+        var roundTrip = Math.max(1, sourceInfo.roundTripTicks ||
+            sourceInfo.route && sourceInfo.route.roundTripTicks || (sourceInfo.distance || 1) * 2);
+        var carryCapacity = typeof CARRY_CAPACITY === 'number' ? CARRY_CAPACITY : 50;
+        var required = Math.ceil(production * roundTrip * 1.1 / carryCapacity);
+        sourceInfo.requiredCarry = required;
+        return total + required;
+    }, 0);
     var unreservedBacklog = Math.max(0, remoteBacklog - remoteReservedCarry);
     var backlogBonus = Math.min(12, Math.ceil(unreservedBacklog / 500) * 2);
     var ageBonus = worstHaulAge > 100 ? 4 : worstHaulAge > 50 ? 2 : 0;

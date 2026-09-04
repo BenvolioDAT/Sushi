@@ -181,6 +181,21 @@ priority policy.
 
 ## Growth release order
 
+Remote energy follows a separate maintenance-versus-expansion policy. Healthy
+RECOVERY rooms may bootstrap their first projected-profitable source and keep an
+established source operating; adding another source uses `remoteExpansion` and
+waits for existing miner, container, delivery, and transport evidence. SURVIVAL
+suspends remote work when core mining is endangered but preserves the portfolio
+for restart. This avoids the former failure path where the ramp asked for generic
+`remote`, RECOVERY denied it despite allowing remote income, and the first remote
+could never produce the evidence required to unlock itself.
+
+Remote routes are canonical per HOME/source. Extractors and outbound Freighters
+follow the packed lane forward, returning Freighters follow it in reverse, and
+the same coordinates feed road planning. Dispatch projects container energy at
+arrival and subtracts inbound reservations; CARRY demand is based on production
+times round-trip travel rather than only accumulated backlog.
+
 Construction release is milestone-first. Essential containers, Spawns,
 extensions, towers, storage, links, and other unlocked core infrastructure are
 considered before bulk roads; roads remain planned and are released before

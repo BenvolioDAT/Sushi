@@ -19,6 +19,7 @@ var REMOTE_HAUL_MEMORY_STALE_TICKS = 25;
 var SPAWN_STOCKPILE_IGNORE_RANGE = 3;
 var SPAWN_STOCKPILE_MIN_RANGE = 1;
 var SPAWN_STOCKPILE_MAX_RANGE = 3;
+var REMOTE_DISPATCH_SAFETY_TICKS = 15;
 
 var roleFreighter = {
 
@@ -89,7 +90,7 @@ function collectEnergy(creep) {
      */
     var hadRemoteJob = creep.memory.freighterJob === 'remote';
 
-    if (hadRemoteJob && !Economy.canSpend(creep.memory.homeRoom, 'remoteIncome')) {
+    if (hadRemoteJob && !Economy.canSpend(creep.memory.homeRoom, 'remoteMaintenance')) {
         RemotePlanner.clearRemoteFreighterMemory(creep);
         if (creep.store[RESOURCE_ENERGY] > 0) {
             creep.memory.FreighterWorking = true;
@@ -397,7 +398,7 @@ function getRemotePickupCandidates(creep, reservations) {
 
         var haul = utility.ensureSourceHaulMemory(sourceInfo.roomName, sourceInfo.sourceId, homeRoomName);
 
-        if(!haul || !haul.targetId || haul.amount <= 0) {
+        if(!haul || !haul.targetId) {
             continue;
         }
 
@@ -433,11 +434,19 @@ function getRemotePickupCandidates(creep, reservations) {
         var reservationKey = getRemoteReservationKey(sourceInfo.roomName, sourceInfo.sourceId, haul.targetId);
         var assignedCount = reservations.byTargetCount[reservationKey] || 0;
         var reservedCarry = reservations.byTargetEnergy[reservationKey] || 0;
-        var remainingEnergy = haul.amount - reservedCarry;
+        var prediction = predictRemotePickup(sourceInfo, haul, creep, reservedCarry);
+        var remainingEnergy = prediction.unreservedProjectedEnergy;
 
-        if(remainingEnergy <= 0) {
+        if(!prediction.shouldDispatch || remainingEnergy <= 0) {
             continue;
         }
+
+        haul.productionRate = prediction.productionRate;
+        haul.ticksToFull = prediction.ticksToFull;
+        haul.travelTicks = prediction.arrivalETA;
+        haul.projectedFillAtArrival = prediction.projectedEnergyAtArrival;
+        haul.inboundFreighters = assignedCount;
+        haul.reservedCarry = reservedCarry;
 
         candidates.push({
             jobType: 'remote',
@@ -447,6 +456,9 @@ function getRemotePickupCandidates(creep, reservations) {
             sourceId: sourceInfo.sourceId,
             type: haul.targetType,
             amount: haul.amount,
+            projectedEnergyAtArrival: prediction.projectedEnergyAtArrival,
+            ticksToFull: prediction.ticksToFull,
+            arrivalETA: prediction.arrivalETA,
             remainingEnergy: remainingEnergy,
             assignedCount: assignedCount,
             estimatedDistance: sourceInfo.distance || getFallbackRemoteDistance(creep, sourceInfo.roomName),
@@ -456,6 +468,35 @@ function getRemotePickupCandidates(creep, reservations) {
     }
 
     return candidates;
+}
+
+function predictRemotePickup(sourceInfo, haul, creep, reservedCarry) {
+    var productionRate = Math.max(0, sourceInfo.effectiveEnergyPerTick ||
+        sourceInfo.grossEnergyPerTick || haul.productionRate || 0);
+    var currentEnergy = Math.max(0, haul.amount || 0);
+    var capacity = Math.max(currentEnergy, haul.capacity ||
+        (haul.targetType === 'container' ? 2000 : currentEnergy));
+    var arrivalETA = Math.max(1, sourceInfo.route && sourceInfo.route.oneWayTravelTicks ||
+        sourceInfo.oneWayTravelTicks || sourceInfo.distance || 1);
+    var projectedEnergyAtArrival = Math.min(capacity, currentEnergy + productionRate * arrivalETA);
+    var ticksToFull = productionRate > 0 ? Math.max(0, (capacity - currentEnergy) / productionRate) : Infinity;
+    var freeCarry = creep && creep.store && creep.store.getFreeCapacity ?
+        creep.store.getFreeCapacity(RESOURCE_ENERGY) : 0;
+    var unreservedProjectedEnergy = Math.max(0, projectedEnergyAtArrival - Math.max(0, reservedCarry || 0));
+    var efficientLoad = Math.max(50, Math.min(freeCarry || 50, capacity * 0.5));
+    var shouldDispatch = ticksToFull <= arrivalETA + REMOTE_DISPATCH_SAFETY_TICKS ||
+        unreservedProjectedEnergy >= efficientLoad ||
+        (freeCarry > 0 && unreservedProjectedEnergy > freeCarry);
+    return {
+        productionRate: productionRate,
+        currentEnergy: currentEnergy,
+        capacity: capacity,
+        arrivalETA: arrivalETA,
+        ticksToFull: ticksToFull,
+        projectedEnergyAtArrival: projectedEnergyAtArrival,
+        unreservedProjectedEnergy: unreservedProjectedEnergy,
+        shouldDispatch: shouldDispatch
+    };
 }
 
 function chooseBestPickupCandidate(candidates) {
@@ -1049,6 +1090,12 @@ function collectFromRemoteTarget(creep, target) {
     }
 
     if(result === OK) {
+        var haul = utility.ensureSourceHaulMemory(
+            creep.memory.pickupRoom,
+            creep.memory.pickupSourceId,
+            creep.memory.homeRoom
+        );
+        if (haul) haul.lastPickupAt = Game.time;
         return;
     }
 
@@ -1064,6 +1111,8 @@ function deliverRemoteEnergy(creep) {
     var homeRoomName = creep.memory.homeRoom;
 
     if(homeRoomName && creep.room.name !== homeRoomName) {
+        if (creep.memory.remoteDeliverySourceId && RemotePlanner.moveFreighterAlongRemotePath(
+            creep, homeRoomName, creep.memory.remoteDeliverySourceId, true)) return;
         travel.moveToRoom(creep, homeRoomName, {
             range: 22,
             reusePath: 20,
@@ -1536,5 +1585,10 @@ function findStorageToFill(creep) {
 
     return null;
 }
+
+roleFreighter._test = {
+    predictRemotePickup: predictRemotePickup,
+    getRemotePickupCandidates: getRemotePickupCandidates
+};
 
 module.exports = roleFreighter;

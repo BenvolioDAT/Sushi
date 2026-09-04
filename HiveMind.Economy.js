@@ -848,7 +848,9 @@ function categoryForRequest(request) {
     if (request && request.economyCategory) return request.economyCategory;
     if (memory.economyCategory) return memory.economyCategory;
     if (memory.remoteMining === true || memory.remoteWorkTargetId ||
-        memory.sourceRoom && memory.homeRoom && memory.sourceRoom !== memory.homeRoom) return 'remote';
+        memory.sourceRoom && memory.homeRoom && memory.sourceRoom !== memory.homeRoom) {
+        return memory.remoteLifecycle === 'BOOTSTRAPPING' ? 'remoteBootstrap' : 'remoteMaintenance';
+    }
     if (CORE_ROLES.has(role)) return role === 'Extractor' ? 'harvest' : 'logistics';
     if (COMBAT_ROLES.has(role)) {
         const targetRoom = memory.defendedRoom || memory.targetRoom || request && request.targetRoom;
@@ -883,8 +885,9 @@ function checkSpend(roomOrName, category) {
     }
     if (snapshot.state === STATES.RECOVERY) {
         const allowed = ['defense', 'controllerSafety', 'criticalController', 'controllerGrowth',
-            'criticalMaintenance', 'criticalInfrastructure', 'remoteIncome', 'remoteBootstrap'].includes(category);
-        if ((category === 'remoteIncome' || category === 'remoteBootstrap') &&
+            'criticalMaintenance', 'criticalInfrastructure', 'remoteIncome', 'remoteMaintenance',
+            'remoteBootstrap'].includes(category);
+        if (['remoteIncome', 'remoteMaintenance', 'remoteBootstrap'].includes(category) &&
             snapshot.harvest && snapshot.harvest.workActive < Math.max(1, snapshot.harvest.workRequired * 0.9)) {
             return { allowed: false, reason: 'local harvest must recover before remote income spending' };
         }

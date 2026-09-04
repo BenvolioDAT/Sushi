@@ -460,7 +460,8 @@ function updateSourceHaulMemory(creep, source, force) {
         options.push({
             targetId: sourceContainers[containerIndex].id,
             targetType: 'container',
-            amount: getStoredEnergy(sourceContainers[containerIndex])
+            amount: getStoredEnergy(sourceContainers[containerIndex]),
+            capacity: sourceContainers[containerIndex].store.getCapacity(RESOURCE_ENERGY) || 2000
         });
     }
 
@@ -521,6 +522,7 @@ function updateSourceHaulMemory(creep, source, force) {
     haul.targetId = best.targetId;
     haul.targetType = best.targetType;
     haul.amount = best.amount;
+    haul.capacity = best.capacity || haul.capacity || 0;
     haul.lastSeen = Game.time;
     haul.homeRoom = homeRoomName;
 }
@@ -559,7 +561,8 @@ function refreshVisibleSourceHaulTarget(creep, source) {
         var containerOption = {
             targetId: sourceContainers[containerIndex].id,
             targetType: 'container',
-            amount: getStoredEnergy(sourceContainers[containerIndex])
+            amount: getStoredEnergy(sourceContainers[containerIndex]),
+            capacity: sourceContainers[containerIndex].store.getCapacity(RESOURCE_ENERGY) || 2000
         };
 
         if (containerOption.targetId === haul.targetId) {
@@ -630,6 +633,7 @@ function updateObservedHaulTarget(haul, target) {
     haul.targetId = target.targetId;
     haul.targetType = target.targetType;
     haul.amount = target.amount;
+    haul.capacity = target.capacity || haul.capacity || 0;
 }
 
 function recordHaulAdvertisement(haul, creep, source, homeRoomName, updateLastSeen) {
@@ -669,6 +673,7 @@ function recordSourceContainerHaul(creep, source, target) {
     haul.targetId = target.id;
     haul.targetType = 'container';
     haul.amount = getStoredEnergy(target) + (creep.store[RESOURCE_ENERGY] || 0);
+    haul.capacity = target.store.getCapacity(RESOURCE_ENERGY) || 2000;
     haul.lastSeen = Game.time;
     haul.homeRoom = homeRoomName;
 }

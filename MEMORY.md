@@ -158,14 +158,19 @@ RCL cap, and whether the bounded `mandatoryFloorBypassUsed` allowance was used.
 authoritative growth calculation: mode/reason, local and remote income, estimated
 net income, replacement and infrastructure allowances, reserve target, energy
 above reserve, controller budget, spawn pressure, and aggregate remote counts.
-No live objects or paths are stored there. Remote planner source records add only
-small derived fields (`requiredWork`, estimated miner cost, road eligibility),
-plus a planner-level ramp decision/reason.
+No live objects or paths are stored there. `remotePlanner.sourceInfos[sourceId]`
+retains `parentHome`, lifecycle `state`, compact `scoreComponents`, container
+identity, throughput demand, and canonical-route metadata. Packed coordinates
+remain in `roadCoords`; decoded `RoomPosition` arrays remain in heap. The planner's
+`lastDecision` records the economic category and one human-readable reason.
 
-Spawn requests for proven remote income use `remoteIncome`; Artificer demand for
-active-source container construction/repair uses `remoteBootstrap`. Reservation
-requests record the small boolean `initialReservation` so initial and maintenance
-priority remain visible and deterministic.
+Remote spending has three intentional meanings: `remoteMaintenance` keeps an
+established positive-income operation alive, `remoteBootstrap` funds the first
+source/container/logistics cycle, and `remoteExpansion` adds another source.
+`remoteIncome` remains a compatibility alias for older queued requests. Source
+lifecycle values are `DISCOVERED`, `PLANNED`, `BOOTSTRAPPING`, `ACTIVE`,
+`DEGRADED`, `SUSPENDED_DANGER`, `SUSPENDED_ECONOMY`, and `RETIRED`. Suspension
+does not erase ownership, container, route, or scoring data.
 
 ## Retention and garbage collection
 
