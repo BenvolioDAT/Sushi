@@ -12,6 +12,7 @@ var travel = require('utility.Travel.Creep');
 var utility = require('utility');
 var RemotePlanner = require('Planner.Remote');
 var Economy = require('HiveMind.Economy');
+var LogisticsJobs = require('Logistics.Jobs');
 
 var MIN_DROPPED_ENERGY = 50;
 var MIN_CONTAINER_ENERGY = 50;
@@ -19,7 +20,6 @@ var REMOTE_HAUL_MEMORY_STALE_TICKS = 25;
 var SPAWN_STOCKPILE_IGNORE_RANGE = 3;
 var SPAWN_STOCKPILE_MIN_RANGE = 1;
 var SPAWN_STOCKPILE_MAX_RANGE = 3;
-var REMOTE_DISPATCH_SAFETY_TICKS = 15;
 
 var roleFreighter = {
 
@@ -42,6 +42,8 @@ var roleFreighter = {
         if(creep.memory.FreighterWorking) {
             if(creep.memory.freighterJob === 'remote' || creep.memory.freighterJob === 'remoteDelivery') {
                 deliverRemoteEnergy(creep);
+            } else if (creep.memory.freighterJob === 'transport' || creep.memory.freighterJob === 'transportDelivery') {
+                deliverTransportJob(creep);
             } else {
                 deliverEnergy(creep);
             }
@@ -52,14 +54,17 @@ var roleFreighter = {
 };
 
 function updateWorkingState(creep) {
+    var assignedResource = creep.memory.resourceType || RESOURCE_ENERGY;
     /*
      * If the Freighter was delivering but is now empty,
      * switch back to collection mode.
      */
-    if(creep.memory.FreighterWorking && creep.store[RESOURCE_ENERGY] === 0) {
+    if(creep.memory.FreighterWorking && (creep.store[assignedResource] || 0) === 0) {
         creep.memory.FreighterWorking = false;
         if(creep.memory.freighterJob === 'remote' || creep.memory.freighterJob === 'remoteDelivery') {
             RemotePlanner.clearRemoteFreighterMemory(creep);
+        } else if (creep.memory.freighterJob === 'transport' || creep.memory.freighterJob === 'transportDelivery') {
+            LogisticsJobs.clear(creep);
         } else {
             clearPickupMemory(creep);
         }
@@ -72,10 +77,12 @@ function updateWorkingState(creep) {
      * We also clear pickup memory so this creep stops reserving
      * the old pickup target.
      */
-    if(!creep.memory.FreighterWorking && creep.store.getFreeCapacity(RESOURCE_ENERGY) === 0) {
+    if(!creep.memory.FreighterWorking && creep.store.getFreeCapacity(assignedResource) === 0) {
         creep.memory.FreighterWorking = true;
         if(creep.memory.freighterJob === 'remote') {
             finishRemotePickup(creep);
+        } else if (creep.memory.freighterJob === 'transport') {
+            creep.memory.freighterJob = 'transportDelivery';
         } else {
             clearPickupMemory(creep);
         }
@@ -83,6 +90,10 @@ function updateWorkingState(creep) {
 }
 
 function collectEnergy(creep) {
+    if (creep.memory.freighterJob === 'transport') {
+        collectTransportJob(creep);
+        return;
+    }
     /*
      * If this Freighter is already committed to a remote target, keep traveling
      * to it. A non-visible remote target is not treated as invalid until the
@@ -252,6 +263,10 @@ function clearPickupMemory(creep) {
 }
 
 function finishRemotePickup(creep) {
+    RemotePlanner.recordRemoteTripLeg(creep, 'OUTBOUND');
+    if (creep.memory.remoteTrip && creep.memory.remoteTrip.direction === 'RETURN') {
+        creep.memory.remoteTrip.returnStartedAt = Game.time;
+    }
     creep.memory.remoteDeliveryRoom = creep.memory.pickupRoom;
     creep.memory.remoteDeliverySourceId = creep.memory.pickupSourceId;
     RemotePlanner.releaseRemoteFreighterReservation(creep);
@@ -262,6 +277,47 @@ function finishRemotePickup(creep) {
     delete creep.memory.freighterReservedCarry;
     delete creep.memory.freighterReservedUntil;
     creep.memory.freighterJob = 'remoteDelivery';
+}
+
+function collectTransportJob(creep) {
+    var origin = creep.memory.originRoom || creep.memory.pickupRoom;
+    var resource = creep.memory.resourceType || RESOURCE_ENERGY;
+    if (creep.room.name !== origin) {
+        travel.moveToRoom(creep, origin, { range: 22, reusePath: 20 });
+        return;
+    }
+    var target = creep.memory.pickupTargetId && Game.getObjectById(creep.memory.pickupTargetId);
+    if (!target) {
+        target = creep.room.storage && (creep.room.storage.store[resource] || 0) > 0 ? creep.room.storage :
+            creep.room.terminal && (creep.room.terminal.store[resource] || 0) > 0 ? creep.room.terminal : null;
+    }
+    if (!target) return;
+    creep.memory.pickupTargetId = target.id;
+    var amount = creep.memory.logisticsAmount || undefined;
+    var result = creep.withdraw(target, resource, amount ? Math.min(amount, creep.store.getFreeCapacity(resource)) : undefined);
+    if (result === ERR_NOT_IN_RANGE) travel.move(creep, target, { range: 1 });
+    if (result === OK && (creep.store[resource] || 0) > 0) {
+        creep.memory.FreighterWorking = true;
+        creep.memory.freighterJob = 'transportDelivery';
+    }
+}
+
+function deliverTransportJob(creep) {
+    var destination = LogisticsJobs.destination(creep);
+    var resource = creep.memory.resourceType || RESOURCE_ENERGY;
+    if (creep.room.name !== destination) {
+        travel.moveToRoom(creep, destination, { range: 22, reusePath: 20 });
+        return;
+    }
+    var target = resource === RESOURCE_ENERGY ? RemotePlanner.getHomeDeliveryTarget(creep, destination) :
+        (creep.room.storage || creep.room.terminal);
+    if (!target) return;
+    var result = creep.transfer(target, resource);
+    if (result === ERR_NOT_IN_RANGE) travel.move(creep, target, { range: 1 });
+    if (result === OK && (creep.store[resource] || 0) === 0) {
+        creep.memory.FreighterWorking = false;
+        LogisticsJobs.clear(creep);
+    }
 }
 
 function recordRemoteDelivery(creep) {
@@ -434,7 +490,7 @@ function getRemotePickupCandidates(creep, reservations) {
         var reservationKey = getRemoteReservationKey(sourceInfo.roomName, sourceInfo.sourceId, haul.targetId);
         var assignedCount = reservations.byTargetCount[reservationKey] || 0;
         var reservedCarry = reservations.byTargetEnergy[reservationKey] || 0;
-        var prediction = predictRemotePickup(sourceInfo, haul, creep, reservedCarry);
+        var prediction = predictRemotePickup(sourceInfo, haul, creep, reservedCarry, assignedCount);
         var remainingEnergy = prediction.unreservedProjectedEnergy;
 
         if(!prediction.shouldDispatch || remainingEnergy <= 0) {
@@ -447,6 +503,8 @@ function getRemotePickupCandidates(creep, reservations) {
         haul.projectedFillAtArrival = prediction.projectedEnergyAtArrival;
         haul.inboundFreighters = assignedCount;
         haul.reservedCarry = reservedCarry;
+        haul.dispatchSafetyTicks = prediction.dispatchSafetyTicks;
+        haul.dispatchReason = prediction.dispatchReason;
 
         candidates.push({
             jobType: 'remote',
@@ -470,23 +528,42 @@ function getRemotePickupCandidates(creep, reservations) {
     return candidates;
 }
 
-function predictRemotePickup(sourceInfo, haul, creep, reservedCarry) {
+function predictRemotePickup(sourceInfo, haul, creep, reservedCarry, inboundFreighters) {
     var productionRate = Math.max(0, sourceInfo.effectiveEnergyPerTick ||
         sourceInfo.grossEnergyPerTick || haul.productionRate || 0);
     var currentEnergy = Math.max(0, haul.amount || 0);
-    var capacity = Math.max(currentEnergy, haul.capacity ||
-        (haul.targetType === 'container' ? 2000 : currentEnergy));
-    var arrivalETA = Math.max(1, sourceInfo.route && sourceInfo.route.oneWayTravelTicks ||
+    var isContainer = haul.targetType === 'container';
+    var capacity = isContainer ? Math.max(currentEnergy, haul.capacity || 2000) : 0;
+    var routeEstimate = creep && creep.body && creep.body.length ?
+        RemotePlanner.getRouteTravelEstimate(sourceInfo, creep.body, false) : null;
+    var arrivalETA = Math.max(1, routeEstimate && routeEstimate.outboundTicks ||
         sourceInfo.oneWayTravelTicks || sourceInfo.distance || 1);
-    var projectedEnergyAtArrival = Math.min(capacity, currentEnergy + productionRate * arrivalETA);
-    var ticksToFull = productionRate > 0 ? Math.max(0, (capacity - currentEnergy) / productionRate) : Infinity;
+    var futureEnergy = currentEnergy + productionRate * arrivalETA;
+    var projectedEnergyAtArrival = isContainer ? Math.min(capacity, futureEnergy) : futureEnergy;
+    var ticksToFull = isContainer && productionRate > 0 ?
+        Math.max(0, (capacity - currentEnergy) / productionRate) : Infinity;
     var freeCarry = creep && creep.store && creep.store.getFreeCapacity ?
         creep.store.getFreeCapacity(RESOURCE_ENERGY) : 0;
     var unreservedProjectedEnergy = Math.max(0, projectedEnergyAtArrival - Math.max(0, reservedCarry || 0));
-    var efficientLoad = Math.max(50, Math.min(freeCarry || 50, capacity * 0.5));
-    var shouldDispatch = ticksToFull <= arrivalETA + REMOTE_DISPATCH_SAFETY_TICKS ||
-        unreservedProjectedEnergy >= efficientLoad ||
-        (freeCarry > 0 && unreservedProjectedEnergy > freeCarry);
+    var effectiveCapacity = isContainer ? capacity : Math.max(freeCarry, currentEnergy);
+    var efficientLoad = Math.max(50, Math.min(freeCarry || 50, effectiveCapacity * 0.5));
+    var route = sourceInfo.route || {};
+    var terrain = route.terrain || {};
+    var samples = route.travelSamples || 0;
+    var deviation = route.travelDeviation || 0;
+    var uncertainty = samples >= 5 ? 0 : Math.max(3, (route.length || sourceInfo.distance || 1) * 0.08);
+    var dispatchSafetyTicks = Math.ceil(Math.max(3, Math.min(100,
+        3 + (route.length || sourceInfo.distance || 1) * 0.03 + (terrain.swamp || 0) * 0.15 +
+        deviation * 1.5 + uncertainty - Math.max(0, inboundFreighters || 0) * 2)));
+    var dispatchReason = null;
+    if (isContainer && ticksToFull <= arrivalETA + dispatchSafetyTicks) {
+        dispatchReason = 'CONTAINER_FILL_BEFORE_ARRIVAL';
+    }
+    else if (unreservedProjectedEnergy >= efficientLoad) dispatchReason = 'PROJECTED_EFFICIENT_LOAD';
+    else if (freeCarry > 0 && unreservedProjectedEnergy > freeCarry) {
+        dispatchReason = 'UNRESERVED_ENERGY_EXCEEDS_INBOUND_CARRY';
+    }
+    var shouldDispatch = dispatchReason !== null;
     return {
         productionRate: productionRate,
         currentEnergy: currentEnergy,
@@ -495,6 +572,8 @@ function predictRemotePickup(sourceInfo, haul, creep, reservedCarry) {
         ticksToFull: ticksToFull,
         projectedEnergyAtArrival: projectedEnergyAtArrival,
         unreservedProjectedEnergy: unreservedProjectedEnergy,
+        dispatchSafetyTicks: dispatchSafetyTicks,
+        dispatchReason: dispatchReason,
         shouldDispatch: shouldDispatch
     };
 }
@@ -1083,6 +1162,10 @@ function idleNearUsefulSource(creep) {
 function collectFromRemoteTarget(creep, target) {
     var result;
 
+    if (creep.pos && creep.pos.isNearTo && creep.pos.isNearTo(target)) {
+        RemotePlanner.recordRemoteTripLeg(creep, 'OUTBOUND');
+    }
+
     if(target.resourceType) {
         result = creep.pickup(target);
     } else {
@@ -1109,11 +1192,13 @@ function collectFromRemoteTarget(creep, target) {
 
 function deliverRemoteEnergy(creep) {
     var homeRoomName = creep.memory.homeRoom;
+    var destinationRoomName = RemotePlanner.getLogisticsDestinationRoom(creep) || homeRoomName;
 
-    if(homeRoomName && creep.room.name !== homeRoomName) {
-        if (creep.memory.remoteDeliverySourceId && RemotePlanner.moveFreighterAlongRemotePath(
+    if(destinationRoomName && creep.room.name !== destinationRoomName) {
+        if (destinationRoomName === homeRoomName && creep.memory.remoteDeliverySourceId &&
+            RemotePlanner.moveFreighterAlongRemotePath(
             creep, homeRoomName, creep.memory.remoteDeliverySourceId, true)) return;
-        travel.moveToRoom(creep, homeRoomName, {
+        travel.moveToRoom(creep, destinationRoomName, {
             range: 22,
             reusePath: 20,
             visualizePathStyle: {
@@ -1123,7 +1208,9 @@ function deliverRemoteEnergy(creep) {
         return;
     }
 
-    var target = RemotePlanner.getHomeDeliveryTarget(creep);
+    RemotePlanner.recordRemoteTripLeg(creep, 'RETURN');
+
+    var target = RemotePlanner.getHomeDeliveryTarget(creep, destinationRoomName);
 
     if(!target) {
         /*
@@ -1588,7 +1675,11 @@ function findStorageToFill(creep) {
 
 roleFreighter._test = {
     predictRemotePickup: predictRemotePickup,
-    getRemotePickupCandidates: getRemotePickupCandidates
+    getRemotePickupCandidates: getRemotePickupCandidates,
+    deliverRemoteEnergy: deliverRemoteEnergy,
+    collectTransportJob: collectTransportJob,
+    deliverTransportJob: deliverTransportJob,
+    updateWorkingState: updateWorkingState
 };
 
 module.exports = roleFreighter;

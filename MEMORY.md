@@ -172,6 +172,18 @@ lifecycle values are `DISCOVERED`, `PLANNED`, `BOOTSTRAPPING`, `ACTIVE`,
 `DEGRADED`, `SUSPENDED_DANGER`, `SUSPENDED_ECONOMY`, and `RETIRED`. Suspension
 does not erase ownership, container, route, or scoring data.
 
+`Memory.config.remote.maxRoomRange` defaults to 2; path profitability and the
+150-tile path cap remain stronger filters than linear range. Canonical routes
+store exact ordered `{room, coords}` segments alongside the road-planning index,
+terrain counts, validity/invalidation details, and compact EWMA travel timing.
+Only averages, deviation, and sample counts persist—never trip histories or live
+positions. A Freighter's `remoteTrip` is transient and cleared after delivery.
+
+Freighter identity (`role`, `homeRoom`) is permanent. Job fields (`originRoom`,
+`pickupRoom`, `destinationRoom`, `resourceType`, `logisticsPurpose`, reservation,
+and trip timing) are transient. `Logistics.Jobs.assign` provides explicit
+HOME/FOB transport plumbing without enabling automatic empire balancing.
+
 ## Retention and garbage collection
 
 `Memory.config.memoryGC` owns cadence, work budget, and retention periods. The

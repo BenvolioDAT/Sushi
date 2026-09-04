@@ -34,6 +34,8 @@ var HAUL_RESERVATION_TICKS = 25;
 var EXTRACTOR_REPLACEMENT_BUFFER_TICKS = 30;
 var REMOTE_REBALANCE_COOLDOWN = 500;
 var REMOTE_REBALANCE_MIN_GAIN = 0.75;
+var ROUTE_VALIDATION_INTERVAL = 251;
+var TRAVEL_EWMA_ALPHA = 0.2;
 var REMOTE_SCHEMA_VERSION = 2;
 var REMOTE_STATES = Object.freeze({
     DISCOVERED: 'DISCOVERED',
@@ -92,7 +94,16 @@ function onScoutRoom(creep) {
         return false;
     }
 
-    return scanVisibleRoom(homeRoomName, creep.room);
+    var scanned = scanVisibleRoom(homeRoomName, creep.room);
+    var hive = HiveMemory.ensure();
+    var homes = hive.homeRooms && hive.homeRooms.names || [];
+    for (var i = 0; i < homes.length; i++) {
+        if (homes[i] !== homeRoomName && homes[i] !== creep.room.name &&
+            isWithinRemoteRange(homes[i], creep.room.name)) {
+            scanned = scanVisibleRoom(homes[i], creep.room) || scanned;
+        }
+    }
+    return scanned;
 }
 
 function scanVisibleRoom(homeRoomName, room) {
@@ -100,7 +111,7 @@ function scanVisibleRoom(homeRoomName, room) {
         return false;
     }
 
-    if (!isAdjacentToHomeRoom(homeRoomName, room.name)) {
+    if (!isWithinRemoteRange(homeRoomName, room.name)) {
         return false;
     }
 
@@ -141,10 +152,7 @@ function getHomeRoomName(creepOrRoom) {
     return null;
 }
 
-/*
- * Remote rooms are limited to direct map exits from the home/spawn room.
- * Longer routes may still be useful for travel, but they are not remote mines.
- */
+/* Legacy direct-neighbor predicate retained for console/debug compatibility. */
 function isAdjacentToHomeRoom(homeRoomName, remoteRoomName) {
     if (!homeRoomName || !remoteRoomName || homeRoomName === remoteRoomName) {
         return false;
@@ -230,7 +238,7 @@ function generateRemotePlan(homeRoomName, remoteRoom) {
         return false;
     }
 
-    if (!isAdjacentToHomeRoom(homeRoomName, remoteRoom.name)) {
+    if (!isWithinRemoteRange(homeRoomName, remoteRoom.name)) {
         return false;
     }
 
@@ -301,11 +309,11 @@ function scoreRemoteRoom(homeRoomName, remoteRoomName) {
         return 0;
     }
 
-    if (!isAdjacentToHomeRoom(homeRoomName, remoteRoomName)) {
+    if (!isWithinRemoteRange(homeRoomName, remoteRoomName)) {
         remoteInfo.score = -999;
         remoteInfo.netEnergyPerTick = 0;
         remoteInfo.status = 'rejected';
-        remoteInfo.lastRejectReason = 'not adjacent to home room';
+        remoteInfo.lastRejectReason = 'outside configured remote range';
         return remoteInfo.score;
     }
 
@@ -376,10 +384,12 @@ function scoreRemoteSource(homeRoomName, sourceId) {
     var minerBodyCost = requiredWork * BODYPART_COST[WORK] +
         Math.ceil(requiredWork / 2) * BODYPART_COST[MOVE] + BODYPART_COST[CARRY];
     var minerCostPerTick = minerBodyCost / minerLifetime;
-    var carryPartsNeeded = Math.ceil((effectiveEnergyPerTick * distance * 2) / CARRY_CAPACITY);
+    var travelEstimate = getRouteTravelEstimate(info, getRepresentativeFreighterBody(homeRoomName), true);
+    var effectiveRoundTripTicks = Math.max(distance * 2, travelEstimate.roundTripTicks);
+    var carryPartsNeeded = Math.ceil((effectiveEnergyPerTick * effectiveRoundTripTicks) / CARRY_CAPACITY);
     var haulerCostPerTick = (carryPartsNeeded * ESTIMATED_CARRY_COST_PER_PART) / CREEP_LIFE_TIME;
     var roadCost = distance * ROAD_REPAIR_COST_PER_TILE;
-    var riskPenalty = info.risk || 0;
+    var riskPenalty = (info.risk || 0) + getTransitRisk(info.route, homeRoomName, info.roomName);
 
     var netIncome = effectiveEnergyPerTick - minerCostPerTick - haulerCostPerTick - CONTAINER_OR_DROP_LOSS - roadCost - riskPenalty;
 
@@ -389,8 +399,8 @@ function scoreRemoteSource(homeRoomName, sourceId) {
     info.netIncome = round3(netIncome);
     info.requiredWork = requiredWork;
     info.requiredCarry = carryPartsNeeded;
-    info.oneWayTravelTicks = info.route && info.route.oneWayTravelTicks || distance;
-    info.roundTripTicks = info.route && info.route.roundTripTicks || distance * 2;
+    info.oneWayTravelTicks = travelEstimate.outboundTicks;
+    info.roundTripTicks = effectiveRoundTripTicks;
     info.estimatedMinerBodyCost = minerBodyCost;
     info.spawnUsage = round3((minerBodyCost / CREEP_LIFE_TIME) + haulerCostPerTick);
     info.score = round3(netIncome - (distance / 1000));
@@ -444,7 +454,7 @@ function getBestRemoteSourceForExtractor(creep) {
             continue;
         }
 
-        if (!isAdjacentToHomeRoom(homeRoomName, info.roomName)) {
+        if (!isWithinRemoteRange(homeRoomName, info.roomName)) {
             continue;
         }
 
@@ -472,9 +482,13 @@ function getRemotePath(homeRoomName, sourceId) {
     if (!info || !info.roadCoords) {
         return [];
     }
-    if (info.route && (!info.route.lastValidatedAt || Game.time - info.route.lastValidatedAt >= RESCORE_INTERVAL)) {
-        info.route.lastValidatedAt = Game.time;
+
+    ensureOrderedRoute(info);
+    var interval = Number((HiveMemory.getConfig('remote') || {}).routeValidationInterval) || ROUTE_VALIDATION_INTERVAL;
+    if (!info.route.lastValidatedAt || Game.time - info.route.lastValidatedAt >= interval || info.route.dirty) {
+        validateRemoteRoute(homeRoomName, sourceId, true);
     }
+    if (!info.route.valid) return [];
 
     if (!global.__sushiRemotePlannerPaths) {
         global.__sushiRemotePlannerPaths = {};
@@ -487,14 +501,11 @@ function getRemotePath(homeRoomName, sourceId) {
     }
 
     var path = [];
-    for (var roomName in info.roadCoords) {
-        if (!info.roadCoords.hasOwnProperty(roomName)) {
-            continue;
-        }
-
-        var packedList = info.roadCoords[roomName];
+    for (var segmentIndex = 0; segmentIndex < info.route.segments.length; segmentIndex++) {
+        var segment = info.route.segments[segmentIndex];
+        var packedList = segment.coords;
         for (var i = 0; i < packedList.length; i++) {
-            path.push(unpackCoord(packedList[i], roomName));
+            path.push(unpackCoord(packedList[i], segment.room));
         }
     }
 
@@ -504,6 +515,194 @@ function getRemotePath(homeRoomName, sourceId) {
     };
 
     return path;
+}
+
+function ensureOrderedRoute(info) {
+    if (!info.route) info.route = {};
+    if (!Array.isArray(info.route.segments) || info.route.segments.length === 0) {
+        info.route.segments = [];
+        for (var roomName in info.roadCoords) {
+            if (!info.roadCoords.hasOwnProperty(roomName)) continue;
+            info.route.segments.push({ room: roomName, coords: info.roadCoords[roomName].slice() });
+        }
+    }
+    info.route.version = info.route.version || PATH_VERSION;
+    info.route.length = info.route.length || info.route.segments.reduce(function(sum, segment) {
+        return sum + (segment.coords ? segment.coords.length : 0);
+    }, 0);
+    info.route.roomSequence = info.route.segments.map(function(segment) { return segment.room; });
+    if (info.route.valid === undefined) info.route.valid = true;
+    if (info.containerCoord === undefined && info.route.segments.length > 0) {
+        var lastSegment = info.route.segments[info.route.segments.length - 1];
+        if (lastSegment.coords && lastSegment.coords.length) {
+            info.containerCoord = lastSegment.coords[lastSegment.coords.length - 1];
+        }
+    }
+    if (info.route.targetCoord === undefined) info.route.targetCoord = info.containerCoord;
+    if (!info.route.terrain) info.route.terrain = { road: 0, plain: info.route.length, swamp: 0 };
+    return info.route;
+}
+
+function validateRemoteRoute(homeRoomName, sourceId, force) {
+    var planner = ensurePlannerMemory(homeRoomName);
+    var info = planner.sourceInfos[sourceId];
+    if (!info || !info.roadCoords) return { valid: false, reason: 'MISSING_ROUTE_DATA' };
+    var route = ensureOrderedRoute(info);
+    var reason = null;
+    if (route.version !== PATH_VERSION) reason = 'PATH_VERSION_CHANGED';
+    else if (!Array.isArray(route.segments) || route.segments.length === 0) reason = 'MALFORMED_ROUTE';
+    else if (route.targetCoord !== info.containerCoord) reason = 'DESTINATION_CHANGED';
+    var sourceMemory = Memory.rooms && Memory.rooms[info.roomName] &&
+        Memory.rooms[info.roomName].sources && Memory.rooms[info.roomName].sources[sourceId];
+    var currentTarget = getSourceTargetInfo(sourceMemory);
+    if (!reason && currentTarget && currentTarget.range === 0 &&
+        Number(packCoord(currentTarget.pos)) !== Number(route.targetCoord)) reason = 'DESTINATION_CHANGED';
+    var count = 0;
+    for (var i = 0; !reason && i < route.segments.length; i++) {
+        var segment = route.segments[i];
+        if (!segment || !segment.room || !Array.isArray(segment.coords) || segment.coords.length === 0) {
+            reason = 'MALFORMED_ROUTE';
+            break;
+        }
+        if (isBlockedRoomForPath(homeRoomName, segment.room)) {
+            reason = 'HOSTILE_TRANSIT_ROOM';
+            break;
+        }
+        var room = Game.rooms[segment.room];
+        var blocked = room ? getPermanentBlockedCoords(room) : null;
+        for (var j = 0; j < segment.coords.length; j++) {
+            var packed = Number(segment.coords[j]);
+            if (!Number.isFinite(packed) || packed < 0 || packed >= 2500) {
+                reason = 'MALFORMED_ROUTE';
+                break;
+            }
+            count++;
+            if (blocked && blocked[packed]) {
+                reason = blocked[packed];
+                break;
+            }
+        }
+    }
+    if (!reason && count !== route.length) reason = 'ROUTE_LENGTH_MISMATCH';
+    if (!reason) {
+        var last = route.segments[route.segments.length - 1];
+        if (!last.coords.length || last.room !== info.roomName ||
+            Number(last.coords[last.coords.length - 1]) !== Number(info.containerCoord)) {
+            reason = 'ROUTE_ENDPOINT_MISMATCH';
+        }
+    }
+    if (!reason) refreshRouteTerrain(info, route);
+    route.lastValidationAttemptAt = Game.time;
+    route.dirty = false;
+    if (reason) {
+        route.valid = false;
+        route.invalidReason = reason;
+        route.invalidatedAt = Game.time;
+        info.routeInvalidReason = reason;
+        clearSourceHeapPath(homeRoomName, sourceId);
+        return { valid: false, reason: reason };
+    }
+    route.valid = true;
+    route.lastValidatedAt = Game.time;
+    delete route.invalidReason;
+    delete info.routeInvalidReason;
+    return { valid: true, reason: null };
+}
+
+function refreshRouteTerrain(info, route) {
+    var path = [];
+    for (var i = 0; i < route.segments.length; i++) {
+        for (var j = 0; j < route.segments[i].coords.length; j++) {
+            path.push(unpackCoord(route.segments[i].coords[j], route.segments[i].room));
+        }
+    }
+    var previousRoads = route.terrain && route.terrain.road || 0;
+    route.terrain = getRouteTerrain(path);
+    if (route.terrain.road !== previousRoads && route.travelSamples) {
+        route.travelSamples = Math.floor(route.travelSamples * 0.5);
+        route.outboundSamples = Math.floor((route.outboundSamples || 0) * 0.5);
+        route.returnSamples = Math.floor((route.returnSamples || 0) * 0.5);
+        route.observationDecayedAt = Game.time;
+    }
+    var estimate = getRouteTravelEstimate(info, getRepresentativeFreighterBody(info.parentHome || info.parentRoomName), true);
+    route.estimatedOutboundTicks = estimate.modelOutboundTicks;
+    route.estimatedReturnTicks = estimate.modelReturnTicks;
+    route.estimatedRoundTripTicks = estimate.modelOutboundTicks + estimate.modelReturnTicks;
+}
+
+function getPermanentBlockedCoords(room) {
+    var blocked = {};
+    if (!room || typeof room.find !== 'function') return blocked;
+    var structures = room.find(FIND_STRUCTURES) || [];
+    for (var i = 0; i < structures.length; i++) {
+        var structure = structures[i];
+        var reason = null;
+        if (structure.structureType === STRUCTURE_RAMPART && !structure.my && !structure.isPublic) {
+            reason = 'BLOCKED_RAMPART';
+        }
+        else if (typeof OBSTACLE_OBJECT_TYPES !== 'undefined' &&
+            OBSTACLE_OBJECT_TYPES.indexOf(structure.structureType) >= 0) {
+            reason = 'BLOCKED_STRUCTURE';
+        }
+        if (reason) blocked[packCoord(structure.pos)] = reason;
+    }
+    return blocked;
+}
+
+function clearSourceHeapPath(homeRoomName, sourceId) {
+    if (global.__sushiRemotePlannerPaths) delete global.__sushiRemotePlannerPaths[homeRoomName + ':' + sourceId];
+}
+
+function startRemoteTrip(creep, sourceInfo) {
+    if (!creep || !creep.memory || !sourceInfo) return;
+    var route = ensureOrderedRoute(sourceInfo);
+    creep.memory.remoteTrip = {
+        sourceId: sourceInfo.sourceId,
+        routeVersion: route.version,
+        departureTick: Game.time,
+        direction: 'OUTBOUND'
+    };
+}
+
+function recordRemoteTripLeg(creep, direction) {
+    if (!creep || !creep.memory || !creep.memory.homeRoom) return false;
+    var trip = creep.memory.remoteTrip;
+    var sourceId = trip && trip.sourceId || creep.memory.pickupSourceId || creep.memory.remoteDeliverySourceId;
+    var planner = ensurePlannerMemory(creep.memory.homeRoom);
+    var info = sourceId && planner.sourceInfos[sourceId];
+    if (!trip || !info || !info.route || trip.routeVersion !== info.route.version) return false;
+    var route = info.route;
+    if (direction === 'OUTBOUND' && trip.direction === 'OUTBOUND') {
+        var outbound = Math.max(1, Game.time - trip.departureTick);
+        route.observedOutboundTicks = updateEwma(route.observedOutboundTicks, outbound);
+        route.travelDeviation = updateEwma(route.travelDeviation, Math.abs(outbound - route.observedOutboundTicks));
+        route.outboundSamples = (route.outboundSamples || 0) + 1;
+        trip.outboundTicks = outbound;
+        trip.returnStartedAt = Game.time;
+        trip.direction = 'RETURN';
+        return true;
+    }
+    if (direction === 'RETURN' && trip.direction === 'RETURN') {
+        var returning = Math.max(1, Game.time - (trip.returnStartedAt || Game.time));
+        route.observedReturnTicks = updateEwma(route.observedReturnTicks, returning);
+        route.travelDeviation = updateEwma(route.travelDeviation, Math.abs(returning - route.observedReturnTicks));
+        route.returnSamples = (route.returnSamples || 0) + 1;
+        route.travelSamples = Math.min(route.outboundSamples || 0, route.returnSamples || 0);
+        if (trip.outboundTicks) route.observedRoundTripTicks = updateEwma(
+            route.observedRoundTripTicks, trip.outboundTicks + returning);
+        route.lastObservedAt = Game.time;
+        var calibrated = getRouteTravelEstimate(info, creep.body || getRepresentativeFreighterBody(creep.memory.homeRoom), true);
+        info.oneWayTravelTicks = calibrated.outboundTicks;
+        info.roundTripTicks = calibrated.roundTripTicks;
+        delete creep.memory.remoteTrip;
+        return true;
+    }
+    return false;
+}
+
+function updateEwma(previous, sample) {
+    return previous === undefined || previous === null ? sample :
+        round3(previous * (1 - TRAVEL_EWMA_ALPHA) + sample * TRAVEL_EWMA_ALPHA);
 }
 
 function shouldUseRemoteSource(homeRoomName, sourceId, ignoreScore) {
@@ -525,8 +724,16 @@ function shouldUseRemoteSource(homeRoomName, sourceId, ignoreScore) {
         return false;
     }
 
-    if (!isAdjacentToHomeRoom(homeRoomName, info.roomName)) {
-        info.rejectReason = 'not adjacent to home room';
+    if (info.route && info.route.valid === false) {
+        info.rejectReason = info.route.invalidReason || 'invalid canonical route';
+        info.blockedReason = info.rejectReason;
+        info.state = info.route.invalidReason === 'HOSTILE_TRANSIT_ROOM' ?
+            REMOTE_STATES.SUSPENDED_DANGER : REMOTE_STATES.DEGRADED;
+        return false;
+    }
+
+    if (!isWithinRemoteRange(homeRoomName, info.roomName)) {
+        info.rejectReason = 'outside configured remote range';
         return false;
     }
 
@@ -620,6 +827,24 @@ function planRemoteSource(homeRoomName, remoteRoom, sourceId, sourceMemory, room
         roadCoords[pos.roomName].push(packCoord(pos));
     }
 
+    var segments = buildRouteSegments(path);
+    var terrain = getRouteTerrain(path);
+    var route = {
+        version: PATH_VERSION,
+        valid: true,
+        calculatedAt: Game.time,
+        lastValidatedAt: Game.time,
+        length: path.length,
+        targetCoord: packCoord(containerPos),
+        terrain: terrain,
+        segments: segments,
+        roomSequence: segments.map(function(segment) { return segment.room; })
+    };
+    var initialTravel = estimateRouteTravelTicks(route, [CARRY, CARRY, MOVE], false);
+    route.estimatedOutboundTicks = initialTravel;
+    route.estimatedReturnTicks = estimateRouteTravelTicks(route, [CARRY, CARRY, MOVE], true);
+    route.estimatedRoundTripTicks = route.estimatedOutboundTicks + route.estimatedReturnTicks;
+
     return {
         sourceId: sourceId,
         roomName: remoteRoom.name,
@@ -632,15 +857,7 @@ function planRemoteSource(homeRoomName, remoteRoom, sourceId, sourceMemory, room
         numOpen: getSourceSeatCount(sourceMemory),
         containerCoord: packCoord(containerPos),
         roadCoords: roadCoords,
-        route: {
-            version: PATH_VERSION,
-            calculatedAt: Game.time,
-            lastValidatedAt: Game.time,
-            length: path.length,
-            oneWayTravelTicks: path.length,
-            roundTripTicks: path.length * 2,
-            roomSequence: getPathRoomSequence(path)
-        },
+        route: route,
         constructed: false,
         risk: getRoomRisk(remoteRoom, roomType),
         netIncome: 0,
@@ -652,12 +869,129 @@ function planRemoteSource(homeRoomName, remoteRoom, sourceId, sourceMemory, room
     };
 }
 
+function getRemoteMaxRoomRange() {
+    var config = HiveMemory.getConfig('remote') || {};
+    return Math.max(1, Math.min(MAX_PATH_ROOMS - 1, Number(config.maxRoomRange) || 2));
+}
+
+function isWithinRemoteRange(homeRoomName, remoteRoomName) {
+    if (!homeRoomName || !remoteRoomName || homeRoomName === remoteRoomName) return false;
+    return Game.map.getRoomLinearDistance(homeRoomName, remoteRoomName) <= getRemoteMaxRoomRange();
+}
+
 function getPathRoomSequence(path) {
     var result = [];
     for (var i = 0; i < path.length; i++) {
         if (result[result.length - 1] !== path[i].roomName) result.push(path[i].roomName);
     }
     return result;
+}
+
+function buildRouteSegments(path) {
+    var segments = [];
+    for (var i = 0; i < path.length; i++) {
+        var last = segments[segments.length - 1];
+        if (!last || last.room !== path[i].roomName) {
+            last = { room: path[i].roomName, coords: [] };
+            segments.push(last);
+        }
+        last.coords.push(packCoord(path[i]));
+    }
+    return segments;
+}
+
+function getRouteTerrain(path) {
+    var result = { road: 0, plain: 0, swamp: 0 };
+    var roads = {};
+    var routeRooms = {};
+    for (var routeIndex = 0; routeIndex < path.length; routeIndex++) routeRooms[path[routeIndex].roomName] = true;
+    for (var roomName in routeRooms) {
+        if (!Game.rooms[roomName] || typeof Game.rooms[roomName].find !== 'function') continue;
+        roads[roomName] = {};
+        var structures = Game.rooms[roomName].find(FIND_STRUCTURES) || [];
+        for (var i = 0; i < structures.length; i++) {
+            if (structures[i].structureType === STRUCTURE_ROAD) roads[roomName][packCoord(structures[i].pos)] = true;
+        }
+    }
+    for (i = 0; i < path.length; i++) {
+        var pos = path[i];
+        if (roads[pos.roomName] && roads[pos.roomName][packCoord(pos)]) result.road++;
+        else {
+            var terrain = Game.map.getRoomTerrain(pos.roomName).get(pos.x, pos.y);
+            if (terrain === TERRAIN_MASK_SWAMP) result.swamp++;
+            else result.plain++;
+        }
+    }
+    return result;
+}
+
+function estimateRouteTravelTicks(route, body, loaded) {
+    route = route || { length: 1, terrain: { plain: 1, road: 0, swamp: 0 } };
+    var moveParts = countBodyParts(body, MOVE);
+    var weight = 0;
+    for (var i = 0; i < (body || []).length; i++) {
+        var type = body[i] && body[i].type || body[i];
+        if (type !== MOVE && (type !== CARRY || loaded)) weight++;
+    }
+    if (moveParts <= 0) return Math.max(1, route.length || 1) * 50;
+    var terrain = route.terrain || { road: 0, plain: route.length || 1, swamp: 0 };
+    function tileTicks(cost) { return Math.max(1, Math.ceil(weight * cost / (moveParts * 2))); }
+    return (terrain.road || 0) * tileTicks(1) +
+        (terrain.plain || 0) * tileTicks(2) + (terrain.swamp || 0) * tileTicks(10);
+}
+
+function getRepresentativeFreighterBody(homeRoomName) {
+    if (!global.__sushiRemoteFreighterBodies || global.__sushiRemoteFreighterBodies.tick !== Game.time ||
+        global.__sushiRemoteFreighterBodies.game !== Game) {
+        global.__sushiRemoteFreighterBodies = { tick: Game.time, game: Game, bodies: {} };
+        for (var indexedName in Game.creeps) {
+            var indexed = Game.creeps[indexedName];
+            if (!indexed || !indexed.memory || indexed.memory.role !== 'Freighter' || !indexed.body) continue;
+            var indexedHome = indexed.memory.homeRoom || indexed.room && indexed.room.name;
+            if (indexedHome && !global.__sushiRemoteFreighterBodies.bodies[indexedHome]) {
+                global.__sushiRemoteFreighterBodies.bodies[indexedHome] = indexed.body;
+            }
+        }
+    }
+    if (global.__sushiRemoteFreighterBodies.bodies[homeRoomName]) {
+        return global.__sushiRemoteFreighterBodies.bodies[homeRoomName];
+    }
+    /* Fallback models the smallest useful early remote hauler. */
+    return [CARRY, CARRY, MOVE];
+}
+
+function getRouteTravelEstimate(info, body, loaded) {
+    var route = ensureOrderedRoute(info);
+    var modelOutbound = estimateRouteTravelTicks(route, body, false);
+    var modelReturn = estimateRouteTravelTicks(route, body, loaded !== false);
+    var samples = route.travelSamples || 0;
+    var observedWeight = Math.min(0.8, samples * 0.16);
+    var outbound = route.observedOutboundTicks ?
+        modelOutbound * (1 - observedWeight) + route.observedOutboundTicks * observedWeight : modelOutbound;
+    var returning = route.observedReturnTicks ?
+        modelReturn * (1 - observedWeight) + route.observedReturnTicks * observedWeight : modelReturn;
+    return { outboundTicks: Math.ceil(outbound), returnTicks: Math.ceil(returning),
+        roundTripTicks: Math.ceil(outbound + returning), modelOutboundTicks: modelOutbound,
+        modelReturnTicks: modelReturn };
+}
+
+function getTransitRisk(route, homeRoomName, destinationRoomName) {
+    if (!route || !route.roomSequence) return 0.5;
+    var risk = 0;
+    for (var i = 0; i < route.roomSequence.length; i++) {
+        var roomName = route.roomSequence[i];
+        if (roomName === homeRoomName || roomName === destinationRoomName) continue;
+        if (isBlockedRoomForPath(homeRoomName, roomName)) return 100;
+        var memory = Memory.rooms && Memory.rooms[roomName];
+        var hive = HiveMemory.ensure();
+        var threat = hive.threats && hive.threats[roomName];
+        if (!memory) risk += 0.25;
+        var reservation = memory && memory.controller && getReservationUsername(memory.controller);
+        if (reservation && reservation !== getMyUsername()) risk += 1.5;
+        if (threat && threat.harmfulHostileCount > 0) risk += 5;
+        if (memory && memory.remotePlanner && memory.remotePlanner.status === 'danger') risk += 5;
+    }
+    return risk;
 }
 
 function getHomeAnchor(homeRoomName) {
@@ -789,6 +1123,15 @@ function buildRemoteCostMatrix(homeRoomName, roomName) {
 
 function isBlockedRoomForPath(homeRoomName, roomName) {
     var roomMemory = Memory.rooms && Memory.rooms[roomName];
+    var room = Game.rooms[roomName];
+    var remoteConfig = HiveMemory.getConfig('remote') || {};
+
+    if (!remoteConfig.allowKeeperRooms && isKeeperRoom(roomName, room)) return true;
+    if (room && isOwnedEnemyRoom(room)) return true;
+    if (room && (hasInvaderCore(room) || hasSeriousDanger(room))) return true;
+    var hive = HiveMemory.ensure();
+    var threat = hive.threats && hive.threats[roomName];
+    if (threat && threat.harmfulHostileCount > 0 && threat.lastSeen >= Game.time - 1500) return true;
 
     if (!roomMemory) {
         return false;
@@ -1079,7 +1422,7 @@ function refreshVisibleCandidatePlans(homeRoomName) {
             continue;
         }
 
-        if (!isAdjacentToHomeRoom(homeRoomName, roomName)) {
+        if (!isWithinRemoteRange(homeRoomName, roomName)) {
             continue;
         }
 
@@ -1152,7 +1495,7 @@ function selectActiveSources(homeRoomName) {
         info.active = false;
 
         if (
-            isAdjacentToHomeRoom(homeRoomName, info.roomName) &&
+            isWithinRemoteRange(homeRoomName, info.roomName) &&
             shouldUseRemoteSource(homeRoomName, sourceId) &&
             info.netIncome > 0
         ) {
@@ -1243,18 +1586,30 @@ function updateSourceTelemetry(homeRoomName, info) {
         minerReplacementETA: replacementEta,
         containerId: sourceMemory && sourceMemory.containerId || null,
         amount: haul.amount || 0,
+        currentEnergy: haul.amount || 0,
         capacity: haul.capacity || 0,
         productionRate: info.effectiveEnergyPerTick || 0,
         ticksToFull: haul.ticksToFull,
         travelTicks: info.oneWayTravelTicks || info.distance || 0,
         projectedFillAtArrival: haul.projectedFillAtArrival,
+        estimatedArrival: haul.travelTicks || info.oneWayTravelTicks || info.distance || 0,
         requiredCarry: info.requiredCarry || 0,
         reservedCarry: haul.reservedCarry || 0,
         inboundFreighters: haul.inboundFreighters || 0,
         lastPickup: haul.lastPickupAt || 0,
         lastDelivery: haul.lastDeliveryAt || 0,
         routeAge: info.route ? Game.time - info.route.calculatedAt : null,
-        routeVersion: info.route && info.route.version || null
+        routeVersion: info.route && info.route.version || null,
+        routeValid: info.route && info.route.valid !== false,
+        routeInvalidReason: info.route && info.route.invalidReason || null,
+        estimatedOutboundTicks: info.route && info.route.estimatedOutboundTicks,
+        estimatedReturnTicks: info.route && info.route.estimatedReturnTicks,
+        observedOutboundTicks: info.route && info.route.observedOutboundTicks,
+        observedReturnTicks: info.route && info.route.observedReturnTicks,
+        observedRoundTripTicks: info.route && info.route.observedRoundTripTicks,
+        travelSamples: info.route && info.route.travelSamples || 0,
+        dispatchSafetyTicks: haul.dispatchSafetyTicks,
+        dispatchReason: haul.dispatchReason || null
     };
 }
 
@@ -1365,14 +1720,22 @@ function getRemoteRampStatus(homeRoomName, activeIds, economy) {
 }
 
 function remoteRoadInvestmentReady(homeRoomName, info, economy) {
-    if (!info || !info.active || info.netIncome <= 0 || !economy || economy.state === Economy.STATES.RECOVERY) return false;
+    if (!info || !info.active || info.netIncome <= 0 || !economy) return false;
     var sourceMemory = Memory.rooms[info.roomName] && Memory.rooms[info.roomName].sources &&
         Memory.rooms[info.roomName].sources[info.sourceId];
     var controller = Memory.rooms[info.roomName] && Memory.rooms[info.roomName].controller;
     var reserved = controller && controller.reservation && controller.reservation.username === getMyUsername();
     var haulOperational = sourceMemory && sourceMemory.haul && sourceMemory.haul.lastSeen >= Game.time - 100;
-    return !!(sourceMemory && sourceMemory.containerId && haulOperational && reserved &&
-        economy.growth && economy.growth.energyAboveReserve > 0 && economy.growth.controllerBudget >= 1);
+    var growth = economy.growth || {};
+    var localHealthy = economy.harvest && economy.harvest.workActive >=
+        Math.max(1, economy.harvest.workRequired * 0.9);
+    var terrain = info.route && info.route.terrain || {};
+    var materialGain = (terrain.plain || 0) + (terrain.swamp || 0) * 3 >= 10;
+    var recoverySafe = economy.state !== Economy.STATES.RECOVERY ||
+        (localHealthy && info.state === REMOTE_STATES.ACTIVE && info.netIncome >= 2 &&
+            materialGain && growth.energyAboveReserve >= 100);
+    return !!(recoverySafe && sourceMemory && sourceMemory.containerId && haulOperational && reserved &&
+        growth.energyAboveReserve > 0 && growth.controllerBudget >= 1);
 }
 
 function hasActiveSourceInRemote(planner, remoteInfo) {
@@ -1408,7 +1771,7 @@ function claimBestParentForSource(homeRoomName, newInfo) {
             continue;
         }
 
-        if (!isAdjacentToHomeRoom(oldInfo.parentRoomName, oldInfo.roomName)) {
+        if (!isWithinRemoteRange(oldInfo.parentRoomName, oldInfo.roomName)) {
             delete planner.sourceInfos[newInfo.sourceId];
             removeFromActiveList(planner, newInfo.sourceId);
             continue;
@@ -1528,7 +1891,7 @@ function hasRemoteAssignmentCapacity(homeRoomName, info, requestingCreep) {
 }
 
 function claimRemoteSource(creep, homeRoomName, info) {
-    if (!creep || !creep.memory || !info || !isAdjacentToHomeRoom(homeRoomName, info.roomName)) {
+    if (!creep || !creep.memory || !info || !isWithinRemoteRange(homeRoomName, info.roomName)) {
         return false;
     }
 
@@ -1613,7 +1976,7 @@ function getActiveRemoteSourcesForHome(homeRoomName) {
             !info ||
             !info.active ||
             info.parentRoomName !== homeRoomName ||
-            !isAdjacentToHomeRoom(homeRoomName, info.roomName)
+            !isWithinRemoteRange(homeRoomName, info.roomName)
         ) {
             continue;
         }
@@ -1719,7 +2082,7 @@ function getRemoteExtractorDemand(homeRoomName, extractorBody, queue) {
     for (var i = 0; i < activeSources.length; i++) {
         var sourceInfo = activeSources[i];
 
-        if (!isAdjacentToHomeRoom(homeRoomName, sourceInfo.roomName)) {
+        if (!isWithinRemoteRange(homeRoomName, sourceInfo.roomName)) {
             continue;
         }
 
@@ -1856,6 +2219,8 @@ function claimRemotePickupTarget(creep, pickupInfo) {
     creep.memory.logisticsPurpose = 'REMOTE_ENERGY';
     creep.memory.freighterReservedCarry = reservedCarry;
     creep.memory.freighterReservedUntil = Game.time + HAUL_RESERVATION_TICKS;
+    var sourceInfo = ensurePlannerMemory(homeRoomName).sourceInfos[pickupInfo.sourceId];
+    if (sourceInfo) startRemoteTrip(creep, sourceInfo);
 
     syncSourceHaulReservation(pickupRoom, pickupInfo.sourceId, haul, null);
 
@@ -1878,6 +2243,13 @@ function clearRemoteFreighterMemory(creep) {
     delete creep.memory.freighterReservedUntil;
     delete creep.memory.remoteDeliveryRoom;
     delete creep.memory.remoteDeliverySourceId;
+    delete creep.memory.destinationRoom;
+    delete creep.memory.logisticsPurpose;
+    delete creep.memory.originRoom;
+    delete creep.memory.resourceType;
+    delete creep.memory.logisticsAmount;
+    delete creep.memory.logisticsPriority;
+    delete creep.memory.remoteTrip;
 
     /* Remove fields written by the previous remote Freighter implementation. */
     delete creep.memory.remoteFreighting;
@@ -1993,12 +2365,16 @@ function syncSourceHaulReservation(roomName, sourceId, haul, skipCreepName) {
     haul.reservedCarry = reservedCarry;
 }
 
-function getHomeDeliveryTarget(creep) {
+function getLogisticsDestinationRoom(creep) {
+    return creep && creep.memory && (creep.memory.destinationRoom || creep.memory.homeRoom) || null;
+}
+
+function getHomeDeliveryTarget(creep, destinationRoomName) {
     if (!creep || !creep.memory) {
         return null;
     }
 
-    var homeRoomName = creep.memory.homeRoom || creep.room.name;
+    var homeRoomName = destinationRoomName || getLogisticsDestinationRoom(creep) || creep.room.name;
     var homeRoom = Game.rooms[homeRoomName];
 
     if (!homeRoom) {
@@ -2109,7 +2485,16 @@ function followRemotePath(creep, homeRoomName, sourceId, reverse) {
         return travel.moveToRoom(creep, destination, { range: 22, reusePath: 20 }) === OK;
     }
     var nextIndex = reverse ? Math.max(0, bestIndex - 1) : Math.min(path.length - 1, bestIndex + 1);
-    return travel.move(creep, path[nextIndex], { range: 0, reusePath: 5 }) === OK;
+    var result = travel.move(creep, path[nextIndex], { range: 0, reusePath: 5 });
+    var info = ensurePlannerMemory(homeRoomName).sourceInfos[sourceId];
+    if (info && info.route) {
+        if (result === ERR_NO_PATH || result === ERR_INVALID_TARGET) {
+            info.route.movementFailures = (info.route.movementFailures || 0) + 1;
+            if (info.route.movementFailures >= 3) info.route.dirty = true;
+        }
+        else if (result === OK) info.route.movementFailures = 0;
+    }
+    return result === OK;
 }
 
 function clearHeapPathCache(homeRoomName) {
@@ -2193,10 +2578,18 @@ module.exports = {
     releaseRemoteFreighterReservation: releaseRemoteFreighterReservation,
     clearRemoteFreighterMemory: clearRemoteFreighterMemory,
     getHomeDeliveryTarget: getHomeDeliveryTarget,
+    getLogisticsDestinationRoom: getLogisticsDestinationRoom,
     getBestRemoteRoomForFreighter: getBestRemoteRoomForFreighter,
     moveFreighterToRemotePickup: moveFreighterToRemotePickup,
     moveFreighterAlongRemotePath: moveFreighterAlongRemotePath,
     getRemotePath: getRemotePath,
+    validateRemoteRoute: validateRemoteRoute,
+    estimateRouteTravelTicks: estimateRouteTravelTicks,
+    getRouteTravelEstimate: getRouteTravelEstimate,
+    recordRemoteTripLeg: recordRemoteTripLeg,
+    startRemoteTrip: startRemoteTrip,
+    isWithinRemoteRange: isWithinRemoteRange,
+    getRemoteMaxRoomRange: getRemoteMaxRoomRange,
     shouldUseRemoteSource: shouldUseRemoteSource,
     packCoord: packCoord,
     unpackCoord: unpackCoord,

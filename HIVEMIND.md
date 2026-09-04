@@ -196,6 +196,20 @@ the same coordinates feed road planning. Dispatch projects container energy at
 arrival and subtracts inbound reservations; CARRY demand is based on production
 times round-trip travel rather than only accumulated backlog.
 
+Remote discovery defaults to a two-room radius through `config.remote`. Route
+segments preserve exact multi-room order. Validation runs on a staggered interval
+or dirty signal and checks schema, endpoint, known transit policy, and permanent
+visible blockers; creeps are deliberately ignored. Invalid routes retain their
+source portfolio but stop receiving new assignments until a visible, CPU-budgeted
+planning pass rebuilds them.
+
+Static ETA uses Screeps fatigue: empty CARRY contributes no outbound weight,
+loaded CARRY contributes return weight, MOVE removes two fatigue per tick, and
+road/plain/swamp tiles cost 1/2/10 fatigue per weighted part. Completed trips feed
+an EWMA for outbound, return, round-trip, and deviation. Dispatch blends observed
+and modeled ETA and derives its safety lead from length, swamp exposure, sample
+confidence, deviation, and inbound Freighters.
+
 Construction release is milestone-first. Essential containers, Spawns,
 extensions, towers, storage, links, and other unlocked core infrastructure are
 considered before bulk roads; roads remain planned and are released before

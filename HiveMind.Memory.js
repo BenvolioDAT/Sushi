@@ -13,6 +13,7 @@ const CONFIG_DEFAULTS = Object.freeze({
             RCL5: 30, RCL6: 36, RCL7: 40, RCL8: 46 }
     },
     economy: {}, lifecycle: { hysteresisTicks: 5, milestoneTimeout: 1500 },
+    remote: { maxRoomRange: 2, allowKeeperRooms: false, routeValidationInterval: 251 },
     memoryGC: {
         interval: 101, workBudget: 25, squadRetention: 250, operationRetention: 1000,
         demandRetention: 25, queueRetention: 50, playerRetention: 50000,

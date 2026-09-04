@@ -138,7 +138,8 @@ function remoteEconomy(roomName) {
         if (haul && haul.lastSeen > 0) oldestHaulAge = Math.max(oldestHaulAge, Game.time - haul.lastSeen);
         const carryCapacity = typeof CARRY_CAPACITY === 'number' ? CARRY_CAPACITY : 50;
         requiredCarry += Math.ceil(Math.max(0, info.effectiveEnergyPerTick || 0) *
-            Math.max(1, info.distance || 1) * 2 / carryCapacity);
+            Math.max(1, info.roundTripTicks || info.route && info.route.estimatedRoundTripTicks ||
+                (info.distance || 1) * 2) / carryCapacity);
         const controller = Memory.rooms && Memory.rooms[info.roomName] && Memory.rooms[info.roomName].controller;
         if (controller && controller.reservation && controller.reservation.username) reservedSources++;
         else unreservedSources++;
