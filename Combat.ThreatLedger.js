@@ -1,3 +1,4 @@
+const RemoteIntel = require('Remote.Intel');
 const HiveMemory = require('HiveMind.Memory');
 const TickIndex = require('HiveMind.Index');
 const CombatMath = require('Combat.Math');
@@ -147,6 +148,7 @@ function ensureDefenseOperation(snapshot) {
 
 function observeRoom(room, suppliedHostiles) {
     if (!room) return null;
+    RemoteIntel.refresh(room);
     const index = TickIndex.get();
     const hostiles = suppliedHostiles || index.hostilesByRoom.get(room.name) || [];
     const attacked = attackEvents(room);
@@ -197,8 +199,18 @@ function cleanup() {
 function run() {
     HiveMemory.migrate();
     const index = TickIndex.get();
+    const relevant = new Set(Object.keys(HiveMemory.ensure().threats));
+    for (const memory of Object.values(Memory.rooms || {})) {
+        const planner = memory && memory.remotePlanner;
+        if (!planner) continue;
+        for (const name of Object.keys(planner.remotes || {})) relevant.add(name);
+        for (const info of Object.values(planner.sourceInfos || {})) {
+            relevant.add(info.roomName);
+            for (const name of info.route && info.route.roomSequence || []) relevant.add(name);
+        }
+    }
     for (const room of index.visibleRooms) {
-        if ((room.controller && room.controller.my) || (index.hostilesByRoom.get(room.name) || []).length > 0) {
+        if (relevant.has(room.name) || (room.controller && room.controller.my) || (index.hostilesByRoom.get(room.name) || []).length > 0) {
             observeRoom(room);
         }
     }

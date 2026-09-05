@@ -2399,23 +2399,6 @@ function getControllerOwnerUsername(controllerMemory) {
     return controllerMemory.owner.username || null;
 }
 
-function getControllerReservation(controllerMemory) {
-    if (!controllerMemory || !controllerMemory.reservation) {
-        return null;
-    }
-
-    if (typeof controllerMemory.reservation === 'string') {
-        return {
-            username: controllerMemory.reservation,
-            ticksToEnd: controllerMemory.ticksToEnd || 0
-        };
-    }
-
-    return {
-        username: controllerMemory.reservation.username || null,
-        ticksToEnd: controllerMemory.reservation.ticksToEnd || controllerMemory.ticksToEnd || 0
-    };
-}
 
 function isLivingAnnexForHome(creep, homeRoomName) {
     return !!(
@@ -2528,10 +2511,9 @@ function requestAnnexForRoom(room) {
         }
         seenRemoteRooms[remoteRoomName] = true;
 
-        var controllerMemory = Memory.rooms && Memory.rooms[remoteRoomName] ?
-            Memory.rooms[remoteRoomName].controller : null;
+        var controllerMemory = RemotePlanner.getControllerInfo(remoteRoomName);
         var ownerUsername = getControllerOwnerUsername(controllerMemory);
-        var reservation = getControllerReservation(controllerMemory);
+        var reservation = RemotePlanner.getEffectiveReservation(remoteRoomName);
 
         if (ownerUsername && ownerUsername !== myUsername) {
             continue;
@@ -2582,7 +2564,7 @@ function requestAnnexForRoom(room) {
             body: annexBody,
             priority: initialReservation ? ANNEX_INITIAL_PRIORITY :
                 claimParts <= 1 ? ANNEX_CONTINUITY_PRIORITY : ANNEX_MAINTENANCE_PRIORITY,
-            economyCategory: initialReservation ? 'remoteIncome' : 'expansion',
+            economyCategory: initialReservation && ['BOOTSTRAPPING', 'RESERVING'].indexOf(sourceInfo.state) >= 0 ? 'remoteBootstrap' : 'remoteMaintenance',
             memory: {
                 role: 'Annex',
                 homeRoom: room.name,
@@ -2601,6 +2583,11 @@ function requestAnnexForRoom(room) {
             return result;
         }
 
+        if (sourceInfo.reservationBootstrap) {
+            sourceInfo.state = 'RESERVING';
+            sourceInfo.reservationBootstrapStartedAt = Game.time;
+            sourceInfo.reservationBootstrapUntil = Game.time + annexBody.length * 3 + (sourceInfo.distance || 50) * 3 + 500;
+        }
         result.requested = 1;
         result.targetRoom = remoteRoomName;
         result.spawnAtTicks = reservationSpawnAt;

@@ -1,3 +1,4 @@
+const RemoteIntel = require('Remote.Intel');
 const HiveMemory = require('HiveMind.Memory');
 const TickIndex = require('HiveMind.Index');
 const Links = require('Resource.Links');
@@ -120,16 +121,18 @@ function remoteEconomy(roomName) {
     let plannedIncome = 0;
     let provenIncome = 0;
     let provenSources = 0;
+    let operationalSources = 0;
     for (const id of activeIds) {
         const info = sourceInfos[id];
         if (!info || !info.active || info.operational === false || (info.route && info.route.valid === false)) continue;
+        operationalSources++;
         const sourceMemory = Memory.rooms && Memory.rooms[info.roomName] &&
             Memory.rooms[info.roomName].sources && Memory.rooms[info.roomName].sources[id];
         const evidence = remoteIncomeEvidence(roomName, info, sourceMemory);
         plannedIncome += evidence.planned;
         provenIncome += evidence.realized;
         gross += evidence.realized;
-        net += evidence.planned > 0 ? Math.max(0, info.netIncome || 0) *
+        net += evidence.planned > 0 ? Math.max(0, info.currentNetEPT !== undefined ? info.currentNetEPT : info.netIncome || 0) *
             (evidence.realized / evidence.planned) : 0;
         if (evidence.planned > 0 && evidence.realized >= evidence.planned * 0.8) provenSources++;
         const haul = sourceMemory && sourceMemory.haul;
@@ -140,12 +143,13 @@ function remoteEconomy(roomName) {
         requiredCarry += Math.ceil(Math.max(0, info.effectiveEnergyPerTick || 0) *
             Math.max(1, info.roundTripTicks || info.route && info.route.estimatedRoundTripTicks ||
                 (info.distance || 1) * 2) / carryCapacity);
-        const controller = Memory.rooms && Memory.rooms[info.roomName] && Memory.rooms[info.roomName].controller;
-        if (controller && controller.reservation && controller.reservation.username) reservedSources++;
+        const reservation = RemoteIntel.getEffectiveReservation(info.roomName);
+        if (reservation && reservation.username) reservedSources++;
         else unreservedSources++;
     }
     return { gross, net, plannedIncome, provenIncome, provenSources,
-        backlog, reservedCarry, activeSources: activeIds.length,
+        backlog, reservedCarry, activeSources: operationalSources, operationalSources,
+        selectedSources: activeIds.length, portfolioSources: Object.keys(sourceInfos).length,
         candidateSources: Object.keys(sourceInfos).filter(id => sourceInfos[id] && sourceInfos[id].score > 0).length,
         reservedSources, unreservedSources, requiredCarry, oldestHaulAge };
 }

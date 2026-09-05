@@ -110,7 +110,7 @@ test('4 true SURVIVAL suspends but preserves remote portfolio and route data', (
     installRemote('remote', 'W1N2', true);
     fresh('Planner.Remote.js').selectActiveSources('W1N1');
     const remote = Memory.rooms.W1N1.remotePlanner;
-    assert.deepStrictEqual(remote.activeSourceIds, ['remote']);
+    assert.deepStrictEqual(remote.activeSourceIds, []);
     assert.strictEqual(remote.sourceInfos.remote.active, false);
     assert.strictEqual(remote.sourceInfos.remote.state, 'SUSPENDED_ECONOMY');
     assert.ok(remote.sourceInfos.remote.roadCoords);
@@ -195,7 +195,7 @@ test('11 memory migration preserves source, ownership and portfolio data', () =>
     Memory.rooms.W1N1.remotePlanner.pathVersion = 0;
     Memory.rooms.W1N1.remotePlanner.remotes.W1N2 = { status: 'candidate' };
     const migrated = fresh('Planner.Remote.js').ensurePlannerMemory('W1N1');
-    assert.deepStrictEqual(migrated.activeSourceIds, ['remote']);
+    assert.deepStrictEqual(migrated.activeSourceIds, []);
     assert.ok(migrated.sourceInfos.remote);
     assert.ok(migrated.remotes.W1N2);
     assert.strictEqual(migrated.sourceInfos.remote.parentHome, 'W1N1');

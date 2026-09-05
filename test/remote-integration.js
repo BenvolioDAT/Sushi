@@ -253,6 +253,7 @@ test('I hostile route removes demand and road eligibility while preserving portf
     info.roadEligible = true;
     Memory.rooms.W1N1.roadPlanner = { rooms: { W1N2: { roadCoords: [510, 511] } }, lastPlanned: Game.time };
     Memory.rooms.W1N2.controller = { owner: 'enemy' };
+    Game.rooms.W1N2.controller = { owner: { username: 'enemy' }, pos: new RoomPosition(25, 25, 'W1N2') };
     assert.strictEqual(planner.validateRemoteRoute('W1N1', 'remote', true).reason, 'HOSTILE_TRANSIT_ROOM');
     assert.deepStrictEqual(planner.getActiveRemoteSourcesForHome('W1N1'), []);
     assert.strictEqual(planner.getRemoteExtractorDemand('W1N1', [WORK, MOVE], []).length, 0);
@@ -262,7 +263,7 @@ test('I hostile route removes demand and road eligibility while preserving portf
     assert.deepStrictEqual(Memory.rooms.W1N1.roadPlanner.rooms, {});
     assert.strictEqual(info.state, 'SUSPENDED_DANGER');
     planner.selectActiveSources('W1N1');
-    assert.deepStrictEqual(Memory.rooms.W1N1.remotePlanner.activeSourceIds, ['remote']);
+    assert.deepStrictEqual(Memory.rooms.W1N1.remotePlanner.activeSourceIds, []);
     assert.strictEqual(info.telemetry.delivered, 900);
 });
 
@@ -289,6 +290,7 @@ test('danger retreat rejects hostile transit and keeps carried energy', () => {
     creep.pos = new RoomPosition(10, 10, 'W1N2');
     creep.store.energy = 75;
     Memory.rooms.W1N2.controller = { owner: 'enemy' };
+    Game.rooms.W1N2.controller = { owner: { username: 'enemy' }, pos: new RoomPosition(25, 25, 'W1N2') };
     Memory.rooms.W2N2 = { controller: { owner: 'enemy' } };
     let searched = false;
     PathFinder.search = (pos, goal, options) => {

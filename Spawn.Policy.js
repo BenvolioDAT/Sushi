@@ -2,6 +2,7 @@ const HiveMemory = require('HiveMind.Memory');
 const Economy = require('HiveMind.Economy');
 const ColonyState = require('HiveMind.ColonyState');
 const Context = require('Spawn.Context');
+const Bodies = require('role.creepBodyConfig');
 
 function maxCreeps(room, policy) {
     const rcl = room && room.controller && room.controller.level || 1;
@@ -13,6 +14,35 @@ function isOwnedDefense(request) {
     const targetName = memory.defendedRoom || request.defendedRoom || request.targetRoom;
     const target = targetName && Game.rooms[targetName];
     return memory.defenseRequest === true && target && target.controller && target.controller.my;
+}
+
+function economyRoleCap(room, role, request, policy) {
+    const configured = policy.roleCaps && policy.roleCaps[role];
+    if (!['Extractor', 'Freighter'].includes(role)) return configured;
+    const memory = Memory.rooms[room.name] || {};
+    const planner = memory.remotePlanner || {};
+    const active = (planner.activeSourceIds || []).map(id => (planner.sourceInfos || {})[id]).filter(info =>
+        info && info.active && info.operational !== false && (!info.route || info.route.valid !== false));
+    const economy = Economy.get(room.name) || {};
+    let required;
+    if (role === 'Extractor') {
+        const body = request.body || Bodies.getExtractorBody(room) || [];
+        const work = Math.max(1, body.filter(part => (part.type || part) === WORK).length);
+        const localSources = Object.values(memory.sources || {});
+        const local = localSources.length ? localSources.reduce((sum, source) => sum + Math.max(1,
+            Math.min(source.seatCount || source.seats && source.seats.length || Infinity,
+                Math.ceil((source.requiredWork || 5) / work))), 0) :
+            (typeof room.find === 'function' ? room.find(FIND_SOURCES) || [] : []).length;
+        required = local + active.reduce((sum, info) => sum + Math.max(1, Math.ceil((info.requiredWork || work) / work)), 0);
+    } else {
+        const body = request.body || Bodies.getFreighterBody(room) || [];
+        const carry = Math.max(1, body.filter(part => (part.type || part) === CARRY).length);
+        const requiredCarry = (economy.haul && economy.haul.requiredCarry || 0) +
+            active.reduce((sum, info) => sum + (info.requiredCarry || 0), 0);
+        required = Math.ceil(requiredCarry / carry);
+    }
+    const hard = policy.economyRoleHardCaps && policy.economyRoleHardCaps[role] || (role === 'Extractor' ? 32 : 64);
+    return Math.min(hard, Math.max(configured || 0, required + 1)); // One replacement handoff.
 }
 
 function evaluate(room, request, context, options = {}) {
@@ -60,14 +90,15 @@ function evaluate(room, request, context, options = {}) {
     }
     const survivalBypass = options.emergency === true && options.bypassRoleCap === true && protectedWork;
     const defenseBypass = ownedDefense && request.emergency === true;
-    const roleCap = policy.roleCaps && policy.roleCaps[role];
+    const roleCap = economyRoleCap(room, role, request, policy);
     const mandatoryFloorBypass = controllerGrowthFloor && lifecycle && lifecycle.growthAllowed &&
         (context.byRole.Tech || 0) <= (options.revalidate ? 1 : 0) &&
         context.nonCombatTotal <= maxCreeps(room, policy) + (options.revalidate ? 1 : 0);
     if (typeof roleCap === 'number' && (context.byRole[role] || 0) >= roleCap && !survivalBypass && !mandatoryFloorBypass) {
         return { allowed: false, reason: 'role cap reached' };
     }
-    if (!Context.isCombatRole(role) && context.nonCombatTotal >= maxCreeps(room, policy) &&
+    if (!Context.isCombatRole(role) && context.nonCombatTotal >= maxCreeps(room, policy) +
+        (['Extractor', 'Freighter'].includes(role) ? Math.max(0, roleCap - (policy.roleCaps && policy.roleCaps[role] || roleCap)) : 0) &&
         !survivalBypass && !mandatoryFloorBypass) {
         return { allowed: false, reason: 'room creep cap reached' };
     }
@@ -81,4 +112,4 @@ function evaluate(room, request, context, options = {}) {
     return { allowed: true, reason: options.revalidate ? 'revalidated' : 'admitted', mandatoryFloorBypass };
 }
 
-module.exports = { evaluate, isOwnedDefense, maxCreeps };
+module.exports = { economyRoleCap, evaluate, isOwnedDefense, maxCreeps };

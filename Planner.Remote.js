@@ -13,6 +13,8 @@
  */
 
 var travel = require('utility.Travel.Creep');
+var Intel = require('Remote.Intel');
+var TickIndex = require('HiveMind.Index');
 var LogisticsIndex = require('Logistics.Index');
 var BodyConfig = require('role.creepBodyConfig');
 var utility = require('utility');
@@ -43,6 +45,7 @@ var REMOTE_STATES = Object.freeze({
     DISCOVERED: 'DISCOVERED',
     PLANNED: 'PLANNED',
     BOOTSTRAPPING: 'BOOTSTRAPPING',
+    RESERVING: 'RESERVING',
     ACTIVE: 'ACTIVE',
     DEGRADED: 'DEGRADED',
     SUSPENDED_DANGER: 'SUSPENDED_DANGER',
@@ -69,20 +72,24 @@ function run() {
         planner.lastRun = Game.time;
 
         cleanupRemoteAssignments(roomName);
+        refreshVisibleIntel(roomName, planner);
         scheduleRouteValidation(roomName, planner);
         rebuildRequestedRoute(roomName, planner);
-
-        if (Game.time % HEAVY_PLAN_INTERVAL === 0) {
+        if (planner.selectionDirty) { delete planner.selectionDirty; selectActiveSources(roomName); }
+        if (planner.lastHeavyPlanAt === undefined || Game.time - planner.lastHeavyPlanAt >= HEAVY_PLAN_INTERVAL) {
+            planner.lastHeavyPlanAt = Game.time;
             refreshVisibleCandidatePlans(roomName);
             selectActiveSources(roomName);
         }
 
-        if (Game.time % RESCORE_INTERVAL === 0) {
+        if (planner.lastRescoreAt === undefined || Game.time - planner.lastRescoreAt >= RESCORE_INTERVAL) {
+            planner.lastRescoreAt = Game.time;
             rescorePlanner(roomName);
             selectActiveSources(roomName);
         }
 
-        if (Game.time % DEBUG_INTERVAL === 0) {
+        if (planner.lastDebugAt === undefined || Game.time - planner.lastDebugAt >= DEBUG_INTERVAL) {
+            planner.lastDebugAt = Game.time;
             logDebugSummary(roomName);
         }
     }
@@ -239,6 +246,10 @@ function ensurePlannerMemory(homeRoomName) {
         if (info.active) info.established = true;
     }
 
+    planner.activeSourceIds = planner.activeSourceIds.filter(function(id) {
+        var info = planner.sourceInfos[id];
+        return info && info.active && info.operational !== false && (!info.route || info.route.valid !== false);
+    });
     return planner;
 }
 
@@ -379,6 +390,7 @@ function scoreRemoteSource(homeRoomName, sourceId) {
     var reservationUsername = getReservationUsername(controller);
 
     if (reservationUsername && reservationUsername !== getMyUsername()) {
+        if (!Game.rooms[info.roomName]) Intel.request(info.roomName, 'HOSTILE_RESERVATION_INTEL', 90);
         info.rejectReason = 'hostile reservation';
         info.netIncome = -999;
         info.score = -999;
@@ -386,6 +398,7 @@ function scoreRemoteSource(homeRoomName, sourceId) {
     }
 
     if (!reservationUsername) {
+        if (!Game.rooms[info.roomName]) Intel.request(info.roomName, 'VERIFY_RESERVATION', 60);
         effectiveEnergyPerTick *= 0.5;
     }
 
@@ -407,6 +420,39 @@ function scoreRemoteSource(homeRoomName, sourceId) {
     info.grossEnergyPerTick = round3(grossEnergyPerTick);
     info.effectiveEnergyPerTick = round3(effectiveEnergyPerTick);
     info.energyPerTick = info.grossEnergyPerTick;
+    info.currentNetEPT = round3(netIncome);
+    info.projectedReservedNetEPT = null;
+    info.reservationBootstrap = false;
+    var annexBody = BodyConfig.getAnnexBody(Game.rooms[homeRoomName]);
+    var roomType = planner.remotes[info.roomName] && planner.remotes[info.roomName].type || 'normal';
+    if (!reservationUsername && roomType === 'normal' && controller && !controller.owner && annexBody && annexBody.length) {
+        var reservedWork = Math.ceil(grossEnergyPerTick / harvestPower);
+        var reservedMinerCost = reservedWork * BODYPART_COST[WORK] + Math.ceil(reservedWork / 2) * BODYPART_COST[MOVE] + BODYPART_COST[CARRY];
+        var reservedCarry = Math.ceil(grossEnergyPerTick * effectiveRoundTripTicks / CARRY_CAPACITY);
+        var annexCost = annexBody.reduce(function(sum, part) { return sum + BODYPART_COST[part.type || part]; }, 0);
+        // A bootstrap must pay for its Annex without relying on unselected historical sources.
+        var reservedNet = grossEnergyPerTick - reservedMinerCost / minerLifetime -
+            reservedCarry * ESTIMATED_CARRY_COST_PER_PART / CREEP_LIFE_TIME - CONTAINER_OR_DROP_LOSS - roadCost - riskPenalty -
+            annexCost / Math.max(1, 600 - distance);
+        info.projectedReservedNetEPT = round3(reservedNet);
+        var home = Game.rooms[homeRoomName];
+        var economy = Economy.get(homeRoomName) || {};
+        var growth = economy.growth || {};
+        var initialCost = annexCost + reservedMinerCost + Math.max(150, reservedCarry * ESTIMATED_CARRY_COST_PER_PART);
+        var liquidity = (home.energyAvailable || 0) + Math.max(0, growth.energyAboveReserve || 0);
+        var roi = initialCost / Math.max(0.01, reservedNet);
+        var queue = Memory.rooms[homeRoomName].spawn && Memory.rooms[homeRoomName].spawn.queue || [];
+        var committed = info.reservationBootstrapUntil >= Game.time && (queue.some(function(request) {
+            return request.memory && request.memory.role === 'Annex' && request.memory.targetRoom === info.roomName;
+        }) || (TickIndex.get().creepsByHomeRoom.get(homeRoomName) || []).some(function(creep) {
+            return creep.memory && creep.memory.role === 'Annex' && creep.memory.homeRoom === homeRoomName &&
+                creep.memory.targetRoom === info.roomName;
+        }));
+        info.reservationBootstrap = netIncome <= 0 && reservedNet >= 1 && roi <= 1500 && (liquidity >= initialCost || committed) &&
+            growth.spawnPressure < 0.5 && Economy.canSpend(homeRoomName, 'remoteBootstrap') &&
+            home.energyCapacityAvailable >= annexCost && (!info.route || info.route.valid !== false);
+        if (info.reservationBootstrap) netIncome = reservedNet;
+    }
     info.netIncome = round3(netIncome);
     info.requiredWork = requiredWork;
     info.requiredCarry = carryPartsNeeded;
@@ -635,7 +681,9 @@ function routeValidationDue(info) {
     if (!info || !info.roadCoords) return false;
     var route = ensureOrderedRoute(info);
     var interval = Number((HiveMemory.getConfig('remote') || {}).routeValidationInterval) || ROUTE_VALIDATION_INTERVAL;
-    return route.dirty || route.validatedRevision !== route.revision ||
+    return route.valid === false && route.invalidReason === 'HOSTILE_TRANSIT_ROOM' &&
+        route.roomSequence.every(function(roomName) { return !isBlockedRoomForPath(info.parentHome || info.parentRoomName, roomName); }) ||
+        route.dirty || route.validatedRevision !== route.revision ||
         routeDestinationChanged(info.parentHome || info.parentRoomName, info) ||
         Game.time - (route.lastValidationAttemptAt || route.lastValidatedAt || 0) >= interval;
 }
@@ -706,13 +754,20 @@ function validateRemoteRoute(homeRoomName, sourceId, force) {
         route.invalidReason = reason;
         route.invalidatedAt = Game.time;
         info.routeInvalidReason = reason;
+        planner.selectionDirty = true;
         info.operational = false;
+        info.active = false;
+        removeFromActiveList(planner, sourceId);
         info.roadEligible = false;
         info.blockedReason = reason;
         info.state = reason === 'HOSTILE_TRANSIT_ROOM' ? REMOTE_STATES.SUSPENDED_DANGER : REMOTE_STATES.DEGRADED;
         info.replanRequestedAt = info.replanRequestedAt || Game.time;
         clearSourceHeapPath(homeRoomName, sourceId);
         return { valid: false, reason: reason };
+    }
+    if (route.valid === false) {
+        planner.selectionDirty = true;
+        if (Game.rooms[info.roomName]) info.risk = getRoomRisk(Game.rooms[info.roomName], getRoomType(info.roomName, Game.rooms[info.roomName]));
     }
     route.valid = true;
     info.operational = true;
@@ -847,12 +902,10 @@ function shouldUseRemoteSource(homeRoomName, sourceId, ignoreScore) {
         return false;
     }
 
-    var established = info.established || info.active || info.state === REMOTE_STATES.ACTIVE ||
-        info.state === REMOTE_STATES.DEGRADED || info.state === REMOTE_STATES.BOOTSTRAPPING ||
-        info.state === REMOTE_STATES.SUSPENDED_ECONOMY;
-    var category = established ? 'remoteMaintenance' :
-        (planner.activeSourceIds.length === 0 ? 'remoteBootstrap' : 'remoteExpansion');
+    var category = sourceSpendCategory(planner, info);
     var spend = Economy.checkSpend(homeRoomName, category);
+    info.spendCategory = category;
+    info.spendAllowed = spend.allowed;
     if (!spend.allowed) {
         info.rejectReason = spend.reason;
         return false;
@@ -1113,10 +1166,10 @@ function getTransitRisk(route, homeRoomName, destinationRoomName) {
         var hive = HiveMemory.ensure();
         var threat = hive.threats && hive.threats[roomName];
         if (!memory) risk += 0.25;
-        var reservation = memory && memory.controller && getReservationUsername(memory.controller);
+        var reservation = getReservationUsername(getControllerInfo(roomName));
         if (reservation && reservation !== getMyUsername()) risk += 1.5;
-        if (threat && threat.harmfulHostileCount > 0) risk += 5;
-        if (memory && memory.remotePlanner && memory.remotePlanner.status === 'danger') risk += 5;
+        if (!Game.rooms[roomName] && threat && threat.harmfulHostileCount > 0) risk += 5;
+        if (!Game.rooms[roomName] && memory && memory.remotePlanner && memory.remotePlanner.status === 'danger') risk += 5;
     }
     return risk;
 }
@@ -1260,9 +1313,14 @@ function isBlockedRoomForPath(homeRoomName, roomName) {
         if (snapshot.danger === undefined) snapshot.danger = hasInvaderCore(room) || hasSeriousDanger(room);
         if (snapshot.danger) return true;
     }
+    if (room) return false;
+    Intel.controller(roomName);
     var hive = HiveMemory.ensure();
     var threat = hive.threats && hive.threats[roomName];
-    if (threat && threat.harmfulHostileCount > 0 && threat.lastSeen >= Game.time - 1500) return true;
+    if (threat && threat.harmfulHostileCount > 0 && threat.lastSeen >= Game.time - 1500) {
+        Intel.request(roomName, 'STALE_TRANSIT_SAFETY', 90);
+        return true;
+    }
 
     if (!roomMemory) {
         return false;
@@ -1324,57 +1382,9 @@ function readControllerInfo(room) {
 }
 
 
-function updateVisibleControllerMemory(room) {
-    if (!room) {
-        return;
-    }
+function updateVisibleControllerMemory(room) { Intel.refresh(room); }
 
-    if (!Memory.rooms) {
-        Memory.rooms = {};
-    }
-
-    if (!Memory.rooms[room.name]) {
-        Memory.rooms[room.name] = {};
-    }
-
-    if (!room.controller) {
-        Memory.rooms[room.name].controller = null;
-        return;
-    }
-
-    var controllerMemory = Memory.rooms[room.name].controller || {};
-
-    /*
-     * utility.scanRoom() may skip rescanning once source memory exists, so keep
-     * volatile controller ownership/reservation fields fresh from visible room
-     * objects while preserving older planning fields already saved there.
-     */
-    controllerMemory.id = room.controller.id;
-    controllerMemory.pos = {
-        x: room.controller.pos.x,
-        y: room.controller.pos.y,
-        roomName: room.controller.pos.roomName
-    };
-    controllerMemory.owner = room.controller.owner ? room.controller.owner.username : null;
-    controllerMemory.reservation = room.controller.reservation ? {
-        username: room.controller.reservation.username,
-        ticksToEnd: room.controller.reservation.ticksToEnd
-    } : null;
-    controllerMemory.my = room.controller.my === true;
-    controllerMemory.level = room.controller.level || 0;
-
-    Memory.rooms[room.name].controller = controllerMemory;
-}
-
-function getControllerInfo(roomName) {
-    var room = Game.rooms[roomName];
-    if (room) {
-        return readControllerInfo(room);
-    }
-
-    var roomMemory = Memory.rooms && Memory.rooms[roomName];
-    return roomMemory ? roomMemory.controller : null;
-}
+function getControllerInfo(roomName) { return Intel.controller(roomName); }
 
 function getReservationUsername(controller) {
     if (!controller || !controller.reservation) {
@@ -1486,6 +1496,8 @@ function hasSeriousDanger(room) {
         return false;
     }
 
+    var freshThreat = HiveMemory.ensure().threats[room.name];
+    if (freshThreat && freshThreat.lastSeen === Game.time) return freshThreat.harmfulHostileCount > 0;
     var hostiles = room.find(FIND_HOSTILE_CREEPS, {
         filter: function(creep) {
             return creep.getActiveBodyparts(ATTACK) > 0 ||
@@ -1543,31 +1555,59 @@ function canSpendPlanningCpu() {
     return true;
 }
 
-function refreshVisibleCandidatePlans(homeRoomName) {
-    for (var roomName in Game.rooms) {
-        if (!Game.rooms.hasOwnProperty(roomName)) {
-            continue;
-        }
+function visibleRemoteRooms(homeRoomName) {
+    return Object.keys(Game.rooms).filter(function(name) {
+        return name !== homeRoomName && isWithinRemoteRange(homeRoomName, name) &&
+            Memory.rooms[name] && Memory.rooms[name].sources;
+    }).sort();
+}
 
-        if (roomName === homeRoomName) {
-            continue;
-        }
-
-        if (!isWithinRemoteRange(homeRoomName, roomName)) {
-            continue;
-        }
-
-        var room = Game.rooms[roomName];
-        if (!room || isOwnedEnemyRoom(room) || hasInvaderCore(room) || hasSeriousDanger(room)) {
-            continue;
-        }
-
-        var memory = Memory.rooms && Memory.rooms[roomName];
-        if (memory && memory.sources) {
-            generateRemotePlan(homeRoomName, room);
-            return;
+function refreshVisibleIntel(homeRoomName, planner) {
+    var names = visibleRemoteRooms(homeRoomName);
+    var cursor = planner.visibleRefreshCursor || 0;
+    for (var i = 0; i < Math.min(2, names.length); i++) {
+        var name = names[(cursor + i) % names.length];
+        Intel.refresh(Game.rooms[name]);
+        // Live containers/haul are maintained by the existing utility without route PathFinder work.
+        var sources = Memory.rooms[name].sources;
+        Object.keys(sources).forEach(function(id) {
+            var source = sources[id];
+            var container = source.containerId && Game.getObjectById(source.containerId);
+            if (container && container.store) {
+                var haul = utility.ensureSourceHaulMemory(name, id, homeRoomName);
+                haul.targetId = container.id;
+                haul.targetType = 'container';
+                haul.amount = container.store[RESOURCE_ENERGY] || 0;
+                haul.capacity = typeof container.store.getCapacity === 'function' ? container.store.getCapacity(RESOURCE_ENERGY) : 2000;
+                haul.lastSeen = Game.time;
+            } else if (source.containerId) {
+                if (source.haul && source.haul.targetId === source.containerId) {
+                    source.haul.targetId = null;
+                    source.haul.amount = 0;
+                    source.haul.lastSeen = Game.time;
+                }
+                delete source.containerId;
+            }
+        });
+        for (var id in planner.sourceInfos) {
+            var info = planner.sourceInfos[id];
+            if (info.roomName === name) {
+                info.risk = getRoomRisk(Game.rooms[name], getRoomType(name, Game.rooms[name]));
+                if (info.route && routeDestinationChanged(homeRoomName, info)) info.route.dirty = true;
+            }
         }
     }
+    planner.visibleRefreshCursor = names.length ? (cursor + Math.min(2, names.length)) % names.length : 0;
+    planner.lastVisibleRefreshAt = Game.time;
+}
+
+function refreshVisibleCandidatePlans(homeRoomName) {
+    var planner = ensurePlannerMemory(homeRoomName);
+    var names = visibleRemoteRooms(homeRoomName);
+    if (!names.length) return;
+    var cursor = (planner.routeRefreshCursor || 0) % names.length;
+    planner.routeRefreshCursor = (cursor + 1) % names.length;
+    generateRemotePlan(homeRoomName, Game.rooms[names[cursor]]);
 }
 
 function rescorePlanner(homeRoomName) {
@@ -1593,6 +1633,7 @@ function rescorePlanner(homeRoomName) {
 function selectActiveSources(homeRoomName) {
     var planner = ensurePlannerMemory(homeRoomName);
     var candidates = [];
+    var selectedBefore = planner.activeSourceIds.slice();
     var homeRoom = Game.rooms[homeRoomName];
     var economy = Economy.get(homeRoomName);
 
@@ -1612,6 +1653,7 @@ function selectActiveSources(homeRoomName) {
         planner.suspendedAt = Game.time;
         planner.lastDecision = { at: Game.time, ready: false, reason: maintenance.reason,
             category: 'remoteMaintenance', preservedSources: planner.activeSourceIds.length };
+        planner.activeSourceIds = [];
         return;
     }
     delete planner.suspendedReason;
@@ -1623,7 +1665,6 @@ function selectActiveSources(homeRoomName) {
 
         var info = planner.sourceInfos[sourceId];
         scoreRemoteSource(homeRoomName, sourceId);
-        info.active = false;
 
         if (
             isWithinRemoteRange(homeRoomName, info.roomName) &&
@@ -1645,7 +1686,7 @@ function selectActiveSources(homeRoomName) {
     });
 
     var levelCap = getEffectiveRemoteSourceCap(homeRoom, economy);
-    var previousActive = planner.activeSourceIds.filter(function(id) {
+    var previousActive = selectedBefore.filter(function(id) {
         return candidates.some(function(candidate) { return candidate.sourceId === id; });
     });
     var ramp = candidates.length > 0 ? getRemoteRampStatus(homeRoomName, previousActive, economy) : {
@@ -1653,6 +1694,10 @@ function selectActiveSources(homeRoomName) {
         reason: getPlannerBlockedReason(planner),
         category: previousActive.length === 0 ? 'remoteBootstrap' : 'remoteExpansion'
     };
+    var returning = candidates.filter(function(info) { return info.established && previousActive.indexOf(info.sourceId) < 0; });
+    for (var restart = 0; restart < returning.length && previousActive.length < levelCap; restart++) {
+        previousActive.push(returning[restart].sourceId);
+    }
     var targetCount = Math.min(Math.max(levelCap, previousActive.length), previousActive.length + (ramp.ready ? 1 : 0));
     if (previousActive.length === 0 && levelCap > 0 && ramp.ready) targetCount = 1;
     var selected = previousActive.slice(0, targetCount);
@@ -1660,11 +1705,8 @@ function selectActiveSources(homeRoomName) {
         if (selected.indexOf(candidates[i].sourceId) < 0) selected.push(candidates[i].sourceId);
     }
     rebalanceRemotePortfolio(homeRoomName, planner, candidates, selected, ramp);
-    var unreachable = planner.activeSourceIds.filter(function(id) {
-        var info = planner.sourceInfos[id];
-        return info && info.operational === false && selected.indexOf(id) < 0;
-    });
-    planner.activeSourceIds = selected.concat(unreachable);
+    planner.activeSourceIds = selected;
+    Object.keys(planner.sourceInfos).forEach(function(id) { planner.sourceInfos[id].active = selected.indexOf(id) >= 0; });
     planner.effectiveSourceCap = levelCap;
     planner.rampReason = ramp.reason;
     planner.rampReady = ramp.ready;
@@ -1675,7 +1717,9 @@ function selectActiveSources(homeRoomName) {
         if (!selectedInfo) continue;
         selectedInfo.active = true;
         selectedInfo.established = true;
-        selectedInfo.state = previousActive.indexOf(selected[i]) >= 0 ? REMOTE_STATES.ACTIVE : REMOTE_STATES.BOOTSTRAPPING;
+        selectedInfo.state = selectedInfo.reservationBootstrap ?
+            (selectedInfo.reservationBootstrapUntil >= Game.time ? REMOTE_STATES.RESERVING : REMOTE_STATES.BOOTSTRAPPING) :
+            previousActive.indexOf(selected[i]) >= 0 ? REMOTE_STATES.ACTIVE : REMOTE_STATES.BOOTSTRAPPING;
         selectedInfo.blockedReason = null;
         selectedInfo.roadEligible = remoteRoadInvestmentReady(homeRoomName, selectedInfo, economy);
         if (Game.rooms[selectedInfo.roomName]) utility.planSourceContainers(selectedInfo.roomName, selectedInfo.sourceId);
@@ -1765,8 +1809,8 @@ function getEffectiveRemoteSourceCap(homeRoom, economy) {
     var remote = growth.remote || {};
     var threats = HiveMemory.ensure().threats[homeRoom.name];
     var backlog = Math.max(0, (remote.backlog || 0) - (remote.reservedCarry || 0));
-    var logisticsProven = (remote.activeSources || 0) === 0 ||
-        remote.provenSources >= remote.activeSources && backlog <= 500 &&
+    var logisticsProven = (remote.operationalSources !== undefined ? remote.operationalSources : remote.activeSources || 0) === 0 ||
+        remote.provenSources >= (remote.operationalSources !== undefined ? remote.operationalSources : remote.activeSources || 0) && backlog <= 500 &&
         (remote.requiredCarry || 0) <= (remote.availableCarry || 0);
     if (growth.spawnPressure > 0.45 || economy.replacementRisk > 0 || !logisticsProven ||
         (threats && threats.harmfulHostileCount > 0) ||
@@ -1791,7 +1835,7 @@ function remoteSwitchingCost(homeRoomName, info) {
     if (sourceMemory && sourceMemory.containerId) cost += 0.6;
     if (countRemoteAssignedExtractorWork(homeRoomName, info).count > 0) cost += 0.5;
     if (sourceMemory && sourceMemory.haul && sourceMemory.haul.lastSeen >= Game.time - 100) cost += 0.4;
-    var controller = Memory.rooms && Memory.rooms[info.roomName] && Memory.rooms[info.roomName].controller;
+    var controller = getControllerInfo(info.roomName);
     if (controller && controller.reservation && controller.reservation.username === getMyUsername()) cost += 0.25;
     return cost;
 }
@@ -1856,10 +1900,10 @@ function getRemoteRampStatus(homeRoomName, activeIds, economy) {
 }
 
 function remoteRoadInvestmentReady(homeRoomName, info, economy) {
-    if (!info || !info.active || info.netIncome <= 0 || !economy) return false;
+    if (!info || !info.active || info.reservationBootstrap || info.netIncome <= 0 || !economy) return false;
     var sourceMemory = Memory.rooms[info.roomName] && Memory.rooms[info.roomName].sources &&
         Memory.rooms[info.roomName].sources[info.sourceId];
-    var controller = Memory.rooms[info.roomName] && Memory.rooms[info.roomName].controller;
+    var controller = getControllerInfo(info.roomName);
     var reserved = controller && controller.reservation && controller.reservation.username === getMyUsername();
     var haulOperational = sourceMemory && sourceMemory.haul && sourceMemory.haul.lastSeen >= Game.time - 100;
     var growth = economy.growth || {};
@@ -2708,8 +2752,78 @@ function round3(value) {
     return Math.round(value * 1000) / 1000;
 }
 
+function sourceSpendCategory(planner, info) {
+    var established = info.established || info.active || info.state === REMOTE_STATES.ACTIVE ||
+        info.state === REMOTE_STATES.DEGRADED || info.state === REMOTE_STATES.BOOTSTRAPPING ||
+        info.state === REMOTE_STATES.SUSPENDED_ECONOMY;
+    return established ? 'remoteMaintenance' :
+        (planner.activeSourceIds.length === 0 ? 'remoteBootstrap' : 'remoteExpansion');
+}
+
+function getDiagnostics(homeRoomName) {
+    var planner = ensurePlannerMemory(homeRoomName);
+    var economy = Economy.get(homeRoomName);
+    var ramp = getRemoteRampStatus(homeRoomName, planner.activeSourceIds, economy);
+    var sourceCap = getEffectiveRemoteSourceCap(Game.rooms[homeRoomName], economy);
+    var queue = Memory.rooms[homeRoomName].spawn && Memory.rooms[homeRoomName].spawn.queue || [];
+    var sources = {};
+    Object.keys(planner.sourceInfos).forEach(function(id) {
+        var info = planner.sourceInfos[id];
+        var room = Memory.rooms[info.roomName] || {};
+        var source = room.sources && room.sources[id] || {};
+        var reservation = Intel.getEffectiveReservation(info.roomName);
+        var saved = room.controller || {};
+        var threat = HiveMemory.ensure().threats[info.roomName];
+        var miners = countRemoteAssignedExtractorWork(homeRoomName, info);
+        var queued = countPendingRemoteExtractorRequest(homeRoomName, info, queue);
+        var haul = source.haul || {};
+        var category = sourceSpendCategory(planner, info);
+        var spend = Economy.checkSpend(homeRoomName, category);
+        var carry = LogisticsIndex.snapshot().freighters.filter(function(creep) {
+            return creep.memory.homeRoom === homeRoomName && (creep.memory.pickupSourceId || creep.memory.remoteDeliverySourceId) === id;
+        }).reduce(function(sum, creep) { return sum + countBodyParts(creep.body || [], CARRY); }, 0);
+        var visible = Game.rooms[info.roomName];
+        var unselectedReason = info.parentRoomName !== homeRoomName ? 'DIFFERENT_PARENT_HOME' :
+            !isWithinRemoteRange(homeRoomName, info.roomName) ? 'OUTSIDE_REMOTE_RANGE' :
+            !info.numOpen ? 'NO_OPEN_SEATS' : !info.distance || info.distance > MAX_REMOTE_DISTANCE ? 'ROUTE_TOO_LONG' :
+            !ramp.ready ? ramp.reason : planner.activeSourceIds.length >= sourceCap ? 'REMOTE_SOURCE_CAP' :
+            'AWAITING_PLANNER_SELECTION';
+        var reason = visible && (isOwnedEnemyRoom(visible) || hasInvaderCore(visible) || hasSeriousDanger(visible)) ? 'HOSTILE_VISIBLE_NOW' :
+            info.route && info.route.valid === false ? info.route.invalidReason :
+            !spend.allowed ? spend.reason : info.score <= 0 ? 'NO_PROFITABLE_ROUTE' :
+            !info.active ? unselectedReason : info.reservationBootstrap ? 'AWAITING_RESERVATION' :
+            miners.count === 0 ? (queued.count ? 'REMOTE_MINER_QUEUED' : 'SPAWN_CAPACITY_SHORTAGE') :
+            !source.containerId && !haul.targetId ? 'REMOTE_CONTAINER_BOOTSTRAPPING' :
+            carry < (info.requiredCarry || 0) ? 'INSUFFICIENT_HAUL' : null;
+        sources[id] = {
+            active: !!info.active, operational: !!info.active && info.operational !== false && !!(info.route && info.route.valid),
+            state: info.state, parentHome: info.parentHome, score: info.score,
+            currentNetEPT: info.currentNetEPT, projectedReservedNetEPT: info.projectedReservedNetEPT,
+            routeValid: !!(info.route && info.route.valid), blockedReason: reason,
+            spendCategory: category, spendAllowed: spend.allowed,
+            minerPresent: miners.count > 0, minerQueued: queued.count > 0,
+            freighterCoverage: { assignedCarryParts: carry, reservedEnergyCapacity: haul.reservedCarry || 0, requiredCarryParts: info.requiredCarry || 0 },
+            reservationOwner: reservation && reservation.username || null,
+            reservationObservedTicks: saved.reservation && saved.reservation.ticksToEnd || 0,
+            estimatedReservationTicks: reservation && reservation.ticksToEnd || 0,
+            intelAge: saved.lastObservedAt !== undefined ? Game.time - saved.lastObservedAt : null,
+            threatAge: threat ? Game.time - threat.lastSeen : null,
+            intelRefreshRequested: room.intelRefreshRequestedAt !== undefined,
+            containerId: source.containerId || null, haulAge: haul.lastSeen !== undefined ? Game.time - haul.lastSeen : null,
+            lastDelivery: haul.lastDeliveryAt || info.telemetry && info.telemetry.lastDelivery || 0
+        };
+    });
+    return { operationalActiveCount: planner.activeSourceIds.length, portfolioCount: Object.keys(sources).length,
+        candidateCount: Object.keys(sources).filter(function(id) { return !sources[id].active && sources[id].score > 0; }).length,
+        lastHeavyPlanAt: planner.lastHeavyPlanAt, lastRescoreAt: planner.lastRescoreAt,
+        lastVisibleRefreshAt: planner.lastVisibleRefreshAt, sources: sources };
+}
+
 module.exports = {
+    getDiagnostics: getDiagnostics,
     run: run,
+    getEffectiveReservation: Intel.getEffectiveReservation,
+    getControllerInfo: getControllerInfo,
     onScoutRoom: onScoutRoom,
     scanVisibleRoom: scanVisibleRoom,
     getHomeRoomName: getHomeRoomName,

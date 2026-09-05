@@ -1,4 +1,5 @@
 var utility = require('utility');
+var Intel = require('Remote.Intel');
 var utilityTravelCreep = require('utility.Travel.Creep');
 var RemotePlanner = require('Planner.Remote');
 var Season11 = require('Logic.Season11');
@@ -43,6 +44,7 @@ var roleScout = {
          * Save simple scouting data every time the Scout has vision in a room.
          */
         saveScoutVisit(creep);
+        Intel.refresh(creep.room);
 
         /*
          * Remote planning uses scanRoom plus the fresh visible Room object. The
@@ -367,6 +369,7 @@ function chooseNextScoutRoom(creep) {
         return false;
     }
 
+    var priorityRoom = null;
     var bestNeverScanned = null;
     var oldestScanned = null;
 
@@ -392,6 +395,12 @@ function chooseNextScoutRoom(creep) {
             continue;
         }
 
+        var intel = Memory.rooms[roomName];
+        if (intel && intel.intelRefreshRequestedAt !== undefined &&
+            (!priorityRoom || (intel.intelPriority || 0) > priorityRoom.priority ||
+                (intel.intelPriority || 0) === priorityRoom.priority && intel.intelRefreshRequestedAt < priorityRoom.at)) {
+            priorityRoom = { roomName: roomName, priority: intel.intelPriority || 0, at: intel.intelRefreshRequestedAt };
+        }
         if(roomRecord.lastScanTick === null || roomRecord.lastScanTick === undefined) {
             if(
                 !bestNeverScanned ||
@@ -423,6 +432,7 @@ function chooseNextScoutRoom(creep) {
         }
     }
 
+    if (priorityRoom) { creep.memory.targetRoom = priorityRoom.roomName; return true; }
     if(bestNeverScanned) {
         creep.memory.targetRoom = bestNeverScanned.roomName;
         return true;
@@ -535,4 +545,5 @@ function idleNearHome(creep) {
     }
 }
 
+roleScout._test = { chooseNextScoutRoom: chooseNextScoutRoom, ensureScoutPlan: ensureScoutPlan };
 module.exports = roleScout;

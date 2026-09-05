@@ -196,6 +196,7 @@ test('9 hostile transit makes a second-ring source uneconomic', () => {
     room('W1N2');
     const remote = room('W1N3');
     Memory.rooms.W1N2.controller = { owner: 'enemy' };
+    Game.rooms.W1N2.controller = { owner: { username: 'enemy' }, pos: new RoomPosition(25, 25, 'W1N2') };
     Game.map.getRoomLinearDistance = (a, b) => b === 'W1N3' ? 2 : 1;
     Game.map.getRoomTerrain = () => ({ get: () => 0 });
     Memory.rooms.W1N3.sources = { second: { id: 'second', seatCount: 1,

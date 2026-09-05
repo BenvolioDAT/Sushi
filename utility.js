@@ -122,9 +122,11 @@ function scanRoom(creep) {
             roomName: room.controller.pos.roomName
         };
         controllerMemory.owner = room.controller.owner ? room.controller.owner.username : null;
+        controllerMemory.lastObservedAt = Game.time;
         controllerMemory.reservation = room.controller.reservation ? {
             username: room.controller.reservation.username,
-            ticksToEnd: room.controller.reservation.ticksToEnd
+            ticksToEnd: room.controller.reservation.ticksToEnd,
+            observedAt: Game.time
         } : null;
         controllerMemory.my = room.controller.my === true;
         controllerMemory.level = room.controller.level || 0;
