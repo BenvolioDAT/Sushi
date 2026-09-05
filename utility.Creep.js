@@ -950,6 +950,14 @@ function sourceHasOpenWorkCapacity(sourceRecord, requestingCreep) {
     var assignedSummary = getAssignedExtractorSummary(sourceRecord);
     var workTarget = getSourceWorkTarget(sourceRecord.source);
 
+    if (requestingCreep && requestingCreep.memory.remoteMining && requestingCreep.memory.homeRoom !== roomName) {
+        // Remote planner owns admission; never discard a targeted overlap miner when
+        // peers fill the source's WORK budget before its container is completed.
+        if (isExtractorAssignedToSource(requestingCreep, sourceRecord.sourceId, roomName)) return true;
+        var remoteSeats = utility.getValidSourceMiningSeats(sourceMemory, sourceRecord.source.pos).length;
+        return assignedSummary.count < remoteSeats && assignedSummary.work < workTarget;
+    }
+
     if (!maxSeats || maxSeats < 1) {
         maxSeats = getSafeSeatCount(sourceMemory);
     }
@@ -1073,10 +1081,31 @@ function getAssignedMiningSeat(creep, source) {
         (creep.memory.homeRoom && creep.memory.homeRoom !== source.pos.roomName);
     var station = remote && utility.getPlannedSourceContainerPosition(sourceMemory, source.pos);
     if (station) {
-        // Match the canonical route endpoint even before a site or container exists.
-        // Never reserve an alternate seat for a miner assigned to this station.
-        rememberMiningSeat(creep, source.id, station, 'container');
-        return station;
+        if (!isMiningSeatTakenByOtherCreep(creep, station, source)) {
+            rememberMiningSeat(creep, source.id, station, 'container');
+            return station;
+        }
+        var sideSeats = utility.getValidSourceMiningSeats(sourceMemory, source.pos).filter(function(pos) {
+            return !sameRoomPosition(pos, station);
+        });
+        var remembered = getRememberedMiningSeat(creep, source);
+        if (remembered && sideSeats.some(function(pos) { return sameRoomPosition(pos, remembered); }) &&
+            !isMiningSeatTakenByOtherCreep(creep, remembered, source)) {
+            rememberMiningSeat(creep, source.id, remembered, 'seat');
+            return remembered;
+        }
+        clearMiningSeatMemory(creep);
+        sideSeats.sort(function(a, b) {
+            return (a.getRangeTo(station) > 1) - (b.getRangeTo(station) > 1) || a.y - b.y || a.x - b.x;
+        });
+        for (var sideIndex = 0; sideIndex < sideSeats.length; sideIndex++) {
+            if (!isMiningSeatTakenByOtherCreep(creep, sideSeats[sideIndex], source)) {
+                rememberMiningSeat(creep, source.id, sideSeats[sideIndex], 'seat');
+                return sideSeats[sideIndex];
+            }
+        }
+        creep.memory.extractorState = 'waitingForContainerSeat';
+        return null;
     }
     var containerPosition = getLiveSourceContainerPosition(source, sourceMemory);
 
@@ -1359,8 +1388,46 @@ function creepHasRememberedMiningSeat(creep, sourceId, position) {
     return creep.memory.miningSeatKey === getMiningSeatKey(position);
 }
 
-function isMiningSeatTakenByOtherCreep(creep, position) {
+function isMiningSeatTakenByOtherCreep(creep, position, source) {
     var seatKey = getMiningSeatKey(position);
+
+    if (source) {
+        // Physical occupation always wins, including duplicate claims from old code.
+        if (position.lookFor(LOOK_CREEPS).some(function(other) { return other.name !== creep.name; })) return true;
+        var index = global.__sushiTickIndex;
+        var extractors = index && index.tick === Game.time ?
+            (index.creepsByRole.get('Extractor') || []) : Object.values(Game.creeps);
+        var candidates = extractors.filter(function(other) {
+            if (Game.creeps[other.name] !== other) return false;
+            var memory = other.memory || {};
+            var seat = memory.miningSeat;
+            if (!seat || memory.role !== 'Extractor' || memory.miningSeatKey !== seatKey) return false;
+            var valid = (memory.sourceId || memory.targetSourceId) === source.id && seat.sourceId === source.id &&
+                (memory.sourceRoom || memory.targetRoom || (other.room && other.room.name)) === source.pos.roomName &&
+                memory.homeRoom === creep.memory.homeRoom && sameRoomPosition(seat, position);
+            if (!valid) {
+                // Only clear internally stale claims, not another portfolio's valid assignment.
+                if (seat.sourceId !== (memory.sourceId || memory.targetSourceId) ||
+                    seat.roomName !== (memory.sourceRoom || memory.targetRoom || (other.room && other.room.name))) {
+                    clearMiningSeatMemory(other);
+                }
+                return false;
+            }
+            return true;
+        });
+        candidates.sort(function(a, b) {
+            return Number(sameRoomPosition(b.pos, position)) - Number(sameRoomPosition(a.pos, position)) ||
+                a.name.localeCompare(b.name);
+        });
+        var owner = candidates[0];
+        if (sameRoomPosition(creep.pos, position)) {
+            candidates.forEach(function(other) { if (other.name !== creep.name) clearMiningSeatMemory(other); });
+            return false;
+        }
+        // Repair legacy duplicate reservations deterministically, preserving the occupant.
+        for (var claimIndex = 1; claimIndex < candidates.length; claimIndex++) clearMiningSeatMemory(candidates[claimIndex]);
+        return !!owner && owner.name !== creep.name;
+    }
 
     /*
      * Check reservations first.

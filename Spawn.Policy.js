@@ -67,6 +67,8 @@ function evaluate(room, request, context, options = {}) {
     if (request.expiresAt && request.expiresAt < Game.time) return { allowed: false, reason: 'request expired' };
     const economy = Economy.canSpawnRequest(room, request);
     if (!economy.allowed) return { allowed: false, reason: economy.reason };
+    const recovery = Economy.localRecoveryRequest(room, request, context.queue);
+    if (recovery.obsolete) return { allowed: false, obsolete: true, reason: recovery.reason };
     const lifecycle = ColonyState.get(room.name);
     const category = Economy.categoryForRequest(request);
     const controllerGrowthFloor = category === 'controllerGrowth' && request.memory &&
@@ -105,7 +107,9 @@ function evaluate(room, request, context, options = {}) {
             return { allowed: false, reason: 'combat spawn-share budget exhausted' };
         }
     }
-    const survivalBypass = options.emergency === true && options.bypassRoleCap === true && protectedWork;
+    const localEconomicRole = recovery.missing !== undefined;
+    const survivalBypass = recovery.mandatory || !localEconomicRole &&
+        options.emergency === true && options.bypassRoleCap === true && protectedWork;
     const defenseBypass = ownedDefense && request.emergency === true;
     const roleCap = economyRoleCap(room, role, request, policy);
     const ownQueued = options.revalidate && context.queue.includes(request) ? 1 : 0;
@@ -127,7 +131,10 @@ function evaluate(room, request, context, options = {}) {
     if (!options.revalidate && admitted >= policy.maxNewRequestsPerRoomPerTick && !survivalBypass && !defenseBypass && !economicScout) {
         return { allowed: false, reason: 'new request cap reached' };
     }
-    return { allowed: true, reason: options.revalidate ? 'revalidated' : 'admitted', mandatoryFloorBypass };
+    return { allowed: true, reason: recovery.mandatory ? recovery.reason : options.revalidate ? 'revalidated' : 'admitted',
+        localMissingWork: (request.role || request.memory && request.memory.role) === 'Extractor' ? recovery.missing : undefined,
+        mandatoryEconomy: recovery.mandatory, mandatoryFloorBypass: mandatoryFloorBypass || recovery.mandatory &&
+            context.nonCombatTotal - ownQueued >= maxCreeps(room, policy) };
 }
 
 module.exports = { economyRoleCap, evaluate, isOwnedDefense, maxCreeps };

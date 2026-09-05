@@ -2076,8 +2076,8 @@ function hasRemoteAssignmentCapacity(homeRoomName, info, requestingCreep) {
         Memory.rooms[homeRoomName].spawn.queue : null;
     var queued = countPendingRemoteExtractorRequest(homeRoomName, info, queue);
 
-    // One remote source gets one normal Extractor to avoid over-mining and spawn spam.
-    return assigned.count + queued.count < 1;
+    return assigned.work + queued.work < getRemoteWantedWork(info) &&
+        assigned.count + queued.count < getRemoteSeatCapacity(info);
 }
 
 function claimRemoteSource(creep, homeRoomName, info) {
@@ -2280,17 +2280,10 @@ function getRemoteExtractorDemand(homeRoomName, extractorBody, queue) {
 
         var assigned = countRemoteAssignedExtractorWork(homeRoomName, sourceInfo);
         var queued = countPendingRemoteExtractorRequest(homeRoomName, sourceInfo, queue);
-        var wantedWork = Math.max(1, Math.ceil(
-            (sourceInfo.effectiveEnergyPerTick || sourceInfo.grossEnergyPerTick || 10) /
-            (typeof HARVEST_POWER === 'number' ? HARVEST_POWER : 2)
-        ));
-
-        /*
-         * Keep one steady miner. A newly reserved source may briefly queue one
-         * handoff replacement when its old unreserved miner is undersized.
-         */
-        if (queued.count >= 1 ||
-            (assigned.count >= 1 && assigned.work >= wantedWork) || assigned.count >= 2) {
+        var wantedWork = getRemoteWantedWork(sourceInfo);
+        var seats = getRemoteSeatCapacity(sourceInfo);
+        var missingWork = Math.max(0, wantedWork - assigned.work - queued.work);
+        if (!missingWork || assigned.count + queued.count >= seats) {
             continue;
         }
 
@@ -2299,7 +2292,8 @@ function getRemoteExtractorDemand(homeRoomName, extractorBody, queue) {
             sourceId: sourceInfo.sourceId,
             remoteRoomName: sourceInfo.roomName,
             homeRoomName: homeRoomName,
-            seats: 1,
+            seats: seats,
+            missingWork: missingWork,
             assignedCount: assigned.count,
             assignedWork: assigned.work,
             queuedCount: queued.count,
@@ -2310,6 +2304,25 @@ function getRemoteExtractorDemand(homeRoomName, extractorBody, queue) {
     }
 
     return demands;
+}
+
+function getRemoteWantedWork(info) {
+    var energy = info.effectiveEnergyPerTick || info.grossEnergyPerTick || 10;
+    // A fresh friendly reservation raises coverage immediately, before the next rescore.
+    var controller = getControllerInfo(info.roomName);
+    if (getReservationUsername(controller) === getMyUsername() && getMyUsername()) {
+        energy = info.grossEnergyPerTick || 10;
+    }
+    return Math.max(1, Math.ceil(energy / (typeof HARVEST_POWER === 'number' ? HARVEST_POWER : 2)));
+}
+
+function getRemoteSeatCapacity(info) {
+    var room = Memory.rooms[info.roomName];
+    var memory = room && room.sources && room.sources[info.sourceId];
+    var positions = utility.getValidSourceMiningSeats(memory);
+    var savedCount = memory && typeof memory.seatCount === 'number' ? memory.seatCount : null;
+    if (memory && memory.pos) return Math.max(0, savedCount === null ? positions.length : Math.min(savedCount, positions.length));
+    return Math.max(0, savedCount === null ? (info.numOpen || 1) : savedCount);
 }
 
 function isRemoteExtractorForSource(creep, homeRoomName, sourceInfo) {
@@ -2366,7 +2379,7 @@ function countBodyPartsFromCreepBody(body, bodyPartType) {
     }
 
     for (var i = 0; i < body.length; i++) {
-        if (body[i] && body[i].type === bodyPartType) {
+        if (body[i] && body[i].type === bodyPartType && body[i].hits !== 0) {
             count++;
         }
     }
@@ -2664,6 +2677,15 @@ function followRemotePath(creep, homeRoomName, sourceId, reverse) {
         return true;
     }
     var route = info.route;
+    // The lane owns travel and safety; beside the source, unique mining seats own movement.
+    // Supplements must not be driven back onto the primary station every tick.
+    if (!reverse && creep.memory && creep.memory.role === 'Extractor') {
+        var sourceMemory = Memory.rooms[info.roomName] && Memory.rooms[info.roomName].sources &&
+            Memory.rooms[info.roomName].sources[sourceId];
+        var station = utility.getPlannedSourceContainerPosition(sourceMemory);
+        if (station && creep.pos.roomName === info.roomName &&
+            creep.pos.getRangeTo(makeRoomPosition(sourceMemory.pos)) <= 1) return false;
+    }
     if (!reverse && creep.memory && creep.memory.role === 'Freighter') refreshRemoteFreighterReservation(creep);
     if (reverse && creep.memory && creep.memory.remoteReturnComplete === sourceId + ':' + route.revision) return false;
     if (atRouteEndpoint(creep, info, reverse)) {
@@ -2814,6 +2836,8 @@ function getDiagnostics(homeRoomName) {
             routeValid: !!(info.route && info.route.valid), blockedReason: reason,
             spendCategory: category, spendAllowed: spend.allowed,
             minerPresent: miners.count > 0, minerQueued: queued.count > 0,
+            wantedWork: getRemoteWantedWork(info), activeWork: miners.work, queuedWork: queued.work,
+            availableSeats: getRemoteSeatCapacity(info), assignedExtractors: miners.count,
             freighterCoverage: { assignedCarryParts: carry, reservedEnergyCapacity: haul.reservedCarry || 0, requiredCarryParts: info.requiredCarry || 0 },
             reservationOwner: reservation && reservation.username || null,
             reservationObservedTicks: saved.reservation && saved.reservation.ticksToEnd || 0,

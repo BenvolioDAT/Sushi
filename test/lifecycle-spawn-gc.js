@@ -120,7 +120,8 @@ test('colony lifecycle separates maturity, economy, and alert overlays', () => {
     const room = makeRoom('W1N1', 2);
     spawn(room);
     addCore(room);
-    Memory.rooms.W1N1.economy = { state: 'STABLE' };
+    Memory.rooms.W1N1.economy = { state: 'STABLE', harvest: {
+        workRequired: 10, workActive: 10, expectedIncome: 20, actualOrEstimatedIncome: 20 } };
     fresh('HiveMind.Memory.js').getConfig('lifecycle').hysteresisTicks = 1;
     delete global.__sushiTickIndex;
     const colony = fresh('HiveMind.ColonyState.js');
@@ -139,7 +140,8 @@ test('colony lifecycle uses guarded adjacent progress and bounded milestone time
     reset();
     const room = makeRoom('W1N1', 8);
     spawn(room);
-    Memory.rooms.W1N1.economy = { state: 'STABLE' };
+    Memory.rooms.W1N1.economy = { state: 'STABLE', harvest: {
+        workRequired: 10, workActive: 10, expectedIncome: 20, actualOrEstimatedIncome: 20 } };
     const memory = fresh('HiveMind.Memory.js');
     memory.getConfig('lifecycle').hysteresisTicks = 1;
     memory.getConfig('lifecycle').milestoneTimeout = 2;
@@ -168,6 +170,8 @@ test('colony lifecycle uses guarded adjacent progress and bounded milestone time
     assert.strictEqual(state.lifecycle, 'MATURE');
 
     const growthRoom = makeRoom('W2N2', 2);
+    Memory.rooms.W2N2.economy = { state: 'STABLE', harvest: {
+        workRequired: 10, workActive: 10, expectedIncome: 20, actualOrEstimatedIncome: 20 } };
     spawn(growthRoom);
     addCore(growthRoom);
     delete global.__sushiTickIndex;

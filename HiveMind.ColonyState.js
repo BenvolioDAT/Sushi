@@ -31,6 +31,8 @@ function isLocalExtractor(item, roomName) {
 
 function plannedSummary(roomName) {
     const byRole = {};
+    const activeByRole = {};
+    let activeLocalExtractors = 0;
     let localExtractors = 0;
     let techWork = 0;
     let nonCombat = 0;
@@ -42,7 +44,14 @@ function plannedSummary(roomName) {
         if (isLocalExtractor(item, roomName)) localExtractors++;
         if (role === 'Tech' && countTechWork !== false) techWork += activeParts(item, typeof WORK !== 'undefined' ? WORK : 'work');
     };
-    for (const creep of TickIndex.get().creepsByHomeRoom.get(roomName) || []) if (isHealthy(creep)) add(creep, true);
+    for (const creep of TickIndex.get().creepsByHomeRoom.get(roomName) || []) if (isHealthy(creep)) {
+        add(creep, true);
+        if (!creep.spawning && !(creep.memory.role === 'Freighter' && creep.memory.freighterJob === 'remote')) {
+            const role = roleOf(creep);
+            activeByRole[role] = (activeByRole[role] || 0) + 1;
+            if (isLocalExtractor(creep, roomName)) activeLocalExtractors++;
+        }
+    }
     const seenSpawning = new Set();
     for (const spawn of TickIndex.get().ownedSpawnsByRoom.get(roomName) || []) {
         const name = spawn && spawn.spawning && spawn.spawning.name;
@@ -59,7 +68,7 @@ function plannedSummary(roomName) {
             memory.controllerEmergency === true;
         add(request, countsForFloor);
     }
-    return { byRole, localExtractors, techWork, nonCombat };
+    return { byRole, activeByRole, activeLocalExtractors, localExtractors, techWork, nonCombat };
 }
 
 function alertFor(room) {
@@ -67,9 +76,9 @@ function alertFor(room) {
     if (!threat || !(threat.harmfulHostileCount > 0)) return ALERTS.PEACE;
     return threat.emergency || threat.siege || threat.totalThreat >= 1000 ? ALERTS.SIEGE : ALERTS.THREATENED;
 }
-function objectiveFor(lifecycle) {
+function objectiveFor(lifecycle, rcl) {
     if (lifecycle === PHASES.OWNED_NO_SPAWN) return 'ESTABLISH_SPAWN';
-    if (lifecycle === PHASES.BOOTSTRAP) return 'REACH_RCL2';
+    if (lifecycle === PHASES.BOOTSTRAP) return rcl > 1 ? 'RESTORE_CORE_ECONOMY' : 'REACH_RCL2';
     if (lifecycle === PHASES.GROWTH) return 'BUILD_CORE_INFRASTRUCTURE';
     if (lifecycle === PHASES.DEVELOPMENT) return 'DEVELOP_SUSTAINABLE_ECONOMY';
     return 'MAINTAIN_AND_SUPPORT_STRATEGY';
@@ -83,7 +92,7 @@ function milestoneFor(room, lifecycle) {
     const requirements = [];
     const unmet = [];
     if (lifecycle === PHASES.OWNED_NO_SPAWN) { requirements.push('owned spawn'); unmet.push('waiting for owned spawn'); }
-    else if (lifecycle === PHASES.BOOTSTRAP) requirements.push('Foreman', 'two local Extractors', 'local Freighter', 'baseline Tech');
+    else if (lifecycle === PHASES.BOOTSTRAP) requirements.push('Foreman', 'sustainable local harvest WORK', 'local Freighter', 'baseline Tech');
     else if (rcl === 2) {
         requirements.push('5 extensions', 'essential source logistics');
         if (structureCount(room.name, typeof STRUCTURE_EXTENSION !== 'undefined' ? STRUCTURE_EXTENSION : 'extension') < 5) unmet.push('waiting for extensions');
@@ -101,10 +110,12 @@ function milestoneFor(room, lifecycle) {
     else requirements.push('controller safety', 'core infrastructure');
     return { milestone: requirements[0] || 'maintain colony', requirements, unmet };
 }
-function rawLifecycle(room, summary) {
+function rawLifecycle(room, summary, economy) {
     if (!(TickIndex.get().ownedSpawnsByRoom.get(room.name) || []).length) return PHASES.OWNED_NO_SPAWN;
     const rcl = room.controller && room.controller.level || 0;
-    const floorsComplete = (summary.byRole.Foreman || 0) >= 1 && summary.localExtractors >= 2 && (summary.byRole.Freighter || 0) >= 1;
+    const active = summary.activeByRole || summary.byRole;
+    const floorsComplete = (active.Foreman || 0) >= 1 &&
+        Economy.localHarvestCoverage(economy || Economy.get(room.name)).status === 'HEALTHY' && (active.Freighter || 0) >= 1;
     if (rcl <= 1 || !floorsComplete) return PHASES.BOOTSTRAP;
     if (rcl <= 3) return PHASES.GROWTH;
     if (rcl <= 7) return PHASES.DEVELOPMENT;
@@ -150,24 +161,24 @@ function transitionReason(room, from, to, summary) {
 function decide(room, economy, summary, lifecycle, alert) {
     const rcl = room.controller && room.controller.level || 0;
     const floorReachable = !economy.bootstrap || economy.bootstrap.floorReachable !== false;
-    const harvest = economy.harvest || {};
-    const functionalMining = summary.localExtractors > 0 &&
-        (harvest.workActive === undefined || harvest.workActive + (harvest.workIncoming || harvest.workQueued || 0) > 0);
+    const localHarvest = Economy.localHarvestCoverage(economy);
+    const active = summary.activeByRole || summary.byRole;
+    const functionalMining = localHarvest.status === 'HEALTHY';
     let nextMandatoryRole = null;
     let blockedReason = null;
     if (!functionalMining && !floorReachable) {
         nextMandatoryRole = 'Extractor';
         blockedReason = 'minimum Extractor energy floor is not recoverable';
     }
-    else if ((summary.byRole.Foreman || 0) < 1) {
+    else if ((active.Foreman || 0) < 1) {
         nextMandatoryRole = 'Foreman';
         blockedReason = 'Foreman floor missing';
     }
-    else if (summary.localExtractors < 2 || !functionalMining) {
-        nextMandatoryRole = 'Extractor';
-        blockedReason = 'minimum local miner floor missing';
+    else if (!functionalMining) {
+        nextMandatoryRole = localHarvest.status === 'MISSING' ? 'Extractor' : null;
+        blockedReason = localHarvest.status === 'RECOVERING' ? 'local harvest recovery incoming' : 'minimum local miner floor missing';
     }
-    else if ((summary.byRole.Freighter || 0) < 1) {
+    else if ((active.Freighter || 0) < 1) {
         nextMandatoryRole = 'Freighter';
         blockedReason = 'core logistics missing';
     }
@@ -189,13 +200,14 @@ function decide(room, economy, summary, lifecycle, alert) {
     else if (baselinePhase) reason = 'minimum controller growth is covered';
     else reason = lifecycle + ' lifecycle requirements active';
     return {
-        objective: objectiveFor(lifecycle),
+        objective: objectiveFor(lifecycle, rcl),
+        localHarvest,
         priorityBand: alert === ALERTS.SIEGE ? PRIORITY_BANDS.EMERGENCY : blockedReason ? PRIORITY_BANDS.CORE :
             baselinePhase ? PRIORITY_BANDS.BASELINE_GROWTH : PRIORITY_BANDS.DEVELOPMENT,
         growthAllowed, baselineTechRequired, baselineTechWork,
         blockedReason: growthAllowed ? null : blockedReason, reason, nextMandatoryRole,
-        coreFloor: { foreman: summary.byRole.Foreman || 0, localExtractors: summary.localExtractors,
-            freighters: summary.byRole.Freighter || 0, complete: !coreBlockedReason },
+        coreFloor: { foreman: active.Foreman || 0, localExtractors: summary.activeLocalExtractors || 0,
+            freighters: active.Freighter || 0, complete: !coreBlockedReason },
         techPlannedWork: summary.techWork, governorNonCombat: summary.nonCombat,
         controllerDowngradeTicks: room.controller && room.controller.ticksToDowngrade || 0,
         protectedStockpileEnergy: economy.protectedStockpileEnergy || 0
@@ -209,7 +221,7 @@ function update(room) {
     if (!room || !room.controller || !room.controller.my) return null;
     const economy = Economy.get(room.name) || { state: Economy.STATES.RECOVERY };
     const summary = plannedSummary(room.name);
-    const proposed = rawLifecycle(room, summary);
+    const proposed = rawLifecycle(room, summary, economy);
     const alert = alertFor(room);
     const memory = HiveMemory.getRoomMemory(room.name);
     if (!memory.colony || typeof memory.colony !== 'object') memory.colony = {};
@@ -263,6 +275,7 @@ function update(room) {
         baselineTechRequired: decision.baselineTechRequired, baselineTechWork: decision.baselineTechWork,
         blockedReason: decision.blockedReason, reason: decision.reason, nextMandatoryRole: decision.nextMandatoryRole,
         coreFloor: decision.coreFloor, techPlannedWork: decision.techPlannedWork,
+        localHarvest: decision.localHarvest,
         governorNonCombat: decision.governorNonCombat, alert, economy: economy.state,
         controllerDowngradeTicks: decision.controllerDowngradeTicks,
         protectedStockpileEnergy: decision.protectedStockpileEnergy,

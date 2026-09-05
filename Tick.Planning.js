@@ -53,7 +53,9 @@ function generateSpawnRequests() {
 
 function runSpawning(requestReport) {
     if (!requestReport || !requestReport.rooms) return;
-    for (const roomName of Object.keys(requestReport.rooms)) spawnManager.runRoom(roomName);
+    for (const roomName of Object.keys(requestReport.rooms)) {
+        requestReport.rooms[roomName].spawnResult = spawnManager.runRoom(roomName);
+    }
 }
 
 module.exports = {

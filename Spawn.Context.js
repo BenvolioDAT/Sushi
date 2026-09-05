@@ -33,10 +33,14 @@ function snapshot(roomName, replacementBuffer = 0) {
         const key = creep.name || creep.id;
         if (key && seen.has(key)) continue;
         if (key) seen.add(key);
-        living++;
+        if (creep.spawning) spawning++;
+        else living++;
         const role = roleOf(creep);
         increment(byRole, role);
-        if (!isCombatRole(role)) nonCombatLiving++;
+        if (!isCombatRole(role)) {
+            if (creep.spawning) nonCombatSpawning++;
+            else nonCombatLiving++;
+        }
     }
     for (const spawn of index.ownedSpawnsByRoom.get(roomName) || []) {
         const name = spawn && spawn.spawning && spawn.spawning.name;

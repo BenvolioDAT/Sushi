@@ -87,7 +87,7 @@ function revalidate(room, request) {
     return Policy.evaluate(room, request, Context.snapshot(room.name), { revalidate: true });
 }
 
-function pruneRoom(roomName) {
+function pruneRoom(roomName, decision) {
     const queue = HiveMemory.getRoomSpawnMemory(roomName).queue;
     let removed = 0;
     for (let i = queue.length - 1; i >= 0; i--) {
@@ -99,6 +99,10 @@ function pruneRoom(roomName) {
         const operation = request && request.operationId && HiveMemory.ensure().operations[request.operationId];
         if (!request || request.expiresAt && request.expiresAt < Game.time ||
             operation && ['COMPLETE', 'ABORTED'].includes(operation.state)) {
+            if (decision && !decision.blocked) decision.blocked = {
+                role: request && request.role || 'unknown',
+                reason: !request ? 'invalid request' : request.expiresAt < Game.time ? 'request expired' : 'operation is terminal'
+            };
             queue.splice(i, 1);
             removed++;
         }

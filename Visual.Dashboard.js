@@ -712,7 +712,7 @@ function getSpawnStatus(room, queue) {
         var role = spawningCreep && spawningCreep.memory && spawningCreep.memory.role;
 
         return {
-            text: 'Spawn ' + truncate(role || spawningName || 'creep', 12),
+            text: 'BUSY ' + truncate(role || spawningName || 'creep', 12) + ' ' + spawn.spawning.remainingTime + 't',
             color: COLORS.title
         };
     }
@@ -724,6 +724,16 @@ function getSpawnStatus(room, queue) {
         };
     }
 
+    var decision = Memory.rooms[room.name] && Memory.rooms[room.name].spawn && Memory.rooms[room.name].spawn.lastDecision;
+    if (decision && decision.tick === Game.time && ['BLOCK', 'ERROR'].includes(decision.status)) {
+        return { text: 'Spawn ' + decision.status, color: COLORS.warning };
+    }
+    if (decision && decision.tick === Game.time && decision.result === 0) {
+        return { text: 'Spawn STARTED', color: COLORS.good };
+    }
+    if (queue.length > 0 && (!decision || decision.tick !== Game.time)) {
+        return { text: 'Spawn UNCHECKED', color: COLORS.warning };
+    }
     if (queue.length === 0) {
         return {
             text: 'Spawn idle',
@@ -829,7 +839,7 @@ function drawRoomPanel(visual, room, sourceStats, remoteStats, roomCreeps) {
     var y = 3.7;
     var width = 18;
     var showRoleCounts = HiveMemory.getConfig('visuals').dashboardShowRoleCounts === true;
-    var height = showRoleCounts ? 24.4 : 22.3;
+    var height = showRoleCounts ? 26.4 : 24.3;
     var controller = room.controller;
     var roomMemory = Memory.rooms && Memory.rooms[room.name];
     var queue = getSpawnQueueInfo(room.name);
@@ -905,6 +915,10 @@ function drawRoomPanel(visual, room, sourceStats, remoteStats, roomCreeps) {
             round(economy.harvest.expectedIncome, 1) + ' W ' + economy.harvest.workActive + '/' +
             economy.harvest.workRequired, x, rowY, COLORS.text);
         rowY += LINE_HEIGHT;
+        drawText(visual, 'Incoming W ' + (economy.harvest.workSpawning || 0) + 's +' +
+            (economy.harvest.workQueued || 0) + 'q | ' + (colony && colony.localHarvest && colony.localHarvest.status || 'UNKNOWN'),
+            x, rowY, economyColor);
+        rowY += LINE_HEIGHT;
         drawText(visual, 'Haul ' + economy.haul.localCarry + '/' + economy.haul.requiredCarry +
             ' backlog ' + compactNumber(economy.haul.backlog), x, rowY, COLORS.text);
         rowY += LINE_HEIGHT;
@@ -962,8 +976,15 @@ function drawRoomPanel(visual, room, sourceStats, remoteStats, roomCreeps) {
     }
     drawRow(visual, ['Spawn queue', { text: queue.length, color: queue.length > 3 ? COLORS.warning : COLORS.text }], x, rowY, [7, 4]);
     rowY += LINE_HEIGHT;
+    var spawnDecision = roomMemory.spawn && roomMemory.spawn.lastDecision;
     drawRow(visual, ['Next', queue.role ? truncate(queue.role, 9) + ' ' + queue.bodyCost + 'e' : 'none'], x, rowY, [3.2, 12]);
     rowY += LINE_HEIGHT;
+    if (spawnDecision && spawnDecision.tick === Game.time && spawnDecision.idle && spawnDecision.queueLength > 0) {
+        drawText(visual, (spawnDecision.selectedRole || 'Queue') + ': ' +
+            truncate(spawnDecision.result === 0 ? spawnDecision.arbiterReason : spawnDecision.reason, 40) +
+            (spawnDecision.result !== null && spawnDecision.result !== undefined ? ' [' + spawnDecision.result + ']' : ''), x, rowY, COLORS.warning);
+        rowY += LINE_HEIGHT;
+    }
     drawRow(visual, ['Sources', sourceStats.length, 'Remote', { text: remoteStats.activeCount, color: remoteStats.activeCount ? COLORS.good : COLORS.muted }], x, rowY, [4.2, 2, 4.2, 3]);
     rowY += LINE_HEIGHT;
     drawRow(visual, ['Remote income', { text: round(remoteStats.totalIncome, 2) + '/t', color: remoteStats.totalIncome > 0 ? COLORS.good : COLORS.muted }], x, rowY, [7.4, 6]);

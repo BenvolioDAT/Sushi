@@ -2312,12 +2312,12 @@ function requestRemoteExtractorsForRoom(room, extractorBody, priority, maxReques
         var demand = demands[i];
         var remoteBody = creepBodyConfig.getExtractorBodyForWork(
             room,
-            demand.wantedWork || SOURCE_WORK_TARGET
+            demand.missingWork || SOURCE_WORK_TARGET
         ) || extractorBody;
 
         /*
          * Queue one source-targeted normal Extractor. remoteMining is assignment
-         * state only, and Planner.Remote caps each remote source at one Extractor.
+         * state only. Each request fills missing WORK within physical seat capacity.
          */
         var addResult = addSpawnRequest(room.name, {
             role: 'Extractor',
@@ -2726,6 +2726,10 @@ function requestRoleForRoom(room, role, desiredCount, priorityOverride, options)
                     return row.id === realSourceId;
                 }) : null;
             var sourceWorkTarget = economySource ? economySource.workRequired : SOURCE_WORK_TARGET;
+            if (economySource && economySource.workSpawning > 0 &&
+                economySource.healthyWork + economySource.workSpawning >= sourceWorkTarget) {
+                continue;
+            }
             var sourceTravelDistance = economySource ? economySource.distance : 30;
             var maxSeats = 1;
             var livingAssignedCount = 0;
@@ -2966,6 +2970,8 @@ function requestRoleForRoom(room, role, desiredCount, priorityOverride, options)
 
                 if (queuedSourceId === realSourceId) {
                     hasPendingSourceRequest = true;
+                    queuedRequest.refreshTick = Game.time;
+                    queuedRequest.expiresAt = Game.time + (HiveMemory.getConfig('memoryGC').queueRetention || 50);
                     break;
                 }
             }
@@ -3193,7 +3199,10 @@ function runStartupBootstrap(room, report) {
         report.requests.push(requestRoleForRoom(room, 'Foreman', 1, 108, emergencyOptions));
         return true;
     }
-    if (localMinerCount < 2) {
+    if (economy.harvest && economy.harvest.sources && economy.harvest.sources.length ?
+        economy.harvest.sources.some(function(source) {
+            return source.workActive + (source.workSpawning || 0) + (source.workQueued || 0) < source.workRequired;
+        }) : localMinerCount < 2) {
         report.requests.push(requestDynamicExtractorsForRoom(room, 116, null, emergencyOptions));
         return true;
     }

@@ -474,6 +474,7 @@ function sourceReplacementCoverage(source, required, distance, assigned, queue, 
     let queueDelay = spawns.reduce((longest, spawn) => Math.max(longest,
         spawn && spawn.spawning && spawn.spawning.remainingTime || 0), 0);
     for (const request of queue) {
+        if (!request || request.expiresAt < Game.time) continue;
         const spawnTime = (request && request.body ? request.body.length : 0) * 3;
         queueDelay += spawnTime;
         if ((request.role || request.memory && request.memory.role) === 'Extractor' &&
@@ -524,9 +525,18 @@ function pendingLocalParts(roomName, role, partType) {
 
 function buildSnapshot(room, previous) {
     const index = TickIndex.get();
-    const creeps = index.creepsByHomeRoom.get(room.name) || [];
+    const creeps = (index.creepsByHomeRoom.get(room.name) || []).slice();
     const sources = typeof room.find === 'function' ? room.find(FIND_SOURCES) || [] : [];
     const spawns = index.ownedSpawnsByRoom.get(room.name) || [];
+    for (const spawn of spawns) {
+        const name = spawn.spawning && spawn.spawning.name;
+        const memory = name && Memory.creeps && Memory.creeps[name];
+        const work = memory && memory.extractorSpawnWorkParts;
+        if (Number.isInteger(work) && work > 0 && work <= 50 && !creeps.some(creep => creep.name === name)) {
+            creeps.push({ name, memory, spawning: true,
+                body: Array(work).fill({ type: WORK, hits: 100 }) });
+        }
+    }
     const dropoff = room.storage || spawns[0] || null;
     const queue = Memory.rooms && Memory.rooms[room.name] && Memory.rooms[room.name].spawn &&
         Memory.rooms[room.name].spawn.queue || [];
@@ -580,6 +590,12 @@ function buildSnapshot(room, previous) {
             assigned: assigned.length,
             workRequired: required,
             workActive: activeWork,
+            stationedWork,
+            workSpawning: assigned.filter(creep => creep.spawning)
+                .reduce((sum, creep) => sum + bodyParts(creep.body, WORK), 0),
+            workQueued: queue.filter(request => request && !(request.expiresAt < Game.time) && requestSourceId(request) === source.id &&
+                isLocalExtractor({ memory: { ...request.memory, role: request.role } }, room.name))
+                .reduce((sum, request) => sum + bodyParts(request.body, WORK), 0),
             expectedIncome: Math.round(sourceIncome * 100) / 100,
             estimatedIncome: Math.round(estimated * 100) / 100,
             backlog: rowBacklog.energy,
@@ -594,8 +610,10 @@ function buildSnapshot(room, previous) {
         .reduce((sum, creep) => sum + activeParts(creep, WORK), 0);
     const spawningWork = localExtractors.filter(creep => creep.spawning)
         .reduce((sum, creep) => sum + bodyParts(creep.body, WORK), 0);
-    const queuedWork = pendingLocalParts(room.name, 'Extractor', WORK);
-    workActive += unassignedWork;
+    const queuedWork = sourceRows.reduce((sum, row) => sum + row.workQueued, 0);
+    // Useful capacity is capped per source; an uncovered source cannot be offset
+    // by extra miners at another source (or miners without an assignment).
+    workActive = sourceRows.reduce((sum, row) => sum + Math.min(row.workRequired, row.workActive), 0);
 
     const freighters = creeps.filter(creep => creep && creep.memory && creep.memory.role === 'Freighter' &&
         (!creep.memory.homeRoom || creep.memory.homeRoom === room.name));
@@ -654,6 +672,8 @@ function buildSnapshot(room, previous) {
             actualOrEstimatedIncome: Math.round(incomeEstimated * 100) / 100,
             workRequired,
             workActive,
+            unassignedWork,
+            stationedWork: sourceRows.reduce((sum, row) => sum + Math.min(row.workRequired, row.stationedWork), 0),
             workQueued: queuedWork,
             workSpawning: spawningWork,
             workIncoming: queuedWork + spawningWork,
@@ -712,7 +732,8 @@ function rawState(snapshot) {
     if (snapshot.spawnFill < 0.15 && reserves < 500 && incomeRatio < 0.45) {
         return { state: STATES.SURVIVAL, reason: 'spawn energy critically low and harvest income below replacement level' };
     }
-    if (harvestRatio < 0.9 || incomeRatio < 0.65) {
+    if (harvestRatio < 0.9 || incomeRatio < 0.65 || (harvest.sources || []).some(row =>
+        row.workActive < row.workRequired * 0.9 || row.estimatedIncome < row.expectedIncome * 0.65)) {
         return { state: STATES.RECOVERY, reason: 'harvesting below sustainable local demand' };
     }
     if (haulRatio < 0.85 || haul.backlog > Math.max(500, haul.activeCarry * 75) ||
@@ -885,6 +906,10 @@ function checkSpend(roomOrName, category) {
     if (['harvest', 'logistics', 'spawnFill'].includes(category)) {
         return { allowed: true, reason: 'core economy' };
     }
+    if (category === 'controllerGrowth' && snapshot.harvest && snapshot.harvest.workRequired > 0 &&
+        localHarvestCoverage(snapshot).status !== 'HEALTHY') {
+        return { allowed: false, reason: 'local harvest must recover before controller growth' };
+    }
     if (snapshot.state === STATES.SURVIVAL) {
         const allowed = ['controllerSafety', 'criticalController', 'criticalMaintenance'].includes(category);
         return { allowed, reason: allowed ? 'critical survival exception' : 'blocked during SURVIVAL' };
@@ -906,6 +931,81 @@ function canSpend(roomOrName, category) {
     return checkSpend(roomOrName, category).allowed;
 }
 
+// Current health comes from the Economy snapshot. Incoming capacity never
+// satisfies the active floor, and excess WORK on one source cannot cover another.
+function localHarvestCoverage(snapshot) {
+    const harvest = snapshot && snapshot.harvest || {};
+    const requiredWork = harvest.workRequired || 0;
+    const activeWork = harvest.workActive || 0;
+    const spawningWork = harvest.workSpawning || 0;
+    const queuedWork = harvest.workQueued || 0;
+    const sources = harvest.sources || [];
+    const activeRatio = requiredWork > 0 ? activeWork / requiredWork : 0;
+    const incomeRatio = harvest.expectedIncome > 0 ?
+        (harvest.actualOrEstimatedIncome || 0) / harvest.expectedIncome : 0;
+    const healthy = activeRatio >= 0.9 && incomeRatio >= 0.65 &&
+        sources.every(row => row.workActive >= row.workRequired * 0.9 && row.estimatedIncome >= row.expectedIncome * 0.65);
+    const incomingCovered = sources.length ? sources.every(row =>
+        row.workActive + (row.workSpawning || 0) + (row.workQueued || 0) >= row.workRequired * 0.9) :
+        activeWork + spawningWork + queuedWork >= requiredWork * 0.9;
+    return { activeWork, spawningWork, queuedWork, requiredWork, activeRatio,
+        incomingWork: spawningWork + queuedWork,
+        status: healthy ? 'HEALTHY' : requiredWork > 0 && incomingCovered ? 'RECOVERING' : 'MISSING' };
+}
+
+// Re-evaluate only source-targeted local requests. Earlier queued reservations
+// count; this request and later duplicates do not. No persisted emergency flag.
+function localRecoveryRequest(room, request, queue) {
+    const memory = request.memory || {};
+    const role = request.role || memory.role;
+    const snapshot = get(room.name);
+    const local = isLocalExtractor({ memory: { ...memory, role } }, room.name);
+    const localHauler = role === 'Freighter' && memory.freighterJob !== 'remote' &&
+        !memory.remoteMining && !memory.remoteSourceId && !memory.remoteWorkTargetId &&
+        (!memory.homeRoom || memory.homeRoom === room.name) &&
+        (!memory.sourceRoom || memory.sourceRoom === room.name) &&
+        (!memory.targetRoom || memory.targetRoom === room.name);
+    if (!local && !localHauler) return { mandatory: false };
+    const sourceId = sourceIdFor(memory);
+    const rows = snapshot && snapshot.harvest && snapshot.harvest.sources;
+    const source = local && rows && rows.find(row => row.id === sourceId);
+    if (local && rows && rows.length && (!sourceId || !source)) return { mandatory: false, obsolete: true, reason: 'invalid local source assignment' };
+    if (local && !source || localHauler && !(snapshot && snapshot.haul)) return { mandatory: false };
+    const part = local ? WORK : CARRY;
+    const matches = item => {
+        const m = item.memory || {};
+        return local ? isLocalExtractor({ memory: { ...m, role: item.role || m.role } }, room.name) && sourceIdFor(m) === sourceId :
+            (item.role || m.role) === 'Freighter' && m.freighterJob !== 'remote' && !m.remoteSourceId &&
+            !m.remoteWorkTargetId && !m.remoteMining && (!m.homeRoom || m.homeRoom === room.name) &&
+            (!m.sourceRoom || m.sourceRoom === room.name) && (!m.targetRoom || m.targetRoom === room.name);
+    };
+    const index = TickIndex.get();
+    let covered = 0;
+    const seen = new Set();
+    for (const creep of index.creepsByHomeRoom.get(room.name) || []) {
+        if (!matches(creep)) continue;
+        seen.add(creep.name);
+        if (creep.spawning || creep.ticksToLive === undefined || creep.ticksToLive > replacementLead(creep, source && source.distance || 25)) {
+            covered += creep.spawning ? bodyParts(creep.body, part) : activeParts(creep, part);
+        }
+    }
+    for (const spawn of index.ownedSpawnsByRoom.get(room.name) || []) {
+        const name = spawn.spawning && spawn.spawning.name;
+        const m = name && Memory.creeps && Memory.creeps[name];
+        const parts = m && (local ? m.extractorSpawnWorkParts : m.freighterSpawnCarryParts);
+        if (Number.isInteger(parts) && parts > 0 && parts <= 50 && !seen.has(name) && matches({ memory: m })) covered += parts;
+    }
+    for (const pending of queue || []) {
+        if (!pending) continue;
+        if (pending === request || request.requestId && pending.requestId === request.requestId) break;
+        if (matches(pending) && !(pending.expiresAt < Game.time)) covered += bodyParts(pending.body, part);
+    }
+    const required = local ? source.workRequired : snapshot.haul.requiredCarry;
+    const missing = Math.max(0, required - covered);
+    return { mandatory: missing > 0, missing, obsolete: local && missing === 0,
+        reason: missing > 0 ? 'mandatory local economy recovery' : 'local source already covered' };
+}
+
 function canSpawnRequest(room, request) {
     const category = categoryForRequest(request);
     const spend = checkSpend(room, category);
@@ -921,6 +1021,8 @@ function shouldBootstrapSelfDeliver(roomOrName) {
 }
 
 module.exports = {
+    localHarvestCoverage,
+    localRecoveryRequest,
     STATES,
     GROWTH_MODES,
     run,

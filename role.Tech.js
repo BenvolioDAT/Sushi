@@ -43,7 +43,7 @@ var roleTech = {
             isBaselineRepresentative(creep, homeRoomName);
         var floorPolicyActive = (controllerGrowthFloor || baselineRepresentative) && colony &&
             colony.rcl < 8;
-        var growthStillAllowed = !floorPolicyActive || colony.growthAllowed;
+        var growthStillAllowed = controllerEmergency || !floorPolicyActive || colony.growthAllowed;
         var spendCategory = controllerEmergency ? 'controllerSafety' :
             floorPolicyActive ? 'controllerGrowth' : 'upgradeSurplus';
         if (!growthStillAllowed || !Economy.canSpend(homeRoomName, spendCategory)) {

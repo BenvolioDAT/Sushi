@@ -426,9 +426,9 @@ function findIdleSpawn(roomName) {
  * @param {string} roomName
  * @returns {object}
  */
-function runRoom(roomName) {
+function runRoomInternal(roomName, decision) {
     var queue = getSpawnQueue(roomName);
-    SpawnArbiter.pruneRoom(roomName);
+    SpawnArbiter.pruneRoom(roomName, decision);
 
     /*
      * Empty queue is a normal success state. Nothing is wrong; there is simply
@@ -438,11 +438,13 @@ function runRoom(roomName) {
         return {
             ok: true,
             result: null,
-            reason: 'Queue empty'
+            reason: decision.blocked ? decision.blocked.reason : 'Queue empty'
         };
     }
 
     var spawn = findIdleSpawn(roomName);
+    decision.spawnName = spawn && spawn.name || null;
+    decision.idle = !!spawn;
 
     /*
      * Spawns can only create one creep at a time. If none are idle, keep the
@@ -476,16 +478,33 @@ function runRoom(roomName) {
 
     for (var queueIndex = 0; queueIndex < queue.length; queueIndex++) {
         var candidate = queue[queueIndex];
+        const details = { selectedRole: candidate && candidate.role || 'unknown',
+            selectedRequestId: candidate && candidate.requestId || null,
+            priority: candidate && candidate.priority || 0,
+            bodyCost: candidate && Array.isArray(candidate.body) ? getBodyCost(candidate.body) : null };
+        if (!candidate || !candidate.role || !Array.isArray(candidate.body) || !candidate.body.length ||
+            !candidate.memory || candidate.memory.role !== candidate.role) {
+            Object.assign(decision, details, { stage: 'request', reason: 'invalid request body or role memory' });
+            decision.blocked = { role: details.selectedRole, reason: decision.reason };
+            queue.splice(queueIndex--, 1);
+            continue;
+        }
         var finalAdmission = SpawnArbiter.revalidate(spawn.room, candidate);
+        details.arbiterAllowed = finalAdmission.allowed;
+        details.arbiterReason = finalAdmission.reason;
         if (!finalAdmission.allowed) {
+            if (!decision.blocked) Object.assign(decision, details, { stage: 'arbiter',
+                blocked: { role: candidate.role, reason: finalAdmission.reason } });
             blockedReasons[candidate && candidate.role || 'unknown'] = finalAdmission.reason;
-            if (finalAdmission.reason === 'request expired' || finalAdmission.reason === 'operation is terminal') {
+            if (finalAdmission.obsolete || finalAdmission.reason === 'request expired' || finalAdmission.reason === 'operation is terminal') {
                 queue.splice(queueIndex, 1);
                 queueIndex--;
             }
             continue;
         }
         var policy = Economy.canSpawnRequest(spawn.room, candidate);
+        details.economyAllowed = policy.allowed;
+        details.economyReason = policy.reason;
         if (!policy.allowed) {
             blockedReasons[candidate && candidate.role || 'unknown'] = policy.reason;
             continue;
@@ -498,8 +517,16 @@ function runRoom(roomName) {
             break;
         }
 
-        var preview = previewAffordableQueuedBodyForSpawn(spawn, candidate);
+        var bodyCandidate = candidate;
+        if (finalAdmission.localMissingWork > 0) {
+            bodyCandidate = Object.assign({}, candidate, { requestedWorkParts: Math.min(
+                candidate.requestedWorkParts || candidate.maxWorkParts || countBodyParts(candidate.body, WORK),
+                finalAdmission.localMissingWork) });
+        }
+        var preview = previewAffordableQueuedBodyForSpawn(spawn, bodyCandidate);
         if (!preview.selection.affordable) {
+            if (!decision.blocked) Object.assign(decision, details, { stage: 'body',
+                blocked: { role: candidate.role, reason: preview.selection.reason } });
             unaffordableRoles.push(candidate.role);
             continue;
         }
@@ -508,6 +535,8 @@ function runRoom(roomName) {
         requestIndex = queueIndex;
         request.body = preview.body;
         bodySelection = preview.selection;
+        Object.assign(decision, details, { stage: 'name', bodyCost: getBodyCost(request.body),
+            work: countBodyParts(request.body, WORK) });
         break;
     }
 
@@ -524,7 +553,7 @@ function runRoom(roomName) {
         return {
             ok: false,
             result: null,
-            reason: 'All queued requests blocked by economy policy',
+            reason: decision.blocked ? decision.blocked.reason : 'All queued requests blocked',
             blocked: blockedReasons
         };
     }
@@ -569,12 +598,15 @@ function runRoom(roomName) {
             request.memory.artificerWorkCategory = request.economyCategory;
         }
     }
+    if (request.role === 'Extractor') request.memory.extractorSpawnWorkParts = countBodyParts(request.body, WORK);
+    if (request.role === 'Freighter') request.memory.freighterSpawnCarryParts = countBodyParts(request.body, CARRY);
 
     /*
      * spawn.spawnCreep is the Screeps API call that starts spawning a creep.
      * The body controls parts, creepName is the unique name, and memory becomes
      * the new creep's creep.memory when it exists.
      */
+    decision.stage = 'spawnCreep';
     var result = spawn.spawnCreep(
         request.body,
         creepName,
@@ -660,6 +692,30 @@ function runRoom(roomName) {
         role: request.role,
         reason: 'Spawn request failed and was removed'
     };
+}
+
+function runRoom(roomName) {
+    const memory = HiveMemory.getRoomSpawnMemory(roomName);
+    const room = Game.rooms && Game.rooms[roomName];
+    const idle = findIdleSpawn(roomName);
+    const decision = { tick: Game.time, spawnName: idle && idle.name || null,
+        idle: !!idle, queueLength: memory.queue.length,
+        energyAvailable: room && room.energyAvailable || 0, stage: 'queue' };
+    // Persist even if a malformed legacy request or API wrapper throws.
+    memory.lastDecision = decision;
+    try {
+        const result = runRoomInternal(roomName, decision);
+        decision.result = result.result;
+        decision.reason = result.reason || 'spawn started';
+        decision.queueRemaining = memory.queue.length;
+        decision.status = result.result === OK ? 'BUSY' : !decision.idle ? 'BUSY' :
+            result.ok && !decision.blocked ? 'IDLE' : decision.stage === 'spawnCreep' || decision.stage === 'name' ? 'ERROR' : 'BLOCK';
+        return result;
+    } catch (error) {
+        decision.status = 'ERROR';
+        decision.reason = String(error.message || error).slice(0, 160);
+        throw error;
+    }
 }
 
 module.exports = {

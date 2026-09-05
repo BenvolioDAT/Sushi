@@ -395,6 +395,34 @@ function getPlannedSourceContainerPosition(sourceMemory, sourcePosition) {
     return new RoomPosition(pos.x, pos.y, pos.roomName);
 }
 
+function getValidSourceMiningSeats(sourceMemory, sourcePosition) {
+    var origin = sourcePosition || (sourceMemory && sourceMemory.pos);
+    if (!origin) return [];
+    var saved = sourceMemory && sourceMemory.seats;
+    var candidates = saved && saved.length ? saved.slice() : [];
+    if (!candidates.length) {
+        for (var x = origin.x - 1; x <= origin.x + 1; x++) {
+            for (var y = origin.y - 1; y <= origin.y + 1; y++) candidates.push({ x: x, y: y });
+        }
+    }
+    var station = getPlannedSourceContainerPosition(sourceMemory, origin);
+    if (station) candidates.push(station);
+    var seen = {};
+    return candidates.map(function(value) {
+        var pos = value.pos || value;
+        return getPlannedSourceContainerPosition({ containerPlannedPos: {
+            x: pos.x, y: pos.y, roomName: pos.roomName || origin.roomName
+        } }, origin);
+    }).filter(function(pos) {
+        if (!pos || seen[pos.x + ':' + pos.y]) return false;
+        seen[pos.x + ':' + pos.y] = true;
+        return !Game.rooms[pos.roomName] || !pos.lookFor(LOOK_STRUCTURES).some(function(structure) {
+            return OBSTACLE_OBJECT_TYPES.indexOf(structure.structureType) >= 0 ||
+                (structure.structureType === STRUCTURE_RAMPART && !structure.my && !structure.isPublic);
+        });
+    });
+}
+
 /////////////////////////////////////////////////////////////////////////////////////////////////
 /**
  * Make sure each scanned source has one container planned.
@@ -1170,5 +1198,6 @@ module.exports = {
 
     planSourceContainers,
     getPlannedSourceContainerPosition,
+    getValidSourceMiningSeats,
     ensureSourceHaulMemory: ensureSourceHaulMemory,
 };

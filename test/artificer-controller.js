@@ -41,7 +41,8 @@ function reset(state = 'STABLE', spawnFill = 1) {
         spawn: { queue: [] },
         economy: {
             state, rawState: state, spawnFill,
-            harvest: { workActive: 5, workQueued: 0, actualOrEstimatedIncome: 10 },
+            harvest: { workActive: 5, workRequired: 5, workQueued: 0,
+                expectedIncome: 10, actualOrEstimatedIncome: 10 },
             haul: { localCarry: 5, queuedCarry: 0, requiredCarry: 5 },
             bootstrap: { floorReachable: true, unrecoverable: false }
         }

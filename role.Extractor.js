@@ -345,7 +345,7 @@ function runRemoteStation(creep, source, miningSeat) {
         creep.harvest(source);
         return;
     }
-    if (container && creep.transfer(container, RESOURCE_ENERGY) === OK) {
+    if (container && creep.pos.getRangeTo(container.pos) <= 1 && creep.transfer(container, RESOURCE_ENERGY) === OK) {
         recordSourceContainerHaul(creep, source, container);
         return;
     }
@@ -359,7 +359,7 @@ function runRemoteStation(creep, source, miningSeat) {
                 other.memory.remoteWorkType === 'buildRemoteContainer' &&
                 other.memory.remoteWorkTargetId === site.id;
         });
-        if (!assisted) {
+        if (!assisted && creep.pos.getRangeTo(site.pos) <= 3) {
             creep.memory.extractorState = 'remoteContainerSelfBuild';
             creep.build(site);
             return;

@@ -63,6 +63,7 @@ function setup(local = false) {
     Game.getObjectById = id => objects[id] || room.structures.concat(room.sites, room.drops).find(v => v.id === id) || null;
     const utility = require('utility');
     const seats = require('utility.Creep');
+    const actualGetAssignedSource = seats.getAssignedSource;
     seats.getAssignedSource = () => source; // Assignment is fixed; seat and routing logic remain real.
     require('HiveMind.Economy').shouldBootstrapSelfDeliver = () => false;
     require('utility.Travel.Creep').move = (unit, target) => { calls.push(['move', target.x, target.y]); return OK; };
@@ -73,7 +74,7 @@ function setup(local = false) {
         return site;
     }
     function addArtificer(target = 'site', currentRoom = room) {
-        const unit = { name: 'builder', room: currentRoom, pos: station,
+        const unit = { name: 'builder', room: currentRoom, pos: new RoomPosition(10, 9, currentRoom.name),
             memory: { role: 'Artificer', remoteWorkTargetId: target, remoteWorkType: 'buildRemoteContainer' } };
         Game.creeps.builder = unit;
         if (currentRoom === room) room.creeps.push(unit);
@@ -87,10 +88,11 @@ function setup(local = false) {
     }
     function tick() { calls.length = 0; Game.time++; role.run(creep); }
     function stationary() { assert.ok(!calls.some(call => call[0] === 'move'), JSON.stringify(calls)); }
-    return { creep, source, memory, room, station, info, calls, seats, utility, addSite, addArtificer, addContainer, tick, stationary };
+    return { creep, source, memory, room, station, info, calls, seats, utility, addSite, addArtificer, addContainer, tick, stationary, actualGetAssignedSource };
 }
 function test(name, fn) { fn(); console.log('PASS ' + name); }
 
+if (require.main === module) {
 test('1 planned tile overrides stale generic seat before container completion', () => {
     const f = setup(); f.addSite();
     assert.deepStrictEqual(f.seats.getAssignedMiningSeat(f.creep, f.source), f.station);
@@ -217,3 +219,5 @@ test('missing station site is not replaced by another nearby site or container',
     assert.deepStrictEqual(f.calls, [['plan', 11, 10], ['drop']]);
     assert.deepStrictEqual(f.memory.containerPlannedPos, { ...f.station });
 });
+}
+module.exports = { setup };
