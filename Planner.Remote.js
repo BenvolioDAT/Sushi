@@ -1208,10 +1208,13 @@ function getSourceTargetInfo(sourceMemory) {
         return null;
     }
 
+    var station = utility.getPlannedSourceContainerPosition(sourceMemory);
+    if (station) return { pos: station, range: 0 };
+
     /*
      * Target priority follows Sushi's existing source-container fields:
-     * 1. live containerId, 2. planned container position, 3. saved mining seat,
-     * 4. source position with range 1 as a safe fallback.
+     * The validated planned station above wins throughout bootstrap and operation.
+     * Without one, fall back to a live container, saved seat, then source range 1.
      */
     if (sourceMemory.containerId) {
         var container = Game.getObjectById(sourceMemory.containerId);
@@ -1228,13 +1231,6 @@ function getSourceTargetInfo(sourceMemory) {
                 range: 0
             };
         }
-    }
-
-    if (sourceMemory.containerPlannedPos) {
-        return {
-            pos: makeRoomPosition(sourceMemory.containerPlannedPos),
-            range: 0
-        };
     }
 
     if (sourceMemory.seats && sourceMemory.seats.length > 0) {
@@ -2132,6 +2128,7 @@ function isBetterExtractorRemote(candidate, best) {
 }
 
 function moveExtractorAlongRemotePath(creep, homeRoomName, sourceId) {
+    creep.memory.extractorState = 'movingToRemoteSource';
     return followRemotePath(creep, homeRoomName, sourceId, false);
 }
 
@@ -2622,6 +2619,7 @@ function atRouteEndpoint(creep, info, reverse) {
 }
 
 function retreatRemoteCreep(creep, homeRoomName) {
+    if (creep.memory && creep.memory.role === 'Extractor') creep.memory.extractorState = 'remoteRetreat';
     if (!creep.pos || creep.pos.roomName === homeRoomName) return true;
     // Compute a safe retreat explicitly; never use generic room travel for a failed lane.
     var result = PathFinder.search(creep.pos, { pos: getHomeAnchor(homeRoomName), range: 1 }, {

@@ -5,7 +5,8 @@
  *
  * Extractor chooses a source through utility.Creep assignment helpers, moves to
  * an assigned mining seat when one exists, harvests until full, then offloads to
- * a nearby container/link/storage or drops energy for haulers.
+ * a nearby container/link/storage or drops energy for haulers. Remote miners
+ * stay on their planned station and build or supply its container during bootstrap.
  */
 var utility = require('utility');
 var utilityCreep = require('utility.Creep');
@@ -45,6 +46,8 @@ var roleExtractor = {
             RemotePlanner.moveExtractorAlongRemotePath(creep, creep.memory.homeRoom, source.id)) return;
         if(source && isHomeRoomSource(creep, source)) {
             delete creep.memory.remoteMining;
+            delete creep.memory.remoteContainerSiteId;
+            delete creep.memory.remoteContainerBootstrapReason;
         }
 
         if(!source) {
@@ -94,7 +97,7 @@ var roleExtractor = {
             return;
         }
 
-        setExtractorWorkingArea(creep, source);
+        setExtractorWorkingArea(creep, source, miningSeat);
         updateSourceHaulMemory(creep, source, false);
 
         if (miningSeat && !isCreepOnPosition(creep, miningSeat)) {
@@ -114,6 +117,11 @@ var roleExtractor = {
                 }
             });
 
+            return;
+        }
+
+        if (!isHomeRoomSource(creep, source)) {
+            runRemoteStation(creep, source, miningSeat);
             return;
         }
 
@@ -292,7 +300,7 @@ function isCreepOnPosition(creep, position) {
     );
 }
 
-function setExtractorWorkingArea(creep, source) {
+function setExtractorWorkingArea(creep, source, miningSeat) {
     /*
      * Traffic manager may gently shuffle idle creeps to unblock a room. Source
      * miners should stay useful, so keep any idle shuffle within harvest range.
@@ -306,7 +314,61 @@ function setExtractorWorkingArea(creep, source) {
         return;
     }
 
-    creep.setWorkingArea(source.pos, 1);
+    if (!isHomeRoomSource(creep, source) && miningSeat) {
+        creep.setWorkingArea(miningSeat, 0);
+    } else creep.setWorkingArea(source.pos, 1);
+}
+
+function runRemoteStation(creep, source, miningSeat) {
+    var sourceMemory = Memory.rooms[source.pos.roomName].sources[source.id];
+    var station = utility.getPlannedSourceContainerPosition(sourceMemory, source.pos) || miningSeat;
+    var container = station && station.lookFor(LOOK_STRUCTURES).find(function(structure) {
+        return structure.structureType === STRUCTURE_CONTAINER;
+    });
+    var site = !container && station && station.lookFor(LOOK_CONSTRUCTION_SITES).find(function(candidate) {
+        return candidate.structureType === STRUCTURE_CONTAINER && candidate.my !== false;
+    });
+    if (container) {
+        sourceMemory.containerId = container.id;
+        delete sourceMemory.containerPlanRetryAt;
+        delete creep.memory.remoteContainerSiteId;
+        delete creep.memory.remoteContainerBootstrapReason;
+        creep.memory.extractorState = 'remoteContainerOperational';
+    } else {
+        sourceMemory.containerId = null;
+        if (site) creep.memory.remoteContainerSiteId = site.id;
+        else delete creep.memory.remoteContainerSiteId;
+        creep.memory.extractorState = 'remoteStationHarvesting';
+    }
+    if (creep.store.getFreeCapacity(RESOURCE_ENERGY) > 0) {
+        // No harvest fallback movement: the station is the only normal destination.
+        creep.harvest(source);
+        return;
+    }
+    if (container && creep.transfer(container, RESOURCE_ENERGY) === OK) {
+        recordSourceContainerHaul(creep, source, container);
+        return;
+    }
+    if (site) {
+        var index = global.__sushiTickIndex;
+        var roomCreeps = index && index.tick === Game.time ?
+            (index.creepsByCurrentRoom.get(creep.room.name) || []) : creep.room.find(FIND_MY_CREEPS);
+        var assisted = roomCreeps.some(function(other) {
+            return other && !other.spawning && other.room && other.room.name === creep.room.name &&
+                other.memory && other.memory.role === 'Artificer' &&
+                other.memory.remoteWorkType === 'buildRemoteContainer' &&
+                other.memory.remoteWorkTargetId === site.id;
+        });
+        if (!assisted) {
+            creep.memory.extractorState = 'remoteContainerSelfBuild';
+            creep.build(site);
+            return;
+        }
+        creep.memory.extractorState = 'remoteContainerSupplyingArtificer';
+    } else if (!container) {
+        creep.memory.extractorState = 'remoteContainerDropBuffer';
+    }
+    if (creep.drop(RESOURCE_ENERGY) === OK) markSourceHaulForRescan(creep, source);
 }
 
 function waitForContainerSeat(creep, source) {

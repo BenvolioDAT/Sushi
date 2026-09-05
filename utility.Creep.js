@@ -1050,7 +1050,8 @@ function getAssignedMiningSeat(creep, source) {
      * This function gives an Extractor one exact mining tile.
      *
      * Priority:
-     * 1. If this source has a live container, reserve the container tile first.
+     * 1. Remote planned stations are authoritative throughout construction.
+     *    Otherwise, if this source has a live container, reserve its tile first.
      * 2. If a healthy full miner owns it, wait; weak/death handoffs may use a side seat.
      * 3. If no seat is open, return null and let the role decide what to do.
      */
@@ -1058,7 +1059,7 @@ function getAssignedMiningSeat(creep, source) {
         return null;
     }
 
-    var sourceMemory = getSourceMemoryForSource(creep.room.name, source.id);
+    var sourceMemory = getSourceMemoryForSource(source.pos.roomName, source.id);
 
     if (!sourceMemory) {
         return null;
@@ -1068,6 +1069,15 @@ function getAssignedMiningSeat(creep, source) {
      * First priority:
      * Use the live container tile if this source has one.
      */
+    var remote = creep.memory.remoteMining ||
+        (creep.memory.homeRoom && creep.memory.homeRoom !== source.pos.roomName);
+    var station = remote && utility.getPlannedSourceContainerPosition(sourceMemory, source.pos);
+    if (station) {
+        // Match the canonical route endpoint even before a site or container exists.
+        // Never reserve an alternate seat for a miner assigned to this station.
+        rememberMiningSeat(creep, source.id, station, 'container');
+        return station;
+    }
     var containerPosition = getLiveSourceContainerPosition(source, sourceMemory);
 
     if (containerPosition) {

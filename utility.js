@@ -383,6 +383,18 @@ function createSourceFlagsFromMemory(creep) {
 
 
 
+/* Shared by remote routing, seat assignment and container planning. */
+function getPlannedSourceContainerPosition(sourceMemory, sourcePosition) {
+    var pos = sourceMemory && sourceMemory.containerPlannedPos;
+    var origin = sourcePosition || (sourceMemory && sourceMemory.pos);
+    if (!pos || !origin || pos.roomName !== origin.roomName ||
+        !Number.isInteger(pos.x) || !Number.isInteger(pos.y) ||
+        pos.x < 0 || pos.x > 49 || pos.y < 0 || pos.y > 49 ||
+        Math.max(Math.abs(pos.x - origin.x), Math.abs(pos.y - origin.y)) !== 1) return null;
+    if (Game.map.getRoomTerrain(pos.roomName).get(pos.x, pos.y) === TERRAIN_MASK_WALL) return null;
+    return new RoomPosition(pos.x, pos.y, pos.roomName);
+}
+
 /////////////////////////////////////////////////////////////////////////////////////////////////
 /**
  * Make sure each scanned source has one container planned.
@@ -489,6 +501,26 @@ function planSourceContainers(roomName, targetSourceId) {
          *
          * This is the "do not end early with a dead containerId" safety check.
          */
+        // A remote station survives missing sites and unrelated nearby infrastructure.
+        var station = (!room.controller || !room.controller.my) &&
+            getPlannedSourceContainerPosition(sourceMemory, source.pos);
+        if (station) {
+            var stationContainer = station.lookFor(LOOK_STRUCTURES).find(function(structure) {
+                return structure.structureType === STRUCTURE_CONTAINER;
+            });
+            sourceMemory.containerId = stationContainer ? stationContainer.id : null;
+            if (stationContainer) continue;
+            var stationSite = station.lookFor(LOOK_CONSTRUCTION_SITES).find(function(site) {
+                return site.structureType === STRUCTURE_CONTAINER;
+            });
+            if (stationSite) continue;
+            if (sourceMemory.containerPlanRetryAt > Game.time) continue;
+            sourceMemory.containerPlanRetryAt = Game.time + 25;
+            var stationResult = station.createConstructionSite(STRUCTURE_CONTAINER);
+            return { ok: stationResult === OK, placed: stationResult === OK,
+                sourceId: source.id, x: station.x, y: station.y, result: stationResult };
+        }
+
         if (sourceMemory.containerId) {
             var rememberedContainer = Game.getObjectById(sourceMemory.containerId);
 
@@ -1137,5 +1169,6 @@ module.exports = {
     createSourceFlagsFromMemory,
 
     planSourceContainers,
+    getPlannedSourceContainerPosition,
     ensureSourceHaulMemory: ensureSourceHaulMemory,
 };
