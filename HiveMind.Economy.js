@@ -507,6 +507,13 @@ function sourceReplacementCoverage(source, required, distance, assigned, queue, 
     };
 }
 
+// Job classification shared by live capacity, core floors and spawn recovery.
+function isLocalFreighter(item) {
+    const memory = item && item.memory || {};
+    return !!item && (item.role || memory.role) === 'Freighter' &&
+        memory.freighterJob !== 'remote' && memory.freighterJob !== 'remoteDelivery';
+}
+
 function pendingLocalParts(roomName, role, partType) {
     const roomMemory = Memory.rooms && Memory.rooms[roomName];
     const queue = roomMemory && roomMemory.spawn && roomMemory.spawn.queue || [];
@@ -515,6 +522,7 @@ function pendingLocalParts(roomName, role, partType) {
         const memory = request && request.memory || {};
         if (!request || (request.role || memory.role) !== role) continue;
         if (memory.homeRoom && memory.homeRoom !== roomName) continue;
+        if (role === 'Freighter' && !isLocalFreighter(request)) continue;
         if (role === 'Extractor' && (memory.remoteMining ||
             memory.sourceRoom && memory.sourceRoom !== roomName ||
             memory.targetRoom && memory.targetRoom !== roomName)) continue;
@@ -620,8 +628,7 @@ function buildSnapshot(room, previous) {
     const healthyFreighters = freighters.filter(creep => creep.ticksToLive === undefined ||
         creep.ticksToLive > replacementLead(creep, 25));
     const activeCarry = healthyFreighters.reduce((sum, creep) => sum + activeParts(creep, CARRY), 0);
-    const remoteCarry = healthyFreighters.filter(creep => creep.memory.freighterJob === 'remote' ||
-        creep.memory.freighterJob === 'remoteDelivery')
+    const remoteCarry = healthyFreighters.filter(creep => !isLocalFreighter(creep))
         .reduce((sum, creep) => sum + activeParts(creep, CARRY), 0);
     const localCarry = Math.max(0, activeCarry - remoteCarry);
     const requiredCarry = Math.ceil(sourceRows.reduce((sum, source) =>
@@ -960,11 +967,13 @@ function localRecoveryRequest(room, request, queue) {
     const role = request.role || memory.role;
     const snapshot = get(room.name);
     const local = isLocalExtractor({ memory: { ...memory, role } }, room.name);
-    const localHauler = role === 'Freighter' && memory.freighterJob !== 'remote' &&
-        !memory.remoteMining && !memory.remoteSourceId && !memory.remoteWorkTargetId &&
-        (!memory.homeRoom || memory.homeRoom === room.name) &&
-        (!memory.sourceRoom || memory.sourceRoom === room.name) &&
-        (!memory.targetRoom || memory.targetRoom === room.name);
+    const localHaulerMatches = item => {
+        const m = item.memory || {};
+        return isLocalFreighter(item) && !m.remoteMining && !m.remoteSourceId && !m.remoteWorkTargetId &&
+            (!m.homeRoom || m.homeRoom === room.name) &&
+            (!m.sourceRoom || m.sourceRoom === room.name) && (!m.targetRoom || m.targetRoom === room.name);
+    };
+    const localHauler = localHaulerMatches(request);
     if (!local && !localHauler) return { mandatory: false };
     const sourceId = sourceIdFor(memory);
     const rows = snapshot && snapshot.harvest && snapshot.harvest.sources;
@@ -975,9 +984,7 @@ function localRecoveryRequest(room, request, queue) {
     const matches = item => {
         const m = item.memory || {};
         return local ? isLocalExtractor({ memory: { ...m, role: item.role || m.role } }, room.name) && sourceIdFor(m) === sourceId :
-            (item.role || m.role) === 'Freighter' && m.freighterJob !== 'remote' && !m.remoteSourceId &&
-            !m.remoteWorkTargetId && !m.remoteMining && (!m.homeRoom || m.homeRoom === room.name) &&
-            (!m.sourceRoom || m.sourceRoom === room.name) && (!m.targetRoom || m.targetRoom === room.name);
+            localHaulerMatches(item);
     };
     const index = TickIndex.get();
     let covered = 0;
@@ -1021,6 +1028,7 @@ function shouldBootstrapSelfDeliver(roomOrName) {
 }
 
 module.exports = {
+    isLocalFreighter,
     localHarvestCoverage,
     localRecoveryRequest,
     STATES,

@@ -211,6 +211,61 @@ test('name exhaustion, role cap and expiration have explicit diagnostics', () =>
     assert.strictEqual(Memory.rooms.W5N8.spawn.lastDecision.reason, 'request expired');
 });
 
+test('remoteDelivery Freighters cannot cover the capped RCL5 local recovery floor', () => {
+    const room = setup();
+    const economy = require('HiveMind.Economy');
+    const colony = require('HiveMind.ColonyState');
+    const policy = require('Spawn.Policy');
+    const cap = policy.maxCreeps(room, require('HiveMind.Memory').getConfig('spawn'));
+    unit(room, 'minerA', 'Extractor', [...Array(5).fill(WORK), MOVE], { sourceId: 'sourceA' });
+    unit(room, 'minerB', 'Extractor', [...Array(5).fill(WORK), MOVE], { sourceId: 'sourceB' });
+    unit(room, 'foreman', 'Foreman', [CARRY, MOVE]);
+    for (let i = 3; i < cap; i++) unit(room, 'remote' + i, 'Freighter', [CARRY, MOVE], { freighterJob: 'remoteDelivery' });
+    const snapshot = sample(room);
+    assert.strictEqual(Object.keys(Game.creeps).length, cap);
+    assert.ok(snapshot.haul.requiredCarry > 0);
+    assert.strictEqual(snapshot.haul.localCarry, 0);
+    assert.strictEqual(colony.plannedSummary(room.name).activeByRole.Freighter || 0, 0);
+    const state = colony.update(room);
+    assert.strictEqual(state.coreFloor.freighters, 0);
+    assert.strictEqual(state.coreFloor.complete, false);
+    assert.strictEqual(state.nextMandatoryRole, 'Freighter');
+    const hauler = { role: 'Freighter', body: [...Array(snapshot.haul.requiredCarry).fill(CARRY), MOVE],
+        memory: { role: 'Freighter', homeRoom: room.name } };
+    const arbiter = require('Spawn.Arbiter');
+    const admitted = arbiter.admit(room.name, hauler);
+    assert.strictEqual(admitted.ok, true);
+    const decision = arbiter.revalidate(room, admitted.request);
+    assert.strictEqual(decision.allowed, true);
+    assert.strictEqual(decision.mandatoryEconomy, true);
+    assert.strictEqual(decision.mandatoryFloorBypass, true);
+    assert.strictEqual(arbiter.admit(room.name, { ...hauler, requestId: 'duplicate' }).ok, false);
+    Memory.rooms[room.name].spawn.queue.length = 0;
+    unit(room, 'local', 'Freighter', hauler.body);
+    const covered = sample(room);
+    assert.ok(covered.haul.localCarry >= covered.haul.requiredCarry);
+    assert.strictEqual(colony.plannedSummary(room.name).activeByRole.Freighter, 1);
+    assert.strictEqual(economy.localRecoveryRequest(room, hauler, []).mandatory, false);
+    assert.strictEqual(arbiter.admit(room.name, { ...hauler, requestId: 'covered' }).ok, false);
+});
+
+test('remote jobs in queued or spawning Freighters cannot reserve local recovery CARRY', () => {
+    for (const freighterJob of ['remote', 'remoteDelivery']) {
+        const room = setup();
+        const economy = require('HiveMind.Economy');
+        const remote = { role: 'Freighter', body: [...Array(24).fill(CARRY), MOVE],
+            memory: { role: 'Freighter', homeRoom: room.name, freighterJob } };
+        Memory.rooms[room.name].spawn.queue.push(remote);
+        Game.spawns.Spawn1.spawning = { name: 'incoming', remainingTime: 20 };
+        Memory.creeps.incoming = { ...remote.memory, freighterSpawnCarryParts: 24 };
+        const snapshot = sample(room);
+        assert.strictEqual(snapshot.haul.queuedCarry, 0);
+        assert.strictEqual(economy.localRecoveryRequest(room, remote, []).mandatory, false);
+        const local = { ...remote, memory: { role: 'Freighter', homeRoom: room.name } };
+        assert.strictEqual(economy.localRecoveryRequest(room, local, [remote]).missing, snapshot.haul.requiredCarry);
+    }
+});
+
 test('a baseline Tech still upgrades during downgrade danger while growth is paused', () => {
     const room = setup();
     room.controller.ticksToDowngrade = 1000;

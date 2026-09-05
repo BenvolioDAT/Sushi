@@ -46,7 +46,7 @@ function plannedSummary(roomName) {
     };
     for (const creep of TickIndex.get().creepsByHomeRoom.get(roomName) || []) if (isHealthy(creep)) {
         add(creep, true);
-        if (!creep.spawning && !(creep.memory.role === 'Freighter' && creep.memory.freighterJob === 'remote')) {
+        if (!creep.spawning && (roleOf(creep) !== 'Freighter' || Economy.isLocalFreighter(creep))) {
             const role = roleOf(creep);
             activeByRole[role] = (activeByRole[role] || 0) + 1;
             if (isLocalExtractor(creep, roomName)) activeLocalExtractors++;
