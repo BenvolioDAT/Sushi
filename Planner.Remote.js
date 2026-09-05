@@ -128,7 +128,7 @@ function scanVisibleRoom(homeRoomName, room) {
 
     updateVisibleControllerMemory(room);
 
-    if (isOwnedEnemyRoom(room)) {
+    if (room.controller && room.controller.my || isOwnedEnemyRoom(room)) {
         rememberBlockedRemote(homeRoomName, room.name, 'blocked');
         return false;
     }
@@ -254,6 +254,7 @@ function ensurePlannerMemory(homeRoomName) {
 }
 
 function generateRemotePlan(homeRoomName, remoteRoom) {
+    if (remoteRoom && remoteRoom.controller && remoteRoom.controller.my) return false;
     if (!homeRoomName || !remoteRoom || remoteRoom.name === homeRoomName) {
         return false;
     }
@@ -947,6 +948,12 @@ function shouldUseRemoteSource(homeRoomName, sourceId, ignoreScore) {
     }
 
     var controller = getControllerInfo(info.roomName);
+    if (controller && controller.my) {
+        info.rejectReason = 'owned HOME';
+        info.active = false;
+        info.operational = false;
+        return false;
+    }
     if (controller && controller.owner && controller.owner !== getMyUsername()) {
         info.rejectReason = 'enemy owned room';
         return false;
@@ -1664,6 +1671,13 @@ function selectActiveSources(homeRoomName) {
         }
 
         var info = planner.sourceInfos[sourceId];
+        var targetController = Intel.controller(info.roomName);
+        if (targetController && targetController.my) {
+            info.active = false;
+            info.operational = false;
+            info.blockedReason = 'OWNED_HOME';
+            continue;
+        }
         scoreRemoteSource(homeRoomName, sourceId);
 
         if (
@@ -2813,7 +2827,14 @@ function getDiagnostics(homeRoomName) {
             lastDelivery: haul.lastDeliveryAt || info.telemetry && info.telemetry.lastDelivery || 0
         };
     });
-    return { operationalActiveCount: planner.activeSourceIds.length, portfolioCount: Object.keys(sources).length,
+    var scout = require('Scout.Economy').status(Game.rooms[homeRoomName] || { name: homeRoomName });
+    var scoutMemory = Memory.rooms[homeRoomName].scout || {};
+    return { scoutPresent: scout.living > 0, scoutQueued: scout.queued > 0,
+        scoutBlockedReason: scoutMemory.blockedReason || scout.blockedReason,
+        discoveryBlockedReason: !Object.keys(sources).length && !scout.living ? 'REMOTE_DISCOVERY_HAS_NO_SCOUT' : null,
+        knownRemoteRooms: scout.knownRemoteRooms, knownRemoteSources: scout.knownRemoteSources,
+        intelRefreshPending: scout.intelRefreshPending, oldestRemoteIntelAge: scout.oldestRemoteIntelAge,
+        operationalActiveCount: planner.activeSourceIds.length, portfolioCount: Object.keys(sources).length,
         candidateCount: Object.keys(sources).filter(function(id) { return !sources[id].active && sources[id].score > 0; }).length,
         lastHeavyPlanAt: planner.lastHeavyPlanAt, lastRescoreAt: planner.lastRescoreAt,
         lastVisibleRefreshAt: planner.lastVisibleRefreshAt, sources: sources };

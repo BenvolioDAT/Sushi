@@ -6,6 +6,7 @@
 var travel = require('utility.Travel.Creep');
 var HiveMemory = require('HiveMind.Memory');
 var RemotePlanner = require('Planner.Remote');
+var Intel = require('Remote.Intel');
 
 var ANNEX_PATH_STYLE = {
     stroke: '#b366ff'
@@ -34,11 +35,23 @@ var roleAnnex = {
             return;
         }
 
-        /*
-         * Ownership and hostile-reservation blocks are terminal for this first
-         * version. Keep the assignment for debugging, but do not path back into
-         * the blocked room after the creep has started returning home.
-         */
+        if (creep.memory.annexState === 'blockedHostileReservation') {
+            var intel = Intel.controller(targetRoomName);
+            var fresh = intel && intel.lastObservedAt !== undefined && Game.time - intel.lastObservedAt < 100;
+            var safe = fresh && !intel.owner && (!intel.reservation || intel.reservation.username === creep.owner.username);
+            if (!safe && Game.time < (creep.memory.nextRetryAt || 0)) {
+                idleNearHome(creep);
+                return;
+            }
+            if (!safe) {
+                Intel.request(targetRoomName, 'ANNEX_RESERVATION_RETRY', 90);
+                creep.memory.nextRetryAt = Game.time + 100;
+                idleNearHome(creep);
+                return;
+            }
+            delete creep.memory.nextRetryAt;
+            creep.memory.annexState = 'retryReservation';
+        }
         if (isTerminalReserveState(creep.memory.annexState)) {
             idleNearHome(creep);
             return;
@@ -91,6 +104,9 @@ var roleAnnex = {
             controller.reservation.username !== creep.owner.username
         ) {
             creep.memory.annexState = 'blockedHostileReservation';
+            creep.memory.nextRetryAt = Game.time + 100;
+            Intel.refresh(targetRoom);
+            Intel.request(targetRoomName, 'ANNEX_HOSTILE_RESERVATION', 90);
             idleNearHome(creep);
             return;
         }
@@ -283,7 +299,6 @@ function idleNearHome(creep) {
 
 function isTerminalReserveState(state) {
     return state === 'blockedOwnedController' ||
-        state === 'blockedHostileReservation' ||
         state === 'alreadyMine' ||
         state === 'invalidReserveTarget';
 }

@@ -58,8 +58,24 @@ function admit(roomName, request, options = {}) {
             mandatoryFloorBypass: promoteToGrowthFloor && context.nonCombatTotal > Policy.maxCreeps(room, HiveMemory.getConfig('spawn')),
             request: existing };
     }
-    const decision = Policy.evaluate(room, normalized, context, options);
+    // Reserve visibility under optional queue pressure, without evicting core work.
+    let displaced = null;
+    if (require('HiveMind.Economy').categoryForRequest(normalized) === 'remoteIntel' &&
+        context.queue.length >= HiveMemory.getConfig('spawn').maxQueueLengthPerRoom) {
+        const optional = new Set(['upgradeSurplus', 'construction', 'expansion', 'special', 'resources', 'discretionary']);
+        displaced = context.queue.filter(item => optional.has(require('HiveMind.Economy').categoryForRequest(item)) &&
+            !item.emergency && (item.priority || 0) < (normalized.priority || 0))
+            .sort((a, b) => (a.priority || 0) - (b.priority || 0))[0];
+    }
+    const evaluationContext = displaced ? Context.snapshot(roomName, options.replacementBuffer || 0) : context;
+    if (displaced) {
+        evaluationContext.queue = context.queue.filter(item => item !== displaced);
+        evaluationContext.byRole[displaced.role]--;
+        evaluationContext.nonCombatTotal--;
+    }
+    const decision = Policy.evaluate(room, normalized, evaluationContext, options);
     if (!decision.allowed) return { ok: false, requested: 0, role: normalized.role, reason: decision.reason };
+    if (displaced) context.queue.splice(context.queue.indexOf(displaced), 1);
     context.queue.push(normalized);
     context.queue.sort((a, b) => (b.priority || 0) - (a.priority || 0) ||
         (a.requestedAt || 0) - (b.requestedAt || 0) || String(a.requestId).localeCompare(String(b.requestId)));

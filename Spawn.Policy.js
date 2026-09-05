@@ -18,6 +18,19 @@ function isOwnedDefense(request) {
 
 function economyRoleCap(room, role, request, policy) {
     const configured = policy.roleCaps && policy.roleCaps[role];
+    if (role === 'Annex') {
+        const planner = Memory.rooms[room.name] && Memory.rooms[room.name].remotePlanner || {};
+        const rooms = new Set((planner.activeSourceIds || []).map(id => (planner.sourceInfos || {})[id])
+            .filter(info => info && info.active && info.operational !== false && (!info.route || info.route.valid !== false))
+            .map(info => info.roomName).filter(name => {
+                const controller = require('Remote.Intel').controller(name);
+                const spawn = (require('HiveMind.Index').get().ownedSpawnsByRoom.get(room.name) || [])[0];
+                const username = HiveMemory.ensure().identity.username || spawn && spawn.owner && spawn.owner.username;
+                return controller && !controller.my && !controller.owner &&
+                    (!controller.reservation || controller.reservation.username === username);
+            }));
+        return Math.min(6, Math.max(configured || 0, rooms.size));
+    }
     if (!['Extractor', 'Freighter'].includes(role)) return configured;
     const memory = Memory.rooms[room.name] || {};
     const planner = memory.remotePlanner || {};
@@ -68,7 +81,11 @@ function evaluate(room, request, context, options = {}) {
             return { allowed: false, reason: lifecycle && lifecycle.blockedReason || 'baseline controller growth is not required' };
         }
     }
-    if (lifecycle && ['OWNED_NO_SPAWN', 'BOOTSTRAP'].includes(lifecycle.phase) && !protectedWork && !isOwnedDefense(request)) {
+    const economicScout = category === 'remoteIntel' && (request.role || request.memory && request.memory.role) === 'Scout';
+    if (economicScout && lifecycle && (lifecycle.alert === 'SIEGE' || lifecycle.nextMandatoryRole)) {
+        return { allowed: false, reason: lifecycle.blockedReason || 'mandatory local floor pending' };
+    }
+    if (lifecycle && ['OWNED_NO_SPAWN', 'BOOTSTRAP'].includes(lifecycle.phase) && !protectedWork && !isOwnedDefense(request) && !economicScout) {
         return { allowed: false, reason: `blocked during ${lifecycle.phase}` };
     }
     const policy = HiveMemory.getConfig('spawn');
@@ -91,22 +108,23 @@ function evaluate(room, request, context, options = {}) {
     const survivalBypass = options.emergency === true && options.bypassRoleCap === true && protectedWork;
     const defenseBypass = ownedDefense && request.emergency === true;
     const roleCap = economyRoleCap(room, role, request, policy);
+    const ownQueued = options.revalidate && context.queue.includes(request) ? 1 : 0;
     const mandatoryFloorBypass = controllerGrowthFloor && lifecycle && lifecycle.growthAllowed &&
         (context.byRole.Tech || 0) <= (options.revalidate ? 1 : 0) &&
         context.nonCombatTotal <= maxCreeps(room, policy) + (options.revalidate ? 1 : 0);
-    if (typeof roleCap === 'number' && (context.byRole[role] || 0) >= roleCap && !survivalBypass && !mandatoryFloorBypass) {
+    if (typeof roleCap === 'number' && (context.byRole[role] || 0) - ownQueued >= roleCap && !survivalBypass && !mandatoryFloorBypass) {
         return { allowed: false, reason: 'role cap reached' };
     }
-    if (!Context.isCombatRole(role) && context.nonCombatTotal >= maxCreeps(room, policy) +
+    if (!Context.isCombatRole(role) && context.nonCombatTotal - ownQueued >= maxCreeps(room, policy) +
         (['Extractor', 'Freighter'].includes(role) ? Math.max(0, roleCap - (policy.roleCaps && policy.roleCaps[role] || roleCap)) : 0) &&
         !survivalBypass && !mandatoryFloorBypass) {
         return { allowed: false, reason: 'room creep cap reached' };
     }
-    if (context.queue.length >= policy.maxQueueLengthPerRoom && !survivalBypass && !defenseBypass) {
+    if (!options.revalidate && context.queue.length >= policy.maxQueueLengthPerRoom && !survivalBypass && !defenseBypass) {
         return { allowed: false, reason: 'spawn queue full' };
     }
     const admitted = context.queue.filter(item => item && item.requestedAt === Game.time).length;
-    if (admitted >= policy.maxNewRequestsPerRoomPerTick && !survivalBypass && !defenseBypass) {
+    if (!options.revalidate && admitted >= policy.maxNewRequestsPerRoomPerTick && !survivalBypass && !defenseBypass && !economicScout) {
         return { allowed: false, reason: 'new request cap reached' };
     }
     return { allowed: true, reason: options.revalidate ? 'revalidated' : 'admitted', mandatoryFloorBypass };

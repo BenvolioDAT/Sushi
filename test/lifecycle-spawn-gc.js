@@ -52,6 +52,11 @@ test('DemandBoard uses the shared role, room, queue, and per-tick admission limi
     const room = makeRoom('W1N1');
     spawn(room);
     addCore(room);
+    Game.creeps.foreman.body.push({ type: CARRY, hits: 100 });
+    Game.creeps.extractor.body.push({ type: WORK, hits: 100 });
+    Game.creeps['extractor-2'].body.push({ type: WORK, hits: 100 });
+    Game.creeps.freighter.body.push({ type: CARRY, hits: 100 });
+    creep('baseline', room, 'Tech').body.push({ type: WORK, hits: 100 });
     const memory = fresh('HiveMind.Memory.js');
     const policy = memory.getConfig('spawn');
     policy.maxNewRequestsPerRoomPerTick = 1;

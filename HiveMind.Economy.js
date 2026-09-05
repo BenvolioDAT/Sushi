@@ -871,7 +871,8 @@ function categoryForRequest(request) {
         return 'upgradeSurplus';
     }
     if (role === 'Artificer') return memory.criticalMaintenance ? 'criticalMaintenance' : 'construction';
-    if (role === 'Annex' || role === 'Scout' || role === 'Pioneer') return 'expansion';
+    if (role === 'Scout') return memory.scoutMode === 'expansion' ? 'expansion' : 'remoteIntel';
+    if (role === 'Annex' || role === 'Pioneer') return 'expansion';
     if (role === 'MineralMiner' || role === 'ResourceCourier') return 'resources';
     if (role === 'ThoriumMiner' || role === 'ThoriumHauler' || role === 'ReactorClaimer') return 'special';
     return 'discretionary';
@@ -891,7 +892,7 @@ function checkSpend(roomOrName, category) {
     if (snapshot.state === STATES.RECOVERY) {
         const allowed = ['defense', 'controllerSafety', 'criticalController', 'controllerGrowth',
             'criticalMaintenance', 'criticalInfrastructure', 'remoteIncome', 'remoteMaintenance',
-            'remoteBootstrap'].includes(category);
+            'remoteBootstrap', 'remoteIntel'].includes(category);
         if (['remoteIncome', 'remoteMaintenance', 'remoteBootstrap'].includes(category) &&
             snapshot.harvest && snapshot.harvest.workActive < Math.max(1, snapshot.harvest.workRequired * 0.9)) {
             return { allowed: false, reason: 'local harvest must recover before remote income spending' };
@@ -906,7 +907,11 @@ function canSpend(roomOrName, category) {
 }
 
 function canSpawnRequest(room, request) {
-    return checkSpend(room, categoryForRequest(request));
+    const category = categoryForRequest(request);
+    const spend = checkSpend(room, category);
+    if (!spend.allowed || category !== 'remoteIntel') return spend;
+    const scout = require('Scout.Economy').status(room);
+    return { allowed: scout.allowed, reason: scout.blockedReason || 'economic intel floor established' };
 }
 
 function shouldBootstrapSelfDeliver(roomOrName) {

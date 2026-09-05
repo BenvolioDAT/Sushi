@@ -119,7 +119,7 @@ var PRIORITY = {
     Artificer: 20,
     Pioneer: 55,
     SupplyRunner: 54,
-    Scout: 10,
+    Scout: 50,
     Ronin: 85,
     Volley: 86,
     Cleric: 84,
@@ -2615,6 +2615,27 @@ function requestAnnexForRoom(room) {
  * @param {number} priorityOverride
  * @returns {object}
  */
+function requestEconomicScout(room, suppressReason) {
+    var scout = require('Scout.Economy').status(room);
+    var request = { role: 'Scout', body: [MOVE], priority: scout.priority, economyCategory: 'remoteIntel',
+        memory: { role: 'Scout', homeRoom: room.name, economyCategory: 'remoteIntel' } };
+    var decision = Economy.canSpawnRequest(room, request);
+    var result = { ok: false, role: 'Scout', requested: 0, reason: suppressReason || decision.reason };
+    if (!suppressReason && decision.allowed && !scout.living && !scout.queued) result = addSpawnRequest(room.name, request);
+    else if (!suppressReason && decision.allowed) {
+        var queued = spawnManager.getSpawnQueue(room.name).find(function(item) { return getRequestRole(item) === 'Scout'; });
+        var queuedDecision = queued && !scout.living ? SpawnArbiter.revalidate(room, queued) : { allowed: true };
+        result = { ok: queuedDecision.allowed, role: 'Scout', requested: 0,
+            reason: queuedDecision.reason || 'Scout already present or queued' };
+    }
+    scout.allowed = result.ok;
+    scout.blockedReason = result.ok ? null : result.reason;
+    scout.queued += result.requested || 0;
+    scout.updatedAt = Game.time;
+    Memory.rooms[room.name].scout = scout;
+    return result;
+}
+
 function requestRoleForRoom(room, role, desiredCount, priorityOverride, options) {
     /*
      * Validate the request before doing body calculations or writing anything to
@@ -4152,6 +4173,7 @@ function runForRoom(room, options) {
         report.nextFullPlanTick = context.demandCache.nextFullPlanTick || null;
 
         runEmergencyPlanning(room, report, context);
+        report.requests.push(requestEconomicScout(room, context.skippedForCpu ? 'CPU budget suppresses economic intel' : null));
 
         if (context.skippedForCpu) {
             report.reason = 'Normal spawn planning skipped by CPU budget';
@@ -4221,7 +4243,6 @@ function runForRoom(room, options) {
             demandCache.artificerDemand
         ));
         report.requests.push(requestSeason11RolesForRoom(room));
-        report.requests.push(requestRoleForRoom(room, 'Scout', DESIRED_COUNTS.Scout));
 
         return report;
     }
@@ -4315,6 +4336,7 @@ module.exports = {
     requestDynamicFreightersForRoom: requestDynamicFreightersForRoom,
     requestRemoteExtractorsForRoom: requestRemoteExtractorsForRoom,
     requestAnnexForRoom: requestAnnexForRoom,
+    requestEconomicScout: requestEconomicScout,
     requestSeason11RolesForRoom: requestSeason11RolesForRoom,
     requestDefendersForRoom: requestDefendersForRoom,
     cleanDefenseQueue: cleanDefenseQueue
