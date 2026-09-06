@@ -21,12 +21,18 @@ var WarRoom = require('Logic.WarRoom');
 var travel = require('utility.Travel.Creep');
 var CombatMath = require('Combat.Math');
 var SquadTactics = require('Squad.Tactics');
+var Season11 = require('Logic.Season11');
+var CombatPolicy = require('Combat.Policy');
 
 var roleVolley = {
 
     /** @param {Creep} creep **/
     run: function(creep) {
         if(!creep || creep.spawning) {
+            return;
+        }
+        if (creep.memory.season11ReactorGuard) {
+            runReactorGuard(creep);
             return;
         }
 
@@ -83,6 +89,38 @@ var roleVolley = {
         WarRoom.idleCombat(creep);
     }
 };
+
+function runReactorGuard(creep) {
+    var entry = Season11.ensureMemory().reactorPortfolio.reactors[creep.memory.season11ReactorGuard];
+    var home = creep.memory.homeRoom;
+    var approved = Season11.isOperatingMode() && entry && entry.active && entry.healthy &&
+        (entry.owned || entry.recapture && entry.recapture.approved);
+    var destination = approved && (entry.defenseTier === 'HOLD' || !entry.owned) ? entry.roomName : home;
+    // This small force denies claimants; it does not pursue structures or a losing fight.
+    var hostileConstant = typeof FIND_HOSTILE_CREEPS !== 'undefined' ? FIND_HOSTILE_CREEPS : null;
+    var enemies = approved && creep.room.name === entry.roomName && hostileConstant !== null ?
+        creep.room.find(hostileConstant).filter(function(enemy) { return !CombatPolicy.isAlly(enemy); }) : [];
+    var threats = enemies.map(function(enemy) { return { creep: enemy, body: CombatMath.analyzeBody(enemy) }; });
+    var dangerous = threats.some(function(item) { return item.body.melee > 0 || item.body.ranged > 20 || item.body.heal > 0; });
+    if (dangerous || creep.hits < creep.hitsMax * 0.6) destination = home;
+    if (destination && creep.room.name !== destination) {
+        travel.moveToRoom(creep, destination, { range: 22, reusePath: 10, allowHostile: false });
+        return;
+    }
+    if (approved && !dangerous && destination === entry.roomName) {
+        threats.sort(function(a, b) { return (b.body.claim || 0) - (a.body.claim || 0) ||
+            creep.pos.getRangeTo(a.creep) - creep.pos.getRangeTo(b.creep); });
+        var target = threats[0] && threats[0].creep;
+        if (target) {
+            if (creep.pos.getRangeTo(target) <= 3) creep.rangedAttack(target);
+            if (creep.pos.getRangeTo(target) > 2) travel.move(creep, target, { range: 2, reusePath: 3 });
+            return;
+        }
+        var reactor = Game.getObjectById(entry.reactorId);
+        if (reactor && creep.pos.getRangeTo(reactor) > 2) travel.move(creep, reactor, { range: 2, reusePath: 10 });
+    }
+    travel.moveOffExit(creep);
+}
 
 function supportCombatHealing(creep, allowMoveToHealTarget) {
     /*

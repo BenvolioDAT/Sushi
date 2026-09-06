@@ -13,12 +13,14 @@ function moveFailed(result) {
 var roleReactorClaimer = {
     run: function(creep) {
         if (!creep || creep.spawning || !creep.memory ||
-            !Season11.isOperatingMode()) {
+            !Season11.isOperatingMode() || creep.memory.season11ClaimFailed) {
             return;
         }
 
         var reactorId = creep.memory.season11ReactorId;
         var reactorRoom = creep.memory.season11ReactorRoom;
+        var entry = Season11.ensureMemory().reactorPortfolio.reactors[reactorId];
+        if (entry && !entry.owned && !entry.claimReady) return;
         var reactor = typeof Game.getObjectById === 'function' ?
             Game.getObjectById(reactorId) : null;
 
@@ -62,6 +64,7 @@ var roleReactorClaimer = {
         if (Season11Adapter.canClaim(creep)) {
             var result = Season11Adapter.claim(creep, reactor);
             Season11.noteClaimResult(reactor.id, result);
+            if (result !== 0 && result !== -9 && result !== -11 && result !== -4) creep.memory.season11ClaimFailed = true;
         }
     }
 };

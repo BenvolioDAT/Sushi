@@ -137,7 +137,15 @@ var roleThoriumHauler = {
             return;
         }
 
-        var withdrawResult = creep.withdraw(staging, resourceType);
+        var allowance = Season11.getFuelAllowance(staging.id, creep.memory.season11ReactorId);
+        var free = creep.store && typeof creep.store.getFreeCapacity === 'function' ?
+            creep.store.getFreeCapacity(resourceType) : 0;
+        var amount = Math.floor(Math.min(allowance, free, Season11.getStoreAmount(staging, resourceType)));
+        if (amount <= 0) { waitNear(creep, staging); return; }
+        var withdrawResult = creep.withdraw(staging, resourceType, amount);
+        if (withdrawResult === (typeof OK !== 'undefined' ? OK : 0)) {
+            Season11.consumeFuelAllowance(staging.id, creep.memory.season11ReactorId, amount);
+        }
         var withdrawRange = typeof ERR_NOT_IN_RANGE !== 'undefined' ?
             ERR_NOT_IN_RANGE : -9;
         if (withdrawResult === withdrawRange) {

@@ -488,11 +488,17 @@ function syncMiningOperations(memory, diagnostics, activeIds) {
         const roomIntel = memory.rooms[assignment.roomName];
         if (roomIntel && roomIntel.thorium) roomIntel.thorium.operationMetrics = operation.seasonMetrics;
 
-        const reactor = diagnostics.selectedReactor;
+        const portfolio = memory.reactorPortfolio;
+        const reactorIds = Object.keys(portfolio.reactors);
+        const targets = reactorIds.length ? reactorIds.map(id => memory.reactors[id]).filter(Boolean) :
+            diagnostics.selectedReactor ? [diagnostics.selectedReactor] : [];
+        for (const reactor of targets) {
+        const entry = portfolio.reactors[reactor.id];
+        if (entry && (!entry.active || !entry.assignedMiningRooms.includes(assignment.roomName))) continue;
         if (!reactor || !assignment.stagingId) continue;
         const haulId = `season11:haul:${assignment.roomName}:${reactor.id}`;
         const lost = !reactor.my && !!reactor.owner;
-        const canContest = lost && memory.config.recapture === true && CombatPolicy.mayLaunchOffense({ owner: { username: reactor.owner } }, true);
+        const canContest = lost && entry && entry.recapture.approved;
         const haulState = lost ? (canContest ? 'CONTESTING' : 'RECOVERING') :
             depleted && stored <= 0 ? 'DEPLETED' :
                 reactor.thorium <= memory.config.starvationWarningTicks ? 'SUPPLYING' : 'HAULING';
@@ -523,6 +529,7 @@ function syncMiningOperations(memory, diagnostics, activeIds) {
         applyUtility(haulOperation, haulCalculation);
         assignCreeps(haulOperation);
         activeIds.add(haulId);
+        }
     }
 }
 
@@ -531,12 +538,15 @@ function reactorState(memory, diagnostics) {
     if (!reactor) return Object.keys(memory.reactors || {}).length ? 'SELECTING' : 'DISCOVERING';
     const depleted = diagnostics.knownThoriumRemaining <= 0 && diagnostics.deliverableReserve <= 0 && reactor.thorium <= 0;
     if (depleted) return 'DEPLETED';
+    const entry = memory.reactorPortfolio.reactors[reactor.id];
+    if (entry) return entry.state === 'HOLD_OFF' ? 'RECOVERING' : entry.state;
     if (reactor.my) {
         return reactor.thorium <= Math.max(memory.config.starvationWarningTicks, memory.config.reactorSafetyStock) ?
             'SUPPLYING' : 'HOLDING';
     }
     if (reactor.owner) {
-        return memory.config.recapture === true && CombatPolicy.mayLaunchOffense({ owner: { username: reactor.owner } }, true) ?
+        return memory.config.recaptureMode === 'manual' && memory.config.recapture === true &&
+            CombatPolicy.mayLaunchOffense({ owner: { username: reactor.owner } }, true) ?
             'CONTESTING' : 'RECOVERING';
     }
     return diagnostics.deliverableReserve >= memory.config.startupReserve ? 'CLAIMING' : 'MUSTERING';
@@ -544,16 +554,19 @@ function reactorState(memory, diagnostics) {
 
 function syncReactorOperation(memory, diagnostics, activeIds) {
     const reactor = diagnostics.selectedReactor;
+    const entry = reactor && memory.reactorPortfolio.reactors[reactor.id];
     const state = reactorState(memory, diagnostics);
     const id = reactor ? `season11:reactor:${reactor.id}` : 'season11:discover';
-    const rank = reactor ? matchingReactorRank(memory, reactor) : {};
+    const rank = entry ? { homeRoom: entry.homeRoom, routeDistance: entry.responseTicks / 50 } :
+        reactor ? matchingReactorRank(memory, reactor) : {};
     const ownerSubject = reactor && reactor.owner ? { owner: { username: reactor.owner } } : null;
     const contested = state === 'CONTESTING';
     const operation = createOrUpdate(reactor ?
         (contested ? 'CONTEST_REACTOR' : reactor.my ? 'HOLD_REACTOR' : 'CAPTURE_REACTOR') : 'SCOUT_INTEL', {
         id,
         state,
-        priority: state === 'CONTESTING' ? 96 : state === 'SUPPLYING' ? 88 : state === 'HOLDING' ? 72 : 45,
+        priority: entry && entry.owned && entry.threat.claimThreat > 0 ? 94 :
+            state === 'CONTESTING' ? 86 : state === 'SUPPLYING' ? 82 : state === 'HOLDING' ? 72 : 45,
         originRoom: rank.homeRoom || null,
         targetRoom: reactor && reactor.roomName || null,
         targetId: reactor && reactor.id || null,
@@ -597,12 +610,70 @@ function syncReactorOperation(memory, diagnostics, activeIds) {
     assignCreeps(operation);
     activeIds.add(id);
 
-    const heavyContest = reactor && (reactor.threatParts || 0) >= 20;
-    operation.manualDirective = contested && memory.config.recapture === true;
+    const threat = entry && entry.threat || {};
+    const heavyContest = reactor && (threat.combatThreat || reactor.threatParts || 0) >= 20;
+    operation.manualDirective = contested && memory.config.recaptureMode === 'manual' && memory.config.recapture === true;
+    operation.season11RecaptureApproved = !!(contested && entry && entry.recapture.approved);
     operation.targetOwner = reactor && reactor.owner || null;
     operation.preferredSquadType = heavyContest ? 'RANGED_QUAD' : null;
     operation.requestedSquadSize = heavyContest ? 4 : 2;
 
+    if (entry) {
+        operation.debugReason = entry.reason;
+        operation.defenseTier = entry.defenseTier;
+        operation.seasonMetrics = Object.assign(operation.seasonMetrics || {}, {
+            continuityValue: entry.continuityValue, ticksUntilNextScoreTier: entry.ticksUntilNextScoreTier,
+            potentialScoreLost: entry.potentialScoreLost, startupReserve: entry.startup.reserve,
+            reservedThorium: entry.reservedThorium, recaptureScore: entry.recapture.recaptureScore });
+        operation.desiredCapabilities.guardDamage = 0;
+        operation.desiredCapabilities.guardHealing = 0;
+        operation.spawnDemands = [];
+        const guard = entry.active && entry.healthy && entry.combatReady &&
+            (entry.owned && ['READY', 'HOLD'].includes(entry.defenseTier) || contested);
+        const escort = guard && (threat.combatThreat > 0 || threat.supportThreat > 0);
+        const heavyApproved = escort && heavyContest && entry.owned && entry.continuityValue >= 80 &&
+            entry.spawnPressure < 0.25 && threat.combatThreat + (threat.supportThreat || 0) <= 40 &&
+            Game.rooms[entry.homeRoom] && Game.rooms[entry.homeRoom].energyCapacityAvailable >= 5600;
+        operation.preferredSquadType = heavyApproved ? 'RANGED_QUAD' : null;
+        operation.requestedSquadSize = heavyApproved ? 4 : escort ? 2 : guard ? 1 : 0;
+        operation.desiredCapabilities.damage = guard ? (escort ? 60 : 20) : 0;
+        operation.desiredCapabilities.healing = escort ? 24 : 0;
+        if (heavyApproved) operation.desiredCapabilities.guardDamage = 20;
+        if (guard && !escort) {
+            operation.spawnDemands.push({ id: `${id}:interceptor`, role: 'Volley', count: 1,
+                priority: threat.claimThreat > 0 ? 94 : contested ? 86 : 76,
+                economyCategory: 'combat', validUntil: now() + 2,
+                bodyRequirements: { body: [RANGED_ATTACK, RANGED_ATTACK, MOVE, MOVE] },
+                targetRoom: entry.defenseTier === 'READY' && !contested ? entry.homeRoom : entry.roomName,
+                memory: { season11ReactorGuard: reactor.id }, reason: 'Deny Reactor claimant' });
+        }
+        if (entry.active && entry.healthy && entry.defenseTier === 'WATCH' && !entry.fresh) {
+            operation.spawnDemands.push({ id: `${id}:watch`, role: 'Scout', count: 1, priority: 50,
+                economyCategory: 'special', validUntil: now() + 2, targetRoom: reactor.roomName,
+                memory: { season11WatchRoom: reactor.roomName }, reason: 'Maintain Reactor vision' });
+        }
+        // Stop old escort replacement when ownership, utility, or economy changes.
+        const existing = HiveMemory.ensure().squads[`duo:${id}`];
+        if (existing && !escort) {
+            existing.replacementRequirements.enabled = false;
+            (existing.demandIds || []).forEach(demandId => DemandBoard.cancel(demandId));
+            existing.targetRoom = entry.homeRoom;
+        }
+        const quad = HiveMemory.ensure().squads[`quad:${id}`];
+        if (quad && !heavyApproved) {
+            if (quad.replacementRequirements) quad.replacementRequirements.enabled = false;
+            (quad.demandIds || []).forEach(demandId => DemandBoard.cancel(demandId));
+            quad.targetRoom = entry.homeRoom;
+        }
+        if (escort && !heavyContest) {
+            const squad = SquadController.createDuo({ id: `duo:${id}`, operationId: id,
+                originRoom: rank.homeRoom, targetRoom: reactor.roomName,
+                expectedTravelTime: entry.responseTicks, debugReason: 'Season Reactor claimant escort denial' });
+            squad.targetRoom = reactor.roomName;
+            squad.replacementRequirements.enabled = true;
+        }
+        return;
+    }
     if (!heavyContest && reactor && (contested || reactor.my && (reactor.threatParts > 0 || reactor.hostileCreeps > 0)) && rank.homeRoom) {
         SquadController.createDuo({
             id: `duo:${id}`,
@@ -686,12 +757,34 @@ function run(diagnostics) {
     const snapshot = diagnostics || Season11.getDiagnostics();
     if (!Season11.isApiAvailable() || !snapshot.operating) {
         retireInactiveMaintenanceJobs();
+        for (const operation of Object.values(HiveMemory.ensure().operations)) {
+            if (!operation.season11) continue;
+            operation.spawnDemands = [];
+            operation.season11RecaptureApproved = false;
+            operation.manualDirective = false;
+            operation.preferredSquadType = null;
+            operation.requestedSquadSize = 0;
+            operation.desiredCapabilities = {};
+            for (const id of operation.assignedSquads || []) {
+                const squad = HiveMemory.ensure().squads[id];
+                if (!squad) continue;
+                if (squad.replacementRequirements) squad.replacementRequirements.enabled = false;
+                squad.targetRoom = squad.originRoom;
+                (squad.demandIds || []).forEach(demandId => DemandBoard.cancel(demandId));
+            }
+        }
         return { enabled: false, reason: 'Season API unavailable or operation mode inactive' };
     }
     ensureSeasonMemory();
     const activeIds = new Set();
     syncMiningOperations(memory, snapshot, activeIds);
-    syncReactorOperation(memory, snapshot, activeIds);
+    const entries = Object.values(memory.reactorPortfolio.reactors);
+    if (!entries.length) syncReactorOperation(memory, snapshot, activeIds);
+    else for (const entry of entries) {
+        const reactor = memory.reactors[entry.reactorId];
+        if (reactor) syncReactorOperation(memory, Object.assign({}, snapshot, {
+            selectedReactor: reactor, deliverableReserve: entry.reservedThorium }), activeIds);
+    }
     retireMissing(activeIds);
     const elapsed = Math.max(0, cpuUsed() - started);
     recordCpu(elapsed);

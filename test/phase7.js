@@ -144,7 +144,8 @@ test('Season 11 schema migration preserves prior intel and custom configuration'
     };
     const { Season11 } = seasonModules();
     const migrated = Season11.ensureMemory();
-    assert.strictEqual(migrated.schemaVersion, 2);
+    assert.strictEqual(migrated.schemaVersion, 3);
+    assert.deepStrictEqual(migrated.reactorPortfolio.activeReactorIds, []);
     assert.strictEqual(migrated.mode, 'observe');
     assert.strictEqual(migrated.config.startupReserve, 777);
     assert.strictEqual(migrated.config.customOperatorNote, 'keep');
@@ -254,6 +255,7 @@ test('ownership loss chooses recovery unless explicit policy permits contest', f
 
     Game.time++;
     memory.config.recapture = true;
+    memory.config.recaptureMode = 'manual';
     Policy.setClassification('Enemy', Policy.CLASSIFICATIONS.ALLY);
     Operations.run(diagnostics(reactor));
     assert.strictEqual(operation.state, 'RECOVERING', 'allies must never be contested');

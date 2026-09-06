@@ -55,6 +55,19 @@ var roleScout = {
 
         /* Season intel piggybacks on the existing Scout's normal visibility. */
         Season11.observeRoom(creep.room, creep.memory.homeRoom, true);
+        if (creep.memory.season11WatchRoom) {
+            var watchRoom = creep.memory.season11WatchRoom;
+            var portfolio = Season11.ensureMemory().reactorPortfolio;
+            var needed = Season11.isObserving() && Object.values(portfolio.reactors).some(function(entry) {
+                return entry.roomName === watchRoom && entry.active && entry.defenseTier !== 'NONE';
+            });
+            if (needed && creep.room.name !== watchRoom) {
+                utilityTravelCreep.moveToRoom(creep, watchRoom, { range: 22, reusePath: 20, allowHostile: false });
+            }
+            else if (needed) utilityTravelCreep.moveOffExit(creep);
+            else delete creep.memory.season11WatchRoom;
+            if (needed) return;
+        }
 
         /*
          * If the Scout just arrived, clear targetRoom so the next choice comes

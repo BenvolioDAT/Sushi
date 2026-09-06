@@ -871,6 +871,7 @@ function syncOperations() {
     const created = [];
     for (const operation of Object.values(HiveMemory.ensure().operations)) {
         if (!operation || ['COMPLETE', 'ABORTED'].includes(operation.state) || !operation.originRoom || !operation.targetRoom) continue;
+        if (operation.season11 && operation.requestedSquadSize < 4) continue;
         const offensive = ['ATTACK_PLAYER', 'RAID_REMOTE', 'CONTEST_REACTOR'].includes(operation.type);
         const heavyDefense = settings.autoDefenseQuads !== false &&
             ['DEFEND_OWNED_ROOM', 'DEFEND_REMOTE', 'HOLD_REACTOR'].includes(operation.type) &&

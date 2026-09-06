@@ -31,9 +31,13 @@ function ownerName(subject) {
 }
 
 function operationDirective(operation) {
+    if (operation.season11 && ['disabled', 'observe'].includes(HiveMemory.getConfig('season11').mode)) return false;
+    if (operation.season11 && operation.type === 'CONTEST_REACTOR' && operation.season11RecaptureApproved) {
+        return CombatPolicy.mayLaunchOffense(operation.targetOwner, operation.manualDirective === true);
+    }
     if (operation.manualDirective === true) return true;
     return !!(operation.type === 'CONTEST_REACTOR' && operation.season11 &&
-        HiveMemory.getConfig('season11').recapture === true);
+        HiveMemory.getConfig('season11').recaptureMode === 'manual' && HiveMemory.getConfig('season11').recapture === true);
 }
 
 function roomSnapshot(operation) {

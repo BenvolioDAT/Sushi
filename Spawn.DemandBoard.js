@@ -60,7 +60,7 @@ function beginTick() {
     for (const [id, saved] of Object.entries(hive.demands)) {
         const operation = saved.operationId && hive.operations[saved.operationId];
         const operationEnded = operation && (operation.state === 'COMPLETE' || operation.state === 'ABORTED');
-        if (!saved || saved.validUntil < Game.time || operationEnded) {
+        if (!saved || saved.validUntil < Game.time || operationEnded || !seasonDemandAllowed(saved)) {
             delete hive.demands[id];
             state.demands.delete(id);
             continue;
@@ -68,6 +68,30 @@ function beginTick() {
         state.demands.set(id, saved);
     }
     return state;
+}
+
+// Revoke stale Season requests immediately, while retaining the shared economy arbiter.
+function seasonDemandAllowed(demand) {
+    const cm = demand && demand.memory || {};
+    if (!cm.season11AssignmentKey && !cm.season11ReactorGuard) return true;
+    const memory = HiveMemory.getSeasonState();
+    const mode = HiveMemory.getConfig('season11').mode;
+    if (mode === 'disabled' || mode === 'observe') return false;
+    const portfolio = memory.reactorPortfolio;
+    if (!portfolio || !portfolio.plannedAt) return true;
+    const id = cm.season11ReactorId || cm.season11ReactorGuard;
+    if (id) {
+        const entry = portfolio.reactors[id];
+        if (!entry || !entry.active || !entry.healthy) return false;
+        if (demand.role === 'ReactorClaimer') return entry.claimReady === true;
+        if (demand.role === 'ThoriumHauler') return (entry.owned || !entry.owner ||
+            entry.recapture && (entry.recapture.approved || entry.recapture.preparing)) &&
+            entry.assignedMiningRooms.includes(cm.season11SourceRoom);
+        if (cm.season11ReactorGuard) return entry.owned && ['READY', 'HOLD'].includes(entry.defenseTier) ||
+            entry.recapture && entry.recapture.approved;
+    }
+    const assignment = memory.assignments && memory.assignments.mining[cm.season11SourceRoom];
+    return demand.role !== 'ThoriumMiner' || !!(assignment && assignment.ready && assignment.remaining > 0);
 }
 
 function emit(input) {
@@ -248,7 +272,7 @@ function cleanupQueues(activeIds) {
 function flush() {
     const state = beginTick();
     const demands = Array.from(state.demands.values())
-        .filter(demand => demand.count > 0 && demand.validUntil >= Game.time)
+        .filter(demand => demand.count > 0 && demand.validUntil >= Game.time && seasonDemandAllowed(demand))
         .sort((a, b) => b.priority - a.priority ||
             (a.deadline || Infinity) - (b.deadline || Infinity) || a.id.localeCompare(b.id));
     const activeIds = new Set(demands.map(demand => demand.id));

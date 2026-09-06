@@ -1238,7 +1238,8 @@ function drawSeason11Panel(visual) {
     rowY += LINE_HEIGHT;
     drawText(
         visual,
-        'Reactor ' + (reactor ? reactor.roomName : 'none'),
+        'Reactors ' + (diagnostics.portfolioDashboard ? diagnostics.portfolioDashboard.activeCount + '/' +
+            diagnostics.portfolioDashboard.desiredCount : '0/1') + ' ' + (reactor ? reactor.roomName : 'none'),
         x,
         rowY,
         reactor ? COLORS.text : COLORS.muted
@@ -1246,7 +1247,11 @@ function drawSeason11Panel(visual) {
     rowY += LINE_HEIGHT;
     drawText(
         visual,
-        'Owner ' + (reactor && reactor.owner ? truncate(reactor.owner, 11) : 'none'),
+        (diagnostics.portfolioDashboard && diagnostics.portfolioDashboard.reactors[0] ?
+            'Defense ' + diagnostics.portfolioDashboard.reactors[0].defense + ' CLAIM ' +
+            diagnostics.portfolioDashboard.reactors[0].claimThreat + ' COMBAT ' +
+            diagnostics.portfolioDashboard.reactors[0].combatThreat :
+            'Owner ' + (reactor && reactor.owner ? truncate(reactor.owner, 11) : 'none')),
         x,
         rowY,
         reactor && reactor.my ? COLORS.good : reactor && reactor.owner ?
@@ -1287,9 +1292,11 @@ function drawSeason11Panel(visual) {
     rowY += LINE_HEIGHT;
     drawText(
         visual,
-        'Flow ' + (operationSummary.throughput && operationSummary.throughput.perTick || 0) +
-            '/t threat ' + (operationSummary.contestThreat || 0) +
-            ' CPU ' + (operationSummary.operationCpu || 0),
+        diagnostics.portfolioDashboard && diagnostics.portfolioDashboard.reactors[1] ?
+            diagnostics.portfolioDashboard.reactors[1].roomName + ' ' + diagnostics.portfolioDashboard.reactors[1].scoreRate +
+                '/t ' + diagnostics.portfolioDashboard.reactors[1].fuel + 't ' + diagnostics.portfolioDashboard.reactors[1].defense :
+            'Est flow ' + (diagnostics.portfolioDashboard && diagnostics.portfolioDashboard.throughput || 0) +
+                '/t CPU ' + (operationSummary.operationCpu || 0),
         x,
         rowY,
         operationSummary.contestThreat > 0 ? COLORS.danger : COLORS.muted
@@ -1297,6 +1304,12 @@ function drawSeason11Panel(visual) {
     rowY += LINE_HEIGHT;
     drawText(
         visual,
+        diagnostics.portfolioDashboard && diagnostics.portfolioDashboard.reactors[0] &&
+            reactor && !reactor.my && reactor.owner ?
+            (diagnostics.portfolioDashboard.reactors[0].state === 'CONTESTING' ? 'GO ' :
+                diagnostics.portfolioDashboard.reactors[0].state === 'MUSTERING' ? 'PREP ' : 'WAIT ') +
+                truncate(diagnostics.portfolioDashboard.reactors[0].reason, 20) +
+                ' ' + diagnostics.portfolioDashboard.reactors[0].retry + 't' :
         alerts.length > 0 ? 'ALERT ' + truncate(alerts.join(' '), 24) :
             'Alerts none',
         x,

@@ -697,4 +697,322 @@ test('existing and Season 11 roles remain in tick dispatch', function() {
     }
 });
 
+var Portfolio = require('./Season11.Portfolio');
+
+test('A low continuity does not station combat; B established work raises readiness', function() {
+    var context = { owned: true, healthy: true, combatReady: true, responseTicks: 25 };
+    assert.strictEqual(Portfolio.defense(Object.assign({}, context, Portfolio.continuity(20))), 'NONE');
+    assert.strictEqual(Portfolio.defense(Object.assign({}, context, Portfolio.continuity(5000))), 'READY');
+});
+
+test('C score threshold urgency protects 950 more than 500', function() {
+    var near = Portfolio.continuity(950), middle = Portfolio.continuity(500);
+    assert.strictEqual(near.scoreRate, 3);
+    assert.strictEqual(near.ticksUntilNextScoreTier, 50);
+    assert.ok(near.continuityValue > middle.continuityValue);
+    assert.ok(near.potentialScoreLost > middle.potentialScoreLost);
+});
+
+test('D CLAIM-only and healer escort create compound ownership threat; allies excluded', function() {
+    var claimant = { id: 'enemyClaim', pos: { x: 24, y: 25 }, body: [{ type: MOVE }, { type: CLAIM }] };
+    var reactor = { pos: { x: 25, y: 25 } };
+    var solo = Portfolio.classifyThreat([claimant], reactor);
+    assert.strictEqual(solo.combatThreat, 0);
+    assert.ok(solo.ownershipThreat >= 60);
+    assert.strictEqual(solo.claimTargetId, 'enemyClaim');
+    var escort = Portfolio.classifyThreat([claimant, { body: [{ type: HEAL }] }], reactor);
+    assert.ok(escort.ownershipThreat > solo.ownershipThreat);
+    assert.strictEqual(Portfolio.classifyThreat([claimant], reactor, function() { return true; }).ownershipThreat, 0);
+});
+
+function recaptureContext(overrides) {
+    return Object.assign({ mode: 'auto', everMine: true, fresh: true, tick: 100,
+        healthy: true, combatReady: true, policyAllowed: true, viable: true,
+        throughput: 1.5, reserve: 800, startupReserve: 500, remaining: 20000,
+        responseTicks: 50, enemyDefense: 0 }, Portfolio.continuity(950), overrides || {});
+}
+
+test('E profitable established pipeline approves AUTO recapture', function() {
+    assert.strictEqual(Portfolio.recapture(recaptureContext()).approved, true);
+});
+test('F weak economy, exhausted supply and overwhelming defense each refuse recapture', function() {
+    [{ healthy: false }, { remaining: 500 }, { enemyDefense: 50 }, { throughput: 0.8 },
+        { policyAllowed: false }, { everMine: false }, { fresh: false }].forEach(function(context) {
+        assert.strictEqual(Portfolio.recapture(recaptureContext(context)).approved, false);
+    });
+});
+test('G ally ownership always refuses automatic and manual recapture', function() {
+    assert.strictEqual(Portfolio.recapture(recaptureContext({ ally: true })).approved, false);
+    assert.strictEqual(Portfolio.recapture(recaptureContext({ ally: true, mode: 'manual', manual: true })).approved, false);
+});
+test('H three failures and active cooldown prevent claim thrashing', function() {
+    resetWorld(); enableSeasonApi();
+    var record = {};
+    Season11.recordClaimFailure(record, 'first');
+    var first = record.recaptureCooldownUntil;
+    Season11.recordClaimFailure(record, 'second');
+    Season11.recordClaimFailure(record, 'third');
+    assert.ok(record.recaptureCooldownUntil > first);
+    assert.strictEqual(record.recaptureFailures, 3);
+    assert.strictEqual(Portfolio.recapture(recaptureContext({ failures: 3 })).approved, false);
+    assert.strictEqual(Portfolio.recapture(recaptureContext({ cooldownUntil: 200 })).approved, false);
+});
+test('I capacity admits two sustainable Reactors and J limits 1.2 per tick to one', function() {
+    var context = { throughput: 2.2, opportunities: 2, healthyColonies: 2, spawnCapacity: 2,
+        defenseCapacity: 2, maximum: 2, cpuSafe: true, remaining: 10000 };
+    assert.strictEqual(Portfolio.sustainableCount(context), 2);
+    assert.strictEqual(Portfolio.sustainableCount(Object.assign({}, context, { throughput: 1.2 })), 1);
+    var sorted = [Object.assign({ reactorId: 'low' }, Portfolio.continuity(500)),
+        Object.assign({ reactorId: 'near' }, Portfolio.continuity(950))].sort(Portfolio.fuelOrder);
+    assert.strictEqual(sorted[0].reactorId, 'near');
+});
+test('K reservations share 800 as 500 plus 300, including duplicate store references', function() {
+    var ledger = {};
+    assert.strictEqual(Portfolio.reserveFuel(ledger, 'store', 'A', 800, 500), 500);
+    assert.strictEqual(Portfolio.reserveFuel(ledger, 'store', 'B', 800, 500), 300);
+    assert.strictEqual(Portfolio.reserveFuel(ledger, 'store', 'C', 800, 500), 0);
+});
+test('L startup reserve grows with route, replacement and danger and rejects infeasible bounds', function() {
+    var config = { minimumStartupReserve: 150, maximumStartupReserve: 900, reactorSafetyStock: 150 };
+    var short = Portfolio.startupReserve({ deliveryEta: 25, replacementDelay: 30, roundTrip: 60, reliability: 1 }, config);
+    var long = Portfolio.startupReserve({ deliveryEta: 250, replacementDelay: 150, roundTrip: 510, reliability: 0.7, defenseRisk: 30 }, config);
+    assert.ok(short.reserve >= 150 && short.reserve < long.reserve);
+    assert.ok(long.reserve >= 600);
+    assert.strictEqual(Portfolio.startupReserve({ deliveryEta: 1500 }, config).feasible, false);
+});
+
+function portfolioWorld(sourceCount, reactorCount) {
+    resetWorld(); enableSeasonApi();
+    global.BODYPART_COST = { work: 100, carry: 50, move: 50, claim: 600, ranged_attack: 150, attack: 80, heal: 250, tough: 10 };
+    Game.time = 100;
+    var memory = Season11.ensureMemory();
+    memory.config.maxActiveReactors = reactorCount;
+    var objects = {};
+    for (var h = 0; h < reactorCount; h++) {
+        var homeName = 'W' + (h + 1) + 'N1';
+        var room = { name: homeName, energyAvailable: 3000, energyCapacityAvailable: 3000,
+            controller: { my: true, level: 8, owner: { username: 'Sushi' }, ticksToDowngrade: 10000 },
+            storage: { id: 'energy' + h, store: { energy: 100000 } }, find: function() { return []; } };
+        Game.rooms[homeName] = room;
+        Game.spawns['spawn' + h] = { id: 'spawn' + h, my: true, room: room, owner: { username: 'Sushi' } };
+        ['Foreman', 'Extractor', 'Freighter'].forEach(function(role) {
+            var name = homeName + role;
+            Game.creeps[name] = { name: name, room: room, ticksToLive: 1400,
+                memory: { role: role, homeRoom: homeName }, body: [] };
+        });
+    }
+    for (var s = 0; s < sourceCount; s++) {
+        var source = 'W' + (s + 10) + 'N1';
+        var mineral = { id: 'mineral' + s, pos: { x: 10, y: 10, roomName: source } };
+        var staging = { id: 'staging' + s, pos: { x: 11, y: 10, roomName: source }, store: { T: 800 } };
+        objects[mineral.id] = mineral; objects[staging.id] = staging;
+        memory.rooms[source] = { roomName: source, threatParts: 0, lastSeen: Game.time,
+            thorium: { id: mineral.id, remaining: 20000 } };
+        memory.assignments.mining[source] = { key: 'mine:' + source, roomName: source,
+            homeRoom: 'W1N1', mineralId: mineral.id, stagingId: staging.id,
+            routeDistance: 1, ready: true, remaining: 20000 };
+    }
+    for (var r = 0; r < reactorCount; r++) {
+        var name = 'W' + (r + 30) + 'N1';
+        Game.rooms[name] = { name: name, find: function() { return []; } };
+        memory.reactors['R' + r] = { id: 'R' + r, roomName: name, my: true, owner: 'Sushi',
+            everMine: true, continuousWork: r ? 500 : 950, thorium: 100, lastSeen: Game.time,
+            reactorThreat: { claimThreat: 0, combatThreat: 0, supportThreat: 0 } };
+        Object.keys(memory.assignments.mining).forEach(function(source) {
+            memory.routes[source + '>' + name] = { fromRoom: source, toRoom: name,
+                distance: 1, checkedAt: Game.time, unreachableUntil: 0 };
+        });
+    }
+    Game.getObjectById = function(id) { return objects[id] || null; };
+    return { memory: memory, objects: objects };
+}
+
+test('portfolio integration selects two, emits distinct hauling plans and protects one after supply loss', function() {
+    var world = portfolioWorld(4, 2), memory = world.memory;
+    Season11.refreshPortfolio(true);
+    assert.strictEqual(memory.reactorPortfolio.activeReactorIds.length, 2);
+    var plans = Season11.getSpawnPlanForRoom(Game.rooms.W1N1);
+    assert.ok(plans.some(function(p) { return p.role === 'ThoriumHauler' && p.memory.season11ReactorId === 'R0'; }));
+    assert.ok(plans.some(function(p) { return p.role === 'ThoriumHauler' && p.memory.season11ReactorId === 'R1'; }));
+    Season11Operations.run(Season11.getDiagnostics());
+    assert.ok(Memory.hive.operations['season11:reactor:R0']);
+    assert.ok(Memory.hive.operations['season11:reactor:R1']);
+    memory.assignments.mining.W12N1.remaining = 0;
+    memory.assignments.mining.W13N1.remaining = 0;
+    Season11.refreshPortfolio(true);
+    assert.deepStrictEqual(memory.reactorPortfolio.activeReactorIds, ['R0']);
+    assert.strictEqual(memory.reactorPortfolio.reactors.R1.state, 'HOLD_OFF');
+});
+
+test('M low CPU preserves ownership/starvation checks and does no route planning', function() {
+    var world = portfolioWorld(4, 2), memory = world.memory;
+    Season11.refreshPortfolio(true);
+    var planned = memory.reactorPortfolio.plannedAt;
+    Game.time++;
+    Game.cpu.bucket = 100;
+    memory.reactors.R0.my = false;
+    memory.reactors.R0.owner = 'Enemy';
+    memory.reactors.R1.thorium = 0;
+    Game.map.findRoute = function() { throw new Error('optional route planning under pressure'); };
+    Season11.refreshPortfolio(false);
+    assert.strictEqual(memory.reactorPortfolio.plannedAt, planned);
+    assert.strictEqual(memory.reactorPortfolio.expansionDeferred, true);
+    assert.strictEqual(memory.reactorPortfolio.reactors.R0.owned, false);
+    assert.strictEqual(memory.reactorPortfolio.reactors.R1.starvationRisk, true);
+    assert.doesNotThrow(function() { JSON.stringify(memory); });
+});
+
+function staffPipeline(memory, reactorId) {
+    Object.values(memory.assignments.mining).forEach(function(a, i) {
+        var room = Game.rooms[a.roomName] || { name: a.roomName, find: function() { return []; } };
+        Game.creeps['seasonMiner' + i] = { name: 'seasonMiner' + i, room: room, ticksToLive: 1400,
+            memory: { role: 'ThoriumMiner', homeRoom: a.homeRoom, season11SourceRoom: a.roomName },
+            body: Array.from({ length: 5 }, function() { return { type: WORK, hits: 100 }; }) };
+        Game.creeps['seasonHauler' + i] = { name: 'seasonHauler' + i, room: room, ticksToLive: 1400,
+            memory: { role: 'ThoriumHauler', homeRoom: a.homeRoom, season11ReactorId: reactorId,
+                season11SourceRoom: a.roomName, season11RouteDistance: 50 },
+            body: Array.from({ length: 10 }, function() { return { type: CARRY, hits: 100 }; }) };
+    });
+    Season11.resetCacheForTests();
+}
+
+test('first claim waits for live supply and then emits a per-Reactor claimant', function() {
+    var memory = portfolioWorld(2, 1).memory;
+    memory.reactors.R0.my = false; memory.reactors.R0.owner = null;
+    memory.reactors.R0.continuousWork = 0;
+    Season11.refreshPortfolio(true);
+    assert.strictEqual(memory.reactorPortfolio.reactors.R0.claimReady, false);
+    var before = Season11.getSpawnPlanForRoom(Game.rooms.W1N1);
+    assert.ok(before.some(function(p) { return p.role === 'ThoriumHauler'; }));
+    assert.ok(!before.some(function(p) { return p.role === 'ReactorClaimer'; }));
+    staffPipeline(memory, 'R0');
+    Season11.refreshPortfolio(true);
+    assert.strictEqual(memory.reactorPortfolio.reactors.R0.claimReady, true);
+    assert.ok(Season11.getSpawnPlanForRoom(Game.rooms.W1N1).some(function(p) {
+        return p.role === 'ReactorClaimer' && p.memory.season11ReactorId === 'R0';
+    }));
+});
+
+test('AUTO recapture prepares supply, approves a clear target, and backs off on observed claimant loss', function() {
+    var memory = portfolioWorld(2, 1).memory;
+    var r = memory.reactors.R0;
+    r.my = false; r.owner = 'Enemy'; r.priorContinuousWork = 950;
+    require('./Combat.Policy').setClassification('Enemy', 'hostile');
+    Season11.refreshPortfolio(true);
+    assert.strictEqual(memory.reactorPortfolio.reactors.R0.recapture.preparing, true);
+    assert.strictEqual(memory.reactorPortfolio.reactors.R0.recapture.approved, false);
+    staffPipeline(memory, 'R0');
+    Season11.refreshPortfolio(true);
+    assert.strictEqual(memory.reactorPortfolio.reactors.R0.recapture.approved, true);
+    assert.strictEqual(Season11.mayClaimReactor({ id: 'R0', owner: { username: 'Enemy' } }), true);
+    r.reactorThreat = { claimThreat: 60, combatThreat: 0, supportThreat: 0 };
+    Season11.refreshPortfolio(false);
+    assert.strictEqual(memory.reactorPortfolio.reactors.R0.recapture.approved, true, 'defense mission can be approved');
+    assert.strictEqual(memory.reactorPortfolio.reactors.R0.claimReady, false, 'claimant waits until hostile claimant is denied');
+    r.reactorThreat = { claimThreat: 0, combatThreat: 0, supportThreat: 0 };
+    Game.creeps.claimant = { name: 'claimant', room: Game.rooms.W1N1, ticksToLive: 500,
+        body: [{ type: CLAIM, hits: 100 }], memory: { role: 'ReactorClaimer', season11ReactorId: 'R0' } };
+    Season11.resetCacheForTests(); Season11.refreshPortfolio(false);
+    delete Game.creeps.claimant;
+    Game.time++; r.lastSeen = Game.time;
+    Season11.refreshPortfolio(false);
+    assert.strictEqual(r.recaptureFailures, 1);
+    assert.ok(r.recaptureCooldownUntil > Game.time);
+    assert.strictEqual(memory.reactorPortfolio.reactors.R0.recapture.approved, false);
+    assert.ok(!Season11.getSpawnPlanForRoom(Game.rooms.W1N1).some(function(p) { return p.role === 'ReactorClaimer'; }));
+});
+
+test('owned high-value defense emits a small responder and current CLAIM escalates its priority', function() {
+    var memory = portfolioWorld(2, 1).memory;
+    memory.reactors.R0.continuousWork = 5000;
+    Season11.refreshPortfolio(true);
+    Season11Operations.run(Season11.getDiagnostics());
+    var operation = Memory.hive.operations['season11:reactor:R0'];
+    assert.strictEqual(operation.defenseTier, 'READY');
+    assert.strictEqual(operation.requestedSquadSize, 1);
+    assert.strictEqual(operation.spawnDemands[0].targetRoom, 'W1N1');
+    assert.deepStrictEqual(operation.spawnDemands[0].bodyRequirements.body, [RANGED_ATTACK, RANGED_ATTACK, MOVE, MOVE]);
+    memory.reactors.R0.reactorThreat = { claimThreat: 60, combatThreat: 0, supportThreat: 0 };
+    Season11.refreshPortfolio(false);
+    Season11Operations.run(Season11.getDiagnostics());
+    assert.strictEqual(operation.defenseTier, 'HOLD');
+    assert.strictEqual(operation.spawnDemands[0].targetRoom, memory.reactors.R0.roomName);
+    assert.strictEqual(operation.spawnDemands[0].priority, 94);
+    assert.strictEqual(operation.spawnDemands[0].economyCategory, 'combat');
+});
+
+test('same-tick fuel intents cannot spend another Reactor reservation', function() {
+    var memory = portfolioWorld(2, 1).memory;
+    memory.thoriumReservations = { tick: Game.time, stores: { store: { total: 800, reactors: { A: 500, B: 300 } } } };
+    assert.strictEqual(Season11.getFuelAllowance('store', 'B'), 300);
+    Season11.consumeFuelAllowance('store', 'B', 200);
+    assert.strictEqual(Season11.getFuelAllowance('store', 'B'), 100);
+    assert.strictEqual(Season11.getFuelAllowance('store', 'A'), 500);
+    Game.time++;
+    assert.strictEqual(Season11.getFuelAllowance('store', 'B'), 0, 'expired reservation cannot authorize a withdrawal');
+});
+
+test('stale queued claimant is removed when fresh ownership threat revokes admission', function() {
+    var memory = portfolioWorld(2, 1).memory;
+    memory.reactors.R0.my = false; memory.reactors.R0.owner = null;
+    staffPipeline(memory, 'R0'); Season11.refreshPortfolio(true);
+    var id = 'season11:claim:R0:ReactorClaimer';
+    DemandBoard.emit({ id: id, role: 'ReactorClaimer', count: 1, validUntil: Game.time + 10,
+        memory: { season11AssignmentKey: 'claim:R0', season11ReactorId: 'R0' } });
+    Memory.rooms = Memory.rooms || {};
+    Memory.rooms.W1N1 = { spawn: { queue: [{ memory: { demandId: id }, expiresAt: Game.time + 10 }] } };
+    memory.reactors.R0.reactorThreat = { claimThreat: 60, combatThreat: 0, supportThreat: 0 };
+    Season11.refreshPortfolio(false);
+    DemandBoard.flush();
+    assert.strictEqual(Memory.rooms.W1N1.spawn.queue.length, 0);
+});
+
+test('disabled mode retires Season combat demands and replacement commitments', function() {
+    var memory = portfolioWorld(2, 1).memory;
+    memory.reactors.R0.continuousWork = 5000;
+    Season11.refreshPortfolio(true); Season11Operations.run(Season11.getDiagnostics());
+    var operation = Memory.hive.operations['season11:reactor:R0'];
+    assert.ok(operation.spawnDemands.length > 0);
+    Season11.setMode('disabled');
+    Season11Operations.run(Season11.getDiagnostics());
+    assert.strictEqual(operation.spawnDemands.length, 0);
+    assert.strictEqual(operation.requestedSquadSize, 0);
+    assert.strictEqual(operation.season11RecaptureApproved, false);
+});
+
+test('critical run refreshes every visible Reactor under low CPU, excluding the Reactor itself from defenses', function() {
+    var memory = portfolioWorld(4, 2).memory;
+    Season11.refreshPortfolio(true);
+    Object.values(memory.reactors).forEach(function(record, i) {
+        var live = { id: record.id, my: i !== 0, owner: { username: i ? 'Sushi' : 'Enemy' },
+            continuousWork: i ? 500 : 0, pos: { x: 25, y: 25, roomName: record.roomName }, store: { T: 0 } };
+        Game.rooms[record.roomName].find = function(type) {
+            if (type === FIND_REACTORS) return [live];
+            if (type === FIND_HOSTILE_STRUCTURES && i === 0) return [live];
+            return [];
+        };
+    });
+    Game.time++; Game.cpu.bucket = 100;
+    Game.map.findRoute = function() { throw new Error('unexpected optional route work'); };
+    Season11.run();
+    assert.strictEqual(memory.reactors.R0.my, false);
+    assert.strictEqual(memory.reactors.R0.hostileDefenseStructures, 0);
+    assert.strictEqual(memory.reactors.R1.thorium, 0);
+    assert.strictEqual(memory.reactors.R1.lastSeen, Game.time);
+    assert.strictEqual(memory.reactorPortfolio.reactors.R1.starvationRisk, true);
+    assert.strictEqual(memory.reactorPortfolio.expansionDeferred, true);
+});
+
+test('primary Reactor ETA ignores another Reactor cargo and empty returning haulers', function() {
+    var memory = portfolioWorld(4, 2).memory;
+    memory.assignments.selectedReactorId = 'R0';
+    [ ['primary', 'R0', 80, 50], ['other', 'R1', 5, 50], ['empty', 'R0', 1, 0] ].forEach(function(data) {
+        Game.creeps[data[0]] = { name: data[0], room: Game.rooms.W1N1, body: [], store: { T: data[3] },
+            memory: { role: 'ThoriumHauler', season11ReactorId: data[1],
+                season11DeliveryEta: data[2], season11EtaTick: Game.time } };
+    });
+    Season11.resetCacheForTests();
+    assert.strictEqual(Season11.getDiagnostics().nextDeliveryEta, 80);
+});
+
 console.log('Season 11 tests passed: ' + passed);

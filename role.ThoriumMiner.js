@@ -95,6 +95,10 @@ var roleThoriumMiner = {
             return;
         }
 
+        if (Season11.shouldPauseMining(sourceRoom)) {
+            if (carried > 0) deliver(creep, staging, resourceType);
+            return;
+        }
         var result = Season11Adapter.harvestThorium(creep, mineral);
         var notInRange = typeof ERR_NOT_IN_RANGE !== 'undefined' ? ERR_NOT_IN_RANGE : -9;
         var exhausted = typeof ERR_NOT_ENOUGH_RESOURCES !== 'undefined' ?

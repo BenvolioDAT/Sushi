@@ -27,14 +27,16 @@ function scoreOperations() {
 
 function run() {
     const settings = HiveMemory.getConfig('combat').strategy;
+    // Seasonal ownership/fuel safety is independent of optional strategy scheduling.
+    const seasonDiagnostics = Season11.run();
     if (settings.enabled === false) return { enabled: false };
     const expansion = HiveMemory.ensure().expansion;
     const expansionActive = expansion && ['claiming', 'placeSpawn', 'buildSpawn', 'bootstrap'].includes(expansion.state);
     Scheduler.run('expansionStrategy', () => Expansion.run(), { interval: expansionActive ? 1 : 17 });
     Scheduler.run('season11Operations', () => {
-        const diagnostics = Season11.run();
-        return Season11Operations.run(diagnostics);
-    }, { interval: 1 });
+        return Season11Operations.run(seasonDiagnostics);
+    }, { interval: 1, emergency: !!(seasonDiagnostics.portfolioDashboard &&
+        seasonDiagnostics.portfolioDashboard.reactors.some(entry => entry.claimThreat > 0)) });
     CombatOperations.run();
     Operations.syncExpansion();
     Scheduler.run('utilityScoring', () => scoreOperations(), { interval: settings.scoreInterval || 17 });

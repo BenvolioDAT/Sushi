@@ -10,8 +10,11 @@ var Season11Adapter = require('Season11.Adapter');
 var CombatPolicy = require('Combat.Policy');
 var TickIndex = require('HiveMind.Index');
 var HiveMemory = require('HiveMind.Memory');
+var Portfolio = require('Season11.Portfolio');
+var Economy = require('HiveMind.Economy');
+var BodyConfig = require('role.creepBodyConfig');
 
-var SCHEMA_VERSION = 2;
+var SCHEMA_VERSION = 3;
 var REACTOR_CAPACITY = 1000;
 var DEFAULT_MODE = 'auto';
 var VALID_MODES = {
@@ -32,7 +35,17 @@ var DEFAULT_CONFIG = {
     routeFailureCooldown: 500,
     maxRouteCacheEntries: 100,
     maxEvents: 20,
-    maxMiningRooms: 2,
+    maxMiningRooms: 5,
+    maxActiveReactors: 1,
+    portfolioInterval: 17,
+    maxPortfolioCandidates: 12,
+    minimumStartupReserve: null,
+    maximumStartupReserve: 1000,
+    recaptureMode: 'auto',
+    maximumRecaptureDefense: 12,
+    recaptureFailureWindow: 10000,
+    maximumClaimBackoff: 8000,
+    supplyHorizon: 1500,
     maximumMiningRouteRooms: 12,
     maximumReactorRouteRooms: 20,
     startupReserve: 500,
@@ -54,6 +67,8 @@ var routeTick = -1;
 var routeOps = 0;
 var diagnosticsTick = -1;
 var diagnosticsCache = null;
+var agingRouteTick = -1;
+var agingRoutes = {};
 
 function getTime() {
     return typeof Game !== 'undefined' && typeof Game.time === 'number' ?
@@ -133,7 +148,11 @@ function ensureMemory() {
 
     var memory = HiveMemory.getSeasonState();
     var config = HiveMemory.getConfig('season11');
+    if (config.recaptureMode === undefined && config.recapture === true) config.recaptureMode = 'manual';
     copyDefaults(config, DEFAULT_CONFIG);
+    if (['disabled', 'manual', 'auto'].indexOf(config.recaptureMode) < 0) config.recaptureMode = 'disabled';
+    config.maxActiveReactors = Math.max(0, Math.min(5, Math.floor(Number(config.maxActiveReactors) || 0)));
+    config.portfolioInterval = Math.max(10, Math.min(25, Number(config.portfolioInterval) || 17));
     if (!VALID_MODES[config.mode]) config.mode = DEFAULT_MODE;
     Object.defineProperty(memory, 'config', {
         configurable: true, enumerable: false, value: config
@@ -152,6 +171,10 @@ function ensureMemory() {
     memory.stats = memory.stats || {};
     memory.stats.events = Array.isArray(memory.stats.events) ?
         memory.stats.events : [];
+    memory.reactorPortfolio = memory.reactorPortfolio || {
+        reactors: {}, activeReactorIds: [], desiredActiveCount: 1, plannedAt: 0
+    };
+    memory.thoriumReservations = memory.thoriumReservations || { tick: 0, stores: {} };
     memory.schemaVersion = SCHEMA_VERSION;
 
     return memory;
@@ -456,6 +479,7 @@ function observeReactors(room, hostileCount, threatParts) {
     var memory = ensureMemory();
     var reactors = safeFind(room, getReactorFindConstant());
     var thoriumType = getThoriumResourceType();
+    var defenseStructures = reactors.length ? safeFind(room, getHostileStructureFindConstant()) : [];
 
     for (var i = 0; i < reactors.length; i++) {
         var reactor = reactors[i];
@@ -467,6 +491,7 @@ function observeReactors(room, hostileCount, threatParts) {
         var ownerName = getOwnerName(reactor.owner);
         var record = previous || {};
         var wasMine = previous && previous.my === true;
+        if (wasMine) record.priorContinuousWork = Math.max(record.priorContinuousWork || 0, record.continuousWork || 0);
         record.id = reactor.id;
         record.roomName = room.name;
         record.x = reactor.pos ? reactor.pos.x : null;
@@ -479,6 +504,13 @@ function observeReactors(room, hostileCount, threatParts) {
         record.continuousWork = Math.max(0, Number(reactor.continuousWork) || 0);
         record.hostileCreeps = hostileCount || 0;
         record.threatParts = threatParts || 0;
+        record.hostileDefenseStructures = defenseStructures.filter(function(structure) {
+            return structure.id !== reactor.id && !CombatPolicy.isAlly(structure);
+        }).length;
+        record.reactorThreat = Portfolio.classifyThreat(
+            TickIndex.get().hostilesByRoom.get(room.name) || safeFind(room, getHostileCreepFindConstant()),
+            reactor, CombatPolicy.isAlly);
+        if (record.reactorThreat.ownershipThreat > 0) record.lastHostileTraffic = getTime();
         record.lastSeen = getTime();
 
         if (record.my) {
@@ -486,6 +518,10 @@ function observeReactors(room, hostileCount, threatParts) {
             clearAlert('STOLEN');
         }
         else if (wasMine && ownerName) {
+            record.ownershipLosses = Math.min(10, (record.ownershipLosses || 0) + 1);
+            record.lastOwnershipLoss = getTime();
+            if (!CombatPolicy.isAlly(ownerName)) CombatPolicy.recordIncident(ownerName, 100,
+                { roomName: room.name, type: 'reactor-theft', targetId: reactor.id });
             setAlert('STOLEN', room.name + ' by ' + ownerName, 1000);
         }
 
@@ -848,8 +884,13 @@ function refreshMiningAssignments() {
     var maximum = Math.max(0, Math.min(5,
         Math.floor(Number(memory.config.maxMiningRooms) || 0)));
     var selected = 0;
+    var healthyHomes = getOwnedSpawnRooms().filter(function(room) { return homeReadiness(room.name).healthy; }).length;
+    var targetCount = Math.max(0, Math.min(Number(memory.config.maxActiveReactors) || 1,
+        Object.keys(memory.reactors).length, healthyHomes));
+    var desiredIncome = targetCount > 0 ? targetCount * 1.15 + 0.25 : 0;
+    var selectedIncome = 0;
 
-    for (var i = 0; i < ranked.length && selected < maximum; i++) {
+    for (var i = 0; i < ranked.length && selected < maximum && selectedIncome < desiredIncome; i++) {
         var target = ranked[i];
         if (!target.accessible || !target.homeRoom) {
             continue;
@@ -886,6 +927,7 @@ function refreshMiningAssignments() {
             plannedAt: getTime()
         };
         selected++;
+        selectedIncome += miningRate(assignments[target.roomName]);
     }
 
     /* Keep depleted routes only while their staging store still has cargo. */
@@ -908,6 +950,8 @@ function refreshMiningAssignments() {
 
     memory.assignments.mining = assignments;
     memory.assignments.rankedMiningTargets = ranked.slice(0, 10);
+    memory.reactorPortfolio.desiredMiningRooms = selected;
+    memory.reactorPortfolio.desiredThoriumIncome = desiredIncome;
 }
 
 function rankReactors() {
@@ -1054,6 +1098,7 @@ function cleanupStaleIntel(force) {
     for (var reactorId in memory.reactors) {
         if (
             memory.reactors.hasOwnProperty(reactorId) &&
+            !memory.reactors[reactorId].everMine &&
             tick - (memory.reactors[reactorId].lastSeen || 0) >
                 memory.config.intelMaxAge
         ) {
@@ -1111,7 +1156,7 @@ function getPlanningInterval() {
 
 function plan(force) {
     var memory = ensureMemory();
-    if (!isObserving()) {
+    if (!isObserving() || getCpuBucket() < memory.config.minimumCpuBucket) {
         return;
     }
     if (!force && getTime() - (memory.stats.lastPlan || 0) <
@@ -1122,6 +1167,7 @@ function plan(force) {
     memory.stats.lastPlan = getTime();
     refreshMiningAssignments();
     refreshSelectedReactor();
+    refreshPortfolio(true);
     memory.assignments.plannedAt = getTime();
     invalidateDiagnostics();
 }
@@ -1169,9 +1215,19 @@ function run() {
         observeRoom(rooms[i], null, false);
     }
 
+    // Ownership and CLAIM intel for every portfolio Reactor survive the scan budget.
+    var refreshed = {};
+    for (var knownId in memory.reactors) {
+        var knownRoom = memory.reactors[knownId].roomName;
+        if (!refreshed[knownRoom] && Game.rooms[knownRoom]) {
+            refreshVisibleReactor(Game.rooms[knownRoom]);
+            refreshed[knownRoom] = true;
+        }
+    }
     if (!cpuPressured) {
         plan(false);
     }
+    refreshPortfolio(false, cpuPressured);
     updateOperationalAlerts();
     return getDiagnostics();
 }
@@ -1246,8 +1302,11 @@ function calculateHaulerDemand(routeDistance, carryCapacity, lifetime, safetyMar
 function getAssignmentCount(assignmentKey, includeQueued) {
     var count = 0;
     var index = TickIndex.get();
-    for (var creepIndex = 0; creepIndex < index.allCreeps.length; creepIndex++) {
-        var creep = index.allCreeps[creepIndex];
+    var role = assignmentKey.indexOf('mine:') === 0 ? 'ThoriumMiner' :
+        assignmentKey.indexOf('haul:') === 0 ? 'ThoriumHauler' : 'ReactorClaimer';
+    var scopedCreeps = index.creepsByRole.get(role) || [];
+    for (var creepIndex = 0; creepIndex < scopedCreeps.length; creepIndex++) {
+        var creep = scopedCreeps[creepIndex];
         if (creep && creep.memory &&
             creep.memory.season11AssignmentKey === assignmentKey) {
             var routeDistance = Number(
@@ -1303,7 +1362,7 @@ function roomHasEssentialEconomy(room) {
         if (!creep || !creep.memory || !roles.hasOwnProperty(creep.memory.role)) {
             continue;
         }
-        if (!creep.ticksToLive || creep.ticksToLive > 100) {
+        if (!creep.spawning && (!creep.ticksToLive || creep.ticksToLive > 100)) {
             roles[creep.memory.role]++;
         }
     }
@@ -1320,10 +1379,19 @@ function mayClaimReactor(reactor) {
     if (!reactor || reactor.my === true) {
         return false;
     }
-    if (!reactor.owner) {
+    var memory = ensureMemory();
+    var entry = memory.reactorPortfolio.reactors[reactor.id];
+    var record = memory.reactors[reactor.id];
+    if (record && getTime() < (record.recaptureCooldownUntil || 0)) return false;
+    if (entry) {
+        if (!entry.active || !entry.claimReady) return false;
+        if (reactor.owner) return !!(entry.recapture && entry.recapture.approved &&
+            CombatPolicy.mayLaunchOffense(reactor, memory.config.recaptureMode === 'manual' && memory.config.recapture === true));
         return true;
     }
-    return ensureMemory().config.recapture === true && CombatPolicy.mayLaunchOffense(reactor, true);
+    // Legacy console/role compatibility before the first portfolio plan.
+    return !reactor.owner || memory.config.recapture === true &&
+        memory.config.recaptureMode === 'manual' && CombatPolicy.mayLaunchOffense(reactor, true);
 }
 
 function makeMinerPlan(assignment) {
@@ -1347,7 +1415,7 @@ function makeClaimerPlan(homeRoom, reactor) {
     return {
         role: 'ReactorClaimer',
         desired: 1,
-        priority: 38,
+        priority: 86,
         assignmentKey: key,
         memory: {
             season11AssignmentKey: key,
@@ -1359,20 +1427,20 @@ function makeClaimerPlan(homeRoom, reactor) {
 }
 
 function getRouteAgingEstimate(assignment, reactor) {
-    var maximumObserved = null;
-    var creeps = TickIndex.get().allCreeps;
-    for (var i = 0; i < creeps.length; i++) {
-        var creep = creeps[i];
-        var creepMemory = creep && creep.memory;
-        if (!creepMemory || creepMemory.role !== 'ThoriumHauler' ||
-            creepMemory.season11SourceRoom !== assignment.roomName ||
-            creepMemory.season11ReactorId !== reactor.id ||
-            creepMemory.season11AgingEstimateSource !== 'tileLook') continue;
-        var observed = Number(creepMemory.season11ObservedTileThorium);
-        if (isFinite(observed) && observed >= 0 &&
-            (maximumObserved === null || observed > maximumObserved)) maximumObserved = observed;
+    if (agingRouteTick !== getTime()) {
+        agingRouteTick = getTime();
+        agingRoutes = {};
+        var creeps = TickIndex.get().allCreeps;
+        for (var i = 0; i < creeps.length; i++) {
+            var cm = creeps[i] && creeps[i].memory;
+            if (!cm || cm.role !== 'ThoriumHauler' || cm.season11AgingEstimateSource !== 'tileLook') continue;
+            var key = cm.season11SourceRoom + '>' + cm.season11ReactorId;
+            var observed = Number(cm.season11ObservedTileThorium);
+            if (isFinite(observed) && observed >= 0) agingRoutes[key] = Math.max(agingRoutes[key] || 0, observed);
+        }
     }
-    if (maximumObserved !== null) {
+    var maximumObserved = agingRoutes[assignment.roomName + '>' + reactor.id];
+    if (maximumObserved !== undefined) {
         return {
             total: maximumObserved,
             multiplier: thoriumAgingMultiplier(maximumObserved),
@@ -1460,12 +1528,349 @@ function hasViableHaulRoute(reactor) {
     return false;
 }
 
+function homeReadiness(roomName) {
+    var room = Game.rooms[roomName];
+    var index = TickIndex.get();
+    var snapshot = Economy.get(roomName);
+    var healthy = roomHasEssentialEconomy(room) && Economy.canSpend(roomName, 'special') &&
+        (!snapshot || !snapshot.harvest || !snapshot.harvest.workRequired ||
+            Economy.localHarvestCoverage(snapshot).status === 'HEALTHY') &&
+        (!room.controller || !room.controller.ticksToDowngrade || room.controller.ticksToDowngrade > 3000);
+    var spawns = index.ownedSpawnsByRoom.get(roomName) || [];
+    var queued = (index.spawnRequestsByRoom.get(roomName) || []).reduce(function(sum, request) {
+        return sum + (request.body ? request.body.length * 3 : 150);
+    }, 0);
+    var busy = spawns.reduce(function(sum, spawn) { return sum + (spawn.spawning ? spawn.spawning.remainingTime || 150 : 0); }, 0);
+    var pressure = Math.min(1, (queued + busy) / Math.max(1, spawns.length * 600));
+    var combatCommitted = (index.creepsByHomeRoom.get(roomName) || []).filter(function(creep) {
+        var cm = creep.memory || {};
+        var op = cm.operationId && HiveMemory.ensure().operations[cm.operationId];
+        return ['Volley', 'Cleric', 'Ronin'].indexOf(cm.role) >= 0 && !cm.season11ReactorGuard && !(op && op.season11);
+    }).length;
+    var defenseSlots = Math.max(0, spawns.length - Math.floor(combatCommitted / 4));
+    return { healthy: !!healthy, spawnPressure: pressure,
+        combatReady: !!(healthy && spawns.length && room.energyCapacityAvailable >= 1300 &&
+            Economy.canSpend(roomName, 'combat') && pressure < 0.75 && defenseSlots > 0), defenseSlots: defenseSlots };
+}
+
+function miningRate(assignment) {
+    var room = Game.rooms[assignment.homeRoom];
+    if (!room || !assignment.ready || assignment.remaining <= 0) return 0;
+    var body = BodyConfig.getBody('ThoriumMiner', room) || [];
+    var work = body.filter(function(p) { return p === 'work'; }).length;
+    var carry = body.filter(function(p) { return p === 'carry'; }).length * 50;
+    var mineral = getObjectById(assignment.mineralId);
+    var staging = getObjectById(assignment.stagingId);
+    var distance = mineral && mineral.pos && staging && staging.pos ?
+        Math.max(Math.abs(mineral.pos.x - staging.pos.x), Math.abs(mineral.pos.y - staging.pos.y)) : 25;
+    var cooldown = typeof EXTRACTOR_COOLDOWN !== 'undefined' ? EXTRACTOR_COOLDOWN : 5;
+    var power = typeof HARVEST_MINERAL_POWER !== 'undefined' ? HARVEST_MINERAL_POWER : 1;
+    var production = work * power / (cooldown + 1);
+    var cycle = carry / Math.max(0.01, production);
+    return Math.min(assignment.remaining / ensureMemory().config.supplyHorizon,
+        production * cycle / Math.max(1, cycle + distance * 2 + 2));
+}
+
+function recordClaimFailure(record, reason) {
+    var config = ensureMemory().config;
+    record.recaptureFailures = Math.min(10, (record.recaptureFailures || 0) + 1);
+    record.lastFailureTick = getTime();
+    record.recaptureCooldownUntil = getTime() + Math.min(config.maximumClaimBackoff,
+        config.claimCooldown * Math.pow(2, record.recaptureFailures));
+    record.failureReason = reason;
+    if (record.claimantName) record.failedClaimantName = record.claimantName;
+    delete record.claimantName;
+    delete record.claimAttemptDeadline;
+}
+
+function refreshPortfolio(force, cpuPressured) {
+    var memory = ensureMemory(), config = memory.config, p = memory.reactorPortfolio;
+    var index = TickIndex.get(), tick = getTime();
+    var cpuSafe = !cpuPressured && getCpuBucket() >= config.minimumCpuBucket;
+    var rescore = cpuSafe && (force || !p.plannedAt || tick - p.plannedAt >= config.portfolioInterval);
+    var homes = {}, candidates = [], assignments = Object.values(memory.assignments.mining);
+    if (rescore) {
+        p.candidateIds = Object.keys(memory.reactors).filter(function(id) {
+            var record = memory.reactors[id];
+            return record.my || tick - (record.lastSeen || 0) <= config.intelMaxAge;
+        }).sort(function(a, b) {
+            var left = memory.reactors[a], right = memory.reactors[b];
+            return Number(!!right.my) - Number(!!left.my) ||
+                Number(b === config.reactorId || right.roomName === config.reactorRoom) -
+                Number(a === config.reactorId || left.roomName === config.reactorRoom) ||
+                Number(!!right.everMine) - Number(!!left.everMine) ||
+                (p.reactors[b] && p.reactors[b].continuityValue || 0) -
+                (p.reactors[a] && p.reactors[a].continuityValue || 0) ||
+                (right.lastSeen || 0) - (left.lastSeen || 0) || a.localeCompare(b);
+        }).slice(0, Math.max(5, Math.min(24, Number(config.maxPortfolioCandidates) || 12)));
+        Object.keys(p.reactors).forEach(function(id) { if (p.candidateIds.indexOf(id) < 0) delete p.reactors[id]; });
+    }
+    var cargo = {}, eta = {}, claimants = {}, liveMiners = {}, liveHaulers = {};
+    // One indexed creep pass, never one empire scan per Reactor.
+    index.allCreeps.forEach(function(creep) {
+        var cm = creep && creep.memory;
+        if (!cm) return;
+        var id = cm.season11ReactorId;
+        if (cm.role === 'ThoriumMiner' && !creep.spawning && creep.ticksToLive > 100 &&
+            creep.room && creep.room.name === cm.season11SourceRoom) {
+            liveMiners[cm.season11SourceRoom] = (liveMiners[cm.season11SourceRoom] || 0) +
+                (creep.body || []).filter(function(part) { return part.type === 'work' && part.hits !== 0; }).length;
+        }
+        if (cm.role === 'ReactorClaimer' && id) claimants[id] = creep.name;
+        if (cm.role !== 'ThoriumHauler' || !id) return;
+        if (!creep.spawning && creep.ticksToLive > (cm.season11RouteDistance || 0) + 100) {
+            if (!liveHaulers[id]) liveHaulers[id] = {};
+            liveHaulers[id][cm.season11SourceRoom] = (liveHaulers[id][cm.season11SourceRoom] || 0) +
+                (creep.body || []).filter(function(part) { return part.type === 'carry' && part.hits !== 0; }).length * 50;
+        }
+        var amount = getStoreAmount(creep, getThoriumResourceType());
+        cargo[id] = (cargo[id] || 0) + amount;
+        if (amount > 0 && tick - (cm.season11EtaTick || 0) <= 2 && typeof cm.season11DeliveryEta === 'number') {
+            eta[id] = Math.min(eta[id] === undefined ? Infinity : eta[id], cm.season11DeliveryEta);
+        }
+    });
+    if (rescore) index.ownedSpawnRooms.forEach(function(room) { homes[room.name] = homeReadiness(room.name); });
+    for (var id of p.candidateIds || []) {
+        var r = memory.reactors[id];
+        if (!r) continue;
+        if (!r.my && tick - (r.lastSeen || 0) > config.intelMaxAge) {
+            delete p.reactors[id];
+            continue;
+        }
+        var entry = p.reactors[id] || { reactorId: id, roomName: r.roomName, routes: [], active: false };
+        if (!p.reactors[id] && !rescore) continue;
+        if (r.my) {
+            r.recaptureFailures = 0; r.recaptureCooldownUntil = 0;
+            delete r.claimAttemptDeadline; delete r.claimantName;
+            delete r.failedClaimantName;
+        }
+        else {
+            if (r.lastFailureTick && tick - r.lastFailureTick > config.recaptureFailureWindow) {
+                r.recaptureFailures = 0; delete r.lastFailureTick; delete r.failureReason;
+            }
+            if (r.failedClaimantName && claimants[id] !== r.failedClaimantName) delete r.failedClaimantName;
+            if (claimants[id] && claimants[id] !== r.failedClaimantName) {
+                if (!r.claimantName) {
+                    r.lastRecaptureAttempt = tick;
+                    r.claimAttemptDeadline = tick + 900;
+                }
+                r.claimantName = claimants[id];
+            }
+            else if (r.claimantName) recordClaimFailure(r, 'claimant disappeared before ownership confirmed');
+            if (r.claimAttemptDeadline && tick > r.claimAttemptDeadline) recordClaimFailure(r, 'claim attempt timed out');
+        }
+        var fresh = tick - (r.lastSeen || 0) <= 2 && !!Game.rooms[r.roomName];
+        var threat = fresh ? r.reactorThreat || {} : {};
+        Object.assign(entry, Portfolio.continuity(r.my ? r.continuousWork : r.priorContinuousWork || 0));
+        entry.owned = r.my === true; entry.owner = r.owner; entry.continuousWork = r.continuousWork || 0;
+        entry.thoriumBuffer = r.thorium || 0; entry.ticksUntilEmpty = Math.max(0, entry.thoriumBuffer - (tick - (r.lastSeen || tick)));
+        entry.threat = threat; entry.fresh = fresh; entry.inTransit = cargo[id] || 0;
+        entry.defenseStructures = r.hostileDefenseStructures === undefined ?
+            (memory.rooms[r.roomName] || {}).hostileStructures || 0 : r.hostileDefenseStructures;
+        if (rescore) {
+            var home = chooseHomeRoom(r.roomName, config.maximumReactorRouteRooms);
+            entry.homeRoom = home && home.roomName;
+            entry.responseTicks = home ? home.distance * 50 : 1000;
+            var exits = Game.map && typeof Game.map.describeExits === 'function' ? Game.map.describeExits(r.roomName) : null;
+            entry.nearbyHostileOwners = Object.values(exits || {}).filter(function(roomName) {
+                var intel = memory.rooms[roomName];
+                return intel && intel.controllerOwner && CombatPolicy.isExplicitHostile(intel.controllerOwner);
+            }).length;
+            entry.routes = [];
+            assignments.forEach(function(a) {
+                if (!a.stagingId || !homes[a.homeRoom] || !homes[a.homeRoom].healthy) return;
+                var plan = makeHaulerPlan(a.homeRoom, a, r, false);
+                if (!plan) return;
+                var verified = memory.routes[routeKey(a.roomName, r.roomName)];
+                if (a.roomName !== r.roomName && (!verified || verified.distance === null ||
+                    verified.unreachableUntil > tick || tick - verified.checkedAt > config.routeCacheTtl * 2)) return;
+                var body = BodyConfig.getThoriumHaulerBodyForCarry(Game.rooms[a.homeRoom], plan.requestedCarryParts) || [];
+                var capacity = body.filter(function(part) { return part === 'carry'; }).length * 50;
+                var tiles = plan.memory.season11RouteDistance;
+                var life = Math.floor(1500 / Math.max(1, plan.memory.season11AgingMultiplier));
+                var replacement = body.length * 3 + config.haulerReplacementMargin +
+                    Math.ceil(homes[a.homeRoom].spawnPressure * 600);
+                var reliability = Math.max(0.25, 1 - tiles / Math.max(1, life) * 0.4 -
+                    ((r.lastHostileTraffic || 0) > tick - 1000 ? 0.2 : 0) -
+                    (entry.nearbyHostileOwners > 0 ? 0.1 : 0));
+                var throughput = Math.min(miningRate(a), plan.desired * capacity / (tiles * 2 + 10)) * reliability;
+                var stored = getStoreAmount(getObjectById(a.stagingId), getThoriumResourceType());
+                if (capacity <= 0 || throughput <= 0 && stored <= 0) return;
+                entry.routes.push({ sourceRoom: a.roomName, stagingId: a.stagingId, homeRoom: a.homeRoom,
+                    throughput: throughput, remaining: Math.max(0, a.remaining || 0), deliveryEta: tiles,
+                    replacementDelay: replacement, roundTrip: tiles * 2 + 10, reliability: reliability,
+                    defenseRisk: threat.ownershipThreat || 0, capacity: capacity, haulerCount: plan.desired,
+                    minerWork: (BodyConfig.getBody('ThoriumMiner', Game.rooms[a.homeRoom]) || []).filter(function(part) {
+                        return part === 'work'; }).length });
+            });
+            entry.routes.sort(function(a, b) { return a.deliveryEta - b.deliveryEta || a.sourceRoom.localeCompare(b.sourceRoom); });
+            entry.lastEvaluated = tick;
+        }
+        var readiness = homes[entry.homeRoom] || (entry.homeRoom ?
+            (homes[entry.homeRoom] = homeReadiness(entry.homeRoom)) : {});
+        entry.healthy = !!readiness.healthy; entry.combatReady = !!readiness.combatReady;
+        entry.spawnPressure = readiness.spawnPressure || 0;
+        entry.deliveryEta = eta[id] === undefined ? null : eta[id];
+        entry.starvationRisk = estimateStarvation(entry.ticksUntilEmpty, entry.deliveryEta).starving;
+        entry.defenseTier = Portfolio.defense(Object.assign({}, entry, threat, {
+            previousLosses: r.ownershipLosses || 0,
+            routeThreat: entry.nearbyHostileOwners > 0 || tick - (r.lastHostileTraffic || -10000) < 1000 ? 1 : 0 }));
+        p.reactors[id] = entry;
+        candidates.push(entry);
+    }
+    // Drop obsolete entries; the underlying everMine intel is retained separately.
+    Object.keys(p.reactors).forEach(function(id) { if (!memory.reactors[id]) delete p.reactors[id]; });
+    candidates.sort(function(a, b) {
+        var aPinned = a.reactorId === config.reactorId || a.roomName === config.reactorRoom;
+        var bPinned = b.reactorId === config.reactorId || b.roomName === config.reactorRoom;
+        return Number(b.owned) - Number(a.owned) || (!a.owned ? Number(bPinned) - Number(aPinned) : 0) || Portfolio.fuelOrder(a, b);
+    });
+    var ledger = {}, sourceIncome = {}, sourceRemaining = {}, protectedCount = 0;
+    var maximum = Math.max(0, Math.min(5, Math.floor(config.maxActiveReactors)));
+    var healthyCount = rescore ? Object.values(homes).filter(function(h) { return h.healthy && h.combatReady; }).length : p.healthyColonies || 0;
+    if (rescore) p.healthyColonies = healthyCount;
+    // Source budgets are shared across the portfolio: never count one miner twice.
+    candidates.forEach(function(e) { (e.routes || []).forEach(function(route) {
+        var assignment = memory.assignments.mining[route.sourceRoom];
+        var sourceIntel = memory.rooms[route.sourceRoom] || {};
+        var cachedRoute = memory.routes[routeKey(route.sourceRoom, e.roomName)];
+        if (!assignment || !assignment.ready || assignment.remaining <= 0 || sourceIntel.threatParts > 0 ||
+            cachedRoute && cachedRoute.unreachableUntil > tick) route.throughput = 0;
+        route.remaining = assignment ? Math.max(0, assignment.remaining || 0) : 0;
+        sourceIncome[route.sourceRoom] = Math.max(sourceIncome[route.sourceRoom] || 0, route.throughput);
+        sourceRemaining[route.sourceRoom] = Math.max(sourceRemaining[route.sourceRoom] || 0, route.remaining);
+    }); });
+    var totalThroughput = Object.values(sourceIncome).reduce(function(sum, n) { return sum + n; }, 0);
+    var totalRemaining = Object.values(sourceRemaining).reduce(function(sum, n) { return sum + n; }, 0);
+    var capacity = Portfolio.sustainableCount({ throughput: totalThroughput, remaining: totalRemaining,
+        opportunities: candidates.length, healthyColonies: healthyCount, spawnCapacity: healthyCount,
+        defenseCapacity: healthyCount, maximum: maximum, cpuSafe: cpuSafe, horizon: config.supplyHorizon });
+    // Low CPU freezes optional growth, but current supply allocation and ownership still change.
+    if (!cpuSafe) capacity = Math.min(p.sustainableCount || 0, Math.floor(totalThroughput));
+    p.sustainableCount = capacity;
+    p.sustainableThoriumDeliveryPerTick = Math.round(totalThroughput * 1000) / 1000;
+    p.desiredActiveCount = Math.min(maximum, Math.max(candidates.length && healthyCount ? 1 : 0, capacity));
+    p.expansionDeferred = !cpuSafe;
+    candidates.forEach(function(e, candidateIndex) {
+        var r = memory.reactors[e.reactorId], usedSources = [];
+        e.active = false; e.fuelPriority = candidateIndex + 1; e.reservedThorium = 0;
+        e.allocatedThroughput = 0; e.assignedMiningRooms = [];
+        var eligible = e.healthy && (e.fresh || e.owned) && (e.owned || !e.owner || r.everMine || config.recaptureMode === 'manual') &&
+            !(e.owner && !e.owned && CombatPolicy.isAlly(e.owner));
+        var slots = protectedCount < p.desiredActiveCount && (cpuSafe || e.wasActive);
+        if (eligible && slots) {
+            var need = 1;
+            (e.routes || []).forEach(function(route) {
+                if (need <= 0) return;
+                var amount = Math.min(need, sourceIncome[route.sourceRoom] || 0, route.throughput);
+                if (amount > 0 || !usedSources.length) {
+                    usedSources.push({ route: route, amount: amount });
+                    e.allocatedThroughput += amount; need -= amount;
+                }
+            });
+            // One bootstrap target may build its reserve while production ramps up.
+            e.active = usedSources.length > 0 && (e.allocatedThroughput >= 0.999 || protectedCount === 0) ||
+                e.owned && e.thoriumBuffer > 0 && protectedCount === 0;
+        }
+        e.startup = usedSources.reduce(function(worst, allocation) {
+            var reserve = Portfolio.startupReserve(allocation.route, config);
+            return reserve.required > worst.required ? reserve : worst;
+        }, Portfolio.startupReserve({}, config));
+        if (e.active) {
+            var wanted = Math.max(0, (e.startup ? e.startup.reserve : config.startupReserve) -
+                (e.owned ? e.thoriumBuffer : 0) - e.inTransit);
+            usedSources.forEach(function(allocation) {
+                var route = allocation.route;
+                sourceIncome[route.sourceRoom] = Math.max(0, (sourceIncome[route.sourceRoom] || 0) - allocation.amount);
+                e.assignedMiningRooms.push(route.sourceRoom);
+                var granted = Portfolio.reserveFuel(ledger, route.stagingId, e.reactorId,
+                    getStoreAmount(getObjectById(route.stagingId), getThoriumResourceType()), wanted);
+                e.reservedThorium += granted; wanted -= granted;
+            });
+            protectedCount++;
+        }
+        var remaining = usedSources.reduce(function(sum, a) { return sum + a.route.remaining; }, 0);
+        var required = e.startup ? e.startup.reserve : config.startupReserve;
+        e.pipelineReady = usedSources.length > 0 && usedSources.every(function(a) {
+            return liveMiners[a.route.sourceRoom] >= a.route.minerWork && liveHaulers[e.reactorId] &&
+                liveHaulers[e.reactorId][a.route.sourceRoom] * a.route.reliability / a.route.roundTrip >= a.amount;
+        });
+        e.claimReady = !!(!e.owned && e.active && e.fresh && e.startup && e.startup.feasible &&
+            e.allocatedThroughput >= 0.999 && e.reservedThorium >= required &&
+            e.combatReady && isClaimApiAvailable() && getTime() >= (r.recaptureCooldownUntil || 0));
+        e.recapture = Portfolio.recapture(Object.assign({}, e, {
+            mode: config.recaptureMode, manual: config.recapture === true, everMine: r.everMine,
+            ally: !!(e.owner && CombatPolicy.isAlly(e.owner)), policyAllowed: !!(e.owner &&
+                CombatPolicy.mayLaunchOffense(e.owner, config.recaptureMode === 'manual' && config.recapture === true)),
+            tick: tick, cooldownUntil: r.recaptureCooldownUntil || 0, failures: r.recaptureFailures || 0,
+            viable: e.claimReady, throughput: e.allocatedThroughput, reserve: e.reservedThorium,
+            startupReserve: required, remaining: remaining,
+            enemyDefense: (e.threat.combatThreat || 0) + (e.threat.supportThreat || 0) +
+                e.defenseStructures * 20,
+            maximumDefense: config.maximumRecaptureDefense }));
+        e.recapture.preparing = !!(e.owner && !e.owned && e.recapture.approved && !e.pipelineReady);
+        if (e.recapture.preparing) {
+            e.recapture.approved = false;
+            e.recapture.reason = 'prepare live mining and hauling pipeline before recapture';
+        }
+        if (e.owner && !e.owned && !e.recapture.approved && !e.recapture.preparing) {
+            e.claimReady = false;
+            if (e.active) {
+                usedSources.forEach(function(a) { sourceIncome[a.route.sourceRoom] += a.amount; });
+                Object.values(ledger).forEach(function(store) { delete store.reactors[e.reactorId]; });
+                e.reservedThorium = 0;
+                e.active = false;
+                protectedCount--;
+            }
+        }
+        e.claimReady = e.claimReady && e.pipelineReady;
+        // An approved fight still must be won before sending a fragile claimant.
+        e.claimReady = e.claimReady && !(e.threat.combatThreat > 0 || e.threat.supportThreat > 0 ||
+            e.threat.claimThreat > 0 || e.defenseStructures > 0);
+        e.recaptureCooldownUntil = r.recaptureCooldownUntil || 0;
+        e.state = e.recapture.preparing ? 'MUSTERING' : e.owner && !e.owned && !e.recapture.approved ? 'RECOVERING' :
+            !e.active ? 'HOLD_OFF' : e.owned ? (e.starvationRisk ? 'SUPPLYING' : 'HOLDING') :
+            e.owner ? (e.recapture.approved ? 'CONTESTING' : 'RECOVERING') : e.claimReady ? 'CLAIMING' : 'MUSTERING';
+        e.reason = e.owner && !e.owned ? e.recapture.reason :
+            !e.active ? 'protect higher-value continuity; capacity or economy limited' : e.state;
+        e.wasActive = e.active;
+    });
+    p.activeReactorIds = candidates.filter(function(e) { return e.active; }).map(function(e) { return e.reactorId; });
+    var primary = candidates.find(function(e) { return e.active; }) || candidates[0];
+    memory.assignments.selectedReactorId = primary ? primary.reactorId : null;
+    memory.assignments.selectedReactorRoom = primary ? primary.roomName : null;
+    memory.thoriumReservations = { tick: tick, stores: ledger };
+    memory.dashboard = { tick: tick, reactors: candidates.slice().sort(function(a, b) {
+        return Number(b.active) - Number(a.active) || a.fuelPriority - b.fuelPriority;
+    }).slice(0, 5).map(function(e) {
+        return { reactorId: e.reactorId, roomName: e.roomName, state: e.state, scoreRate: e.scoreRate,
+            work: e.continuousWork, fuel: e.ticksUntilEmpty, eta: e.deliveryEta, defense: e.defenseTier,
+            claimThreat: e.threat.claimThreat || 0, combatThreat: e.threat.combatThreat || 0,
+            recaptureValue: e.recapture.recaptureScore, reason: e.reason, retry: Math.max(0, e.recaptureCooldownUntil - tick) };
+    }), activeCount: p.activeReactorIds.length, desiredCount: p.desiredActiveCount,
+    throughput: p.sustainableThoriumDeliveryPerTick, sustainableCount: capacity, expansionDeferred: !cpuSafe };
+    if (rescore) p.plannedAt = tick;
+    invalidateDiagnostics();
+}
+
+function getFuelAllowance(stagingId, reactorId) {
+    var reservations = ensureMemory().thoriumReservations;
+    if (reservations.tick !== getTime()) return 0;
+    var store = reservations.stores[stagingId];
+    return store ? Math.max(0, store.reactors[reactorId] || 0) : 0;
+}
+
+function consumeFuelAllowance(stagingId, reactorId, amount) {
+    var reservations = ensureMemory().thoriumReservations;
+    var store = reservations.stores[stagingId];
+    if (store) store.reactors[reactorId] = Math.max(0, (store.reactors[reactorId] || 0) - amount);
+}
+
 function getSpawnPlanForRoom(room) {
     var memory = ensureMemory();
     var plans = [];
 
-    if (!isOperatingMode() || !roomHasEssentialEconomy(room) ||
-        getCpuBucket() < memory.config.minimumCpuBucket) {
+    if (!isOperatingMode() || !homeReadiness(room.name).healthy) {
         return plans;
     }
 
@@ -1477,33 +1882,30 @@ function getSpawnPlanForRoom(room) {
         if (
             assignment && assignment.ready &&
             assignment.homeRoom === room.name &&
-            assignment.remaining > 0 &&
+            assignment.remaining > 0 && !shouldPauseMining(assignment.roomName) &&
+            getCpuBucket() >= memory.config.minimumCpuBucket &&
             getAssignmentCount(assignment.key, true) < 1
         ) {
             plans.push(makeMinerPlan(assignment));
         }
     }
 
-    var reactor = getSelectedReactorRecord();
-    if (!reactor) {
-        return plans;
-    }
-
-    var diagnostics = getDiagnostics();
-    var reserveReady = diagnostics.deliverableReserve >=
-        memory.config.startupReserve;
-    var throughputReady = hasViableHaulRoute(reactor);
-    var reactorHome = chooseHomeRoom(reactor.roomName,
-        memory.config.maximumReactorRouteRooms);
+    for (var reactorId of memory.reactorPortfolio.activeReactorIds) {
+    var reactor = memory.reactors[reactorId];
+    var entry = memory.reactorPortfolio.reactors[reactorId];
+    if (!reactor || !entry) continue;
+    var reserveReady = entry.claimReady;
+    var throughputReady = entry.allocatedThroughput >= 0.999;
+    var reactorHome = entry.homeRoom ? { roomName: entry.homeRoom } : null;
     var canClaimUnowned = !reactor.owner;
-    var canRecapture = !!(reactor.owner && !reactor.my &&
-        memory.config.recapture === true);
+    var canRecapture = !!(reactor.owner && !reactor.my && entry.recapture && entry.recapture.approved);
 
     if (
         reactorHome && reactorHome.roomName === room.name &&
         reserveReady && throughputReady && !reactor.my &&
         (canClaimUnowned || canRecapture) &&
         isClaimApiAvailable() &&
+        getCpuBucket() >= memory.config.minimumCpuBucket &&
         getTime() >= (reactor.nextClaimRequestAfter || 0)
     ) {
         var claimPlan = makeClaimerPlan(room.name, reactor);
@@ -1513,8 +1915,8 @@ function getSpawnPlanForRoom(room) {
     }
 
     var claiming = getAssignmentCount('claim:' + reactor.id, true) > 0;
-    if (!reactor.my && !claiming) {
-        return plans;
+    if (!reactor.my && !claiming && reactor.owner && !entry.recapture.approved && !entry.recapture.preparing) {
+        continue;
     }
 
     var starving = reactor.my &&
@@ -1527,7 +1929,7 @@ function getSpawnPlanForRoom(room) {
             continue;
         }
         var haulAssignment = memory.assignments.mining[miningRoom];
-        if (!haulAssignment || !haulAssignment.stagingId) {
+        if (!haulAssignment || !haulAssignment.stagingId || entry.assignedMiningRooms.indexOf(miningRoom) < 0) {
             continue;
         }
         var home = chooseHomeRoom(haulAssignment.roomName,
@@ -1541,16 +1943,29 @@ function getSpawnPlanForRoom(room) {
             plans.push(haulPlan);
         }
     }
+    }
     return plans;
+}
+
+function shouldPauseMining(roomName) {
+    var memory = ensureMemory(), assignment = memory.assignments.mining[roomName];
+    if (!assignment || !assignment.ready || assignment.remaining <= 0) return true;
+    var entries = Object.values(memory.reactorPortfolio.reactors);
+    var useful = entries.filter(function(e) { return e.active && (e.assignedMiningRooms || []).indexOf(roomName) >= 0; });
+    // Build at most one startup stockpile per useful Reactor, then preserve finite deposits.
+    var target = useful.reduce(function(sum, e) { return sum + (e.startup ? e.startup.reserve : memory.config.startupReserve); }, 0);
+    return !target || getStoreAmount(getObjectById(assignment.stagingId), getThoriumResourceType()) >= target;
 }
 
 function noteSpawnRequestQueued(plan) {
     if (!plan || plan.role !== 'ReactorClaimer') {
         return;
     }
-    var reactor = getSelectedReactorRecord();
+    var reactor = ensureMemory().reactors[plan.memory && plan.memory.season11ReactorId];
     if (reactor) {
         reactor.nextClaimRequestAfter = getTime() + ensureMemory().config.claimCooldown;
+        reactor.lastRecaptureAttempt = getTime();
+        reactor.claimAttemptDeadline = getTime() + 1000;
     }
 }
 
@@ -1587,6 +2002,9 @@ function noteClaimResult(reactorId, result) {
     if (result === 0) {
         logEvent('CLAIM', reactor.roomName + ' intent accepted');
         clearAlert('NO CLAIM');
+    }
+    else if (result !== -9 && result !== -11 && result !== -4) {
+        recordClaimFailure(reactor, 'claim intent rejected: ' + result);
     }
 }
 
@@ -1683,6 +2101,8 @@ function getDiagnostics() {
             if (creep.memory.season11AgingEstimateSource === 'fallbackEstimate') agingFallbackCreeps++;
             var eta = creep.memory.season11DeliveryEta;
             if (typeof eta === 'number' &&
+                creep.memory.season11ReactorId === memory.assignments.selectedReactorId &&
+                getStoreAmount(creep, thoriumType) > 0 &&
                 getTime() - (creep.memory.season11EtaTick || 0) <= 2 &&
                 (nextEta === null || eta < nextEta)) {
                 nextEta = eta;
@@ -1738,6 +2158,8 @@ function getDiagnostics() {
         haulers: haulers,
         claimers: claimers,
         selectedReactor: reactorInfo,
+        reactorPortfolio: memory.reactorPortfolio,
+        portfolioDashboard: memory.dashboard || null,
         nextDeliveryEta: nextEta,
         aging: {
             maximumObservedTileThorium: maximumObservedTileThorium,
@@ -1829,6 +2251,8 @@ function shouldSuppressPixelGeneration() {
 }
 
 function resetCacheForTests() {
+    agingRouteTick = -1;
+    agingRoutes = {};
     observedTick = -1;
     observedRooms = {};
     routeTick = -1;
@@ -1839,6 +2263,12 @@ function resetCacheForTests() {
 }
 
 module.exports = {
+    refreshPortfolio: refreshPortfolio,
+    homeReadiness: homeReadiness,
+    getFuelAllowance: getFuelAllowance,
+    consumeFuelAllowance: consumeFuelAllowance,
+    shouldPauseMining: shouldPauseMining,
+    recordClaimFailure: recordClaimFailure,
     run: run,
     plan: plan,
     observeRoom: observeRoom,
