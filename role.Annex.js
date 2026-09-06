@@ -71,6 +71,7 @@ var roleAnnex = {
         var targetRoom = Game.rooms[targetRoomName];
         if (!targetRoom) {
             creep.memory.annexState = 'movingToTargetRoom';
+            if (RemotePlanner.moveToRemoteRoomAlongRoute(creep, creep.memory.homeRoom, targetRoomName)) return;
             travel.moveToRoom(creep, targetRoomName, {
                 range: 22,
                 visualizePathStyle: ANNEX_PATH_STYLE
@@ -157,6 +158,7 @@ function runExpandMode(creep) {
 
     if (creep.room.name !== targetRoomName) {
         creep.memory.annexState = 'expandMovingToTargetRoom';
+        if (RemotePlanner.moveToRemoteRoomAlongRoute(creep, creep.memory.homeRoom, targetRoomName)) return;
         travel.moveToRoom(creep, targetRoomName, {
             range: 22,
             visualizePathStyle: ANNEX_PATH_STYLE

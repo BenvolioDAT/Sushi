@@ -14,6 +14,7 @@ var Economy = require('HiveMind.Economy');
 var HiveMemory = require('HiveMind.Memory');
 var ColonyState = require('HiveMind.ColonyState');
 var roleTech = require('role.Tech');
+var RemotePlanner = require('Planner.Remote');
 
 var MAX_REPAIR_ARTIFICERS = 2;
 
@@ -1180,6 +1181,9 @@ function travelToRememberedRemoteWorkPosition(creep) {
     if(!creep.memory.remoteWorkTargetId || !roomName || creep.room.name === roomName) {
         return false;
     }
+
+    var homeRoomName = creep.memory.remoteWorkHomeRoom || getHomeRoomName(creep);
+    if (RemotePlanner.moveToRemoteRoomAlongRoute(creep, homeRoomName, roomName)) return true;
 
     if(creep.memory.remoteWorkX === undefined || creep.memory.remoteWorkY === undefined) {
         utilityTravelCreep.moveToRoom(creep, roomName, {

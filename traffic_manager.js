@@ -35,6 +35,12 @@ function unpackCoordinates(packedCoord) {
 function defaultPriority(creep) {
     const memory = creep.memory || {};
     if (typeof memory.trafficPriority === 'number') return memory.trafficPriority;
+    if (memory.role === 'Freighter' && creep.store && creep.store.getUsedCapacity && creep.store.getUsedCapacity() > 0) return 90;
+    if (memory.role === 'Extractor' && (memory.homeRoom || memory.sourceId || memory.targetSourceId)) return 70;
+    if (memory.role === 'Freighter') return 50;
+    if (memory.role === 'Annex') return 40;
+    if (memory.role === 'Artificer' && memory.remoteWorkRoomName) return 35;
+    if (!memory.assignment && !memory.targetRoom && !memory.remoteWorkRoomName) return 5;
     if (memory.squadId) return 80;
     if (['Ronin', 'Volley', 'Cleric'].includes(memory.role)) return 60;
     if (['ThoriumMiner', 'ThoriumHauler', 'ReactorClaimer'].includes(memory.role)) return 45;
@@ -202,6 +208,11 @@ function search(context, creep, rootPriority, visited) {
             return true;
         }
         if (occupant === creep || occupant.my === false || occupant.__trafficBlocker) continue;
+        const occupantMemory = occupant.memory || {};
+        const protectedMiner = occupantMemory.role === 'Extractor' &&
+            (occupantMemory.sourceId || occupantMemory.targetSourceId) &&
+            String(occupantMemory.extractorState || '').indexOf('retreat') < 0;
+        if (protectedMiner) continue;
         if (
             (occupant._trafficPriority || 0) > rootPriority &&
             occupant._matchedPackedCoord === occupant._intendedPackedCoord

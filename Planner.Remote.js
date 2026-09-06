@@ -719,6 +719,9 @@ function validateRemoteRoute(homeRoomName, sourceId, force) {
             reason = 'MALFORMED_ROUTE';
             break;
         }
+        if (!reason && i > 0) {
+            reason = getBorderContinuityReason(route.segments[i - 1], segment);
+        }
         if (isBlockedRoomForPath(homeRoomName, segment.room)) {
             reason = 'HOSTILE_TRANSIT_ROOM';
             break;
@@ -777,6 +780,82 @@ function validateRemoteRoute(homeRoomName, sourceId, force) {
     delete route.invalidReason;
     delete info.routeInvalidReason;
     return { valid: true, reason: null };
+}
+
+function getBorderContinuityReason(previous, next) {
+    if (!previous || !next || previous.room === next.room) return null;
+    var from = unpackCoord(Number(previous.coords[previous.coords.length - 1]), previous.room);
+    var to = unpackCoord(Number(next.coords[0]), next.room);
+    var exits = Game.map && Game.map.describeExits ? Game.map.describeExits(previous.room) : null;
+    if (!exits || !Object.keys(exits).length) return null;
+    var direction = null;
+    if (exits) for (var key in exits) if (exits[key] === next.room) direction = Number(key);
+    if (!direction) return 'BORDER_DISCONTINUITY';
+    var aligned = direction === TOP ? from.y === 0 && to.y === 49 && from.x === to.x :
+        direction === RIGHT ? from.x === 49 && to.x === 0 && from.y === to.y :
+        direction === BOTTOM ? from.y === 49 && to.y === 0 && from.x === to.x :
+        direction === LEFT ? from.x === 0 && to.x === 49 && from.y === to.y : false;
+    return aligned ? null : 'BORDER_DISCONTINUITY';
+}
+
+function getBestRouteToRoom(homeRoomName, targetRoomName) {
+    var planner = ensurePlannerMemory(homeRoomName);
+    var candidates = planner.activeSourceIds.map(function(sourceId) {
+        var info = planner.sourceInfos[sourceId];
+        if (!info || !info.route || info.roomName !== targetRoomName || info.operational === false) return null;
+        var validation = validateRemoteRoute(homeRoomName, sourceId, false);
+        return validation.valid ? info : null;
+    }).filter(Boolean);
+    candidates.sort(function(a, b) {
+        return (a.route.length || a.distance || 0) - (b.route.length || b.distance || 0) ||
+            String(a.sourceId).localeCompare(String(b.sourceId));
+    });
+    return candidates[0] || null;
+}
+
+function moveToRemoteRoomAlongRoute(creep, homeRoomName, targetRoomName) {
+    if (!creep || !creep.memory || !homeRoomName || !targetRoomName) return false;
+    if (creep.pos.roomName === targetRoomName) return false;
+    var info = getBestRouteToRoom(homeRoomName, targetRoomName);
+    if (!info) return false;
+    var path = getRemotePath(homeRoomName, info.sourceId);
+    var first = path.filter(function(pos) { return pos.roomName === targetRoomName; })[0];
+    if (!first) return false;
+    var current = path.filter(function(pos) { return pos.roomName === creep.pos.roomName; });
+    var target = current.length ? current[current.length - 1] : path[0];
+    travel.move(creep, target, { range: 0, maxRooms: target.roomName === creep.pos.roomName ? 1 : 2, reusePath: 5,
+        trafficPriority: creep.memory.role === 'Annex' ? 55 : 35 });
+    creep.memory.remoteLaneSourceId = info.sourceId;
+    creep.memory.remoteLaneRevision = info.route.revision;
+    return true;
+}
+
+function discoverSharedLanes(homeRoomName) {
+    var planner = ensurePlannerMemory(homeRoomName);
+    var active = (planner.activeSourceIds || []).map(function(id) { return planner.sourceInfos[id]; }).filter(function(info) {
+        return info && info.route && info.route.valid !== false;
+    });
+    var groups = {};
+    for (var i = 0; i < active.length; i++) {
+        var info = active[i], route = ensureOrderedRoute(info), prefix = [];
+        for (var s = 0; s < route.segments.length; s++) {
+            for (var c = 0; c < route.segments[s].coords.length; c++) {
+                prefix.push(route.segments[s].room + ':' + route.segments[s].coords[c]);
+                if (prefix.length >= 2) {
+                    var key = prefix.join('|');
+                    if (!groups[key]) groups[key] = { rooms: route.segments.slice(0, s + 1).map(function(x) { return x.room; }), coords: prefix.slice(), users: [] };
+                    if (groups[key].users.indexOf(info.sourceId) < 0) groups[key].users.push(info.sourceId);
+                }
+            }
+        }
+    }
+    var shared = {};
+    Object.keys(groups).forEach(function(key) {
+        var group = groups[key];
+        if (group.users.length > 1) shared[key] = { revision: Game.time, rooms: group.rooms, packed: group.coords, users: group.users, lastUsed: Game.time };
+    });
+    planner.sharedLanes = shared;
+    return shared;
 }
 
 function refreshRouteTerrain(info, route) {
@@ -1744,6 +1823,7 @@ function selectActiveSources(homeRoomName) {
         var remoteInfo = planner.remotes[remoteRoomName];
         remoteInfo.status = hasActiveSourceInRemote(planner, remoteInfo) ? 'active' : remoteInfo.status;
     }
+    discoverSharedLanes(homeRoomName);
 }
 
 function getPlannerBlockedReason(planner) {
@@ -2677,6 +2757,8 @@ function followRemotePath(creep, homeRoomName, sourceId, reverse) {
         return true;
     }
     var route = info.route;
+    route.traffic = route.traffic || { moves: 0, blockedMoves: 0, pushes: 0, detours: 0, stuckEvents: 0,
+        avgObservedTravel: route.observedRoundTripTicks || 0, congestionScore: 0, lastUpdated: Game.time };
     // The lane owns travel and safety; beside the source, unique mining seats own movement.
     // Supplements must not be driven back onto the primary station every tick.
     if (!reverse && creep.memory && creep.memory.role === 'Extractor') {
@@ -2719,10 +2801,18 @@ function followRemotePath(creep, homeRoomName, sourceId, reverse) {
     if (!reverse && creep.pos.roomName === homeRoomName && bestRange > 3) nextIndex = 0;
     var result = travel.move(creep, path[nextIndex], { range: 0,
         maxRooms: path[nextIndex].roomName === creep.pos.roomName ? 1 : 2, reusePath: 5 });
+    route.traffic.moves++;
     if (result === ERR_NO_PATH || result === ERR_INVALID_TARGET) {
+        route.traffic.blockedMoves++;
         route.movementFailures = (route.movementFailures || 0) + 1;
         if (route.movementFailures >= 3) route.dirty = true;
     } else if (result === OK) route.movementFailures = 0;
+    if (Game.time - (route.traffic.lastUpdated || 0) >= 10) {
+        var ratio = route.traffic.moves ? route.traffic.blockedMoves / route.traffic.moves : 0;
+        route.traffic.congestionScore = Math.round((route.traffic.congestionScore || 0) * 0.8 + ratio * 100 * 0.2);
+        route.traffic.avgObservedTravel = route.observedRoundTripTicks || route.traffic.avgObservedTravel || 0;
+        route.traffic.lastUpdated = Game.time;
+    }
     return true; // A movement intent, fatigue or traffic still owns this leg.
 }
 
@@ -2891,6 +2981,10 @@ module.exports = {
     moveFreighterToRemotePickup: moveFreighterToRemotePickup,
     moveFreighterAlongRemotePath: moveFreighterAlongRemotePath,
     getRemotePath: getRemotePath,
+    getBestRouteToRoom: getBestRouteToRoom,
+    moveToRemoteRoomAlongRoute: moveToRemoteRoomAlongRoute,
+    discoverSharedLanes: discoverSharedLanes,
+    getBorderContinuityReason: getBorderContinuityReason,
     validateRemoteRoute: validateRemoteRoute,
     retreatRemoteCreep: retreatRemoteCreep,
     estimateRouteTravelTicks: estimateRouteTravelTicks,

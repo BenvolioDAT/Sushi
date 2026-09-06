@@ -322,4 +322,39 @@ test('17 explicit FOB transport job is consumed from origin through destination 
     assert.strictEqual(creep.memory.homeRoom, 'W1N1');
 });
 
+test('18 canonical route rejects a misaligned east border', () => {
+    reset();
+    Game.map.describeExits = () => ({ [RIGHT]: 'W1N2' });
+    const planner = fresh('Planner.Remote.js');
+    assert.strictEqual(planner.getBorderContinuityReason(
+        { room: 'W1N1', coords: [20 * 50 + 49] },
+        { room: 'W1N2', coords: [23 * 50] }), 'BORDER_DISCONTINUITY');
+});
+
+test('19 canonical route accepts aligned north and south borders', () => {
+    reset();
+    Game.map.describeExits = (roomName) => roomName === 'W1N1' ? ({ [TOP]: 'W1N2' }) : ({});
+    const planner = fresh('Planner.Remote.js');
+    assert.strictEqual(planner.getBorderContinuityReason(
+        { room: 'W1N1', coords: [17] }, { room: 'W1N2', coords: [17 + 49 * 50] }), null);
+});
+
+test('20 overlapping active routes expose one shared trunk', () => {
+    reset();
+    home();
+    const info = installRoute();
+    const second = JSON.parse(JSON.stringify(info));
+    second.sourceId = 'remote2';
+    second.containerCoord = 512;
+    second.route.targetCoord = 512;
+    second.route.signature = undefined;
+    second.route.segments[1].coords = [510, 512];
+    second.roadCoords.W1N2 = [510, 512];
+    const planner = fresh('Planner.Remote.js');
+    Memory.rooms.W1N1.remotePlanner.activeSourceIds = ['remote', 'remote2'];
+    Memory.rooms.W1N1.remotePlanner.sourceInfos.remote2 = second;
+    const lanes = planner.discoverSharedLanes('W1N1');
+    assert.ok(Object.keys(lanes).some(key => lanes[key].users.length === 2));
+});
+
 console.log('Remote route and logistics regression tests passed.');
