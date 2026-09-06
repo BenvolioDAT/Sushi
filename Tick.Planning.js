@@ -28,6 +28,7 @@ function runStrategy() {
     /* Economy is sampled first so every planner and demand emitter shares one policy. */
     Telemetry.measure('economy', () => Economy.run());
     Telemetry.measure('colonyState', () => ColonyState.run());
+    Telemetry.measure('capacity', () => require('HiveMind.Capacity').get());
     Telemetry.measure('remotePlanning', () => {
         Scheduler.run('remotePlanning', () => RemotePlanner.run(), { interval: 5 });
     });

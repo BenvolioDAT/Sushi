@@ -33,6 +33,7 @@ function isBaselineRepresentative(creep, homeRoomName) {
 
 var roleTech = {
     run: function(creep) {
+        creep._capacityProductive = false;
         var homeRoomName = creep.memory.homeRoom || creep.room.name;
         var controllerEmergency = creep.memory.controllerEmergency === true ||
             creep.room.controller && creep.room.controller.ticksToDowngrade < 5000;
@@ -68,6 +69,7 @@ var roleTech = {
         }
 
         if (creep.memory.upgrading) {
+            creep._capacityProductive = !!creep.room.controller;
             upgradeRoomController(creep);
             return;
         }
@@ -83,7 +85,7 @@ var roleTech = {
          * 6. Source containers
          * 7. Mine its own energy
          */
-        getEnergyForTech(creep);
+        creep._capacityProductive = !!getEnergyForTech(creep);
     }
 };
 

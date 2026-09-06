@@ -267,6 +267,10 @@ function buildBody(bodyPlan) {
 }
 
 function getBestBodyForEnergy(role, energy) {
+    if (role === 'Extractor' || role === 'Annex') {
+        var generated = require('BodyProfiles').build(role, { energyCapacity: energy, desiredWork: 5, desiredClaim: 1 });
+        return generated && generated.body;
+    }
     var bodyPlans = BODY_PLANS[role];
 
     if (!bodyPlans || typeof energy !== 'number' || energy < 0) {
@@ -301,6 +305,10 @@ function countBodyParts(body, partType) {
 }
 
 function getTechBodyForEnergyAndWork(energy, desiredWork) {
+    if (desiredWork > 12 && energy >= 1800) {
+        var generated = require('BodyProfiles').build('Tech', { energyCapacity: energy, desiredWork: desiredWork });
+        if (generated) return generated.body;
+    }
     var bodyPlans = BODY_PLANS.Tech;
 
     if (typeof energy !== 'number' || energy < 0 || desiredWork <= 0) {
@@ -324,6 +332,10 @@ function getTechBodyForEnergyAndWork(energy, desiredWork) {
 }
 
 function getArtificerBodyForEnergyAndWork(energy, desiredWork) {
+    if (desiredWork > 6 && energy >= 1300) {
+        var generated = require('BodyProfiles').build('Artificer', { energyCapacity: energy, desiredWork: desiredWork });
+        if (generated) return generated.body;
+    }
     var bodyPlans = BODY_PLANS.Artificer;
 
     if (typeof energy !== 'number' || energy < 0 || desiredWork <= 0) {
@@ -367,22 +379,8 @@ function getFreighterBodyForEnergyAndCarry(energy, desiredCarryParts) {
 }
 
 function getExtractorBodyForEnergyAndWork(energy, desiredWork) {
-    var bodyPlans = BODY_PLANS.Extractor;
-
-    if (typeof energy !== 'number' || energy < 0 || desiredWork <= 0) {
-        return null;
-    }
-
-    for (var index = 0; index < bodyPlans.length; index++) {
-        var body = buildBody(bodyPlans[index]);
-        var workParts = countBodyParts(body, WORK);
-
-        if (workParts <= desiredWork && getBodyCost(body) <= energy) {
-            return body;
-        }
-    }
-
-    return null;
+    var generated = require('BodyProfiles').build('Extractor', { energyCapacity: energy, desiredWork: desiredWork, maxWork: desiredWork });
+    return generated && generated.body;
 }
 
 function getThoriumHaulerBodyForEnergyAndCarry(energy, desiredCarryParts) {

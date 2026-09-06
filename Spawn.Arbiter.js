@@ -17,6 +17,34 @@ function normalize(roomName, request, options = {}) {
     const producer = options.producer || request.producer || 'legacy';
     const normalized = { ...request, memory: { ...(request.memory || {}) } };
     normalized.role = normalized.role || normalized.memory.role;
+    const profiles = require('BodyProfiles');
+    const room = Game.rooms[roomName];
+    if (room && normalized.role === 'Tech' && !normalized.memory.controllerEmergency) {
+        const claimed = new Set(HiveMemory.getRoomSpawnMemory(roomName).queue.flatMap(q => q.replacementFor || []));
+        const expiring = (require('HiveMind.Index').get().creepsByHomeRoom.get(roomName) || []).filter(c =>
+            c.memory.role === 'Tech' && !c.spawning && c.ticksToLive <= 150 && c.ticksToLive > 0 && !claimed.has(c.name));
+        const work = expiring.reduce((sum, c) => sum + profiles.metrics(c.body || []).WORK, 0);
+        if (expiring.length && work >= profiles.metrics(normalized.body || []).WORK) {
+            normalized.replacementFor = expiring.map(c => c.name);
+            normalized.deadline = Game.time + Math.min(...expiring.map(c => c.ticksToLive));
+        }
+    }
+    if (room && ['Tech', 'Artificer', 'Freighter', 'Extractor', 'ThoriumHauler', 'Annex', 'ReactorClaimer'].includes(normalized.role)) {
+        const bodyOptions = profiles.requestOptions(room, normalized);
+        // Keep established small-body recovery shapes; scale only meaningful capability.
+        const scale = normalized.replacementFor || normalized.role === 'Extractor' || normalized.role === 'Annex' ||
+            normalized.role === 'Tech' && bodyOptions.desiredWork > 12 ||
+            normalized.role === 'Artificer' && bodyOptions.desiredWork > 6 ||
+            normalized.role === 'Freighter' && bodyOptions.provenRoads;
+        const selected = scale && profiles.build(normalized.role, bodyOptions);
+        if (selected) {
+            normalized.body = selected.body;
+            normalized.bodyProfile = bodyOptions;
+            normalized.bodyReason = selected.reason;
+        }
+    }
+    normalized.bodyMetrics = profiles.metrics(normalized.body || [], normalized.memory);
+    normalized.priority = (normalized.priority || 0) + require('HiveMind.Surplus').requestBias(roomName, normalized);
     normalized.requestId = fingerprint(roomName, normalized, producer);
     normalized.producer = producer;
     normalized.category = normalized.category || normalized.economyCategory || 'unspecified';
@@ -35,6 +63,10 @@ function admit(roomName, request, options = {}) {
         return { ok: false, requested: 0, role: normalized.role, reason: 'invalid normalized request' };
     }
     const context = Context.snapshot(roomName, options.replacementBuffer || 0);
+    const spawnMemory = HiveMemory.getRoomSpawnMemory(roomName);
+    if (!spawnMemory.governor) spawnMemory.governor = {};
+    spawnMemory.governor.nextBody = { role: normalized.role, ...normalized.bodyMetrics,
+        reason: normalized.bodyReason || 'existing capability-bounded role profile' };
     const existing = context.queue.find(item => item && item.requestId === normalized.requestId);
     if (existing) {
         const promoteToGrowthFloor = normalized.memory.controllerGrowthFloor === true &&

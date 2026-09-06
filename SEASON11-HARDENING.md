@@ -1,5 +1,11 @@
 # Season 11 recapture and startup hardening
 
+Restoration note: the subsequent population-capacity preflight found clean main
+at `0183985` contained this report only. The JavaScript changes were absent locally.
+The population-capacity pass restores the behavior below and validates 55 Season
+11 tests, including critical Reactor defense under exhausted optional CPU capacity.
+See `POPULATION-CAPACITY.md` for the combined implementation and validation report.
+
 ## Defense assessment
 
 The old observation counted every non-ally hostile structure except the Reactor.

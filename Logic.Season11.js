@@ -39,7 +39,7 @@ var DEFAULT_CONFIG = {
     maxActiveReactors: 1,
     portfolioInterval: 17,
     maxPortfolioCandidates: 12,
-    minimumStartupReserve: null,
+    minimumStartupReserve: 150,
     maximumStartupReserve: 1000,
     recaptureMode: 'auto',
     maximumRecaptureDefense: 12,
@@ -470,16 +470,25 @@ function observeRoom(room, homeRoomName, force) {
     }
 
     memory.rooms[room.name] = roomIntel;
-    observeReactors(room, hostiles.length, roomIntel.threatParts);
+    observeReactors(room, hostiles.length, roomIntel.threatParts, hostileStructures);
     invalidateDiagnostics();
     return roomIntel;
 }
 
-function observeReactors(room, hostileCount, threatParts) {
+function observeReactors(room, hostileCount, threatParts, observedStructures) {
     var memory = ensureMemory();
     var reactors = safeFind(room, getReactorFindConstant());
     var thoriumType = getThoriumResourceType();
-    var defenseStructures = reactors.length ? safeFind(room, getHostileStructureFindConstant()) : [];
+    var defenseStructures = reactors.length ? observedStructures || safeFind(room, getHostileStructureFindConstant()) : [];
+    var indexed = reactors.length && TickIndex.get().structuresByRoom.get(room.name);
+    var seen = new Set(defenseStructures.map(function(s) { return s.id; }));
+    defenseStructures = defenseStructures.concat((indexed && indexed.get('constructedWall') || []).filter(function(s) { return !seen.has(s.id); }));
+    var harmless = 0;
+    defenseStructures = defenseStructures.filter(function(s) {
+        if (s.my || CombatPolicy.isAlly(s) || reactors.some(function(r) { return r.id === s.id; })) return false;
+        if (['tower', 'rampart', 'constructedWall'].includes(s.structureType)) return true;
+        harmless++; return false;
+    });
 
     for (var i = 0; i < reactors.length; i++) {
         var reactor = reactors[i];
@@ -504,9 +513,10 @@ function observeReactors(room, hostileCount, threatParts) {
         record.continuousWork = Math.max(0, Number(reactor.continuousWork) || 0);
         record.hostileCreeps = hostileCount || 0;
         record.threatParts = threatParts || 0;
-        record.hostileDefenseStructures = defenseStructures.filter(function(structure) {
-            return structure.id !== reactor.id && !CombatPolicy.isAlly(structure);
-        }).length;
+        record.defenseAssessment = Portfolio.assessStructures(defenseStructures, reactor);
+        record.defenseAssessment.harmlessStructures += harmless;
+        record.defenseAssessment.tick = getTime();
+        delete record.hostileDefenseStructures;
         record.reactorThreat = Portfolio.classifyThreat(
             TickIndex.get().hostilesByRoom.get(room.name) || safeFind(room, getHostileCreepFindConstant()),
             reactor, CombatPolicy.isAlly);
@@ -1665,8 +1675,9 @@ function refreshPortfolio(force, cpuPressured) {
         entry.owned = r.my === true; entry.owner = r.owner; entry.continuousWork = r.continuousWork || 0;
         entry.thoriumBuffer = r.thorium || 0; entry.ticksUntilEmpty = Math.max(0, entry.thoriumBuffer - (tick - (r.lastSeen || tick)));
         entry.threat = threat; entry.fresh = fresh; entry.inTransit = cargo[id] || 0;
-        entry.defenseStructures = r.hostileDefenseStructures === undefined ?
-            (memory.rooms[r.roomName] || {}).hostileStructures || 0 : r.hostileDefenseStructures;
+        entry.defenseThreat = r.defenseAssessment ? r.defenseAssessment.totalThreat : 0;
+        entry.defenseReason = r.defenseAssessment ? r.defenseAssessment.reason : 'CLEAR';
+        delete entry.defenseStructures;
         if (rescore) {
             var home = chooseHomeRoom(r.roomName, config.maximumReactorRouteRooms);
             entry.homeRoom = home && home.roomName;
@@ -1806,7 +1817,7 @@ function refreshPortfolio(force, cpuPressured) {
             viable: e.claimReady, throughput: e.allocatedThroughput, reserve: e.reservedThorium,
             startupReserve: required, remaining: remaining,
             enemyDefense: (e.threat.combatThreat || 0) + (e.threat.supportThreat || 0) +
-                e.defenseStructures * 20,
+                e.defenseThreat,
             maximumDefense: config.maximumRecaptureDefense }));
         e.recapture.preparing = !!(e.owner && !e.owned && e.recapture.approved && !e.pipelineReady);
         if (e.recapture.preparing) {
@@ -1826,7 +1837,9 @@ function refreshPortfolio(force, cpuPressured) {
         e.claimReady = e.claimReady && e.pipelineReady;
         // An approved fight still must be won before sending a fragile claimant.
         e.claimReady = e.claimReady && !(e.threat.combatThreat > 0 || e.threat.supportThreat > 0 ||
-            e.threat.claimThreat > 0 || e.defenseStructures > 0);
+            e.threat.claimThreat > 0 || e.defenseThreat > 0);
+        if (e.recapture.approved && !e.owned && e.defenseThreat > 0)
+            e.recapture.reason = 'claim waits for enemy defense clearance: ' + e.defenseReason;
         e.recaptureCooldownUntil = r.recaptureCooldownUntil || 0;
         e.state = e.recapture.preparing ? 'MUSTERING' : e.owner && !e.owned && !e.recapture.approved ? 'RECOVERING' :
             !e.active ? 'HOLD_OFF' : e.owned ? (e.starvationRisk ? 'SUPPLYING' : 'HOLDING') :
@@ -1846,6 +1859,7 @@ function refreshPortfolio(force, cpuPressured) {
         return { reactorId: e.reactorId, roomName: e.roomName, state: e.state, scoreRate: e.scoreRate,
             work: e.continuousWork, fuel: e.ticksUntilEmpty, eta: e.deliveryEta, defense: e.defenseTier,
             claimThreat: e.threat.claimThreat || 0, combatThreat: e.threat.combatThreat || 0,
+            defenseThreat: e.defenseThreat, defenseReason: e.defenseReason,
             recaptureValue: e.recapture.recaptureScore, reason: e.reason, retry: Math.max(0, e.recaptureCooldownUntil - tick) };
     }), activeCount: p.activeReactorIds.length, desiredCount: p.desiredActiveCount,
     throughput: p.sustainableThoriumDeliveryPerTick, sustainableCount: capacity, expansionDeferred: !cpuSafe };

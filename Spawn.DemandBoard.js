@@ -191,6 +191,14 @@ function roomSurvivalReady(room, demand) {
 function bodyForDemand(demand, room) {
     const specified = demand.bodyRequirements && demand.bodyRequirements.body;
     if (Array.isArray(specified) && specified.length) return specified.slice();
+    if (demand.capabilities && demand.role && demand.bodyRequirements && demand.bodyRequirements.scalable === true) {
+        const capability = demand.capabilities;
+        const selected = require('BodyProfiles').build(demand.role, { energyCapacity: room.energyCapacityAvailable,
+            energyAvailable: room.energyAvailable, urgency: demand.emergency ? 'EMERGENCY' : 'NORMAL',
+            desiredWork: capability.work, desiredCarry: capability.carry, desiredClaim: capability.claim,
+            desiredPower: capability.attack || capability.ranged_attack || capability.heal });
+        if (selected) return selected.body;
+    }
     return demand.role ? bodyConfig.getBody(demand.role, room) : null;
 }
 
@@ -241,6 +249,10 @@ function queueDemand(demand, room, count) {
         const result = Arbiter.admit(room.name, {
             role: demand.role,
             body,
+            bodyProfile: demand.bodyRequirements && demand.bodyRequirements.scalable ? {
+                desiredPower: demand.capabilities.attack || demand.capabilities.ranged_attack || demand.capabilities.heal,
+                urgency: demand.emergency ? 'EMERGENCY' : 'NORMAL'
+            } : undefined,
             priority: demand.priority,
             deadline: demand.deadline,
             demandId: demand.id,

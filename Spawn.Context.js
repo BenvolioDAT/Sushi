@@ -73,4 +73,26 @@ function snapshot(roomName, replacementBuffer = 0) {
     };
 }
 
-module.exports = { snapshot, roleOf, healthy, isCombatRole };
+function capability(roomName, role, partType) {
+    const result = { active: 0, spawning: 0, queued: 0 }, seen = new Set();
+    const index = TickIndex.get();
+    for (const creep of index.creepsByHomeRoom.get(roomName) || []) {
+        seen.add(creep.name);
+        if (roleOf(creep) !== role || !healthy(creep, 40)) continue;
+        result[creep.spawning ? 'spawning' : 'active'] += (creep.body || []).filter(p =>
+            (p.type || p) === partType && p.hits !== 0).length;
+    }
+    for (const spawn of index.ownedSpawnsByRoom.get(roomName) || []) {
+        const name = spawn.spawning && spawn.spawning.name;
+        const memory = name && Memory.creeps && Memory.creeps[name];
+        if (name && !seen.has(name) && memory && memory.role === role) {
+            result.spawning += memory.spawnCapability && memory.spawnCapability[partType] || 0;
+            seen.add(name);
+        }
+    }
+    for (const request of HiveMemory.getRoomSpawnMemory(roomName).queue) if (roleOf(request) === role) {
+        result.queued += (request.body || []).filter(p => (p.type || p) === partType).length;
+    }
+    return result;
+}
+module.exports = { snapshot, capability, roleOf, healthy, isCombatRole };

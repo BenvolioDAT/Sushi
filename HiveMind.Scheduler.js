@@ -32,6 +32,10 @@ function shouldRun(taskName, options = {}) {
         run = false;
         reason = 'critical CPU pressure';
     }
+    else if (!emergency && global.__sushiCpuRolling && global.__sushiCpuRolling.total > pressure.limit * 0.83) {
+        run = false;
+        reason = 'rolling full-tick CPU pressure';
+    }
     else if (!dirty && interval > 1 && (Game.time + hash(taskName)) % interval !== 0) {
         run = false;
         reason = 'staggered';

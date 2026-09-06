@@ -832,6 +832,15 @@ function drawGlobalPanel(visual, ownedRoomCount, totalCreeps) {
     drawText(visual, 'Bucket ' + compactNumber(bucket), x + 24.2, y + 0.35, bucketColor, 0.6);
     drawText(visual, 'Rooms ' + ownedRoomCount, x + 33, y + 0.35, COLORS.text, 0.6);
     drawText(visual, 'Creeps ' + totalCreeps, x + 41, y + 0.35, COLORS.text, 0.6);
+    var capacity = Memory.hive && Memory.hive.capacity;
+    var utilization = Memory.hive && Memory.hive.telemetry && Memory.hive.telemetry.populationRoles || {};
+    var useText = ['Freighter', 'Tech', 'Artificer'].map(function(role) {
+        return role[0] + ' ' + (utilization[role] ? Math.round(utilization[role].utilization * 100) : '-');
+    }).join(' ');
+    if (capacity) drawText(visual, 'CAP ' + capacity.mode + ' | rolling CPU ' + round(capacity.cpu.rollingUsed, 1) +
+        '/' + round(capacity.cpu.targetCeiling, 1) + ' of ' + capacity.cpu.limit + ' | Spawn repl ' +
+        Math.round(capacity.spawn.replacementLoad / Math.max(1, capacity.spawn.count) * 100) + '% (' +
+        capacity.spawn.count + ' spawns) | Use ' + useText, x, y + 1.05, COLORS.text, 0.5);
 }
 
 function drawRoomPanel(visual, room, sourceStats, remoteStats, roomCreeps) {
@@ -977,7 +986,9 @@ function drawRoomPanel(visual, room, sourceStats, remoteStats, roomCreeps) {
     drawRow(visual, ['Spawn queue', { text: queue.length, color: queue.length > 3 ? COLORS.warning : COLORS.text }], x, rowY, [7, 4]);
     rowY += LINE_HEIGHT;
     var spawnDecision = roomMemory.spawn && roomMemory.spawn.lastDecision;
-    drawRow(visual, ['Next', queue.role ? truncate(queue.role, 9) + ' ' + queue.bodyCost + 'e' : 'none'], x, rowY, [3.2, 12]);
+    var nextBody = spawnGovernor.nextBody;
+    drawRow(visual, ['Next', nextBody && queue.role ? nextBody.role + ' ' + nextBody.WORK + 'W ' +
+        nextBody.bodyParts + 'p ' + queue.bodyCost + 'e' : queue.role ? truncate(queue.role, 9) + ' ' + queue.bodyCost + 'e' : 'none'], x, rowY, [3.2, 12]);
     rowY += LINE_HEIGHT;
     if (spawnDecision && spawnDecision.tick === Game.time && spawnDecision.idle && spawnDecision.queueLength > 0) {
         drawText(visual, (spawnDecision.selectedRole || 'Queue') + ': ' +
@@ -998,7 +1009,9 @@ function drawRoomPanel(visual, room, sourceStats, remoteStats, roomCreeps) {
         { text: repairCount, color: getBacklogColor(repairCount, 25, 100) }
     ], x, rowY, [3.4, 2.5, 4.2, 3]);
     rowY += LINE_HEIGHT;
-    drawRow(visual, ['Creeps', roomCreeps.total], x, rowY, [4.2, 3]);
+    var capacity = Memory.hive && Memory.hive.capacity && Memory.hive.capacity.rooms[room.name];
+    drawRow(visual, capacity ? ['Pop ' + capacity.mode, roomCreeps.total + '/' + capacity.population.softCap +
+        ' soft | ' + capacity.population.hardSafetyCap + ' hard'] : ['Creeps', roomCreeps.total], x, rowY, [6, 11]);
     rowY += LINE_HEIGHT;
     drawText(
         visual,
@@ -1248,7 +1261,9 @@ function drawSeason11Panel(visual) {
     drawText(
         visual,
         (diagnostics.portfolioDashboard && diagnostics.portfolioDashboard.reactors[0] ?
-            'Defense ' + diagnostics.portfolioDashboard.reactors[0].defense + ' CLAIM ' +
+            (reactor && !reactor.my ? 'DEF ' + (diagnostics.portfolioDashboard.reactors[0].defenseThreat || 0) + ' ' +
+                (diagnostics.portfolioDashboard.reactors[0].defenseReason || 'CLEAR') :
+                'Defense ' + diagnostics.portfolioDashboard.reactors[0].defense) + ' CLAIM ' +
             diagnostics.portfolioDashboard.reactors[0].claimThreat + ' COMBAT ' +
             diagnostics.portfolioDashboard.reactors[0].combatThreat :
             'Owner ' + (reactor && reactor.owner ? truncate(reactor.owner, 11) : 'none')),

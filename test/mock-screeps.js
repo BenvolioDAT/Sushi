@@ -97,6 +97,7 @@ function installGlobals(cpu) {
     delete global.__sushiTrafficIntents;
     delete global.__sushiScheduler;
     delete global.__sushiTelemetry;
+    delete global.__sushiCpuRolling;
     installConstants();
     global.RoomPosition = RoomPosition;
     global.RoomVisual = class { text() { return this; } circle() { return this; } line() { return this; } rect() { return this; } };

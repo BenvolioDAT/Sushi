@@ -3,9 +3,12 @@ const Economy = require('HiveMind.Economy');
 const ColonyState = require('HiveMind.ColonyState');
 const Context = require('Spawn.Context');
 const Bodies = require('role.creepBodyConfig');
+const Capacity = require('HiveMind.Capacity');
 
 function maxCreeps(room, policy) {
     const rcl = room && room.controller && room.controller.level || 1;
+    const capacity = room && Capacity.get().rooms[room.name];
+    if (capacity) return capacity.population.softCap;
     return policy.maxCreepsPerRoomByRcl && policy.maxCreepsPerRoomByRcl[`RCL${rcl}`] || 10;
 }
 
@@ -18,6 +21,11 @@ function isOwnedDefense(request) {
 
 function economyRoleCap(room, role, request, policy) {
     const configured = policy.roleCaps && policy.roleCaps[role];
+    if (['Tech', 'Artificer'].includes(role) && request.maxWorkParts > 0) {
+        const view = Capacity.get().rooms[room.name];
+        return view && ['NORMAL', 'SURPLUS', 'EXPAND'].includes(view.mode) ?
+            Math.max(configured || 0, role === 'Tech' ? 5 : 8) : configured;
+    }
     if (role === 'Annex') {
         const planner = Memory.rooms[room.name] && Memory.rooms[room.name].remotePlanner || {};
         const rooms = new Set((planner.activeSourceIds || []).map(id => (planner.sourceInfos || {})[id])
@@ -111,19 +119,23 @@ function evaluate(room, request, context, options = {}) {
     const survivalBypass = recovery.mandatory || !localEconomicRole &&
         options.emergency === true && options.bypassRoleCap === true && protectedWork;
     const defenseBypass = ownedDefense && request.emergency === true;
+    const seasonId = request.memory && (request.memory.season11ReactorGuard || request.memory.season11ReactorId);
+    const seasonEmergency = seasonId &&
+        HiveMemory.ensure().season && HiveMemory.ensure().season.season11 &&
+        HiveMemory.ensure().season.season11.reactorPortfolio &&
+        HiveMemory.ensure().season.season11.reactorPortfolio.reactors[seasonId];
+    const capacity = Capacity.evaluate(room, request, context, survivalBypass || defenseBypass ||
+        !!(seasonEmergency && seasonEmergency.owned && seasonEmergency.threat && seasonEmergency.threat.claimThreat > 0), options.revalidate);
+    if (!capacity.allowed) return capacity;
     const roleCap = economyRoleCap(room, role, request, policy);
     const ownQueued = options.revalidate && context.queue.includes(request) ? 1 : 0;
     const mandatoryFloorBypass = controllerGrowthFloor && lifecycle && lifecycle.growthAllowed &&
         (context.byRole.Tech || 0) <= (options.revalidate ? 1 : 0) &&
-        context.nonCombatTotal <= maxCreeps(room, policy) + (options.revalidate ? 1 : 0);
-    if (typeof roleCap === 'number' && (context.byRole[role] || 0) - ownQueued >= roleCap && !survivalBypass && !mandatoryFloorBypass) {
+        context.nonCombatTotal <= (policy.maxCreepsPerRoomByRcl['RCL' + room.controller.level] || 10) + (options.revalidate ? 1 : 0);
+    if (typeof roleCap === 'number' && (context.byRole[role] || 0) - ownQueued - (capacity.replacementCount || 0) >= roleCap && !survivalBypass && !mandatoryFloorBypass) {
         return { allowed: false, reason: 'role cap reached' };
     }
-    if (!Context.isCombatRole(role) && context.nonCombatTotal - ownQueued >= maxCreeps(room, policy) +
-        (['Extractor', 'Freighter'].includes(role) ? Math.max(0, roleCap - (policy.roleCaps && policy.roleCaps[role] || roleCap)) : 0) &&
-        !survivalBypass && !mandatoryFloorBypass) {
-        return { allowed: false, reason: 'room creep cap reached' };
-    }
+    // Capacity owns the population ceiling; RCL remains a baseline and role guardrail.
     if (!options.revalidate && context.queue.length >= policy.maxQueueLengthPerRoom && !survivalBypass && !defenseBypass) {
         return { allowed: false, reason: 'spawn queue full' };
     }

@@ -34,11 +34,20 @@ function finish() {
     telemetry.total = Math.max(0, getUsed() - telemetry.start);
     telemetry.bucket = Game.cpu && Game.cpu.bucket;
     telemetry.mode = cpuStatus.persistCurrent().mode;
+    // Heap EMA uses every completed tick; occasional Memory persistence survives resets.
+    const previous = global.__sushiCpuRolling || HiveMemory.ensure().telemetry.cpu || { samples: 0, phases: {} };
+    const phases = {};
+    for (const name of new Set([...Object.keys(previous.phases || {}), ...Object.keys(telemetry.phases)])) {
+        phases[name] = (previous.phases[name] || 0) * 0.9 + (telemetry.phases[name] || 0) * 0.1;
+    }
+    global.__sushiCpuRolling = { tick: Game.time, samples: Math.min(1000, previous.samples + 1),
+        total: previous.samples ? previous.total * 0.9 + telemetry.total * 0.1 : telemetry.total,
+        phases, bucket: telemetry.bucket, mode: telemetry.mode };
     sampleControllerProgress();
 
     const settings = HiveMemory.getConfig('cpu').telemetry;
     const interval = Math.max(10, settings.persistInterval || 100);
-    if (Game.time % interval === 0) persistRolling(telemetry);
+    if (Game.time % interval === 0) HiveMemory.ensure().telemetry.cpu = global.__sushiCpuRolling;
     if (settings.debug === true) {
         console.log('Sushi CPU', JSON.stringify(getView()));
     }
@@ -76,25 +85,6 @@ function sampleControllerProgress() {
         current.rollingRate = Math.round(current.rollingRate * 100) / 100;
         telemetryMemory.growth[roomName] = current;
     }
-}
-
-function persistRolling(telemetry) {
-    const telemetryMemory = HiveMemory.ensure().telemetry;
-    const previous = telemetryMemory.cpu || { samples: 0, phases: {} };
-    const samples = Math.min(1000, (previous.samples || 0) + 1);
-    const alpha = Math.max(0.05, 1 / samples);
-    const phases = { ...(previous.phases || {}) };
-    for (const [name, value] of Object.entries(telemetry.phases)) {
-        phases[name] = phases[name] === undefined ? value : phases[name] + ((value - phases[name]) * alpha);
-    }
-    telemetryMemory.cpu = {
-        tick: telemetry.tick,
-        samples,
-        total: previous.total === undefined ? telemetry.total : previous.total + ((telemetry.total - previous.total) * alpha),
-        bucket: telemetry.bucket,
-        mode: telemetry.mode,
-        phases
-    };
 }
 
 function getView() {
@@ -158,4 +148,29 @@ function getView() {
     };
 }
 
-module.exports = { startTick, measure, finish, getView, sampleControllerProgress };
+function samplePopulation(samples) {
+    const memory = HiveMemory.ensure().telemetry;
+    const roles = memory.populationRoles || (memory.populationRoles = {});
+    const rooms = memory.populationRooms || (memory.populationRooms = {});
+    const update = (previous, value) => ({ cpu: previous ? previous.cpu * 0.8 + value.cpu * 0.2 : value.cpu,
+        utilization: previous ? previous.utilization * 0.8 + value.utilization * 0.2 : value.utilization,
+        samples: Math.min(1000, (previous && previous.samples || 0) + 1), tick: Game.time });
+    const totals = {};
+    for (const [roomName, byRole] of Object.entries(samples)) {
+        if (!rooms[roomName]) rooms[roomName] = {};
+        for (const [role, value] of Object.entries(byRole)) {
+            rooms[roomName][role] = update(rooms[roomName][role], { cpu: value.cpu / value.count,
+                utilization: value.active / value.count });
+            const total = totals[role] || (totals[role] = { cpu: 0, active: 0, count: 0 });
+            total.cpu += value.cpu; total.active += value.active; total.count += value.count;
+        }
+    }
+    for (const [role, value] of Object.entries(totals)) roles[role] = update(roles[role], {
+        cpu: value.cpu / value.count, utilization: value.active / value.count });
+    for (const roomName of Object.keys(rooms)) {
+        if (!Game.rooms[roomName] || !Game.rooms[roomName].controller || !Game.rooms[roomName].controller.my) delete rooms[roomName];
+        else for (const role of Object.keys(rooms[roomName])) if (Game.time - rooms[roomName][role].tick > 1500) delete rooms[roomName][role];
+    }
+    for (const role of Object.keys(roles)) if (Game.time - roles[role].tick > 1500) delete roles[role];
+}
+module.exports = { startTick, measure, finish, getView, sampleControllerProgress, samplePopulation };

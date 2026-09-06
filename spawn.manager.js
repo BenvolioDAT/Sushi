@@ -65,7 +65,15 @@ function selectAffordableQueuedBodyForSpawn(spawn, request) {
     var energyAvailable = spawn.room.energyAvailable;
     var bestBody;
 
-    if (request.role === 'Extractor') {
+    if (request.bodyProfile && request.role !== 'Extractor') {
+        var profile = Object.assign({}, request.bodyProfile, { energyCapacity: energyAvailable,
+            energyAvailable: energyAvailable });
+        if (request.role === 'Tech' && spawn.room.controller && spawn.room.controller.ticksToDowngrade < 5000)
+            profile.urgency = 'EMERGENCY';
+        var selected = require('BodyProfiles').build(request.role, profile);
+        bestBody = selected && selected.body;
+    }
+    else if (request.role === 'Extractor') {
         var requestedExtractorWork = request.requestedWorkParts ||
             request.maxWorkParts || countBodyParts(request.body, WORK);
         bestBody = creepBodyConfig.getExtractorBodyForAvailableEnergy(
@@ -131,6 +139,7 @@ function selectAffordableQueuedBodyForSpawn(spawn, request) {
     var newCost = getBodyCost(bestBody);
 
     request.body = bestBody;
+    request.bodyMetrics = require('BodyProfiles').metrics(bestBody, request.memory || {});
 
     return {
         changed: oldCost !== newCost,
@@ -599,6 +608,8 @@ function runRoomInternal(roomName, decision) {
         }
     }
     if (request.role === 'Extractor') request.memory.extractorSpawnWorkParts = countBodyParts(request.body, WORK);
+    request.memory.spawnCapability = { work: countBodyParts(request.body, WORK), carry: countBodyParts(request.body, CARRY),
+        claim: countBodyParts(request.body, CLAIM) };
     if (request.role === 'Freighter') request.memory.freighterSpawnCarryParts = countBodyParts(request.body, CARRY);
 
     /*

@@ -31,7 +31,7 @@ var RESERVE_DESIRED_TICKS = 4000;
 var RESERVE_SPAWN_AT_TICKS = 2500;
 var TECH_DOWNGRADE_DANGER_TICKS = 5000;
 var TECH_BASE_MAX_DESIRED_WORK = 24;
-var TECH_MAX_DESIRED_WORK = 36;
+var TECH_MAX_DESIRED_WORK = 60;
 var TECH_RCL8_MAX_WORK = 15;
 var TECH_ABSOLUTE_CREEP_CAP = 5;
 var MANDATORY_FLOOR_CAP_ALLOWANCE = 1;
@@ -641,6 +641,8 @@ function buildRoomPlanningContext(room, roomIndex, skipNormalPlanning) {
 }
 
 function getMaxCreepsForRoom(room, policy) {
+    var capacity = require('HiveMind.Capacity').get().rooms[room.name];
+    if (capacity) return capacity.population.softCap;
     var level = room && room.controller ? (room.controller.level || 1) : 1;
     var key = 'RCL' + level;
     var maxByRcl = policy.maxCreepsPerRoomByRcl || {};
@@ -1210,6 +1212,9 @@ function getDesiredTechWork(room) {
         desiredWork = Math.min(desiredWork, economicWorkCap);
     }
     desiredWork = Math.max(level < 8 ? 1 : 0, Math.min(desiredWork, TECH_MAX_DESIRED_WORK));
+    var capacity = require('HiveMind.Capacity').get().rooms[room.name];
+    var surplus = require('HiveMind.Surplus').plan(room, economy, capacity);
+    desiredWork = Math.max(desiredWork, Math.min(TECH_MAX_DESIRED_WORK, surplus.techWork));
 
     /* RCL 8 controllers accept at most 15 normal upgrade energy per tick. */
     if (level === 8) {
@@ -1387,14 +1392,17 @@ function getTechWorkDemand(room) {
     }
 
     var desiredWork = getDesiredTechWork(room);
-    var livingWork = countLivingRoleWork(room.name, 'Tech');
-    var queuedWork = countQueuedRoleWork(room.name, 'Tech');
+    var capability = SpawnContext.capability(room.name, 'Tech', WORK);
+    var livingWork = capability.active;
+    var queuedWork = capability.queued;
+    ensureRoomMemory(room.name).techSpawningWork = capability.spawning;
 
     return {
         desiredWork: desiredWork,
         livingWork: livingWork,
         queuedWork: queuedWork,
-        missingWork: Math.max(0, desiredWork - livingWork - queuedWork)
+        spawningWork: capability.spawning,
+        missingWork: Math.max(0, desiredWork - livingWork - capability.spawning - queuedWork)
     };
 }
 
@@ -3908,7 +3916,33 @@ function runEmergencyPlanning(room, report, context) {
         report.requests.push(requestEmergencyTechForRoom(room));
     }
 
+    if (Game.time % 5 === 0) {
+        var replacement = requestConsolidatingTech(room);
+        if (replacement) report.requests.push(replacement);
+    }
     report.defense = requestDefendersForRoom(room, context);
+}
+
+function requestConsolidatingTech(room) {
+    var cpu = cpuStatusUtility.getCpuStatus();
+    var rolling = global.__sushiCpuRolling || HiveMemory.ensure().telemetry.cpu || {};
+    if (cpu.mode === 'critical' || cpu.bucket < 1800 ||
+        cpu.mode !== 'low' && !(rolling.total > cpu.limit * 0.83) ||
+        !Economy.canSpend(room.name, 'upgradeSurplus') || countQueuedRequests(room.name, 'Tech') > 0) return null;
+    var units = (TickIndex.get().creepsByHomeRoom.get(room.name) || []).filter(function(c) {
+        return c.memory.role === 'Tech' && !c.spawning;
+    });
+    var expiring = 0, lasting = 0;
+    units.forEach(function(c) {
+        var work = getCreepActiveBodyParts(c, WORK);
+        if (c.ticksToLive <= 150) expiring += work; else lasting += work;
+    });
+    var desired = Math.min(room.controller.level === 8 ? 15 : TECH_MAX_DESIRED_WORK,
+        ensureRoomMemory(room.name).techDesiredWork || 0);
+    var missing = Math.max(0, Math.min(expiring, desired - lasting));
+    if (!missing) return null;
+    return requestTechWorkForRoom(room, { desiredWork: desired, livingWork: lasting,
+        queuedWork: 0, missingWork: missing });
 }
 
 function cleanDefenseQueue(roomName, demand) {
@@ -3960,10 +3994,17 @@ function requestDefendersForRoom(room, context) {
     };
     function emitDefenseRole(role, count, priority) {
         if (count <= 0) return null;
+        var partType = role === 'Cleric' ? 'heal' : role === 'Ronin' ? 'attack' : 'ranged_attack';
+        var partPower = role === 'Cleric' ? 12 : role === 'Ronin' ? 30 : 10;
+        var requestedPower = Math.ceil((role === 'Cleric' ? demand.requiredHealing : demand.requiredDamage) / count / partPower);
+        var existingBody = creepBodyConfig.getBody(role, room);
+        var scaleBody = requestedPower > countBodyParts(existingBody, partType);
         return DemandBoard.emit({
             id: demand.operationId + ':' + role,
             operationId: demand.operationId,
             role: role,
+            capabilities: scaleBody ? { [partType]: requestedPower } : null,
+            bodyRequirements: scaleBody ? { scalable: true } : null,
             count: count,
             priority: priority,
             originRoom: room.name,
@@ -4004,7 +4045,8 @@ function saveSpawnGovernorDebug(context) {
     var floorQueued = governorContext.queue.some(function(request) {
         return request && request.memory && request.memory.controllerGrowthFloor === true;
     });
-    HiveMemory.getRoomSpawnMemory(context.roomName).governor = {
+    var savedGovernor = HiveMemory.getRoomSpawnMemory(context.roomName).governor || {};
+    HiveMemory.getRoomSpawnMemory(context.roomName).governor = Object.assign(savedGovernor, {
         tick: Game.time,
         fullPlan: context.fullPlan,
         skippedForCpu: context.skippedForCpu,
@@ -4019,7 +4061,7 @@ function saveSpawnGovernorDebug(context) {
         queueLength: context.queue ? context.queue.length : 0,
         maxQueueLength: policy.maxQueueLengthPerRoom,
         denied: context.denied
-    };
+    });
 }
 
 function countQueuedSeason11Assignment(roomName, assignmentKey) {
@@ -4326,6 +4368,7 @@ module.exports = {
     getOwnedSpawnRooms: getOwnedSpawnRooms,
     requestRoleForRoom: requestRoleForRoom,
     requestTechWorkForRoom: requestTechWorkForRoom,
+    requestConsolidatingTech: requestConsolidatingTech,
     getTechWorkDemand: getTechWorkDemand,
     getArtificerBuildDemand: getArtificerBuildDemand,
     saveArtificerDemandDebug: saveArtificerDemandDebug,

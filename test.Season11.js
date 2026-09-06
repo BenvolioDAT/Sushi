@@ -62,6 +62,7 @@ function resetWorld() {
     Season11Operations.resetForTests();
     delete global.__sushiDemandBoard;
     delete global.__sushiTickIndex;
+    delete global.__sushiCpuRolling;
     delete global.__sushiResourceJobs;
 }
 
@@ -996,7 +997,7 @@ test('critical run refreshes every visible Reactor under low CPU, excluding the 
     Game.map.findRoute = function() { throw new Error('unexpected optional route work'); };
     Season11.run();
     assert.strictEqual(memory.reactors.R0.my, false);
-    assert.strictEqual(memory.reactors.R0.hostileDefenseStructures, 0);
+    assert.strictEqual(memory.reactors.R0.defenseAssessment.totalThreat, 0);
     assert.strictEqual(memory.reactors.R1.thorium, 0);
     assert.strictEqual(memory.reactors.R1.lastSeen, Game.time);
     assert.strictEqual(memory.reactorPortfolio.reactors.R1.starvationRisk, true);
@@ -1013,6 +1014,79 @@ test('primary Reactor ETA ignores another Reactor cargo and empty returning haul
     });
     Season11.resetCacheForTests();
     assert.strictEqual(Season11.getDiagnostics().nextDeliveryEta, 80);
+});
+
+test('hardening A/J observed theft ignores harmless structures and prepares a live claimant pipeline', function() {
+    var memory = portfolioWorld(2, 1).memory;
+    var reactor = { id: 'R0', my: false, owner: { username: 'Enemy' }, pos: { x: 25, y: 25 }, store: { T: 0 } };
+    var structures = Array.from({ length: 10 }, function(_, i) { return { id: 'extension' + i, structureType: 'extension' }; });
+    ['storage', 'terminal', 'link', 'extractor', 'lab', 'spawn'].forEach(function(type) { structures.push({ id: type, structureType: type }); });
+    Game.rooms.W30N1.find = function(type) { return type === FIND_REACTORS ? [reactor] : type === FIND_HOSTILE_STRUCTURES ? structures : []; };
+    Season11.observeRoom(Game.rooms.W30N1, 'W1N1', true);
+    assert.strictEqual(memory.reactors.R0.priorContinuousWork, 950);
+    assert.strictEqual(memory.reactors.R0.defenseAssessment.totalThreat, 0);
+    require('./Combat.Policy').setClassification('Enemy', 'hostile');
+    Season11.refreshPortfolio(true);
+    assert.strictEqual(memory.reactorPortfolio.reactors.R0.recapture.preparing, true);
+    staffPipeline(memory, 'R0'); Season11.refreshPortfolio(true);
+    assert.strictEqual(memory.reactorPortfolio.reactors.R0.claimReady, true);
+    assert.ok(Season11.getSpawnPlanForRoom(Game.rooms.W1N1).some(function(p) { return p.role === 'ReactorClaimer'; }));
+});
+test('hardening B/C/D towers and local barriers count; distant, public and allied barriers do not', function() {
+    var reactor = { id: 'R', pos: { x: 25, y: 25 } };
+    function assess(type, x, extra) { return Portfolio.assessStructures([Object.assign({ id: 'S', structureType: type,
+        pos: { x: x, y: x }, store: { energy: 100 } }, extra || {})], reactor); }
+    assert.strictEqual(assess('tower', 25).totalThreat, 20);
+    assert.strictEqual(assess('tower', 1).totalThreat, 5);
+    assert.strictEqual(assess('tower', 25, { store: { energy: 0 } }).totalThreat, 0);
+    assert.strictEqual(assess('tower', 25, { isActive: function() { return false; } }).totalThreat, 0);
+    ['rampart', 'constructedWall'].forEach(function(type) {
+        assert.strictEqual(assess(type, 24).totalThreat, 15);
+        assert.strictEqual(assess(type, 1).totalThreat, 0);
+    });
+    assert.strictEqual(assess('rampart', 25, { isPublic: true }).totalThreat, 0);
+    assert.strictEqual(Portfolio.assessStructures([{ id: 'ally', structureType: 'tower' }], reactor, function() { return true; }).totalThreat, 0);
+});
+test('hardening indexed unowned walls reject staffed AUTO recapture with a barrier reason', function() {
+    var memory = portfolioWorld(2, 1).memory;
+    var reactor = { id: 'R0', owner: { username: 'Enemy' }, pos: { x: 25, y: 25 }, store: { T: 0 } };
+    var wall = { id: 'wall', structureType: 'constructedWall', pos: { x: 24, y: 25 } };
+    Game.rooms.W30N1.find = function(type) { return type === FIND_REACTORS ? [reactor] : type === FIND_STRUCTURES ? [wall] : []; };
+    Season11.observeRoom(Game.rooms.W30N1, 'W1N1', true);
+    require('./Combat.Policy').setClassification('Enemy', 'hostile');
+    staffPipeline(memory, 'R0'); Season11.refreshPortfolio(true);
+    var entry = memory.reactorPortfolio.reactors.R0;
+    assert.strictEqual(entry.claimReady, false); assert.ok(entry.reason.includes('BARRIER'));
+});
+test('hardening E/F/G/H dynamic defaults, legacy null, long/infeasible routes and malformed numbers', function() {
+    resetWorld(); var config = Season11.ensureMemory().config;
+    assert.strictEqual(config.minimumStartupReserve, 150);
+    [150, null].forEach(function(min) {
+        config.minimumStartupReserve = min;
+        assert.strictEqual(Portfolio.startupReserve({ deliveryEta: 25, replacementDelay: 30, roundTrip: 60, reliability: 1 }, config).reserve, 211);
+    });
+    assert.strictEqual(Portfolio.startupReserve({ deliveryEta: 250, replacementDelay: 150, roundTrip: 500, reliability: 0.9 }, config).reserve, 650);
+    assert.strictEqual(Portfolio.startupReserve({ deliveryEta: 1500 }, config).feasible, false);
+    [NaN, Infinity, -Infinity, -1, 1e308, 'bad', null].forEach(function(value) {
+        var result = Portfolio.startupReserve({ deliveryEta: value, replacementDelay: value, roundTrip: value,
+            reliability: value, defenseRisk: value }, { minimumStartupReserve: value, maximumStartupReserve: value });
+        Object.values(result).filter(function(v) { return typeof v === 'number'; }).forEach(function(v) { assert.ok(Number.isFinite(v) && v >= 0); });
+        assert.ok(result.maximum >= result.minimum);
+    });
+});
+test('capacity T critical owned Reactor CLAIM defense survives exhausted optional CPU capacity', function() {
+    var memory = portfolioWorld(2, 1).memory;
+    Season11.refreshPortfolio(true);
+    memory.reactors.R0.reactorThreat = { claimThreat: 60, combatThreat: 0, supportThreat: 0 };
+    Season11.refreshPortfolio(false); Season11Operations.run(Season11.getDiagnostics());
+    var operation = Memory.hive.operations['season11:reactor:R0'];
+    var guard = operation.spawnDemands.find(function(d) { return d.memory && d.memory.season11ReactorGuard; });
+    assert.ok(guard);
+    Memory.hive.telemetry.cpu = { total: 90, samples: 20, phases: {} };
+    var request = { role: guard.role, body: guard.bodyRequirements.body, economyCategory: guard.economyCategory,
+        memory: Object.assign({ role: guard.role, homeRoom: 'W1N1' }, guard.memory) };
+    var result = require('./Spawn.Arbiter').admit('W1N1', request);
+    assert.strictEqual(result.ok, true, result.reason);
 });
 
 console.log('Season 11 tests passed: ' + passed);

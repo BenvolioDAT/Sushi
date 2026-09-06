@@ -1,5 +1,26 @@
 /* Compact policy math. No seasonal globals or live objects are retained here. */
 const Utility = require('HiveMind.Utility');
+const CombatMath = require('Combat.Math');
+
+function assessStructures(structures, reactor, isAlly = () => false) {
+    const result = { totalThreat: 0, towers: 0, relevantRamparts: 0, relevantWalls: 0,
+        harmlessStructures: 0, reason: 'CLEAR' };
+    for (const s of structures || []) {
+        if (!s || s.id === reactor.id || s.my || isAlly(s)) continue;
+        const range = s.pos && reactor.pos ? Math.max(Math.abs(s.pos.x - reactor.pos.x),
+            Math.abs(s.pos.y - reactor.pos.y)) : Infinity;
+        if (s.structureType === 'tower' && (!s.isActive || s.isActive()) && (!s.store || s.store.energy >= 10)) {
+            result.towers++;
+            result.totalThreat += Math.ceil(CombatMath.towerDamage(s, reactor) / 30);
+        } else if (range <= 2 && (s.structureType === 'constructedWall' || s.structureType === 'rampart' && !s.isPublic)) {
+            result[s.structureType === 'rampart' ? 'relevantRamparts' : 'relevantWalls']++;
+            result.totalThreat += 15;
+        } else result.harmlessStructures++;
+    }
+    const barriers = result.relevantRamparts + result.relevantWalls;
+    result.reason = result.towers ? (barriers ? 'TOWER+BARRIER' : 'TOWER') : barriers ? 'BARRIER' : 'CLEAR';
+    return result;
+}
 
 function continuity(work, horizon = 1000) {
     work = Math.max(0, Math.floor(Number(work) || 0));
@@ -44,15 +65,15 @@ function classifyThreat(creeps, reactor, isAlly = () => false) {
 }
 
 function startupReserve(pipeline, config) {
-    const minimum = Math.max(config.reactorSafetyStock || 0,
-        config.minimumStartupReserve == null ? config.startupReserve || 500 : config.minimumStartupReserve);
-    const maximum = Math.max(minimum, config.maximumStartupReserve || 1000);
-    const eta = Math.max(0, pipeline.deliveryEta || 0);
-    const replacement = Math.max(0, pipeline.replacementDelay || 0);
-    const jitter = Math.ceil((pipeline.roundTrip || eta * 2) *
-        (0.1 + (1 - (pipeline.reliability == null ? 1 : pipeline.reliability))));
-    const required = Math.ceil(eta + replacement + jitter + (config.reactorSafetyStock || 0) +
-        (pipeline.defenseRisk || 0));
+    pipeline = pipeline || {}; config = config || {};
+    const safe = (v, fallback) => Number(v) === Infinity ? 1e12 : v == null || !Number.isFinite(Number(v)) ?
+        fallback : Math.min(1e12, Math.max(0, Number(v)));
+    const safety = safe(config.reactorSafetyStock, 150);
+    const minimum = Math.max(safety, safe(config.minimumStartupReserve, 150));
+    const maximum = Math.max(minimum, safe(config.maximumStartupReserve, 1000));
+    const eta = safe(pipeline.deliveryEta, 0), replacement = safe(pipeline.replacementDelay, 0);
+    const jitter = Math.ceil(safe(pipeline.roundTrip, eta * 2) * (0.1 + (1 - Math.min(1, safe(pipeline.reliability, 1)))));
+    const required = Math.ceil(eta + replacement + jitter + safety + safe(pipeline.defenseRisk, 0));
     return { reserve: Math.min(maximum, Math.max(minimum, required)), required,
         feasible: required <= maximum, minimum, maximum, eta, replacement, jitter };
 }
@@ -90,7 +111,7 @@ function recapture(context) {
     else if (!c.combatReady) reason = 'claimant and defense capability unavailable';
     else if (!c.viable || c.throughput < 1 || c.reserve < c.startupReserve) reason = 'pipeline or startup reserve insufficient';
     else if (c.remaining < Math.max(1500, c.startupReserve * 2)) reason = 'remaining finite supply too low';
-    else if (c.enemyDefense > (c.maximumDefense || 12)) reason = 'enemy defense exceeds Season combat budget';
+    else if (c.enemyDefense > (c.maximumDefense || 12)) reason = 'enemy defense exceeds Season combat budget: ' + (c.defenseReason || 'CREEPS');
     else if (c.continuityValue < 45 || utility.total < 35) reason = 'recapture cost exceeds current score value';
     return { approved: reason.startsWith('approved:'), reason,
         recaptureValue: utility.components.expectedValue + utility.components.strategicValue,
@@ -120,5 +141,5 @@ function reserveFuel(ledger, stagingId, reactorId, available, requested) {
     return granted;
 }
 
-module.exports = { continuity, classifyThreat, startupReserve, defense, recapture,
+module.exports = { continuity, classifyThreat, assessStructures, startupReserve, defense, recapture,
     sustainableCount, fuelOrder, reserveFuel };
