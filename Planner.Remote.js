@@ -1790,6 +1790,16 @@ function selectActiveSources(homeRoomName) {
     });
 
     var levelCap = getEffectiveRemoteSourceCap(homeRoom, economy);
+    // Consume the demand pass snapshot without triggering another room/index scan.
+    var investment = Memory.rooms[homeRoomName].surplus;
+    if (!investment || Game.time - investment.tick > 25) investment = { allocations: [] };
+    // Only the existing ranked, safe candidates can consume a funded bootstrap slot.
+    var fundedBootstrap = candidates.some(function(candidate) {
+        return investment.allocations.some(function(a) {
+            return a.id === 'remoteBootstrap:' + candidate.sourceId && a.allocated >= a.demand;
+        });
+    });
+    if (fundedBootstrap && investment.mode === 'DRAWDOWN' && levelCap > MAX_ACTIVE_REMOTE_SOURCES) levelCap++;
     var previousActive = selectedBefore.filter(function(id) {
         return candidates.some(function(candidate) { return candidate.sourceId === id; });
     });

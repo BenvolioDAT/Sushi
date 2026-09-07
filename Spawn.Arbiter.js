@@ -19,10 +19,11 @@ function normalize(roomName, request, options = {}) {
     normalized.role = normalized.role || normalized.memory.role;
     const profiles = require('BodyProfiles');
     const room = Game.rooms[roomName];
-    if (room && normalized.role === 'Tech' && !normalized.memory.controllerEmergency) {
+    if (room && ['Tech', 'Artificer'].includes(normalized.role) && !normalized.memory.controllerEmergency) {
         const claimed = new Set(HiveMemory.getRoomSpawnMemory(roomName).queue.flatMap(q => q.replacementFor || []));
         const expiring = (require('HiveMind.Index').get().creepsByHomeRoom.get(roomName) || []).filter(c =>
-            c.memory.role === 'Tech' && !c.spawning && c.ticksToLive <= 150 && c.ticksToLive > 0 && !claimed.has(c.name));
+            c.memory.role === normalized.role && !c.spawning && c.ticksToLive <= 150 && c.ticksToLive > 0 && !claimed.has(c.name) &&
+            (normalized.role === 'Tech' || c.memory.artificerWorkCategory === normalized.economyCategory));
         const work = expiring.reduce((sum, c) => sum + profiles.metrics(c.body || []).WORK, 0);
         if (expiring.length && work >= profiles.metrics(normalized.body || []).WORK) {
             normalized.replacementFor = expiring.map(c => c.name);

@@ -23,8 +23,20 @@ function economyRoleCap(room, role, request, policy) {
     const configured = policy.roleCaps && policy.roleCaps[role];
     if (['Tech', 'Artificer'].includes(role) && request.maxWorkParts > 0) {
         const view = Capacity.get().rooms[room.name];
-        return view && ['NORMAL', 'SURPLUS', 'EXPAND'].includes(view.mode) ?
-            Math.max(configured || 0, role === 'Tech' ? 5 : 8) : configured;
+        const settings = require('HiveMind.Surplus').config();
+        const dynamic = HiveMemory.getConfig('surplus').dynamicRoleCaps !== false;
+        const target = role === 'Tech' ? Math.min(room.controller.level === 8 ? 15 : settings.techMaxWork,
+            (Memory.rooms[room.name] || {}).techDesiredWork || 0) : (Memory.rooms[room.name] || {}).artificerDesiredWork || 0;
+        const profile = require('BodyProfiles').build(role, { energyCapacity: room.energyCapacityAvailable, desiredWork: target });
+        const needed = profile ? Math.ceil(target / Math.max(1, profile.WORK)) : 0;
+        const effective = dynamic && view && ['NORMAL', 'SURPLUS', 'EXPAND'].includes(view.mode) ?
+            Math.max(configured || 0, role === 'Tech' ? 5 : 8, needed) : configured;
+        const governor = HiveMemory.getRoomSpawnMemory(room.name).governor ||
+            (HiveMemory.getRoomSpawnMemory(room.name).governor = {});
+        if (!governor.roleCaps) governor.roleCaps = {};
+        governor.roleCaps[role] = { configured, effective, source: 'persisted configuration; provenance unknown',
+            reason: effective !== configured ? 'dynamic healthy-room capability cap' : 'configured cap', dynamic };
+        return effective;
     }
     if (role === 'Annex') {
         const planner = Memory.rooms[room.name] && Memory.rooms[room.name].remotePlanner || {};

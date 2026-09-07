@@ -102,11 +102,11 @@ function calculateRoom(input, settings = DEFAULTS) {
         20 + rcl * 4 + spawn.count * 20 + Math.floor(cpu.limit / 5)));
     const reason = !energy.healthy ? 'ECONOMY_RECOVERY' : cpu.mode === 'critical' || cpu.bucket < 4000 || cpu.headroom <= 0 ?
         'CPU_CAPACITY_EXHAUSTED' : spawn.headroom <= 0 ? 'SPAWN_LOAD_HIGH' :
-        energy.known !== false && (energy.aboveReserve <= 0 || energy.trend < -1 || energy.sustainableNetIncome <= 0) ? 'ENERGY_BELOW_RESERVE' :
+        energy.known !== false && (energy.aboveReserve <= 0 || (energy.trend < -1 || energy.sustainableNetIncome <= 0) && !energy.drawdownSpend) ? 'ENERGY_BELOW_RESERVE' :
         input.threat ? 'DEFENSE_EMERGENCY' : 'CAPACITY_AVAILABLE';
     const available = reason === 'CAPACITY_AVAILABLE';
     const slots = available ? Math.max(0, Math.floor(Math.min(cpu.share / 0.2, spawn.headroom / 0.05,
-        energy.sustainableNetIncome / 0.5, energy.aboveReserve / 1000))) : 0;
+        (energy.sustainableNetIncome + (energy.drawdownSpend || 0)) / 0.5, energy.aboveReserve / 1000))) : 0;
     const softCap = Math.min(hard, available ? Math.max(population.baseline, population.current + slots) :
         Math.max(population.mandatory, population.current - Math.max(1, Math.ceil(population.discretionary * 0.25))));
     const mode = !energy.healthy ? 'RECOVERY' : !available ? 'CONSERVE' : energy.aboveReserve > 100000 ?
@@ -153,6 +153,8 @@ function get(force = false) {
             energy: { known: Number.isFinite(growth.storedEnergy), stored: safe(growth.storedEnergy), reserve: safe(growth.reserveTarget),
                 aboveReserve: safe(growth.energyAboveReserve), grossIncome: safe(growth.localGrossIncome) + safe(growth.remoteGrossIncome),
                 sustainableNetIncome: safe(growth.estimatedNetIncome), trend: economy.energyTrend || 0,
+                drawdownSpend: require('HiveMind.Surplus').drawdown(growth, Memory.rooms[room.name].surplus,
+                    !['SURVIVAL', 'RECOVERY'].includes(economy.state) && growth.mode !== 'RECOVERY').extraSpendPerTick,
                 healthy: !['SURVIVAL', 'RECOVERY'].includes(economy.state) && growth.mode !== 'RECOVERY' },
             population: { current: creeps.length, mandatory, economic: classes.ECONOMIC || 0,
                 discretionary: creeps.length - mandatory, baseline, classes },
@@ -183,9 +185,10 @@ function evaluate(room, request, context, mandatory, revalidate) {
     const queuedCpu = queue.reduce((sum, q) => sum + roleCpu(q.role), 0) + committed.cpu;
     const metrics = Bodies.metrics(request.body || [], request.memory || {});
     const claimed = new Set(queue.flatMap(q => q.replacementFor || []));
-    const replacing = role === 'Tech' ? (request.replacementFor || []).map(name => Game.creeps[name]).filter(c =>
+    const replacing = ['Tech', 'Artificer'].includes(role) ? (request.replacementFor || []).map(name => Game.creeps[name]).filter(c =>
         c && c.memory.role === role && c.memory.homeRoom === room.name && !claimed.has(c.name) &&
-        c.ticksToLive > 0 && c.ticksToLive <= 150) : [];
+        c.ticksToLive > 0 && c.ticksToLive <= 150 &&
+        (role === 'Tech' || c.memory.artificerWorkCategory === request.economyCategory)) : [];
     const replacementWork = replacing.reduce((sum, c) => sum + Bodies.metrics(c.body || []).WORK, 0);
     const cpuReplacement = replacing.length > 0 && metrics.WORK <= replacementWork &&
         metrics.spawnTime <= Math.min(...replacing.map(c => c.ticksToLive)) && cpu.mode !== 'critical' && cpu.bucket >= 1800;
@@ -197,7 +200,7 @@ function evaluate(room, request, context, mandatory, revalidate) {
             cpu.headroom / Math.max(1, Object.keys(get().rooms).length)) < queuedCpu + roleCpu(role))) reason = 'CPU_CAPACITY_EXHAUSTED';
         else if (spawns.headroom < metrics.estimatedReplacementLoad + metrics.spawnTime / settings.queueHorizon) reason = 'SPAWN_LOAD_HIGH';
         else if (!intelFloor && view.energy.known !== false && (!view.energy.healthy || view.energy.aboveReserve < metrics.cost +
-            queue.reduce((sum, q) => sum + Bodies.cost(q.body || []), 0) || view.energy.trend < -1)) reason = 'ENERGY_BELOW_RESERVE';
+            queue.reduce((sum, q) => sum + Bodies.cost(q.body || []), 0) || view.energy.trend < -1 && !view.energy.drawdownSpend)) reason = 'ENERGY_BELOW_RESERVE';
         else if (utilization && utilization.samples >= 8 && utilization.utilization < 0.5 &&
             Game.time - utilization.tick < 200 && ['GROWTH', 'INFRASTRUCTURE'].includes(kind)) reason = 'ROLE_UNDERUTILIZED';
         else if (!intelFloor && !cpuReplacement && total >= view.population.softCap) reason = 'SOFT_CAPACITY_EXHAUSTED';

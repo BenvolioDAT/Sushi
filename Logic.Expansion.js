@@ -1343,12 +1343,20 @@ function requestExpansionAnnex(expansion, originRoom) {
 }
 
 function requestBootstrapCreeps(expansion, originRoom) {
+    var investment = require('HiveMind.Surplus').plan(originRoom, require('HiveMind.Economy').get(originRoom.name),
+        require('HiveMind.Capacity').get().rooms[originRoom.name]);
+    var pioneerBody = creepBodyConfig.getBody('Pioneer', originRoom);
+    var baseWork = (pioneerBody || []).filter(function(p) { return p === WORK; }).length;
+    var fundedBody = investment.expansionWork > 0 && require('BodyProfiles').build('Pioneer', {
+        energyCapacity: originRoom.energyCapacityAvailable,
+        desiredWork: baseWork + Math.ceil(investment.expansionWork / DESIRED_PIONEERS)
+    });
     ensureExpansionCreepCount(
         originRoom.name,
         expansion.targetRoom,
         'Pioneer',
         DESIRED_PIONEERS,
-        creepBodyConfig.getBody('Pioneer', originRoom),
+        fundedBody ? fundedBody.body : pioneerBody,
         PIONEER_PRIORITY,
         {}
     );

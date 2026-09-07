@@ -14,6 +14,9 @@ const CONFIG_DEFAULTS = Object.freeze({
         maxCreepsPerRoomByRcl: { RCL1: 10, RCL2: 16, RCL3: 20, RCL4: 26,
             RCL5: 30, RCL6: 36, RCL7: 40, RCL8: 46 }
     },
+    surplus: { drawdownHorizon: 20000, enterAboveReserve: 200000, exitAboveReserve: 50000,
+        maxSpendPerTick: 100, techMaxWork: 60, artificerMaxWork: 80,
+        constructionHorizon: 5000, workDutyCycle: 0.65, dynamicRoleCaps: true },
     economy: {}, lifecycle: { hysteresisTicks: 5, milestoneTimeout: 1500 },
     remote: { maxRoomRange: 2, allowKeeperRooms: false, routeValidationInterval: 251 },
     memoryGC: {

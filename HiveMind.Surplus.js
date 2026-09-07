@@ -1,54 +1,109 @@
-/* Rank useful work already discovered by the existing planners. */
-function score(candidate) {
-    if (!(candidate.demand > 0)) return -Infinity;
-    return (candidate.urgency || 0) + (candidate.benefit || 0) + (candidate.income || 0) * 10 -
-        (candidate.energyCost || 0) / 1000 - (candidate.cpuCost || 0) * 10 -
-        (candidate.spawnLoad || 0) * 30 - (candidate.risk || 0);
+const finite = (v, fallback = 0) => Number.isFinite(v) ? Math.max(0, v) : fallback;
+function config() {
+    const raw = require('HiveMind.Memory').getConfig('surplus') || {};
+    return { drawdownHorizon: Math.max(1500, finite(raw.drawdownHorizon, 20000)),
+        enterAboveReserve: Math.max(1, finite(raw.enterAboveReserve, 200000)),
+        exitAboveReserve: Math.min(finite(raw.exitAboveReserve, 50000), finite(raw.enterAboveReserve, 200000)),
+        maxSpendPerTick: finite(raw.maxSpendPerTick, 100), techMaxWork: finite(raw.techMaxWork, 60),
+        artificerMaxWork: finite(raw.artificerMaxWork, 80), constructionHorizon: Math.max(100, finite(raw.constructionHorizon, 5000)),
+        workDutyCycle: Math.max(0.1, Math.min(1, finite(raw.workDutyCycle, 0.65))) };
+}
+function drawdown(growth, previous, allowed, settings = config()) {
+    const above = finite(growth.storedEnergy - growth.reserveTarget);
+    const active = allowed && above > settings.exitAboveReserve &&
+        (above >= settings.enterAboveReserve || previous && previous.mode === 'DRAWDOWN');
+    return { mode: active ? 'DRAWDOWN' : 'INCOME', energyAboveReserve: above,
+        extraSpendPerTick: active ? Math.min(settings.maxSpendPerTick,
+            (above - settings.exitAboveReserve) / settings.drawdownHorizon) : 0 };
+}
+function score(c) {
+    if (!(c.demand > 0)) return -Infinity;
+    return (c.urgency || 0) + (c.benefit || 0) + (c.income || 0) * 10 -
+        (c.energyCost || 0) / 1000 - (c.cpuCost || 0) * 10 - (c.spawnLoad || 0) * 30 - (c.risk || 0);
 }
 function allocate(candidates, budget) {
     let remaining = Math.max(0, budget);
     return candidates.map(c => ({ ...c, score: score(c) })).filter(c => c.score > 0)
         .sort((a, b) => b.score - a.score || a.id.localeCompare(b.id)).map(c => {
             const allocated = Math.min(remaining, c.demand); remaining -= allocated;
-            return { id: c.id, score: c.score, allocated };
+            return { ...c, allocated };
         });
 }
 function plan(room, economy, capacity) {
-    const growth = economy && economy.growth || {};
-    const rich = capacity && ['SURPLUS', 'EXPAND'].includes(capacity.mode) && capacity.population.discretionarySlots > 0;
-    const budget = rich ? Math.max(0, (growth.estimatedNetIncome || 0) * 0.85 +
-        Math.min(30, (growth.energyAboveReserve || 0) / 10000)) : 0;
-    const remote = growth.remote || {};
-    const hive = Memory.hive || {}, memory = Memory.rooms[room.name] || (Memory.rooms[room.name] = {});
-    const reactors = hive.season && hive.season.season11 && hive.season.season11.reactorPortfolio;
-    const season = Object.values(reactors && reactors.reactors || {}).filter(r => r.homeRoom === room.name && r.active);
+    const growth = economy && economy.growth || {}, settings = config();
+    const memory = Memory.rooms[room.name] || (Memory.rooms[room.name] = {});
+    const healthy = !!capacity && capacity.energy.healthy && capacity.energy.known !== false &&
+        !['SURVIVAL', 'RECOVERY'].includes(economy && economy.state) && growth.mode !== 'RECOVERY';
+    const reason = !healthy || !(growth.storedEnergy > growth.reserveTarget) ? 'ENERGY_RESERVE' : capacity.cpu.headroom <= 0 || capacity.cpu.bucket < 4000 ||
+        capacity.cpu.mode === 'critical' ? 'CPU_LIMIT' : capacity.spawn.headroom <= 0 ? 'SPAWN_LIMIT' :
+        capacity.reason === 'DEFENSE_EMERGENCY' ? 'DEFENSE_EMERGENCY' : null;
+    const stock = drawdown(growth, memory.surplus, !reason, settings);
+    const budget = reason ? 0 : Math.min(settings.maxSpendPerTick,
+        finite(growth.estimatedNetIncome) * 0.85 + stock.extraSpendPerTick);
+    const hive = Memory.hive || {}, remote = growth.remote || {};
+    const sites = typeof room.find === 'function' ? room.find(FIND_MY_CONSTRUCTION_SITES) || [] : [];
+    const progress = sites.reduce((sum, s) => sum + finite(s.progressTotal - s.progress), 0);
+    const backlog = memory.surplusBacklog;
+    const work = backlog && Game.time - backlog.tick <= 25 ? backlog.work :
+        progress / (5 * settings.constructionHorizon * settings.workDutyCycle);
+    const infrastructure = Math.min(settings.artificerMaxWork, Math.ceil(work));
     const expansion = Object.values(hive.operations || {}).filter(o => o.originRoom === room.name &&
-        /EXPANSION|CLAIM/.test(o.type || '') && !['COMPLETE', 'ABORTED'].includes(o.state));
+        /^(EXPAND|EXPANSION|CLAIM)$/.test(o.type || '') && !['COMPLETE', 'ABORTED'].includes(o.state));
     const candidates = [
-        { id: 'remoteHauling', demand: Math.max(0, (remote.requiredCarry || 0) - (remote.availableCarry || 0)), benefit: 100, income: remote.provenIncome || 0 },
-        { id: 'criticalInfrastructure', demand: growth.criticalConstructionBudget || 0, urgency: 80 },
-        { id: 'reactorContinuity', demand: season.filter(r => r.owned).length * 2, benefit: 90 },
-        { id: 'seasonExpansion', demand: season.filter(r => !r.owned).length * 2, benefit: 65 },
-        { id: 'controller', demand: room.controller.level < 8 ? 60 : 15, benefit: room.controller.level < 8 ? 60 : 20 },
-        { id: 'infrastructure', demand: Math.max(0, (memory.artificerDesiredWork || 0) - (memory.artificerLivingWork || 0)), benefit: 40 },
-        { id: 'expansionSupport', demand: expansion.length * 2, benefit: 30 }
+        { id: 'remoteHauling', demand: Math.max(0, finite(remote.requiredCarry) - finite(remote.availableCarry)) * 0.1,
+            benefit: 100, income: finite(remote.provenIncome), capabilityPerEnergy: 10 },
+        { id: 'infrastructure', demand: infrastructure, benefit: 85, capabilityPerEnergy: 1 },
+        { id: 'expansionSupport', demand: expansion.length * 2, benefit: 70, capabilityPerEnergy: 1 },
+        { id: 'controller', demand: room.controller.level < 8 ? settings.techMaxWork : 15,
+            benefit: room.controller.level < 8 ? 60 : 20, capabilityPerEnergy: 1 }
     ];
-    const allocations = allocate(candidates, budget);
-    const controller = allocations.find(a => a.id === 'controller');
-    const result = { tick: Game.time, budget, allocations,
-        techWork: controller ? Math.floor(controller.allocated) : 0,
-        reason: budget > 0 ? 'invest sustainable income and bounded stored surplus in useful work' : 'NO_USEFUL_SURPLUS_WORK' };
+    const sources = memory.remotePlanner && memory.remotePlanner.sourceInfos || {};
+    for (const info of Object.values(sources)) {
+        if (info.active || !(info.netIncome > 0) || !(info.score > 0) || !info.route || info.route.valid !== true || info.risk > 0) continue;
+        candidates.push({ id: 'remoteBootstrap:' + info.sourceId, demand: Math.max(1,
+            (finite(info.estimatedMinerBodyCost) + finite(info.requiredCarry) * 100) / 1500),
+            benefit: 70, income: info.netIncome, risk: finite(info.risk), capabilityPerEnergy: 1,
+            sourceId: info.sourceId, requiredWork: info.requiredWork, requiredCarry: info.requiredCarry });
+    }
+    const reactors = hive.season && hive.season.season11 && hive.season.season11.reactorPortfolio;
+    for (const owned of [true, false]) candidates.push({ id: owned ? 'reactorContinuity' : 'seasonExpansion',
+        demand: Object.values(reactors && reactors.reactors || {}).filter(r => r.homeRoom === room.name && r.active && !!r.owned === owned).length * 2,
+        benefit: owned ? 90 : 65 });
+    for (const c of candidates) {
+        // Replacement estimates, not lifetime operating expenditure (demand is energy/tick).
+        c.energyCost = c.demand * 150;
+        c.cpuCost = Math.ceil(c.demand / 18) * 0.2;
+        c.spawnLoad = c.demand * 8 / 1500;
+    }
+    // Existing controller income demand remains alive even when other investments win.
+    // Reserve it once so infrastructure cannot spend the same operating allowance.
+    const controllerFloor = Math.min(budget, room.controller.level === 8 ? 15 : settings.techMaxWork,
+        finite(growth.affordableWork));
+    candidates.find(c => c.id === 'controller').demand = Math.max(0,
+        candidates.find(c => c.id === 'controller').demand - controllerFloor);
+    const allocations = allocate(candidates, budget - controllerFloor);
+    let controller = allocations.find(a => a.id === 'controller');
+    if (!controller && controllerFloor) {
+        controller = { id: 'controller', demand: 0, allocated: 0, score: 0 };
+        allocations.push(controller);
+    }
+    if (controller) { controller.allocated += controllerFloor; controller.demand += controllerFloor; }
+    const amount = id => { const a = allocations.find(a => a.id === id); return a ? Math.floor(a.allocated * (a.capabilityPerEnergy || 1)) : 0; };
+    const result = { tick: Game.time, ...stock, budget, settings, allocations,
+        techWork: amount('controller'), artificerWork: amount('infrastructure'),
+        remoteCarry: amount('remoteHauling'), expansionWork: amount('expansionSupport'),
+        reason: reason || (stock.mode === 'DRAWDOWN' ? 'STOCKPILE_DRAWDOWN' : budget ? 'SUSTAINABLE_INCOME' : 'ENERGY_RESERVE') };
     memory.surplus = result;
     return result;
 }
 function requestBias(roomName, request) {
-    const memory = Memory.rooms[roomName] || {}, plan = memory.surplus;
+    const plan = (Memory.rooms[roomName] || {}).surplus;
     if (!plan || !plan.budget || Game.time - plan.tick > 10 || request.emergency) return 0;
     const category = require('HiveMind.Economy').categoryForRequest(request);
-    const id = category === 'upgradeSurplus' ? 'controller' : category === 'criticalInfrastructure' ? 'criticalInfrastructure' :
-        /^remote/.test(category) ? 'remoteHauling' : category === 'construction' ? 'infrastructure' :
+    const id = category === 'upgradeSurplus' ? 'controller' : /^remote/.test(category) ? 'remoteHauling' :
+        ['construction', 'criticalInfrastructure'].includes(category) ? 'infrastructure' :
         category === 'special' ? 'seasonExpansion' : category === 'expansion' ? 'expansionSupport' : null;
     const investment = plan.allocations.find(a => a.id === id && a.allocated > 0);
     return investment ? Math.min(5, Math.max(0, investment.score / 20)) : 0;
 }
-module.exports = { score, allocate, plan, requestBias };
+module.exports = { config, drawdown, score, allocate, plan, requestBias };

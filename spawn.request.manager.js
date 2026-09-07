@@ -1125,7 +1125,8 @@ function getDesiredTechWork(room) {
     var energyCapacity = room.energyCapacityAvailable || 300;
     var desiredWork;
 
-    if (level === 1) {
+    if (level === 1 && !(Economy.get(room.name) && Economy.get(room.name).growth &&
+        Economy.get(room.name).growth.energyAboveReserve >= require('HiveMind.Surplus').config().enterAboveReserve)) {
         var rcl1Memory = ensureRoomMemory(room.name);
         setMemoryValueIfChanged(rcl1Memory, 'techBaseDesiredWork', 1);
         setMemoryValueIfChanged(rcl1Memory, 'techCpuMultiplier', 1);
@@ -1214,7 +1215,7 @@ function getDesiredTechWork(room) {
     desiredWork = Math.max(level < 8 ? 1 : 0, Math.min(desiredWork, TECH_MAX_DESIRED_WORK));
     var capacity = require('HiveMind.Capacity').get().rooms[room.name];
     var surplus = require('HiveMind.Surplus').plan(room, economy, capacity);
-    desiredWork = Math.max(desiredWork, Math.min(TECH_MAX_DESIRED_WORK, surplus.techWork));
+    desiredWork = Math.max(desiredWork, Math.min(require('HiveMind.Surplus').config().techMaxWork, surplus.techWork));
 
     /* RCL 8 controllers accept at most 15 normal upgrade energy per tick. */
     if (level === 8) {
@@ -1452,14 +1453,15 @@ function requestTechWorkForRoom(room, demandOverride, options) {
         saveTechRequestDebug(
             room.name,
             'satisfied',
-            'enough WORK already planned',
+            'TECH_CAPABILITY_SATISFIED',
             demand,
             plannedTechCreeps
         );
         return result;
     }
 
-    if (plannedTechCreeps >= TECH_ABSOLUTE_CREEP_CAP) {
+    if (plannedTechCreeps >= Math.max(TECH_ABSOLUTE_CREEP_CAP,
+        require('Spawn.Policy').economyRoleCap(room, 'Tech', { maxWorkParts: 1 }, ensureSpawnPolicyMemory()) || 0)) {
         result.ok = false;
         result.reason = 'Absolute Tech creep cap reached';
         saveTechRequestDebug(
@@ -1617,6 +1619,7 @@ function getValidLocalRepairDemand(room) {
     var seen = {};
     var targets = 0;
     var emergencyTargets = 0;
+    var missingHits = 0;
 
     if (!repairList || !Array.isArray(repairList)) {
         return {
@@ -1645,6 +1648,10 @@ function getValidLocalRepairDemand(room) {
         }
 
         targets++;
+        // Match utility.Creep's modest barrier goal, never the enormous hitsMax.
+        var repairGoal = target.structureType === STRUCTURE_WALL || target.structureType === STRUCTURE_RAMPART ?
+            Math.min(10000, target.hitsMax) : target.hitsMax;
+        missingHits += Math.max(0, repairGoal - target.hits);
 
         if (isCriticalArtificerStructureType(target.structureType)) {
             emergencyTargets++;
@@ -1653,6 +1660,7 @@ function getValidLocalRepairDemand(room) {
 
     return {
         targets: targets,
+        missingHits: missingHits,
         emergencyTargets: emergencyTargets
     };
 }
@@ -2121,21 +2129,23 @@ function getArtificerBuildDemand(room) {
         mode = desiredWork > 0 ? 'downgrade-safe-' + mode : mode;
     }
 
-    if (
-        desiredWork === 0 &&
-        room.storage &&
-        storageEnergy >= ARTIFICER_HEALTHY_STORAGE_ENERGY &&
-        !upgradeRush &&
-        !controllerDanger
-    ) {
-        desiredWork = 1;
-        mode = 'fallback-upgrade';
-    }
-
     desiredWork = Math.max(0, Math.min(
         ARTIFICER_MAX_DESIRED_WORK,
         Math.ceil(desiredWork)
     ));
+    var investmentSettings = require('HiveMind.Surplus').config();
+    var backlogWork = (localBuildProgressRemaining + (remoteDemand.constructionProgressRemaining || 0)) /
+        (5 * investmentSettings.constructionHorizon * investmentSettings.workDutyCycle) +
+        (repairDemand.missingHits || 0) / (100 * investmentSettings.constructionHorizon * investmentSettings.workDutyCycle);
+    ensureRoomMemory(room.name).surplusBacklog = { tick: Game.time, work: backlogWork };
+    var investment = require('HiveMind.Surplus').plan(room, Economy.get(room.name), require('HiveMind.Capacity').get().rooms[room.name]);
+    if (!controllerDanger && !upgradeRush && investment.artificerWork > desiredWork) {
+        var investmentCategory = localBuildProgressRemaining > 0 || repairDemand.targets > 0 ?
+            'construction' : remoteDemand.containerConstructionSites > 0 ? 'remoteBootstrap' : 'remote';
+        workByEconomyCategory[investmentCategory] += investment.artificerWork - desiredWork;
+        desiredWork = investment.artificerWork;
+        mode = investment.reason;
+    }
     workByEconomyCategory = limitArtificerCategoryWork(workByEconomyCategory, desiredWork);
     var livingWorkCoverage = getLivingArtificerWorkCoverage(room.name);
     var queuedWorkByEconomyCategory = getQueuedArtificerWorkByCategory(room.name);
@@ -2196,6 +2206,8 @@ function saveArtificerDemandDebug(roomName, demand) {
     roomMemory.artificerRemoteBuildTargets = demand.remoteConstructionSites;
     roomMemory.artificerRemoteRepairTargets = demand.remoteRepairTargets;
     roomMemory.artificerMode = demand.mode;
+    roomMemory.artificerRequestBlockReason = demand.desiredWork <= 0 ? 'NO_USEFUL_WORK' :
+        demand.missingWork <= 0 ? 'ARTIFICER_BACKLOG_SATISFIED' : null;
 }
 
 function requestDynamicArtificersForRoom(room, demandOverride, options) {
@@ -2268,6 +2280,7 @@ function requestDynamicArtificersForRoom(room, demandOverride, options) {
     if (!addResult.ok) {
         result.ok = false;
         result.reason = addResult.reason;
+        ensureRoomMemory(room.name).artificerRequestBlockReason = addResult.reason;
         return result;
     }
 
@@ -3597,6 +3610,14 @@ function getFreighterCarryDemand(room) {
 
     desiredCarryParts = Math.max(safeMinimum, desiredCarryParts);
     desiredCarryParts = Math.min(FREIGHTER_MAX_DESIRED_CARRY, desiredCarryParts);
+    var haulInvestment = room && ensureRoomMemory(room.name).surplus;
+    if (haulInvestment && Game.time - haulInvestment.tick <= 10 && haulInvestment.remoteCarry > 0) {
+        // Allocate missing CARRY, never duplicate capability already living or committed.
+        var committedCarry = countLivingRoleBodyParts(room.name, 'Freighter', CARRY) +
+            countQueuedRoleBodyParts(room.name, 'Freighter', CARRY);
+        desiredCarryParts = Math.max(desiredCarryParts, Math.min(baseLocalCarry + remoteBaseCarry,
+            committedCarry + haulInvestment.remoteCarry));
+    }
 
     var livingCarryParts = economy ? economy.haul.activeCarry : (room ?
         countLivingRoleBodyParts(room.name, 'Freighter', CARRY) : 0);
@@ -3926,8 +3947,10 @@ function runEmergencyPlanning(room, report, context) {
 function requestConsolidatingTech(room) {
     var cpu = cpuStatusUtility.getCpuStatus();
     var rolling = global.__sushiCpuRolling || HiveMemory.ensure().telemetry.cpu || {};
+    var spawnView = (require('HiveMind.Capacity').get().rooms[room.name] || {}).spawn || {};
     if (cpu.mode === 'critical' || cpu.bucket < 1800 ||
-        cpu.mode !== 'low' && !(rolling.total > cpu.limit * 0.83) ||
+        cpu.mode !== 'low' && !(rolling.total > cpu.limit * 0.83) &&
+            !(spawnView.utilization >= 0.65) ||
         !Economy.canSpend(room.name, 'upgradeSurplus') || countQueuedRequests(room.name, 'Tech') > 0) return null;
     var units = (TickIndex.get().creepsByHomeRoom.get(room.name) || []).filter(function(c) {
         return c.memory.role === 'Tech' && !c.spawning;
@@ -3937,7 +3960,7 @@ function requestConsolidatingTech(room) {
         var work = getCreepActiveBodyParts(c, WORK);
         if (c.ticksToLive <= 150) expiring += work; else lasting += work;
     });
-    var desired = Math.min(room.controller.level === 8 ? 15 : TECH_MAX_DESIRED_WORK,
+    var desired = Math.min(room.controller.level === 8 ? 15 : require('HiveMind.Surplus').config().techMaxWork,
         ensureRoomMemory(room.name).techDesiredWork || 0);
     var missing = Math.max(0, Math.min(expiring, desired - lasting));
     if (!missing) return null;
