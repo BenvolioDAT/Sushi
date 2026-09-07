@@ -358,3 +358,30 @@ test('20 overlapping active routes expose one shared trunk', () => {
 });
 
 console.log('Remote route and logistics regression tests passed.');
+
+
+test('80 shared tiles form one cached trunk, rebuilt only on route/user changes', () => {
+    reset();
+    const first = installRoute();
+    const coords = Array.from({ length: 80 }, (_, i) => 100 + i);
+    first.route.segments = [{ room: 'W1N1', coords }];
+    first.route.revision = 1;
+    const second = JSON.parse(JSON.stringify(first));
+    second.sourceId = 'remote2';
+    const memory = Memory.rooms.W1N1.remotePlanner;
+    memory.activeSourceIds = ['remote2', 'remote'];
+    memory.sourceInfos.remote2 = second;
+    const planner = fresh('Planner.Remote.js');
+    const lanes = planner.discoverSharedLanes('W1N1');
+    assert.strictEqual(Object.keys(lanes).length, 1);
+    assert.strictEqual(lanes.lane0.packed.length, 80);
+    assert.deepStrictEqual(lanes.lane0.users, ['remote', 'remote2']);
+    assert.ok(lanes.lane0.packed.every(value => typeof value === 'string'));
+    Game.time++;
+    memory.activeSourceIds.reverse();
+    assert.strictEqual(planner.discoverSharedLanes('W1N1'), lanes);
+    second.route.revision++;
+    assert.notStrictEqual(planner.discoverSharedLanes('W1N1'), lanes);
+    memory.activeSourceIds.pop();
+    assert.deepStrictEqual(planner.discoverSharedLanes('W1N1'), {});
+});

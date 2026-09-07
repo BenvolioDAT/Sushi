@@ -1028,7 +1028,8 @@ function requestMove(creep, direction, options) {
                 fixed: options.trafficFixed === true,
                 squadId: options.squadId,
                 operationId: options.operationId,
-                fallbackPositions: options.fallbackPositions
+                fallbackPositions: options.fallbackPositions,
+                remoteRoute: options.remoteRoute
             });
         }
 
@@ -1118,6 +1119,18 @@ function move(creep, target, options) {
             if (options.hasOwnProperty(key)) {
                 moveOptions[key] = options[key];
             }
+        }
+    }
+
+    // Saved remote geometry already supplies the next tile. Do not pathfind around traffic.
+    if (moveOptions.canonicalStep) {
+        if (creep.pos.roomName === targetPosition.roomName && creep.pos.getRangeTo(targetPosition) === 1) {
+            return moveDirection(creep, creep.pos.getDirectionTo(targetPosition), moveOptions);
+        }
+        if (creep.pos.roomName !== targetPosition.roomName && isOnExitTile(creep.pos)) {
+            var exits = Game.map.describeExits(creep.pos.roomName) || {};
+            var crossing = Object.keys(exits).find(function(key) { return exits[key] === targetPosition.roomName; });
+            if (crossing) return moveDirection(creep, Number(crossing), moveOptions);
         }
     }
 

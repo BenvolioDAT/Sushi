@@ -1465,6 +1465,8 @@ function remoteStructureNeedsRepair(structure) {
 }
 
 function doBuildOrRepairTarget(creep, target, workType) {
+    if (!creep.memory.season11Maintenance && target.pos.roomName !== creep.room.name &&
+        RemotePlanner.moveToRemoteRoomAlongRoute(creep, creep.memory.remoteWorkHomeRoom || getHomeRoomName(creep), target.pos.roomName)) return;
     var result;
 
     if(workType === 'buildRemoteContainer' || workType === 'buildRemoteRoad') {
@@ -1750,5 +1752,5 @@ function isIgnoredEnergyTarget(target, ignoredTargetIds) {
     return !!(target && target.id && ignoredTargetIds && ignoredTargetIds[target.id]);
 }
 
-roleArtificer._test = { getRememberedRemoteWorkTarget: getRememberedRemoteWorkTarget, remoteWorkRouteAvailable: remoteWorkRouteAvailable };
+roleArtificer._test = { doBuildOrRepairTarget: doBuildOrRepairTarget, getRememberedRemoteWorkTarget: getRememberedRemoteWorkTarget, remoteWorkRouteAvailable: remoteWorkRouteAvailable };
 module.exports = roleArtificer;

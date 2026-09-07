@@ -818,42 +818,53 @@ function moveToRemoteRoomAlongRoute(creep, homeRoomName, targetRoomName) {
     if (creep.pos.roomName === targetRoomName) return false;
     var info = getBestRouteToRoom(homeRoomName, targetRoomName);
     if (!info) return false;
-    var path = getRemotePath(homeRoomName, info.sourceId);
-    var first = path.filter(function(pos) { return pos.roomName === targetRoomName; })[0];
-    if (!first) return false;
-    var current = path.filter(function(pos) { return pos.roomName === creep.pos.roomName; });
-    var target = current.length ? current[current.length - 1] : path[0];
-    travel.move(creep, target, { range: 0, maxRooms: target.roomName === creep.pos.roomName ? 1 : 2, reusePath: 5,
-        trafficPriority: creep.memory.role === 'Annex' ? 55 : 35 });
-    creep.memory.remoteLaneSourceId = info.sourceId;
-    creep.memory.remoteLaneRevision = info.route.revision;
-    return true;
+    return followRemotePath(creep, homeRoomName, info.sourceId, false);
 }
 
 function discoverSharedLanes(homeRoomName) {
     var planner = ensurePlannerMemory(homeRoomName);
-    var active = (planner.activeSourceIds || []).map(function(id) { return planner.sourceInfos[id]; }).filter(function(info) {
-        return info && info.route && info.route.valid !== false;
+    var active = (planner.activeSourceIds || []).slice().sort().map(function(id) {
+        return planner.sourceInfos[id];
+    }).filter(function(info) { return info && info.route && info.route.valid !== false; });
+    var signature = JSON.stringify(active.map(function(info) {
+        return [info.sourceId, ensureOrderedRoute(info).revision];
+    }));
+    if (planner.sharedLaneSignature === signature && planner.sharedLanes) return planner.sharedLanes;
+    // Build a transient trie, then emit disjoint runs between forks/user changes.
+    // No ancestor prefix is copied into either the keys or child trunks.
+    var root = { children: new Map(), users: [] };
+    active.forEach(function(info) {
+        var node = root;
+        info.route.segments.forEach(function(segment) {
+            segment.coords.forEach(function(coord) {
+                var key = segment.room + ':' + coord;
+                if (!node.children.has(key)) node.children.set(key, { key: key, children: new Map(), users: [] });
+                node = node.children.get(key);
+                node.users.push(info.sourceId);
+            });
+        });
     });
-    var groups = {};
-    for (var i = 0; i < active.length; i++) {
-        var info = active[i], route = ensureOrderedRoute(info), prefix = [];
-        for (var s = 0; s < route.segments.length; s++) {
-            for (var c = 0; c < route.segments[s].coords.length; c++) {
-                prefix.push(route.segments[s].room + ':' + route.segments[s].coords[c]);
-                if (prefix.length >= 2) {
-                    var key = prefix.join('|');
-                    if (!groups[key]) groups[key] = { rooms: route.segments.slice(0, s + 1).map(function(x) { return x.room; }), coords: prefix.slice(), users: [] };
-                    if (groups[key].users.indexOf(info.sourceId) < 0) groups[key].users.push(info.sourceId);
-                }
-            }
+    var laneCount = 0, shared = {}, pending = Array.from(root.children.values()).reverse().map(function(node) {
+        return { node: node, parent: null };
+    });
+    while (pending.length) {
+        var entry = pending.pop(), node = entry.node;
+        if (node.users.length < 2) continue;
+        var packed = [node.key], users = node.users;
+        while (node.children.size === 1) {
+            var child = node.children.values().next().value;
+            if (child.users.length !== users.length) break;
+            packed.push(child.key);
+            node = child;
         }
+        var id = 'lane' + laneCount++;
+        shared[id] = { packed: packed, users: users, parent: entry.parent,
+            revision: Game.time, lastUsed: Game.time };
+        Array.from(node.children.values()).reverse().forEach(function(child) {
+            pending.push({ node: child, parent: id });
+        });
     }
-    var shared = {};
-    Object.keys(groups).forEach(function(key) {
-        var group = groups[key];
-        if (group.users.length > 1) shared[key] = { revision: Game.time, rooms: group.rooms, packed: group.coords, users: group.users, lastUsed: Game.time };
-    });
+    planner.sharedLaneSignature = signature;
     planner.sharedLanes = shared;
     return shared;
 }
@@ -2780,7 +2791,7 @@ function followRemotePath(creep, homeRoomName, sourceId, reverse) {
     for (var i = 0; i < path.length; i++) {
         if (path[i].roomName !== creep.pos.roomName) continue;
         var range = creep.pos.getRangeTo(path[i]);
-        if (range < bestRange) { bestRange = range; bestIndex = i; }
+        if (range < bestRange || (range === bestRange && range > 0 && !reverse)) { bestRange = range; bestIndex = i; }
     }
     if (creep.memory && creep.memory.role === 'Freighter') {
         if (!reverse && bestIndex === 0 && bestRange === 0 && !creep.memory.remoteTrip) startRemoteTrip(creep, info);
@@ -2794,25 +2805,19 @@ function followRemotePath(creep, homeRoomName, sourceId, reverse) {
     if (bestIndex < 0) return retreatRemoteCreep(creep, homeRoomName);
     var laneKey = sourceId + ':' + route.revision;
     if (!reverse && creep.memory && creep.pos.roomName === homeRoomName && creep.memory.remoteOutboundLane !== laneKey) {
-        if (bestIndex === 0 && bestRange === 0) creep.memory.remoteOutboundLane = laneKey;
+        if (bestRange <= 1) creep.memory.remoteOutboundLane = laneKey;
         else { travel.move(creep, path[0], { range: 0, maxRooms: 1, reusePath: 5 }); return true; }
     }
     var nextIndex = (bestRange === 0 || (reverse && atRouteEndpoint(creep, info, false))) ? (reverse ? Math.max(0, bestIndex - 1) : Math.min(path.length - 1, bestIndex + 1)) : bestIndex;
     if (!reverse && creep.pos.roomName === homeRoomName && bestRange > 3) nextIndex = 0;
-    var result = travel.move(creep, path[nextIndex], { range: 0,
-        maxRooms: path[nextIndex].roomName === creep.pos.roomName ? 1 : 2, reusePath: 5 });
-    route.traffic.moves++;
-    if (result === ERR_NO_PATH || result === ERR_INVALID_TARGET) {
-        route.traffic.blockedMoves++;
-        route.movementFailures = (route.movementFailures || 0) + 1;
-        if (route.movementFailures >= 3) route.dirty = true;
-    } else if (result === OK) route.movementFailures = 0;
-    if (Game.time - (route.traffic.lastUpdated || 0) >= 10) {
-        var ratio = route.traffic.moves ? route.traffic.blockedMoves / route.traffic.moves : 0;
-        route.traffic.congestionScore = Math.round((route.traffic.congestionScore || 0) * 0.8 + ratio * 100 * 0.2);
-        route.traffic.avgObservedTravel = route.observedRoundTripTicks || route.traffic.avgObservedTravel || 0;
-        route.traffic.lastUpdated = Game.time;
-    }
+    var target = path[nextIndex];
+    var metadata = { homeRoom: homeRoomName, sourceId: sourceId, routeRevision: route.revision,
+        direction: reverse ? 'RETURN' : 'OUTBOUND', rejoin: bestRange === 1 };
+    var options = { range: 0, maxRooms: target.roomName === creep.pos.roomName ? 1 : 2,
+        reusePath: 0, disableSharedRouteCache: true, remoteRoute: metadata };
+    options.canonicalStep = true;
+    travel.move(creep, target, options);
+    // Resolution reports traffic. A transient movement failure never dirties geometry.
     return true; // A movement intent, fatigue or traffic still owns this leg.
 }
 

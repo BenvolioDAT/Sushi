@@ -235,4 +235,101 @@ test('static traffic matrices are reused and invalidated by structure changes', 
     assert.strictEqual(changed.get(6, 5), 255);
 });
 
+
+
+
+test('mission priorities precede idle and only seated stationary Extractors are protected', () => {
+    const traffic = trafficWorld();
+    for (const role of ['Volley', 'Ronin', 'Cleric', 'ReactorClaimer', 'ThoriumMiner', 'ThoriumHauler']) {
+        assert.ok(traffic.defaultPriority({ memory: { role } }) > 5);
+    }
+    assert.strictEqual(traffic.defaultPriority({ memory: { squadId: 'squad' } }), 80);
+    const miner = creep('miner', 11, 10, 'Extractor');
+    miner.memory.sourceId = 'source';
+    miner.memory.extractorState = 'miningRemoteSource';
+    Memory.rooms.W1N1 = { sources: { source: { pos: { x: 12, y: 10, roomName: 'W1N1' },
+        containerPlannedPos: { x: 11, y: 10, roomName: 'W1N1' }, seats: [{ x: 11, y: 11 }] } } };
+    assert.strictEqual(traffic.isProtectedStationaryMiner(miner), true);
+    miner.pos = position(11, 11);
+    miner.memory.miningSeat = { sourceId: 'source', x: 11, y: 11, roomName: 'W1N1' };
+    assert.strictEqual(traffic.isProtectedStationaryMiner(miner), true);
+    miner.pos = position(10, 10);
+    assert.strictEqual(traffic.isProtectedStationaryMiner(miner), false);
+    assert.ok(traffic.getPossibleMoves(miner).length > 0);
+    miner.pos = position(11, 10);
+    miner.memory.extractorState = 'remoteRetreat';
+    assert.strictEqual(traffic.isProtectedStationaryMiner(miner), false);
+    miner.memory.extractorState = 'remoteContainerOperational';
+    const hauler = creep('loaded', 10, 10, 'Freighter');
+    hauler.registerMove(RIGHT, { priority: 90 });
+    traffic.run(hauler.room, new PathFinder.CostMatrix(), 20, { creeps: [hauler, miner] });
+    assert.deepStrictEqual(miner.moves, []);
+    assert.deepStrictEqual(hauler.moves, []);
+});
+
+test('loaded highway Freighter gets head-on right of way and records real push/sidestep events', () => {
+    for (const role of ['Annex', 'Extractor', 'Tech']) {
+        const traffic = trafficWorld();
+        const loaded = creep('loaded', 10, 10, 'Freighter');
+        loaded.store = { getUsedCapacity: () => 100 };
+        const worker = creep('worker', 11, 10, role);
+        if (role === 'Extractor') { worker.memory.sourceId = 'remote'; worker.memory.extractorState = 'movingToRemoteSource'; }
+        const route = { revision: 1 };
+        Memory.rooms.W1N1 = { remotePlanner: { sourceInfos: { remote: { route } } } };
+        const metadata = { homeRoom: 'W1N1', sourceId: 'remote', routeRevision: 1, direction: 'RETURN' };
+        loaded.registerMove(RIGHT, { remoteRoute: metadata });
+        if (role !== 'Tech') worker.registerMove(LEFT, { remoteRoute: { ...metadata, direction: 'OUTBOUND' } });
+        traffic.run(loaded.room, new PathFinder.CostMatrix(), 20, { creeps: [worker, loaded] });
+        assert.deepStrictEqual(loaded.moves, [RIGHT]);
+        assert.strictEqual(worker.moves.length, 1);
+        if (role !== 'Tech') assert.ok(![LEFT, RIGHT].includes(worker.moves[0]), 'head-on yield must leave the lane');
+        assert.strictEqual(route.traffic.moves, 1);
+        assert.strictEqual(route.traffic.pushes, 1);
+        assert.strictEqual(route.traffic.sidesteps, 1);
+        assert.ok(!route.dirty);
+    }
+});
+
+test('canonical fallbacks reject source seats, walls, structures, exits and hostile reach', () => {
+    const traffic = trafficWorld();
+    global.OBSTACLE_OBJECT_TYPES = [STRUCTURE_SPAWN, STRUCTURE_EXTENSION];
+    const worker = creep('worker', 10, 10);
+    Memory.rooms.W1N1 = { sources: { source: { pos: { x: 12, y: 10, roomName: 'W1N1' },
+        containerPlannedPos: { x: 11, y: 10, roomName: 'W1N1' }, seats: [{ x: 11, y: 9 }] } } };
+    Game.map.getRoomTerrain = () => ({ get: (x, y) => x === 9 && y === 9 ? TERRAIN_MASK_WALL : 0 });
+    worker.room.find = kind => kind === FIND_STRUCTURES ? [
+        { structureType: STRUCTURE_SPAWN, pos: position(9, 10) }
+    ] : kind === FIND_HOSTILE_CREEPS ? [
+        { body: [{ type: ATTACK, hits: 100 }], pos: position(10, 13) }
+    ] : [];
+    worker.registerMove(TOP, { remoteRoute: { sourceId: 'remote' }, fallbackPositions: [{ x: 0, y: 10 }] });
+    const possible = traffic.getPossibleMoves(worker, new PathFinder.CostMatrix(), 20);
+    assert.deepStrictEqual(possible.map(traffic.packCoordinates), ['10:9']);
+});
+
+
+
+
+test('route rejoin and observed stuck events use transient intent metadata and reject stale revisions', () => {
+    const traffic = trafficWorld();
+    const worker = creep('rejoining', 10, 11, 'Annex');
+    const route = { revision: 1 };
+    Memory.rooms.W1N1 = { remotePlanner: { sourceInfos: { remote: { route } } } };
+    const metadata = { homeRoom: 'W1N1', sourceId: 'remote', routeRevision: 1, direction: 'OUTBOUND', rejoin: true };
+    worker.registerMove(TOP, { remoteRoute: metadata });
+    traffic.run(worker.room, new PathFinder.CostMatrix(), 20, { creeps: [worker] });
+    assert.strictEqual(route.traffic.rejoins, 1);
+    Game.time++; // Engine kept the creep in place despite an accepted move.
+    worker.registerMove(TOP, { remoteRoute: metadata });
+    traffic.run(worker.room, new PathFinder.CostMatrix(), 20, { creeps: [worker] });
+    assert.strictEqual(route.traffic.stuckEvents, 1);
+    route.revision++;
+    const snapshot = JSON.stringify(route.traffic);
+    Game.time++;
+    worker.registerMove(TOP, { remoteRoute: metadata });
+    traffic.run(worker.room, new PathFinder.CostMatrix(), 20, { creeps: [worker] });
+    assert.strictEqual(JSON.stringify(route.traffic), snapshot);
+    assert.strictEqual(worker.memory.remoteRoute, undefined);
+});
+
 console.log(`Phase 2 tests passed: ${passed}`);

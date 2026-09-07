@@ -430,3 +430,84 @@ test('economics use assigned remote bodies, then the planned body, independent o
     assert.ok(planned > 0);
     assert.ok(info.roundTripTicks < assignedTicks);
 });
+
+
+test('visible Annex and Artificer targets use the next highway tile before their final branch', () => {
+    for (const role of ['Annex', 'Artificer']) {
+        const { creep, moves } = movementSetup(role);
+        const target = { id: 'work', pos: new RoomPosition(15, 15, 'W1N2') };
+        creep.memory.targetRoom = 'W1N2';
+        creep.owner = { username: 'me' };
+        Game.rooms.W1N2.controller = target;
+        creep.reserveController = () => ERR_NOT_IN_RANGE;
+        creep.build = () => ERR_NOT_IN_RANGE;
+        const run = role === 'Annex' ? () => fresh('role.Annex.js').run(creep) :
+            () => fresh('role.Artificer.js')._test.doBuildOrRepairTarget(creep, target, 'buildRemoteRoad');
+        run();
+        assert.strictEqual(moves[0].roomName, 'W1N1');
+        assert.strictEqual(moves[0].x, 26);
+        creep.pos = new RoomPosition(10, 10, 'W1N2');
+        creep.room = Game.rooms.W1N2;
+        run();
+        assert.strictEqual(moves[1], target.pos);
+    }
+});
+
+test('canonical steps bypass Traveler and congestion never dirties route geometry', () => {
+    reset();
+    const info = installRoute();
+    const traffic = fresh('traffic_manager.js');
+    traffic.init();
+    const creep = new Creep();
+    Object.assign(creep, { name: 'annex', my: true, fatigue: 0,
+        memory: { role: 'Annex', homeRoom: 'W1N1', targetRoom: 'W1N2' },
+        room: Game.rooms.W1N1, pos: new RoomPosition(25, 25, 'W1N1'),
+        travelTo() { throw Error('Traveler used for adjacent lane tile'); }, move() { return OK; } });
+    creep.pos.getDirectionTo = () => RIGHT;
+    const planner = fresh('Planner.Remote.js');
+    const costs = new PathFinder.CostMatrix();
+    for (let x = 24; x <= 26; x++) for (let y = 24; y <= 26; y++) costs.set(x, y, 255);
+    const blocker = { id: 'friendly-power-creep', pos: new RoomPosition(26, 25, 'W1N1') };
+    for (let i = 0; i < 4; i++) {
+        Game.time++;
+        planner.moveToRemoteRoomAlongRoute(creep, 'W1N1', 'W1N2');
+        assert.strictEqual(creep._trafficIntent.packedTarget, '26:25');
+        traffic.run(creep.room, costs, 20, { creeps: [creep], blockers: [blocker] });
+    }
+    assert.strictEqual(info.route.traffic.blockedMoves, 4);
+    assert.strictEqual(info.route.traffic.pushes, 0);
+    assert.ok(!info.route.dirty);
+    assert.strictEqual(info.route.valid, true);
+});
+
+
+test('a one-tile sidestep rejoins forward locally and return movement stays exactly reversed', () => {
+    const { creep, info, moves, planner } = movementSetup('Annex');
+    info.route.segments[0].coords = [1275, 1276, 1277, 1278];
+    info.route.length = 6;
+    info.route.revision = 2;
+    creep.pos = new RoomPosition(26, 26, 'W1N1');
+    planner.moveToRemoteRoomAlongRoute(creep, 'W1N1', 'W1N2');
+    assert.strictEqual(moves[0].x, 27);
+    assert.strictEqual(moves[0].y, 25);
+    creep.pos = new RoomPosition(27, 25, 'W1N1');
+    planner.moveFreighterAlongRemotePath(creep, 'W1N1', 'remote', true);
+    assert.strictEqual(moves[1].x, 26);
+});
+
+test('direct canonical border steps preserve both crossing directions without Traveler', () => {
+    reset();
+    const travel = fresh('utility.Travel.Creep.js');
+    for (const reverse of [false, true]) {
+        let requested;
+        const from = reverse ? 'W1N2' : 'W1N1';
+        const to = reverse ? 'W1N1' : 'W1N2';
+        const direction = reverse ? LEFT : RIGHT;
+        Game.map.describeExits = () => ({ [direction]: to });
+        const creep = { memory: {}, pos: new RoomPosition(reverse ? 0 : 49, 20, from),
+            registerMove(value) { requested = value; return OK; },
+            travelTo() { throw Error('Traveler used for saved border crossing'); } };
+        travel.move(creep, new RoomPosition(reverse ? 49 : 0, 20, to), { range: 0, canonicalStep: true });
+        assert.strictEqual(requested, direction);
+    }
+});

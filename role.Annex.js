@@ -112,6 +112,7 @@ var roleAnnex = {
             return;
         }
 
+        if (RemotePlanner.moveToRemoteRoomAlongRoute(creep, creep.memory.homeRoom, targetRoomName)) return;
         var reserveResult = creep.reserveController(controller);
 
         if (reserveResult === ERR_NOT_IN_RANGE) {
