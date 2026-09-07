@@ -899,6 +899,7 @@ test('AUTO recapture prepares supply, approves a clear target, and backs off on 
     var r = memory.reactors.R0;
     r.my = false; r.owner = 'Enemy'; r.priorContinuousWork = 950;
     require('./Combat.Policy').setClassification('Enemy', 'hostile');
+    require('./HiveMind.Memory').getConfig('combat').diplomacy.playerResponseMode = 'war';
     Season11.refreshPortfolio(true);
     assert.strictEqual(memory.reactorPortfolio.reactors.R0.recapture.preparing, true);
     assert.strictEqual(memory.reactorPortfolio.reactors.R0.recapture.approved, false);
@@ -1026,6 +1027,7 @@ test('hardening A/J observed theft ignores harmless structures and prepares a li
     assert.strictEqual(memory.reactors.R0.priorContinuousWork, 950);
     assert.strictEqual(memory.reactors.R0.defenseAssessment.totalThreat, 0);
     require('./Combat.Policy').setClassification('Enemy', 'hostile');
+    require('./HiveMind.Memory').getConfig('combat').diplomacy.playerResponseMode = 'war';
     Season11.refreshPortfolio(true);
     assert.strictEqual(memory.reactorPortfolio.reactors.R0.recapture.preparing, true);
     staffPipeline(memory, 'R0'); Season11.refreshPortfolio(true);
@@ -1054,6 +1056,7 @@ test('hardening indexed unowned walls reject staffed AUTO recapture with a barri
     Game.rooms.W30N1.find = function(type) { return type === FIND_REACTORS ? [reactor] : type === FIND_STRUCTURES ? [wall] : []; };
     Season11.observeRoom(Game.rooms.W30N1, 'W1N1', true);
     require('./Combat.Policy').setClassification('Enemy', 'hostile');
+    require('./HiveMind.Memory').getConfig('combat').diplomacy.playerResponseMode = 'war';
     staffPipeline(memory, 'R0'); Season11.refreshPortfolio(true);
     var entry = memory.reactorPortfolio.reactors.R0;
     assert.strictEqual(entry.claimReady, false); assert.ok(entry.reason.includes('BARRIER'));

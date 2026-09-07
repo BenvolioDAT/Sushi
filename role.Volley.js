@@ -110,7 +110,8 @@ function runReactorGuard(creep) {
     if (approved && !dangerous && destination === entry.roomName) {
         threats.sort(function(a, b) { return (b.body.claim || 0) - (a.body.claim || 0) ||
             creep.pos.getRangeTo(a.creep) - creep.pos.getRangeTo(b.creep); });
-        var target = threats[0] && threats[0].creep;
+        var eligible = threats.filter(function(item) { return WarRoom.mayTarget(item.creep, creep); });
+        var target = eligible[0] && eligible[0].creep;
         if (target) {
             if (creep.pos.getRangeTo(target) <= 3) creep.rangedAttack(target);
             if (creep.pos.getRangeTo(target) > 2) travel.move(creep, target, { range: 2, reusePath: 3 });

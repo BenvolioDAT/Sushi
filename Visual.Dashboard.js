@@ -759,7 +759,9 @@ function getThreatStatus() {
 
     if (!threat) {
         return {
-            text: 'Threat none',
+            text: 'Combat ' + require('Combat.Policy').playerResponseMode() + ' D' +
+                Object.values(HiveMemory.ensure().threats).reduce(function(sum, item) { return sum + (item.dangerousHostileCount || item.harmfulHostileCount || 0); }, 0) +
+                ' A' + Object.values(HiveMemory.ensure().threats).reduce(function(sum, item) { return sum + (item.actionableHostileCount || 0); }, 0),
             color: COLORS.muted
         };
     }

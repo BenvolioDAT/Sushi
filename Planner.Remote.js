@@ -1593,9 +1593,13 @@ function hasSeriousDanger(room) {
     if (freshThreat && freshThreat.lastSeen === Game.time) return freshThreat.harmfulHostileCount > 0;
     var hostiles = room.find(FIND_HOSTILE_CREEPS, {
         filter: function(creep) {
-            return creep.getActiveBodyparts(ATTACK) > 0 ||
-                creep.getActiveBodyparts(RANGED_ATTACK) > 0 ||
-                creep.getActiveBodyparts(HEAL) > 0;
+            return require('Combat.Policy').isDangerous(creep, {
+                melee: creep.getActiveBodyparts(ATTACK), ranged: creep.getActiveBodyparts(RANGED_ATTACK),
+                claim: creep.getActiveBodyparts(CLAIM), heal: creep.getActiveBodyparts(HEAL)
+            }, { supportingArmed: room.find(FIND_HOSTILE_CREEPS).some(function(other) {
+                return other.owner && creep.owner && other.owner.username === creep.owner.username &&
+                    (other.getActiveBodyparts(ATTACK) > 0 || other.getActiveBodyparts(RANGED_ATTACK) > 0);
+            }) });
         }
     });
 
@@ -2991,6 +2995,7 @@ module.exports = {
     discoverSharedLanes: discoverSharedLanes,
     getBorderContinuityReason: getBorderContinuityReason,
     validateRemoteRoute: validateRemoteRoute,
+    hasSeriousDanger: hasSeriousDanger,
     retreatRemoteCreep: retreatRemoteCreep,
     estimateRouteTravelTicks: estimateRouteTravelTicks,
     getRouteTravelEstimate: getRouteTravelEstimate,

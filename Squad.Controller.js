@@ -184,6 +184,7 @@ function bothReady(members, squad) {
 function emitDemands(squad) {
     if (TERMINAL.has(squad.state) || squad.replacementRequirements && squad.replacementRequirements.enabled === false) return [];
     const operation = squad.operationId && HiveMemory.ensure().operations[squad.operationId];
+    if (operation && ['COMPLETE', 'ABORTED'].includes(operation.state)) return [];
     const emergency = !!(operation && operation.priority >= 95);
     const ownedDefense = !!(operation && operation.type === 'DEFEND_OWNED_ROOM');
     const demands = [
@@ -298,13 +299,13 @@ function roomTowers(roomName) {
 
 function currentLockedTarget(squad, attacker) {
     const target = squad.sharedTargetId && Game.getObjectById(squad.sharedTargetId);
-    return target && target.hits > 0 && target.pos && attacker && target.pos.roomName === attacker.room.name ? target : null;
+    return target && target.hits > 0 && target.pos && attacker && target.pos.roomName === attacker.room.name && WarRoom.mayTarget(target, attacker) ? target : null;
 }
 
 function performAttack(attacker, tactic) {
     if (!attacker || !tactic.target || CombatMath.rangeBetween(attacker, tactic.target) > 3) return;
-    if (tactic.attackMode === 'mass' && typeof attacker.rangedMassAttack === 'function') attacker.rangedMassAttack();
-    else if (tactic.attackMode === 'single' && typeof attacker.rangedAttack === 'function') attacker.rangedAttack(tactic.target);
+    if (tactic.attackMode === 'mass' && WarRoom.mayMassAttack(attacker) && typeof attacker.rangedMassAttack === 'function') attacker.rangedMassAttack();
+    else if (['single', 'mass'].includes(tactic.attackMode) && typeof attacker.rangedAttack === 'function') attacker.rangedAttack(tactic.target);
 }
 
 function healOne(healer, target) {

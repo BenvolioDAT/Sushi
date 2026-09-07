@@ -245,6 +245,7 @@ function replacementCanArrive(squad, operation) {
 function emitDemands(squad) {
     if (TERMINAL.has(squad.state) || squad.replacementRequirements.enabled === false) return [];
     const operation = squad.operationId && HiveMemory.ensure().operations[squad.operationId];
+    if (operation && ['COMPLETE', 'ABORTED'].includes(operation.state)) return [];
     if (!replacementCanArrive(squad, operation)) {
         squad.debugReason = 'Replacement cannot arrive before operation timeout';
         return [];
@@ -327,9 +328,9 @@ function sameRoom(members) {
     return living.length > 0 && living.every(member => member.room.name === living[0].room.name);
 }
 
-function roomHostiles(roomName) {
+function roomHostiles(roomName, member) {
     return (TickIndex.get().hostilesByRoom.get(roomName) || [])
-        .filter(hostile => WarRoom.isHostileCreepThreat(hostile));
+        .filter(hostile => WarRoom.mayTarget(hostile, member));
 }
 
 function roomTowers(roomName) {
@@ -556,17 +557,18 @@ function performActions(squad, members) {
     const living = Object.values(members).filter(Boolean);
     const leader = squad.leader && Game.creeps[squad.leader] || living[0];
     if (!leader) return Tactics.evaluateQuad([], [], []);
-    const hostiles = roomHostiles(leader.room.name);
+    const hostiles = roomHostiles(leader.room.name, leader);
     const towers = roomTowers(leader.room.name);
     const operation = squad.operationId && HiveMemory.ensure().operations[squad.operationId];
     let locked = squad.sharedTargetId && Game.getObjectById(squad.sharedTargetId);
-    if (!locked || !locked.hits || locked.pos.roomName !== leader.room.name) locked = null;
+    if (!locked || !locked.hits || locked.pos.roomName !== leader.room.name || !WarRoom.mayTarget(locked, leader)) locked = null;
     let structureTarget = null;
     if (operation && operation.policyApproved === true) {
         for (const member of living) member.memory.allowOffensiveTargets = true;
         structureTarget = operation.targetId && Game.getObjectById(operation.targetId) ||
             WarRoom.findBestHostileStructure(leader);
     }
+    if (structureTarget && !WarRoom.mayTarget(structureTarget, leader)) structureTarget = null;
     const tactic = Tactics.evaluateQuad(living, hostiles, towers, {
         leader,
         lockedTarget: locked,
@@ -579,7 +581,7 @@ function performActions(squad, members) {
         const range = tactic.target ? CombatMath.rangeBetween(member, tactic.target) : Infinity;
         if (analysis.ranged > 0 && range <= 3) {
             const mode = tactic.attackModes[member.name || member.id];
-            if (mode === 'mass' && typeof member.rangedMassAttack === 'function') member.rangedMassAttack();
+            if (mode === 'mass' && WarRoom.mayMassAttack(member) && typeof member.rangedMassAttack === 'function') member.rangedMassAttack();
             else if (typeof member.rangedAttack === 'function') member.rangedAttack(tactic.target);
         }
         else if (analysis.dismantle > 0 && range <= 1 && typeof member.dismantle === 'function' && tactic.target && tactic.target.body === undefined) {

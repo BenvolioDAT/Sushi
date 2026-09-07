@@ -28,6 +28,11 @@ function closestRange(pos, positions) {
 
 function attackEvents(room) {
     const attackedBy = new Map();
+    const previous = HiveMemory.ensure().threats[room && room.name];
+    if (previous && previous.tick === Game.time) {
+        for (const record of previous.hostiles || []) if (record.attackedUs) attackedBy.set(record.id, { severity: record.incidentSeverity });
+        return attackedBy;
+    }
     if (!room || typeof room.getEventLog !== 'function') return attackedBy;
     const attackTypes = new Set();
     if (typeof EVENT_ATTACK !== 'undefined') attackTypes.add(EVENT_ATTACK);
@@ -42,7 +47,16 @@ function attackEvents(room) {
         const attacker = Game.getObjectById && Game.getObjectById(event.objectId);
         const targetId = event.data && event.data.targetId;
         const target = targetId && Game.getObjectById && Game.getObjectById(targetId);
-        if (!attacker || !attacker.owner || !target || target.my === false) continue;
+        if (!attacker || !attacker.owner || !target) continue;
+        // Tower fire is territorial defense, not diplomatic aggression.
+        if (attacker.structureType === (typeof STRUCTURE_TOWER !== 'undefined' ? STRUCTURE_TOWER : 'tower')) continue;
+        const ours = target.my === true || Object.values(Game.creeps || {}).some(creep => creep.id === targetId) ||
+            target.structureType === 'controller' && target.reservation &&
+            Object.values(Game.spawns || {}).some(spawn => spawn.owner && spawn.owner.username === target.reservation.username);
+        const sources = Memory.rooms && Memory.rooms[room.name] && Memory.rooms[room.name].sources || {};
+        const managedInfrastructure = Policy.isDefenseRoom(room.name) && Object.values(sources).some(source =>
+            source && source.containerId === targetId);
+        if (!ours && !managedInfrastructure) continue;
         const severity = target.structureType === 'spawn' || target.structureType === 'tower' ? 100 :
             target.structureType === 'controller' ? 120 : 40;
         attackedBy.set(attacker.id || attacker.name, { severity, targetId, type: 'attack' });
@@ -56,9 +70,13 @@ function attackEvents(room) {
 function nearestOwnedRoom(roomName) {
     let best = null;
     let distance = Infinity;
+    let bestAffordable = false;
     for (const room of TickIndex.get().ownedRooms) {
+        if (!Object.values(Game.spawns || {}).some(spawn => spawn.my !== false && spawn.room && spawn.room.name === room.name)) continue;
         const current = room.name === roomName ? 0 : Game.map.getRoomLinearDistance(room.name, roomName);
-        if (current < distance) {
+        const affordable = room.name === roomName || require('HiveMind.Economy').checkSpend(room.name, 'combat').allowed;
+        if (best === null || affordable && !bestAffordable || affordable === bestAffordable && current < distance) {
+            bestAffordable = affordable;
             best = room.name;
             distance = current;
         }
@@ -70,7 +88,7 @@ function hostileTowerSupport(roomName) {
     return getStructures(roomName).filter(structure => structure.structureType === 'tower' && structure.my === false).length;
 }
 
-function summarizeHostile(hostile, room, attacked, positions, towerSupport) {
+function summarizeHostile(hostile, room, attacked, positions, towerSupport, supportingArmed) {
     const body = CombatMath.analyzeBody(hostile);
     const owner = Policy.usernameOf(hostile) || 'unknown';
     const incident = attacked.get(hostile.id || hostile.name);
@@ -85,7 +103,9 @@ function summarizeHostile(hostile, room, attacked, positions, towerSupport) {
         movePower: body.movePower,
         fatigueRisk: body.fatigueRisk
     };
-    const harmful = Policy.shouldDefendAgainst(owner, capabilities, !!incident);
+    const context = { roomName: room.name, attackedUs: !!incident, supportingArmed };
+    const harmful = Policy.isDangerous(owner, capabilities, context);
+    const autoEngage = harmful && Policy.mayAutoDefendAgainst(owner, context);
     const proximity = closestRange(hostile.pos, positions);
     return {
         id: hostile.id || hostile.name || null,
@@ -100,7 +120,10 @@ function summarizeHostile(hostile, room, attacked, positions, towerSupport) {
         closestCriticalRange: Number.isFinite(proximity) ? proximity : null,
         attackedUs: !!incident,
         incidentSeverity: incident ? incident.severity : 0,
-        harmful,
+        harmful, // Legacy safety signal. Combat consumers must use autoEngage.
+        dangerous: harmful,
+        autoEngage,
+        reason: harmful ? Policy.autoEngageReason(owner, context) : 'HARMLESS',
         score: Math.round(
             (capabilities.melee + capabilities.ranged + capabilities.dismantle) * 4 +
             capabilities.heal * 6 + body.effectiveHits * 0.05 +
@@ -113,13 +136,15 @@ function summarizeHostile(hostile, room, attacked, positions, towerSupport) {
 function ensureDefenseOperation(snapshot) {
     const hive = HiveMemory.ensure();
     const id = `defend:${snapshot.roomName}`;
-    if (snapshot.harmfulHostileCount <= 0) {
+    if (!(snapshot.actionableHostileCount > 0) || !Policy.isDefenseRoom(snapshot.roomName) || !snapshot.respondingColony) {
         const existing = hive.operations[id];
         if (existing && existing.state !== 'COMPLETE') {
             existing.state = 'COMPLETE';
             existing.completedTick = Game.time;
             existing.updatedTick = Game.time;
-            existing.debugReason = 'Live vision is safe';
+            existing.debugReason = snapshot.dangerousHostileCount > 0 ? 'No permitted automatic defense targets' : 'Live vision is safe';
+            existing.desiredCapabilities = { damage: 0, healing: 0 };
+            existing.spawnDemands = [];
         }
         return null;
     }
@@ -133,15 +158,20 @@ function ensureDefenseOperation(snapshot) {
         assignedSquads: []
     };
     existing.state = 'ACTIVE';
-    existing.priority = snapshot.emergency ? 100 : 80;
+    existing.priority = snapshot.owned && snapshot.emergency ? 100 : 80;
     existing.originRoom = snapshot.respondingColony;
     existing.updatedTick = Game.time;
-    existing.lastConfirmedTick = Game.time;
+    existing.lastConfirmedTick = snapshot.timeLastConfirmed;
     existing.desiredCapabilities = {
-        damage: Math.round(snapshot.hostileHealing + snapshot.hostileEffectiveHits / 10),
-        healing: Math.round((snapshot.hostileMelee + snapshot.hostileRanged) * 0.5)
+        damage: Math.round(snapshot.actionableHealing + snapshot.actionableEffectiveHits / 10),
+        healing: Math.round((snapshot.actionableMelee + snapshot.actionableRanged) * 0.5)
     };
-    existing.debugReason = `${snapshot.harmfulHostileCount} actionable hostile(s), threat ${snapshot.totalThreat}`;
+    // Non-damaging NPC support still needs a defender; damaging forces use the existing duo/quad path.
+    existing.spawnDemands = !snapshot.owned && existing.desiredCapabilities.healing <= 0 ? [{
+        role: 'Volley', count: 1, capabilities: { ranged: 1 }, economyCategory: 'combat',
+        targetRoom: snapshot.roomName, reason: 'Remote NPC support clearance'
+    }] : [];
+    existing.debugReason = `${snapshot.actionableHostileCount} actionable hostile(s), threat ${snapshot.totalThreat}`;
     hive.operations[id] = existing;
     return existing;
 }
@@ -154,8 +184,13 @@ function observeRoom(room, suppliedHostiles) {
     const attacked = attackEvents(room);
     const positions = criticalPositions(room);
     const towerSupport = hostileTowerSupport(room.name);
-    const records = hostiles.map(hostile => summarizeHostile(hostile, room, attacked, positions, towerSupport));
+    const armedOwners = new Set(hostiles.filter(hostile => {
+        const body = CombatMath.analyzeBody(hostile);
+        return body.melee > 0 || body.ranged > 0;
+    }).map(Policy.usernameOf));
+    const records = hostiles.map(hostile => summarizeHostile(hostile, room, attacked, positions, towerSupport, armedOwners.has(Policy.usernameOf(hostile))));
     const harmful = records.filter(record => record.harmful);
+    const actionable = records.filter(record => record.autoEngage);
     const snapshot = {
         tick: Game.time,
         roomName: room.name,
@@ -163,6 +198,15 @@ function observeRoom(room, suppliedHostiles) {
         lastSeen: Game.time,
         hostileCount: records.length,
         harmfulHostileCount: harmful.length,
+        dangerousHostileCount: harmful.length,
+        actionableHostileCount: actionable.length,
+        npcHostileCount: harmful.filter(record => record.classification === 'npc').length,
+        humanThreatCount: harmful.filter(record => record.classification !== 'npc').length,
+        actionableMelee: actionable.reduce((sum, record) => sum + record.capabilities.melee, 0),
+        actionableRanged: actionable.reduce((sum, record) => sum + record.capabilities.ranged, 0),
+        actionableDismantle: actionable.reduce((sum, record) => sum + record.capabilities.dismantle, 0),
+        actionableHealing: actionable.reduce((sum, record) => sum + record.capabilities.heal, 0),
+        actionableEffectiveHits: actionable.reduce((sum, record) => sum + record.effectiveHits, 0),
         hostileMelee: harmful.reduce((sum, record) => sum + record.capabilities.melee, 0),
         hostileRanged: harmful.reduce((sum, record) => sum + record.capabilities.ranged, 0),
         hostileDismantle: harmful.reduce((sum, record) => sum + record.capabilities.dismantle, 0),
@@ -183,10 +227,34 @@ function observeRoom(room, suppliedHostiles) {
     return snapshot;
 }
 
+function refreshPermissions(snapshot) {
+    const targets = (snapshot.hostiles || []).filter(record => {
+        record.autoEngage = !!record.harmful && Policy.mayAutoDefendAgainst(record.owner, {
+            roomName: snapshot.roomName, attackedUs: record.attackedUs
+        });
+        record.classification = Policy.getClassification(record.owner);
+        record.reason = record.harmful ? Policy.autoEngageReason(record.owner, {
+            roomName: snapshot.roomName, attackedUs: record.attackedUs
+        }) : 'HARMLESS';
+        return record.autoEngage;
+    });
+    snapshot.actionableHostileCount = targets.length;
+    for (const [field, capability] of [['Melee', 'melee'], ['Ranged', 'ranged'], ['Dismantle', 'dismantle'], ['Healing', 'heal']]) {
+        snapshot[`actionable${field}`] = targets.reduce((sum, record) => sum + (record.capabilities[capability] || 0), 0);
+    }
+    snapshot.actionableEffectiveHits = targets.reduce((sum, record) => sum + record.effectiveHits, 0);
+}
+
 function cleanup() {
     const hive = HiveMemory.ensure();
     for (const [roomName, threat] of Object.entries(hive.threats)) {
         if (Game.time - (threat.timeLastConfirmed || threat.lastSeen || 0) > THREAT_FORGET_TICKS) {
+            const operation = hive.operations[`defend:${roomName}`];
+            if (operation && operation.state !== 'COMPLETE') {
+                operation.state = 'COMPLETE';
+                operation.completedTick = Game.time;
+                operation.debugReason = 'Threat intel expired; await new observation';
+            }
             delete hive.threats[roomName];
         }
     }
@@ -214,7 +282,13 @@ function run() {
             observeRoom(room);
         }
     }
-    if (Game.time % 50 === 0) cleanup();
+    for (const snapshot of Object.values(HiveMemory.ensure().threats)) {
+        if (Game.rooms[snapshot.roomName]) continue;
+        refreshPermissions(snapshot);
+        ensureDefenseOperation(snapshot);
+        if (snapshot.dangerousHostileCount > 0) RemoteIntel.request(snapshot.roomName, 'DEFENSE_NEEDS_INTEL', 90);
+    }
+    cleanup();
 }
 
 function getRoomThreat(roomName) {

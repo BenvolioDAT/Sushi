@@ -32,7 +32,7 @@ function findMyTowers(room) {
 
 function liveHostiles(room) {
     const threat = ThreatLedger.getRoomThreat(room.name) || ThreatLedger.observeRoom(room);
-    const allowed = new Set((threat && threat.hostiles || []).filter(record => record.harmful).map(record => record.id));
+    const allowed = new Set((threat && threat.hostiles || []).filter(record => record.autoEngage).map(record => record.id));
     return ThreatLedger.getLiveHostiles(room.name).filter(hostile => allowed.has(hostile.id || hostile.name));
 }
 
@@ -82,7 +82,9 @@ function evaluateTowerTarget(room, towers, target, enemies) {
 }
 
 function chooseTowerTarget(room, towers, enemies) {
-    const evaluations = enemies.map(target => evaluateTowerTarget(room, towers, target, enemies));
+    const evaluations = enemies.filter(target => require('Combat.Policy').mayAutoEngage(target, {
+        roomName: room.name, attackedUs: !!(getRecord(room.name, target) || {}).attackedUs
+    })).map(target => evaluateTowerTarget(room, towers, target, enemies));
     evaluations.sort((a, b) => b.score - a.score || String(a.target.id).localeCompare(String(b.target.id)));
     return evaluations[0] || null;
 }

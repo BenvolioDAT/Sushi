@@ -114,7 +114,7 @@ function enemy(name, types, x, y, enemyRoom, hits) {
         id: name,
         name,
         my: false,
-        owner: { username: 'Enemy' },
+        owner: { username: 'Invader' },
         room: enemyRoom,
         pos: position(x, y, enemyRoom.name),
         body,

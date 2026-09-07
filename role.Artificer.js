@@ -60,6 +60,11 @@ var roleArtificer = {
         }
 
         var homeRoomName = creep.memory.homeRoom || creep.room.name;
+        if (creep.room.name !== homeRoomName && !creep.memory.season11Maintenance && RemotePlanner.hasSeriousDanger(creep.room)) {
+            clearRemoteWorkTarget(creep);
+            RemotePlanner.retreatRemoteCreep(creep, homeRoomName);
+            return;
+        }
         if(creep.memory.season11Maintenance && !getSeason11OperationMaintenanceTarget(creep)) {
             clearRemoteWorkTarget(creep);
             clearSeason11MaintenanceAssignment(creep);

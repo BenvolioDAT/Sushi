@@ -28,7 +28,7 @@ const CONFIG_DEFAULTS = Object.freeze({
     },
     combat: {
         independentCombat: true, useWarRoom: false,
-        diplomacy: { incidentHalfLife: 5000, hostileThreshold: 100 },
+        diplomacy: { playerResponseMode: 'observe', npcAutoDefense: true, incidentHalfLife: 5000, hostileThreshold: 100 },
         towers: { energyReserve: 200, repairEnergyReserve: 700 },
         safeMode: { enabled: true, manualConfirmation: true },
         strategy: { enabled: true, scoreInterval: 17, maxCandidates: 12,

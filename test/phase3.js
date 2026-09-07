@@ -135,7 +135,8 @@ test('diplomacy honors allies, manual hostiles, NPCs, and decaying incidents', f
     assert.strictEqual(policy.isAlly('Friend'), true);
     assert.strictEqual(policy.shouldDefendAgainst('Friend', { melee: 100 }, true), false);
     policy.setClassification('Enemy', 'hostile');
-    assert.strictEqual(policy.mayLaunchOffense('Enemy'), true);
+    assert.strictEqual(policy.mayLaunchOffense('Enemy'), false);
+    assert.strictEqual(policy.mayLaunchOffense('Enemy', true), true);
     assert.strictEqual(policy.getClassification('Invader'), 'npc');
     policy.recordIncident('Unknown', 120, { roomName: 'W1N1' });
     assert.strictEqual(policy.getClassification('Unknown'), 'hostile');
@@ -186,8 +187,8 @@ test('allies and harmless neutral WORK creeps do not create defense operations',
 
 test('real combat creeps create independent room defense operations', function() {
     installCombatWorld();
-    const a = hostile('a', [ATTACK, MOVE], 24, 25, 'RaiderA');
-    const b = hostile('b', [RANGED_ATTACK, MOVE], 24, 25, 'RaiderB');
+    const a = hostile('a', [ATTACK, MOVE], 24, 25, 'Invader');
+    const b = hostile('b', [RANGED_ATTACK, MOVE], 24, 25, 'Invader');
     const spawnA = { id: 'spawnA', my: true, structureType: STRUCTURE_SPAWN, pos: pos(25, 25, 'W1N1') };
     const spawnB = { id: 'spawnB', my: true, structureType: STRUCTURE_SPAWN, pos: pos(25, 25, 'W2N2') };
     const roomA = roomWorld('W1N1', [a], [spawnA]);
@@ -210,6 +211,7 @@ test('tower target prediction favors a guaranteed important healer kill', functi
     const spawn = { id: 'spawn', my: true, structureType: STRUCTURE_SPAWN, pos: pos(25, 25) };
     const room = roomWorld('W1N1', [tank, healer], [defenseTower, spawn]);
     fresh('Combat.Policy.js').setClassification('Enemy', 'hostile');
+    fresh('HiveMind.Memory.js').getConfig('combat').diplomacy.playerResponseMode = 'defend';
     fresh('Combat.ThreatLedger.js').observeRoom(room, [tank, healer]);
     const towerLogic = fresh('Logic.Tower.js');
     const evaluation = towerLogic.chooseTowerTarget(room, [defenseTower], [tank, healer]);
@@ -230,6 +232,7 @@ test('towers heal a predicted casualty instead of wasting fire', function() {
     };
     Game.creeps.defender = defender;
     fresh('Combat.Policy.js').setClassification('Enemy', 'hostile');
+    fresh('HiveMind.Memory.js').getConfig('combat').diplomacy.playerResponseMode = 'defend';
     delete global.__sushiTickIndex;
     fresh('Combat.ThreatLedger.js').observeRoom(room, [attacker]);
     const decision = fresh('Logic.Tower.js').run(room);
@@ -270,6 +273,7 @@ test('independent combat switch suppresses and cleans non-squad defense requests
     }] };
     Game.spawns.Spawn1 = { my: true, room };
     fresh('Combat.Policy.js').setClassification('Enemy', 'hostile');
+    fresh('HiveMind.Memory.js').getConfig('combat').diplomacy.playerResponseMode = 'defend';
     delete global.__sushiTickIndex;
     fresh('Combat.ThreatLedger.js').observeRoom(room, [invader]);
     fresh('HiveMind.Memory.js').getConfig('combat').independentCombat = false;
@@ -303,6 +307,7 @@ test('safe mode ignores scouts and activates only for an overwhelming critical b
         return [];
     };
     fresh('Combat.Policy.js').setClassification('Enemy', 'hostile');
+    fresh('HiveMind.Memory.js').getConfig('combat').diplomacy.playerResponseMode = 'defend';
     delete global.__sushiTickIndex;
     ledger = fresh('Combat.ThreatLedger.js');
     ledger.observeRoom(room, [breach]);

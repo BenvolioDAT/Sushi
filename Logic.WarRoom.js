@@ -222,6 +222,28 @@ WarRoom.findBestThreatInRoom = function(room) {
  * Return true when a hostile creep has an active body part that can threaten
  * our creeps, structures, or operations.
  */
+// Only an explicitly manual, active operation can override player observation.
+WarRoom.mayTarget = function(target, creep) {
+    if (!target || CombatPolicy.isAlly(target)) return false;
+    var operation = creep && creep.memory && creep.memory.operationId &&
+        require('HiveMind.Memory').ensure().operations[creep.memory.operationId];
+    if (operation && !['COMPLETE', 'ABORTED'].includes(operation.state) && operation.policyApproved === true &&
+        operation.targetRoom === (target.pos && target.pos.roomName) &&
+        (!operation.targetOwner || operation.targetOwner === CombatPolicy.usernameOf(target))) {
+        return CombatPolicy.mayLaunchOffense(target, operation.manualDirective === true);
+    }
+    return !!target.body && WarRoom.isHostileCreepThreat(target);
+};
+
+WarRoom.mayMassAttack = function(creep) {
+    var nearby = creep.room.find(FIND_HOSTILE_CREEPS) || [];
+    if (typeof FIND_HOSTILE_POWER_CREEPS !== 'undefined') nearby = nearby.concat(creep.room.find(FIND_HOSTILE_POWER_CREEPS) || []);
+    if (typeof FIND_HOSTILE_STRUCTURES !== 'undefined') nearby = nearby.concat(creep.room.find(FIND_HOSTILE_STRUCTURES) || []);
+    return !nearby.some(function(target) {
+        return CombatMath.rangeBetween(creep, target) <= 3 && !WarRoom.mayTarget(target, creep);
+    });
+};
+
 WarRoom.isHostileCreepThreat = function(hostile) {
     if(!hostile) {
         return false;
@@ -233,13 +255,9 @@ WarRoom.isHostileCreepThreat = function(hostile) {
     var record = ledger && ledger.hostiles.find(function(item) {
         return item.id === (hostile.id || hostile.name);
     });
-    return CombatPolicy.shouldDefendAgainst(hostile, {
-        melee: analysis.melee,
-        ranged: analysis.ranged,
-        dismantle: analysis.dismantle,
-        heal: analysis.heal,
-        claim: analysis.claim
-    }, !!(record && record.attackedUs));
+    return CombatPolicy.isDangerous(hostile, analysis, { attackedUs: !!(record && record.attackedUs),
+        supportingArmed: !!(record && record.dangerous) }) &&
+        CombatPolicy.mayAutoEngage(hostile, { roomName: roomName, attackedUs: !!(record && record.attackedUs) });
 };
 
 /*
@@ -389,7 +407,11 @@ WarRoom.forgetStaleThreat = function() {
         return false;
     }
 
-    if(Game.time - activeThreat.lastSeen <= THREAT_FORGET_TICKS) {
+    var permitted = CombatPolicy.mayAutoEngage(activeThreat.owner, { roomName: activeThreat.roomName });
+    var visible = Game.rooms[activeThreat.roomName];
+    var liveTarget = visible && Game.getObjectById(activeThreat.id);
+    if(permitted && (!visible || liveTarget && WarRoom.isHostileCreepThreat(liveTarget)) &&
+        Game.time - activeThreat.lastSeen <= THREAT_FORGET_TICKS) {
         return false;
     }
 
@@ -535,7 +557,7 @@ WarRoom.findHostileCreeps = function(creep) {
 
     return creep.room.find(FIND_HOSTILE_CREEPS, {
         filter: function(hostile) {
-            return WarRoom.isHostileCreepThreat(hostile);
+            return WarRoom.mayTarget(hostile, creep);
         }
     });
 };
@@ -632,7 +654,7 @@ WarRoom.findHostileStructures = function(creep) {
                 return false;
             }
 
-            return CombatPolicy.mayLaunchOffense(structure, true);
+            return WarRoom.mayTarget(structure, creep);
         }
     });
 };
@@ -720,7 +742,7 @@ WarRoom.getCombatTarget = function(creep) {
             oldTarget.hits > 0 &&
             oldTarget.pos &&
             oldTarget.pos.roomName === creep.room.name &&
-            (!oldTarget.body || WarRoom.isHostileCreepThreat(oldTarget))
+            WarRoom.mayTarget(oldTarget, creep)
         ) {
             return oldTarget;
         }
