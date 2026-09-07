@@ -27,6 +27,7 @@ function build(role, options = {}) {
     const work = Math.floor(n(options.desiredWork, role === 'Extractor' || role === 'ThoriumMiner' ? 5 : 0));
     const carry = Math.floor(n(options.desiredCarry, 0));
     const combat = ['Ronin', 'Volley', 'Cleric'].includes(role);
+    const breacher = role === 'CoreBreaker' || role === 'Breacher';
     const requested = role === 'Scout' ? 1 : role === 'Annex' || role === 'ReactorClaimer' ?
         Math.floor(n(options.desiredClaim, 1)) : combat ? Math.floor(n(options.desiredPower, 1)) :
         ['Freighter', 'Foreman', 'ThoriumHauler', 'ResourceCourier', 'SupplyRunner'].includes(role) ? carry : work;
@@ -37,7 +38,11 @@ function build(role, options = {}) {
         let counts;
         if (role === 'Scout') counts = { move: 1 };
         else if (role === 'Annex' || role === 'ReactorClaimer') counts = { claim: amount, move: amount };
-        else if (combat) {
+        else if (breacher) {
+            const workParts = Math.max(1, amount);
+            counts = { tough: Math.ceil(workParts / 3), work: workParts,
+                move: workParts + Math.ceil(workParts / 3) };
+        } else if (combat) {
             const power = role === 'Ronin' ? 'attack' : role === 'Volley' ? 'ranged_attack' : 'heal';
             const tough = role === 'Ronin' ? Math.ceil(amount / 4) : 0;
             const heal = role !== 'Cleric' && amount >= 8 ? 1 : 0;

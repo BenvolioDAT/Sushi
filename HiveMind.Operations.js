@@ -21,15 +21,15 @@ const TRANSITIONS = {
 const ROOM_TARGET_TYPES = new Set([
     'DEFEND_OWNED_ROOM', 'DEFEND_REMOTE', 'RECOVER_ROOM', 'EXPAND',
     'MINE_REMOTE', 'SCOUT_INTEL', 'FORTIFY', 'ATTACK_PLAYER', 'RAID_REMOTE',
-    'HARVEST_THORIUM', 'SUPPLY_REACTOR', 'HOLD_REACTOR', 'CAPTURE_REACTOR', 'CONTEST_REACTOR'
+    'HARVEST_THORIUM', 'SUPPLY_REACTOR', 'HOLD_REACTOR', 'CAPTURE_REACTOR', 'CONTEST_REACTOR', 'CLEAR_NPC_STRONGHOLD'
 ]);
 const OWNED_ORIGIN_TYPES = new Set([
     'DEFEND_REMOTE', 'RECOVER_ROOM', 'EXPAND', 'MINE_REMOTE', 'FORTIFY',
     'PRODUCE_BOOSTS', 'ATTACK_PLAYER', 'RAID_REMOTE', 'HARVEST_THORIUM',
-    'SUPPLY_REACTOR', 'HOLD_REACTOR', 'CAPTURE_REACTOR', 'CONTEST_REACTOR'
+    'SUPPLY_REACTOR', 'HOLD_REACTOR', 'CAPTURE_REACTOR', 'CONTEST_REACTOR', 'CLEAR_NPC_STRONGHOLD'
 ]);
 const VISIBLE_TARGET_TYPES = new Set(['DEFEND_OWNED_ROOM', 'DEFEND_REMOTE', 'RECOVER_ROOM', 'FORTIFY']);
-const OFFENSIVE_TYPES = new Set(['ATTACK_PLAYER', 'RAID_REMOTE', 'CONTEST_REACTOR']);
+const OFFENSIVE_TYPES = new Set(['ATTACK_PLAYER', 'RAID_REMOTE', 'CONTEST_REACTOR', 'CLEAR_NPC_STRONGHOLD']);
 
 function makeId(type, options) {
     if (options.id) return options.id;
@@ -38,7 +38,7 @@ function makeId(type, options) {
 }
 
 function create(type, options = {}) {
-    if (!TYPES.includes(type)) throw new Error(`Unsupported operation type: ${type}`);
+    if (!TYPES.includes(type) && type !== 'CLEAR_NPC_STRONGHOLD') throw new Error(`Unsupported operation type: ${type}`);
     const hive = HiveMemory.ensure();
     const id = makeId(type, options);
     if (hive.operations[id] && !TERMINAL_STATES.has(hive.operations[id].state)) return hive.operations[id];
@@ -170,8 +170,11 @@ function typePrerequisiteDecision(operation) {
         return { decision: 'wait', reason: `${operation.type} requires visibility or a scout demand` };
     }
     if (OFFENSIVE_TYPES.has(operation.type)) {
-        if (operation.manualDirective !== true) {
+        if (operation.type !== 'CLEAR_NPC_STRONGHOLD' && operation.manualDirective !== true) {
             return { decision: 'wait', reason: `${operation.type} requires an explicit offensive directive` };
+        }
+        if (operation.type === 'CLEAR_NPC_STRONGHOLD' && operation.strongholdRelevant !== true) {
+            return { decision: 'wait', reason: 'NPC stronghold is not relevant to an active route, remote, safety, or objective' };
         }
         const assessment = operation.offensiveAssessment;
         if (!assessment || assessment.tick !== Game.time || assessment.code !== 'APPROVED' ||

@@ -8,7 +8,7 @@ const CONFIG_DEFAULTS = Object.freeze({
     spawn: {
         enabled: true, maxQueueLengthPerRoom: 8, maxNewRequestsPerRoomPerTick: 2,
         combatSpawnShare: 0.5,
-        roleCaps: { Foreman: 1, Scout: 1, Annex: 4, Ronin: 4, Volley: 4, Cleric: 3,
+        roleCaps: { Foreman: 1, Scout: 1, Annex: 4, Ronin: 4, Volley: 4, Cleric: 3, CoreBreaker: 2,
             Tech: 3, Artificer: 3, Extractor: 6, Freighter: 6, Pioneer: 2,
             SupplyRunner: 2, ThoriumMiner: 2, ThoriumHauler: 4, ReactorClaimer: 1 },
         maxCreepsPerRoomByRcl: { RCL1: 10, RCL2: 16, RCL3: 20, RCL4: 26,

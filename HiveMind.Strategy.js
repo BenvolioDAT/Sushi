@@ -6,6 +6,7 @@ const Expansion = require('Logic.Expansion');
 const Season11 = require('Logic.Season11');
 const Season11Operations = require('Season11.Operations');
 const CombatOperations = require('Combat.Operations');
+const Stronghold = require('Combat.Stronghold');
 
 function scoreOperations() {
     const settings = HiveMemory.getConfig('combat').strategy;
@@ -37,6 +38,7 @@ function run() {
         return Season11Operations.run(seasonDiagnostics);
     }, { interval: 1, emergency: !!(seasonDiagnostics.portfolioDashboard &&
         seasonDiagnostics.portfolioDashboard.reactors.some(entry => entry.claimThreat > 0)) });
+    Stronghold.run();
     CombatOperations.run();
     Operations.syncExpansion();
     Scheduler.run('utilityScoring', () => scoreOperations(), { interval: settings.scoreInterval || 17 });

@@ -218,6 +218,12 @@ var BODY_PLANS = {
         [[MOVE, 2], [RANGED_ATTACK, 2], [HEAL, 1]]
     ],
 
+    CoreBreaker: [
+        [[TOUGH, 3], [WORK, 6], [MOVE, 9]],
+        [[TOUGH, 2], [WORK, 3], [MOVE, 5]],
+        [[WORK, 1], [MOVE, 2]]
+    ],
+
     Cleric: [
         [[HEAL, 3], [MOVE, 3]],
         [[HEAL, 2], [MOVE, 2]],
@@ -560,6 +566,10 @@ function getClericBody(room) {
     return getBody('Cleric', room);
 }
 
+function getCoreBreakerBody(room) {
+    return getBody('CoreBreaker', room);
+}
+
 function getMineralMinerBody(room) {
     return getBody('MineralMiner', room);
 }
@@ -595,6 +605,7 @@ module.exports = {
     getRoninBody: getRoninBody,
     getVolleyBody: getVolleyBody,
     getClericBody: getClericBody,
+    getCoreBreakerBody: getCoreBreakerBody,
     getMineralMinerBody: getMineralMinerBody,
     getResourceCourierBody: getResourceCourierBody
 };

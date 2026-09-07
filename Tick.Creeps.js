@@ -15,7 +15,9 @@ const roles = {
     ThoriumHauler: require('role.ThoriumHauler'),
     ReactorClaimer: require('role.ReactorClaimer'),
     MineralMiner: require('role.MineralMiner'),
-    ResourceCourier: require('role.ResourceCourier')
+    ResourceCourier: require('role.ResourceCourier'),
+    CoreBreaker: require('role.CoreBreaker'),
+    Breacher: require('role.CoreBreaker')
 };
 const TickIndex = require('HiveMind.Index');
 const SquadController = require('Squad.Controller');

@@ -5,7 +5,7 @@ const CombatMath = require('Combat.Math');
 const Utility = require('HiveMind.Utility');
 const TickIndex = require('HiveMind.Index');
 
-const OFFENSIVE_TYPES = Object.freeze(['ATTACK_PLAYER', 'RAID_REMOTE', 'CONTEST_REACTOR']);
+const OFFENSIVE_TYPES = Object.freeze(['ATTACK_PLAYER', 'RAID_REMOTE', 'CONTEST_REACTOR', 'CLEAR_NPC_STRONGHOLD']);
 const OBJECTIVES = Object.freeze([
     'REMOTE_DEFENSE', 'REMOTE_DENIAL', 'REACTOR_CONTEST', 'HARASSMENT',
     'TOWER_SIEGE', 'DISMANTLE_BREACH'
@@ -35,6 +35,7 @@ function operationDirective(operation) {
     if (operation.season11 && operation.type === 'CONTEST_REACTOR' && operation.season11RecaptureApproved) {
         return CombatPolicy.mayLaunchOffense(operation.targetOwner, operation.manualDirective === true);
     }
+    if (operation.type === 'CLEAR_NPC_STRONGHOLD') return operation.npcOnly === true;
     if (operation.manualDirective === true) return true;
     return !!(operation.type === 'CONTEST_REACTOR' && operation.season11 &&
         HiveMemory.getConfig('season11').recaptureMode === 'manual' && HiveMemory.getConfig('season11').recapture === true);
@@ -132,6 +133,9 @@ function evaluate(operation) {
             ownerName(snapshot.room.controller);
     }
     const subject = targetOwner || operation.targetOwner || null;
+    if (operation.type === 'CLEAR_NPC_STRONGHOLD' && subject && !['Invader', 'Source Keeper'].includes(subject)) {
+        return { allowed: false, viable: false, code: 'HUMAN_TARGET', reason: 'Stronghold operation is NPC-only', targetOwner: subject };
+    }
     if (subject && CombatPolicy.isAlly(subject)) {
         return { allowed: false, viable: false, code: 'ALLY_TARGET', reason: `${subject} is configured as an ally`, targetOwner };
     }
@@ -199,6 +203,81 @@ function evaluate(operation) {
     return { allowed: true, viable: true, wait: false, code: 'APPROVED', reason: 'Explicit offensive directive passes diplomacy and viability policy', metrics, utility };
 }
 
+function strongholdCore(room) {
+    if (!room || typeof room.find !== 'function') return null;
+    const type = typeof STRUCTURE_INVADER_CORE !== 'undefined' ? STRUCTURE_INVADER_CORE : 'invaderCore';
+    const structures = safeFind(room, typeof FIND_STRUCTURES !== 'undefined' ? FIND_STRUCTURES : undefined);
+    return structures.find(structure => structure && structure.structureType === type &&
+        ownerName(structure) === 'Invader') || null;
+}
+
+function assessStronghold(operation) {
+    const room = operation && operation.targetRoom && Game.rooms && Game.rooms[operation.targetRoom];
+    if (!room) return { status: 'NEEDS_INTEL', viable: false, reason: 'Stronghold room is not visible' };
+    const core = strongholdCore(room);
+    if (!core) return { status: 'NOT_VIABLE', viable: false, reason: 'No visible Invader Core' };
+    const snapshot = roomSnapshot(operation);
+    const level = Number.isFinite(core.level) ? core.level : null;
+    const barriers = snapshot.barriers || [];
+    const hostile = snapshot.hostileCreeps || [];
+    const enemyDamage = snapshot.enemyDamage || 0;
+    const enemyHealing = snapshot.enemyHealing || 0;
+    const towerDamage = snapshot.towerDamage || 0;
+    const requiredDamage = Math.max(50, enemyHealing + towerDamage * 0.25 + (level || 1) * 20);
+    const requiredHealing = Math.max(12, towerDamage * 0.25 + enemyDamage * 0.15);
+    const requiredDismantle = barriers.reduce((sum, barrier) => sum + Math.max(0, barrier.hits || 0), 0) > 0 ?
+        Math.max(50, Math.min(5000, Math.max(...barriers.map(barrier => barrier.hits || 0)) / 20)) : 0;
+    const assessment = {
+        status: 'VIABLE', viable: true, reason: 'Visible NPC stronghold has a force plan',
+        coreId: core.id || null, coreLevel: level, coreHits: core.hits || 0,
+        enemyDps: enemyDamage, enemyHealing, towerDps: towerDamage,
+        barrierEstimate: requiredDismantle, requiredDps: requiredDamage,
+        requiredHealing, requiredDismantle, defenderCount: hostile.length,
+        ticksToDeploy: core.ticksToDeploy || 0, visible: true
+    };
+    if ((core.ticksToDeploy || 0) > 0) {
+        assessment.status = 'NEEDS_INTEL'; assessment.viable = false;
+        assessment.reason = 'Invader Core is still deploying and invulnerable';
+    } else if (towerDamage > requiredHealing * 8 && towerDamage > 0) {
+        assessment.status = 'NOT_VIABLE'; assessment.viable = false;
+        assessment.reason = `Tower DPS ${towerDamage} exceeds support capacity ${requiredHealing}`;
+    }
+    operation.targetId = core.id || operation.targetId;
+    operation.targetOwner = 'Invader';
+    operation.npcOnly = true;
+    operation.strongholdAssessment = assessment;
+    operation.desiredCapabilities = { damage: requiredDamage, ranged: requiredDamage,
+        healing: requiredHealing, dismantle: requiredDismantle };
+    assessment.assignedSquads = (operation.assignedSquads || []).slice();
+    assessment.breacherCount = (operation.assignedCreeps || [])
+        .map(name => Game.creeps && Game.creeps[name]).filter(creep => creep &&
+            ['CoreBreaker', 'Breacher'].includes(creep.memory && creep.memory.role)).length;
+    return assessment;
+}
+
+function createStronghold(options = {}) {
+    if (!options.targetRoom) return { ok: false, reason: 'A targetRoom is required' };
+    const operation = Operations.create('CLEAR_NPC_STRONGHOLD', {
+        ...options, id: options.id || `clear_npc_stronghold:${options.targetRoom}`,
+        state: options.state || 'PENDING', priority: Number.isFinite(options.priority) ? options.priority : 65,
+        preferredSquadType: 'RANGED_QUAD', requestedSquadSize: 4,
+        objective: 'NPC_STRONGHOLD', npcOnly: true,
+        debugReason: options.debugReason || 'NPC stronghold objective'
+    });
+    operation.npcOnly = true;
+    operation.manualDirective = options.manualDirective === true;
+    operation.strongholdRelevant = options.strongholdRelevant === true || operation.manualDirective;
+    operation.retreatRoom = options.retreatRoom || options.originRoom || null;
+    operation.spawnDemands = [{
+        id: `${operation.id}:breacher`, role: 'CoreBreaker', count: 1,
+        capabilities: { work: 6 },
+        bodyRequirements: { scalable: true }, economyCategory: 'combat',
+        priority: operation.priority + 1, targetRoom: operation.targetRoom,
+        memory: { formationRole: 'breacher', allowOffensiveTargets: true }
+    }];
+    return { ok: true, operation };
+}
+
 function applyAssessment(operation, assessment) {
     operation.offensiveAssessment = {
         tick: Game.time,
@@ -230,6 +309,17 @@ function run() {
     for (const operation of Object.values(HiveMemory.ensure().operations)) {
         if (!operation || !OFFENSIVE_TYPES.includes(operation.type) ||
             operation.state === 'COMPLETE' || operation.state === 'ABORTED') continue;
+        if (operation.type === 'CLEAR_NPC_STRONGHOLD') {
+            const assessment = assessStronghold(operation);
+            const room = operation.targetRoom && Game.rooms && Game.rooms[operation.targetRoom];
+            const remainingNpc = room && safeFind(room, typeof FIND_HOSTILE_CREEPS !== 'undefined' ? FIND_HOSTILE_CREEPS : undefined)
+                .filter(creep => ['Invader', 'Source Keeper'].includes(ownerName(creep)) && creep.hits > 0);
+            if (assessment.status === 'NOT_VIABLE' && !strongholdCore(room) && remainingNpc.length === 0 && operation.state === 'ACTIVE') {
+                Operations.transition(operation, 'COMPLETE', 'Invader Core destroyed and dangerous NPC presence cleared');
+                operation.strongholdState = 'COMPLETE';
+                continue;
+            }
+        }
         results[operation.id] = applyAssessment(operation, evaluate(operation));
     }
     return results;
@@ -287,6 +377,8 @@ module.exports = {
     evaluate,
     run,
     createManual,
+    createStronghold,
+    assessStronghold,
     setManualTarget,
     roomSnapshot
 };
