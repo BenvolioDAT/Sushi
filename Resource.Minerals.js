@@ -1,6 +1,7 @@
 const HiveMemory = require('HiveMind.Memory');
 const TickIndex = require('HiveMind.Index');
 const DemandBoard = require('Spawn.DemandBoard');
+const Policy = require('Resource.Policy');
 const Season11Adapter = require('Season11.Adapter');
 
 function isDedicatedThorium(resourceType) {
@@ -62,7 +63,8 @@ function observe(room) {
     const extractor = extractorFor(room.name, mineral);
     const container = mineralContainer(room.name, mineral);
     const depleted = mineral.mineralAmount <= 0;
-    const constrained = !hasDepositCapacity(room, mineral.mineralType);
+    const decision = Policy.extraction(room, mineral.mineralType);
+    const constrained = !!Policy.capacity(room).extractionBlockedReason;
     const seasonal = isDedicatedThorium(mineral.mineralType);
     state.mineral = {
         id: mineral.id,
@@ -76,13 +78,14 @@ function observe(room) {
         containerId: container && container.id || null,
         depleted,
         storageConstrained: constrained,
-        active: !seasonal && !!extractor && !depleted && !constrained,
+        active: !seasonal && !!extractor && (!extractor.isActive || extractor.isActive()) && !depleted && decision.allowed,
+        reasonCode: seasonal ? 'DEDICATED_THORIUM' : !extractor || extractor.isActive && !extractor.isActive() ? 'WAITING_EXTRACTOR' : depleted ? 'DEPLETED_REGENERATING' : decision.reason,
         seasonalDedicated: seasonal,
         lastSeen: Game.time,
         debugReason: seasonal ? 'Thorium reserved for the dedicated Season 11 pipeline' :
             !extractor ? 'Waiting for planned extractor' :
             depleted ? 'Mineral depleted until regeneration' :
-                constrained ? 'Storage and terminal constrained' : 'Mineral extraction active'
+                decision.detail || decision.reason
     };
     if (seasonal) cancelGenericDemands(room.name);
     state.updatedTick = Game.time;
@@ -106,6 +109,7 @@ function emitDemands(room, state) {
             reason: mineral.debugReason
         }));
     }
+    if (!mineral.active) DemandBoard.cancel(`${operationId}:MineralMiner`);
     const container = mineral.containerId && Game.getObjectById(mineral.containerId);
     if (mineral.active || container && amount(container.store, mineral.mineralType) > 0) {
         demands.push(DemandBoard.emit({
@@ -125,7 +129,7 @@ function jobs(room, state) {
     const container = Game.getObjectById(mineral.containerId);
     const stored = container && amount(container.store, mineral.mineralType);
     if (!stored) return [];
-    const target = [room.terminal, room.storage].find(structure => structure && free(structure.store, mineral.mineralType) > 0);
+    const target = Policy.deposit(room, mineral.mineralType);
     if (!target) return [];
     return [{
         id: `mineral-haul:${room.name}:${mineral.mineralType}`,

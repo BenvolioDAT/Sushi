@@ -134,7 +134,7 @@ function sourceFor(room, resourceType, minimum = 1) {
 }
 
 function depositFor(room, resourceType) {
-    return [room.terminal, room.storage].filter(Boolean).find(structure => !structure.store ||
+    return [room.storage].filter(Boolean).find(structure => !structure.store ||
         typeof structure.store.getFreeCapacity !== 'function' || structure.store.getFreeCapacity(resourceType) > 0) || null;
 }
 
@@ -179,6 +179,10 @@ function runReactionState(room, state, cluster) {
         transition(state, jobs.some(Boolean) ? 'CLEANING' : 'IDLE',
             jobs.some(Boolean) ? 'No reaction goal remains' : 'Labs idle and clean');
         return setJobs(state, jobs);
+    }
+    if (require('Resource.Storage').capacity(room).extractionBlockedReason) {
+        state.debugReason = 'PAUSED_STORAGE_PRESSURE';
+        return setJobs(state, cluster.all.map(lab => unloadJob(room, lab, 75, state.debugReason)));
     }
     const ingredients = ingredientsFor(goal.product);
     if (!ingredients) {

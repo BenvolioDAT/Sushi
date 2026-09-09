@@ -74,22 +74,42 @@ var roleThoriumHauler = {
         creep.memory.season11AgingMultiplier = tileAging.multiplier;
         creep.memory.season11AgingEstimateSource = tileAging.source;
 
-        if (!staging) {
-            Season11.noteRouteFailure(creep.room.name, sourceRoom,
-                sourceRoom + ' staging disappeared');
+        var reserve = require('Season11.ResourcePolicy');
+        var safeStore = reserve.safeStorage(sourceRoom);
+        var reserveRoute = !!creep.memory.season11ReserveStorageId;
+        var unavailable = reserveRoute || (reactor && (reactor.my !== true ||
+            Season11.getStoreAmount(reactor, resourceType) >= require('Resource.Policy').config().desiredReactorThorium)) ||
+            (!reactor && (!reactorRecord || reactorRecord.my !== true));
+        if (unavailable && safeStore) {
+            if (carried > 0) { returnCargo(creep, safeStore, resourceType); return; }
+            if (!staging) return;
+            if (creep.room.name !== sourceRoom) { travelToRoom(creep, sourceRoom, 'reserve pickup'); return; }
+            // Preserve the portfolio's startup/continuity allocations for dedicated Reactor haulers.
+            var stores = Season11.ensureMemory().thoriumReservations.stores;
+            var ledger = stores[staging.id];
+            var reactorRecords = Season11.ensureMemory().reactors;
+            var reserved = ledger ? Object.entries(ledger.reactors || {}).reduce(function(sum, pair) {
+                var record = reactorRecords[pair[0]];
+                return sum + (record && record.my === true ? pair[1] : 0);
+            }, 0) : 0;
+            var available = Math.max(0, Season11.getStoreAmount(staging, resourceType) - reserved);
+            var take = Math.min(available, creep.store.getFreeCapacity(resourceType));
+            if (take > 0) {
+                var result = creep.withdraw(staging, resourceType, take);
+                if (result === OK && ledger) {
+                    var moved = take;
+                    Object.keys(ledger.reactors).forEach(function(id) {
+                        if (reactorRecords[id] && reactorRecords[id].my === true) return;
+                        var n = Math.min(moved, ledger.reactors[id]);
+                        ledger.reactors[id] -= n; moved -= n;
+                    });
+                }
+                if (result === ERR_NOT_IN_RANGE) travel.move(creep, staging, { range: 1, reusePath: 10 });
+            }
             return;
         }
-
-        /* Never feed an unclaimed or stolen Reactor. Bring cargo back safely. */
-        if ((reactor && reactor.my !== true) || (!reactor && reactorRecord && reactorRecord.my !== true)) {
-            if (carried > 0) {
-                returnCargo(creep, staging, resourceType);
-            }
-            else {
-                waitNear(creep, staging);
-            }
-            return;
-        }
+        if (unavailable) return;
+        if (!staging && carried <= 0) return;
 
         if (carried > 0) {
             var routeTiles = Math.max(1,
@@ -105,7 +125,10 @@ var roleThoriumHauler = {
                 return;
             }
 
-            var transferResult = creep.transfer(reactor, resourceType);
+            var deliveryAmount = Math.min(carried, Math.max(0,
+                Math.min(1000, require('Resource.Policy').config().desiredReactorThorium) - Season11.getStoreAmount(reactor, resourceType)));
+            if (deliveryAmount <= 0) return;
+            var transferResult = creep.transfer(reactor, resourceType, deliveryAmount);
             var notInRange = typeof ERR_NOT_IN_RANGE !== 'undefined' ?
                 ERR_NOT_IN_RANGE : -9;
             if (transferResult === notInRange) {
@@ -116,7 +139,7 @@ var roleThoriumHauler = {
                 });
             }
             else if (transferResult === (typeof OK !== 'undefined' ? OK : 0)) {
-                Season11Operations.noteDelivery(carried, {
+                Season11Operations.noteDelivery(deliveryAmount, {
                     creepName: creep.name,
                     sourceRoom: sourceRoom,
                     reactorId: reactor.id,
@@ -132,12 +155,19 @@ var roleThoriumHauler = {
             return;
         }
 
-        if (Season11.getStoreAmount(staging, resourceType) <= 0) {
+        if (Season11.getStoreAmount(staging, resourceType) <= 0 &&
+            !(creep.room.storage && Season11.getFuelAllowance(creep.room.storage.id, creep.memory.season11ReactorId) > 0)) {
             waitNear(creep, staging);
             return;
         }
 
         var allowance = Season11.getFuelAllowance(staging.id, creep.memory.season11ReactorId);
+        var localStorage = creep.room.storage;
+        if (allowance <= 0 && localStorage && localStorage.my !== false &&
+            Season11.getFuelAllowance(localStorage.id, creep.memory.season11ReactorId) > 0) {
+            staging = localStorage;
+            allowance = Season11.getFuelAllowance(staging.id, creep.memory.season11ReactorId);
+        }
         var free = creep.store && typeof creep.store.getFreeCapacity === 'function' ?
             creep.store.getFreeCapacity(resourceType) : 0;
         var amount = Math.floor(Math.min(allowance, free, Season11.getStoreAmount(staging, resourceType)));

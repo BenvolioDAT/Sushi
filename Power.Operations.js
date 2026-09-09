@@ -53,6 +53,7 @@ function countAssigned(operationId, role) {
 
 function sync(bank) {
     const operation = operationFor(bank);
+    if (operation.state === 'COMPLETE') return operation;
     operation.updatedAt = Game.time;
     operation.roomName = bank.roomName;
     operation.originRoom = bank.homeRoom;
@@ -62,6 +63,7 @@ function sync(bank) {
         operation.reason = operation.viability.reason;
         return operation;
     }
+    operation.recoveryTarget = Math.max(operation.recoveryTarget || 0, bank.power || 0);
     if (!Economy.canSpend(bank.homeRoom, 'combat')) {
         operation.state = 'EVALUATING';
         operation.reason = 'HOME_ECONOMY_BLOCKED';

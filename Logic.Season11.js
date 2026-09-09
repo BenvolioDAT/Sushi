@@ -61,6 +61,7 @@ var DEFAULT_CONFIG = {
     minimumCpuBucket: 2500,
     minimumStorageEnergy: 30000,
     expansionValueThreshold: 25000,
+    pauseMining: false,
     expansionMinimumThorium: 15000,
     expansionMinimumSources: 1,
     expansionMaximumRouteRooms: 8,
@@ -928,32 +929,14 @@ function requestInfrastructurePlan(room, mineral, missingType) {
 }
 
 function findStagingStructure(room, mineral) {
-    if (!room) {
-        return null;
-    }
-
-    if (room.storage && room.storage.my !== false) {
-        return room.storage;
-    }
-    if (room.terminal && room.terminal.my !== false) {
-        return room.terminal;
-    }
-
-    var structureConstant = typeof FIND_STRUCTURES !== 'undefined' ?
-        FIND_STRUCTURES : null;
-    var containerType = typeof STRUCTURE_CONTAINER !== 'undefined' ?
-        STRUCTURE_CONTAINER : 'container';
-    var containers = safeFind(room, structureConstant, {
-        filter: function(structure) {
-            return structure && structure.structureType === containerType &&
-                structure.store;
-        }
+    if (!room) return null;
+    var byType = TickIndex.get().structuresByRoom.get(room.name);
+    var type = typeof STRUCTURE_CONTAINER !== 'undefined' ? STRUCTURE_CONTAINER : 'container';
+    var containers = (byType && byType.get(type) || []).filter(function(s) {
+        return s.store && s.pos && mineral && mineral.pos && s.pos.getRangeTo(mineral) <= 2;
     });
-
-    if (mineral && mineral.pos && typeof mineral.pos.findClosestByRange === 'function') {
-        return mineral.pos.findClosestByRange(containers) || null;
-    }
-    return containers.length > 0 ? containers[0] : null;
+    containers.sort(function(a, b) { return a.pos.getRangeTo(mineral) - b.pos.getRangeTo(mineral) || String(a.id).localeCompare(String(b.id)); });
+    return containers[0] || (room.storage && room.storage.my !== false ? room.storage : null);
 }
 
 function hasActiveExtractor(room, mineral) {
@@ -1000,7 +983,7 @@ function refreshMiningAssignments() {
     var desiredIncome = targetCount > 0 ? targetCount * 1.15 + 0.25 : 0;
     var selectedIncome = 0;
 
-    for (var i = 0; i < ranked.length && selected < maximum && selectedIncome < desiredIncome; i++) {
+    for (var i = 0; i < ranked.length && selected < maximum; i++) {
         var target = ranked[i];
         if (!target.accessible || !target.homeRoom) {
             continue;
@@ -1064,7 +1047,8 @@ function refreshMiningAssignments() {
         }
         var oldAssignment = previousAssignments[oldRoomName];
         var oldStaging = oldAssignment && getObjectById(oldAssignment.stagingId);
-        if (oldStaging && getStoreAmount(oldStaging, thoriumType) > 0) {
+        var reserveStorage = Game.rooms[oldRoomName] && Game.rooms[oldRoomName].storage;
+        if (oldStaging && (getStoreAmount(oldStaging, thoriumType) > 0 || getStoreAmount(reserveStorage, thoriumType) > 0)) {
             oldAssignment.remaining = 0;
             oldAssignment.ready = false;
             oldAssignment.depleted = true;
@@ -1607,12 +1591,13 @@ function makeHaulerPlan(homeRoom, assignment, reactor, emergency) {
         ensureMemory().config.haulerSafetyMargin
     );
     desired = Math.min(ensureMemory().config.maxHaulersPerRoute, desired);
+    var supply = require('Season11.ResourcePolicy').runway(reactor, routeTiles, requestedCarryParts * 6);
     var key = 'haul:' + assignment.roomName + ':' + reactor.id;
 
     return {
         role: 'ThoriumHauler',
         desired: desired,
-        priority: emergency ? 72 : 42,
+        priority: emergency ? supply.emergencyPriority : 42,
         emergency: emergency,
         requestedCarryParts: requestedCarryParts,
         assignmentKey: key,
@@ -1903,7 +1888,8 @@ function refreshPortfolio(force, cpuPressured) {
             return reserve.required > worst.required ? reserve : worst;
         }, Portfolio.startupReserve({}, config));
         if (e.active) {
-            var wanted = Math.max(0, (e.startup ? e.startup.reserve : config.startupReserve) -
+            var wanted = Math.max(0, (e.owned ? require('Resource.Policy').config().desiredReactorThorium :
+                (e.startup ? e.startup.reserve : config.startupReserve)) -
                 (e.owned ? e.thoriumBuffer : 0) - e.inTransit);
             usedSources.forEach(function(allocation) {
                 var route = allocation.route;
@@ -1912,10 +1898,18 @@ function refreshPortfolio(force, cpuPressured) {
                 var granted = Portfolio.reserveFuel(ledger, route.stagingId, e.reactorId,
                     getStoreAmount(getObjectById(route.stagingId), getThoriumResourceType()), wanted);
                 e.reservedThorium += granted; wanted -= granted;
+                var reserveRoom = Game.rooms[route.sourceRoom], reserveStorage = reserveRoom && reserveRoom.storage;
+                if (wanted > 0 && reserveStorage && reserveStorage.my !== false && reserveStorage.id !== route.stagingId) {
+                    var reserveGranted = Portfolio.reserveFuel(ledger, reserveStorage.id, e.reactorId,
+                        getStoreAmount(reserveStorage, getThoriumResourceType()), wanted);
+                    e.reservedThorium += reserveGranted; wanted -= reserveGranted;
+                }
             });
             protectedCount++;
         }
         var remaining = usedSources.reduce(function(sum, a) { return sum + a.route.remaining; }, 0);
+        e.supply = require('Season11.ResourcePolicy').runway(r,
+            e.deliveryEta === null ? e.startup.eta : e.deliveryEta, e.startup.replacement, e.inTransit);
         var required = e.startup ? e.startup.reserve : config.startupReserve;
         e.pipelineReady = usedSources.length > 0 && usedSources.every(function(a) {
             return liveMiners[a.route.sourceRoom] >= a.route.minerWork && liveHaulers[e.reactorId] &&
@@ -2073,17 +2067,13 @@ function getSpawnPlanForRoom(room) {
         }
     }
     }
+    plans = plans.concat(require('Season11.ResourcePolicy').reservePlans(room, memory, makeHaulerPlan, getAssignmentCount));
     return plans;
 }
 
 function shouldPauseMining(roomName) {
-    var memory = ensureMemory(), assignment = memory.assignments.mining[roomName];
-    if (!assignment || !assignment.ready || assignment.remaining <= 0) return true;
-    var entries = Object.values(memory.reactorPortfolio.reactors);
-    var useful = entries.filter(function(e) { return e.active && (e.assignedMiningRooms || []).indexOf(roomName) >= 0; });
-    // Build at most one startup stockpile per useful Reactor, then preserve finite deposits.
-    var target = useful.reduce(function(sum, e) { return sum + (e.startup ? e.startup.reserve : memory.config.startupReserve); }, 0);
-    return !target || getStoreAmount(getObjectById(assignment.stagingId), getThoriumResourceType()) >= target;
+    var memory = ensureMemory();
+    return !require('Season11.ResourcePolicy').assess(memory.assignments.mining[roomName], memory).allowed;
 }
 
 function noteSpawnRequestQueued(plan) {

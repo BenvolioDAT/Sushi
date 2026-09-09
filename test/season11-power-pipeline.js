@@ -144,7 +144,7 @@ test('completed extractor and staging produce exactly one miner demand', () => {
     const extractor = { id: 'extractor', structureType: STRUCTURE_EXTRACTOR,
         pos: new RoomPosition(20, 20, 'W2N2'), isActive: () => true };
     const container = { id: 'container', structureType: STRUCTURE_CONTAINER,
-        pos: new RoomPosition(21, 20, 'W2N2'), store: { getUsedCapacity: () => 0 } };
+        pos: new RoomPosition(21, 20, 'W2N2'), store: { getUsedCapacity: () => 0, getFreeCapacity: () => 2000 } };
     const world = miningWorld(6, [extractor, container], []);
     assert.strictEqual(world.assignment.state, 'READY');
     assert.strictEqual(world.assignment.ready, true);
@@ -225,7 +225,7 @@ test('configured Power Creep creation requires free GPL', () => {
 test('unspawned configured Power Creep selects owned active Power Spawn', () => {
     reset(); const room = homeRoom(); let selected = null;
     const spawn = { id: 'PS1', structureType: STRUCTURE_POWER_SPAWN, isActive: () => true,
-        store: { getUsedCapacity: () => 0 } };
+        store: { getUsedCapacity: () => 0, getFreeCapacity: () => 2000 } };
     room.find = constant => constant === FIND_STRUCTURES ? [spawn] : [];
     Game.powerCreeps.SushiOperator = { ticksToLive: 0, spawn: target => { selected = target; return OK; } };
     const Economy = fresh('HiveMind.Economy.js'); Economy.canSpend = () => true;

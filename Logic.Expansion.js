@@ -674,6 +674,9 @@ function chooseExpansionTarget(expansion, ownedSpawnRooms) {
             candidate.linearDistance +
             (candidate.spacingDistance * 4);
 
+        var resourceBonus = require('Resource.Policy').diversity(candidate.mineralType);
+        candidate.score += resourceBonus;
+        ensureCandidateMemory(expansion, candidate.roomName).mineralDiversityBonus = resourceBonus;
         ensureCandidateMemory(expansion, candidate.roomName).score = candidate.score;
 
         if (!best || candidate.score > best.score) {
@@ -855,6 +858,7 @@ function buildCandidate(expansion, roomName, roomMemory) {
         ok: true,
         roomName: roomName,
         sourceCount: sourceCount,
+        mineralType: scoutIntel.mineralType || null,
         linearDistance: typeof spacingDistance === 'number' ? spacingDistance : 99,
         spacingDistance: typeof spacingDistance === 'number' ? spacingDistance : 99,
         originRoom: candidateMemory.originRoom || null,

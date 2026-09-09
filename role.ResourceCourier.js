@@ -9,13 +9,13 @@ function resourceKeys(store) {
 }
 
 function fallbackDeposit(creep, resourceType) {
-    return [creep.room.terminal, creep.room.storage].find(structure => structure && structure.store &&
+    return [creep.room.storage].find(structure => structure && structure.store &&
         structure.store.getFreeCapacity(resourceType) > 0) || null;
 }
 
 function ownedFallbackDeposit(creep, resourceType) {
     if (!creep.room.controller || !creep.room.controller.my) return null;
-    return [creep.room.terminal, creep.room.storage].find(structure => structure && structure.my !== false &&
+    return [creep.room.storage].find(structure => structure && structure.my !== false &&
         structure.store && structure.store.getFreeCapacity(resourceType) > 0) || null;
 }
 
@@ -120,13 +120,19 @@ function runPowerBankHauler(creep) {
             creep.memory.powerBankState = 'returning';
             return;
         }
-        const target = [creep.room.powerSpawn, creep.room.storage, creep.room.terminal]
+        const target = creep.room.controller && creep.room.controller.my && [creep.room.powerSpawn && (creep.room.powerSpawn.store[powerType] || 0) <
+            (require('HiveMind.Memory').getConfig('power').processing.targetPower || 25) ? creep.room.powerSpawn : null, creep.room.storage]
             .find(item => item && item.store && item.my !== false &&
                 (typeof item.store.getFreeCapacity !== 'function' || item.store.getFreeCapacity(powerType) > 0));
-        const result = target && moveOrAct(creep, target, () => creep.transfer(target, powerType));
+        const workingNeed = target && target === creep.room.powerSpawn ? Math.max(0,
+            (require('HiveMind.Memory').getConfig('power').processing.targetPower || 25) - (target.store[powerType] || 0)) : creep.store[powerType];
+        const deliveryAmount = target ? Math.min(creep.store[powerType], workingNeed,
+            typeof target.store.getFreeCapacity === 'function' ? target.store.getFreeCapacity(powerType) : workingNeed) : 0;
+        const result = target && moveOrAct(creep, target, () => creep.transfer(target, powerType, deliveryAmount));
         if (result === OK && operation) {
-            operation.state = 'COMPLETE';
-            operation.completedAt = Game.time;
+            operation.deliveredPower = (operation.deliveredPower || 0) + deliveryAmount;
+            operation.state = operation.recoveryTarget > 0 && operation.deliveredPower >= operation.recoveryTarget ? 'COMPLETE' : 'RETURNING';
+            if (operation.state === 'COMPLETE') operation.completedAt = Game.time;
             operation.reason = 'Recovered Power delivered to safe owned storage';
         }
         creep.memory.powerBankState = target ? 'depositing' : 'waitingForSafeStore';

@@ -310,6 +310,7 @@ function saveScoutVisit(creep) {
         roomName: roomName,
         roomStatus: getRoomStatusString(roomName),
         sourceCount: creep.room.find(FIND_SOURCES).length,
+        mineralType: typeof FIND_MINERALS !== 'undefined' ? (creep.room.find(FIND_MINERALS)[0] || {}).mineralType || null : null,
         hostileCreepCount: creep.room.find(FIND_HOSTILE_CREEPS).length,
         hostileStructureCount: creep.room.find(FIND_HOSTILE_STRUCTURES).length,
         invaderCore: hasInvaderCore(creep.room),

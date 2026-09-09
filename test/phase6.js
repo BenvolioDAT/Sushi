@@ -137,9 +137,10 @@ test('resource Memory migration is additive and defaults market use off', functi
 test('mineral lifecycle waits for extractor, emits demand when active, and stops safely', function() {
     reset();
     const node = mineral();
-    const terminal = structure('terminal', STRUCTURE_TERMINAL, 20, 20, {}, 50000);
-    const structures = [terminal];
-    const room = makeRoom('W1N1', { structures, minerals: [node], terminal });
+    const terminal = structure('terminal', STRUCTURE_TERMINAL, 20, 20, {}, 300000);
+    const storage = structure('storage', STRUCTURE_STORAGE, 21, 20, {}, 1000000);
+    const structures = [terminal, storage];
+    const room = makeRoom('W1N1', { structures, minerals: [node], terminal, storage });
     installObjectLookup(structures.concat(node));
     let index = fresh('HiveMind.Index.js');
     index.build();
@@ -157,7 +158,7 @@ test('mineral lifecycle waits for extractor, emits demand when active, and stops
     state = minerals.observe(room);
     assert.strictEqual(state.mineral.active, true);
     assert.strictEqual(minerals.emitDemands(room, state).length, 2);
-    assert.strictEqual(minerals.jobs(room, state)[0].targetId, terminal.id);
+    assert.strictEqual(minerals.jobs(room, state)[0].targetId, storage.id);
 
     node.mineralAmount = 0;
     state = minerals.observe(room);
@@ -170,7 +171,8 @@ test('MineralMiner harvests through the extractor lifecycle and deposits cargo',
     const node = mineral();
     const container = structure('container', STRUCTURE_CONTAINER, 11, 10, {}, 2000);
     node.pos.findInRange = () => [container];
-    const room = makeRoom('W1N1', { structures: [container], minerals: [node] });
+    const storage = structure('storage', STRUCTURE_STORAGE, 20, 20, {}, 1000000);
+    const room = makeRoom('W1N1', { structures: [container, storage], storage, minerals: [node] });
     installObjectLookup([node, container]);
     const minerCreep = new Creep();
     Object.assign(minerCreep, {
@@ -222,9 +224,9 @@ test('link routing moves source energy once and preserves emergency room energy'
 test('terminals send only to visible owned terminals and retain an energy reserve', function() {
     reset();
     const sent = [];
-    const fromTerminal = structure('from-terminal', STRUCTURE_TERMINAL, 20, 20, { [RESOURCE_ENERGY]: 30000, H: 2000 }, 50000);
+    const fromTerminal = structure('from-terminal', STRUCTURE_TERMINAL, 20, 20, { [RESOURCE_ENERGY]: 30000, H: 2000 }, 300000);
     fromTerminal.send = (type, quantity, roomName) => { sent.push([type, quantity, roomName]); return OK; };
-    const toTerminal = structure('to-terminal', STRUCTURE_TERMINAL, 20, 20, { [RESOURCE_ENERGY]: 30000 }, 50000);
+    const toTerminal = structure('to-terminal', STRUCTURE_TERMINAL, 20, 20, { [RESOURCE_ENERGY]: 30000 }, 300000);
     makeRoom('W1N1', { structures: [fromTerminal], terminal: fromTerminal });
     makeRoom('W2N2', { structures: [toTerminal], terminal: toTerminal });
     delete global.__sushiTickIndex;
@@ -232,7 +234,7 @@ test('terminals send only to visible owned terminals and retain an energy reserv
     terminals.requestTransfer({ fromRoom: 'W1N1', toRoom: 'W2N2', resourceType: 'H', amount: 500 });
     terminals.run();
     assert.deepStrictEqual(sent, [['H', 500, 'W2N2']]);
-    const hostileTerminal = structure('hostile-terminal', STRUCTURE_TERMINAL, 20, 20, {}, 50000);
+    const hostileTerminal = structure('hostile-terminal', STRUCTURE_TERMINAL, 20, 20, {}, 300000);
     makeRoom('W9N9', { structures: [hostileTerminal], terminal: hostileTerminal, controller: { my: false, level: 8 } });
     const rejected = terminals.validate({ fromRoom: 'W1N1', toRoom: 'W9N9', resourceType: 'H', validUntil: Game.time + 1 });
     assert.strictEqual(rejected.ok, false);
@@ -243,8 +245,8 @@ test('terminals send only to visible owned terminals and retain an energy reserv
 
 test('active boost stock is reserved and missing compounds stage from an owned terminal', function() {
     reset();
-    const localTerminal = structure('local-terminal', STRUCTURE_TERMINAL, 20, 20, { [RESOURCE_ENERGY]: 30000 }, 50000);
-    const donorTerminal = structure('donor-terminal', STRUCTURE_TERMINAL, 20, 20, { [RESOURCE_ENERGY]: 30000, XKHO2: 1000 }, 50000);
+    const localTerminal = structure('local-terminal', STRUCTURE_TERMINAL, 20, 20, { [RESOURCE_ENERGY]: 30000 }, 300000);
+    const donorTerminal = structure('donor-terminal', STRUCTURE_TERMINAL, 20, 20, { [RESOURCE_ENERGY]: 30000, XKHO2: 1000 }, 300000);
     makeRoom('W1N1', { structures: [localTerminal], terminal: localTerminal });
     makeRoom('W2N2', { structures: [donorTerminal], terminal: donorTerminal });
     const hive = fresh('HiveMind.Memory.js').ensure();
@@ -255,6 +257,7 @@ test('active boost stock is reserved and missing compounds stage from an owned t
     delete global.__sushiTickIndex;
     const manager = fresh('Resource.Manager.js');
     manager.syncBoostRequests();
+    fresh('Resource.Terminals.js').planBalance();
     const transfer = hive.resources.transfers['terminal:W2N2:W1N1:XKHO2'];
     assert.ok(transfer);
     assert.strictEqual(transfer.toRoom, 'W1N1');
@@ -263,7 +266,7 @@ test('active boost stock is reserved and missing compounds stage from an owned t
 
 test('lab reactions progress through loading, reacting, and unloading states', function() {
     reset();
-    const storage = structure('storage', STRUCTURE_STORAGE, 20, 20, { H: 1000, O: 1000, [RESOURCE_ENERGY]: 5000 }, 50000);
+    const storage = structure('storage', STRUCTURE_STORAGE, 20, 20, { H: 1000, O: 1000, [RESOURCE_ENERGY]: 5000 }, 300000);
     const inputA = structure('lab-a', STRUCTURE_LAB, 10, 10, {}, 3000);
     const inputB = structure('lab-b', STRUCTURE_LAB, 11, 10, {}, 3000);
     const output = structure('lab-out', STRUCTURE_LAB, 10, 11, {}, 3000);
@@ -295,7 +298,7 @@ test('lab reactions progress through loading, reacting, and unloading states', f
 
 test('lab contamination enters cleaning and missing reaction data fails gracefully', function() {
     reset();
-    const storage = structure('storage', STRUCTURE_STORAGE, 20, 20, {}, 50000);
+    const storage = structure('storage', STRUCTURE_STORAGE, 20, 20, {}, 300000);
     const labsList = [
         structure('lab-a', STRUCTURE_LAB, 10, 10, { Z: 100 }, 3000),
         structure('lab-b', STRUCTURE_LAB, 11, 10, {}, 3000),
@@ -322,7 +325,7 @@ test('lab contamination enters cleaning and missing reaction data fails graceful
 
 test('boost workflow stages compounds, exposes rally positions, and verifies body boosts', function() {
     reset();
-    const storage = structure('storage', STRUCTURE_STORAGE, 20, 20, { XKHO2: 100, XLHO2: 100, [RESOURCE_ENERGY]: 5000 }, 50000);
+    const storage = structure('storage', STRUCTURE_STORAGE, 20, 20, { XKHO2: 100, XLHO2: 100, [RESOURCE_ENERGY]: 5000 }, 300000);
     const labA = structure('lab-a', STRUCTURE_LAB, 10, 10, {}, 3000);
     const labB = structure('lab-b', STRUCTURE_LAB, 11, 10, {}, 3000);
     const labC = structure('lab-c', STRUCTURE_LAB, 10, 11, {}, 3000);
@@ -364,7 +367,7 @@ test('boost workflow stages compounds, exposes rally positions, and verifies bod
 test('ResourceCourier executes a generated transfer job end to end', function() {
     reset();
     const source = structure('source', STRUCTURE_CONTAINER, 10, 10, { H: 80 }, 2000);
-    const target = structure('target', STRUCTURE_TERMINAL, 20, 20, {}, 50000);
+    const target = structure('target', STRUCTURE_TERMINAL, 20, 20, {}, 300000);
     const room = makeRoom('W1N1', { structures: [source, target], terminal: target });
     installObjectLookup([source, target]);
     const worker = courier('courier', room, 100);

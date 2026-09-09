@@ -97,34 +97,7 @@ function syncBoostRequests() {
             priority: 90,
             acceptPartial: squad.acceptPartialBoosts
         });
-        const compounds = Object.values(request.requirements).flat().map(item => item.compound);
-        const room = Game.rooms[roomName];
-        if (!room) continue;
-        for (const compound of compounds) {
-            const localAmount = Labs.amount(room.storage && room.storage.store, compound) +
-                Labs.amount(room.terminal && room.terminal.store, compound);
-            if (localAmount > 0) continue;
-            const donor = TickIndex.get().ownedRooms.filter(candidate => candidate.name !== roomName && candidate.terminal &&
-                Labs.amount(candidate.terminal.store, compound) >= 100)
-                .sort((a, b) => Labs.amount(b.terminal.store, compound) - Labs.amount(a.terminal.store, compound) ||
-                    a.name.localeCompare(b.name))[0];
-            if (donor && room.terminal) {
-                Terminals.requestTransfer({
-                    fromRoom: donor.name,
-                    toRoom: roomName,
-                    resourceType: compound,
-                    amount: Math.min(1000, Labs.amount(donor.terminal.store, compound)),
-                    priority: 95,
-                    validUntil: Game.time + 200,
-                    reason: `Stage boost compound for ${squad.id}`
-                });
-                continue;
-            }
-            if (Labs.ingredientsFor(compound)) {
-                Labs.configureReaction(roomName, compound, 1000, { priority: 90, operationId: squad.operationId });
-                break;
-            }
-        }
+
     }
 }
 
@@ -185,7 +158,13 @@ function plan() {
     scrubGenericThoriumDemands();
     if (settings.enabled === false) return { enabled: false };
     syncBoostRequests();
+    const policy = require('Resource.Policy').snapshot();
     const schedule = scheduleState();
+    if (schedule.resourcePolicyTick !== policy.updatedAt) {
+        if (settings.labs !== false) require('Resource.Policy').planReactions();
+        if (settings.terminals !== false) Terminals.planBalance();
+        schedule.resourcePolicyTick = policy.updatedAt;
+    }
     let minerals = [];
     if (settings.minerals !== false && Game.time - schedule.mineralPlanTick >= 11) {
         minerals = Minerals.plan();
@@ -224,6 +203,7 @@ function runRoom(room) {
         const observer = byType && (byType.get(STRUCTURE_OBSERVER) || [])[0];
         if (observer) report.observer = Observers.run(observer);
     }
+    if (discretionary && settings.terminals !== false) addJobs(Terminals.jobs(room));
     report.jobs = jobsForRoom(room.name).map(job => ({ ...job }));
     return report;
 }

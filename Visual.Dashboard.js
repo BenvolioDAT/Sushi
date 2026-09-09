@@ -1430,6 +1430,37 @@ function drawRemoteRoomDashboard(remoteRoom, homeRoomName, remoteSources, creepS
     }
 }
 
+function drawResourceStrategy(visual, roomName) {
+    var policy = HiveMemory.ensure().resources.policy;
+    if (!policy || !policy.updatedAt) return;
+    var room = policy.rooms[roomName];
+    var y = 35.2;
+    drawPanel(visual, 1, 34.5, 18, 14, 'RESOURCE ECONOMY');
+    ['energy', 'H', 'O', 'U', 'L', 'K', 'Z', 'X', 'G'].forEach(function(type) {
+        var r = policy.resources[type];
+        if (!r) return;
+        var label = type === 'energy' ? 'PROTECTED' : r.miningState === 'PAUSED_TARGET_REACHED' ? 'PAUSED' : r.state;
+        drawText(visual, type + ' ' + compactNumber(r.totalStored) + ' ' + label +
+            (r.targetDesired ? ' > ' + compactNumber(r.targetDesired) : '') +
+            (r.demandReason.indexOf('boost') >= 0 ? ' BOOST' : r.demandReason.indexOf('reaction') >= 0 ? ' LAB' : ''), 1.5, y += 0.7, COLORS.text, 0.5);
+    });
+    if (room) {
+        drawText(visual, 'Used ' + compactNumber(room.storageUsed), 1.5, y += 0.7, COLORS.text, 0.5);
+        drawText(visual, 'Free ' + compactNumber(room.storageFree) + ' / reserve ' + compactNumber(room.reservedFree), 1.5, y += 0.7, COLORS.text, 0.5);
+        drawText(visual, room.capacityPressure + ' Hub: ' + (policy.hubs[0] || '-'), 1.5, y += 0.7, COLORS.text, 0.5);
+    }
+    var season = Season11.isApiAvailable() ? Season11.ensureMemory() : null;
+    var type = season && Season11.getThoriumResourceType(), thorium = type && policy.resources[type];
+    if (thorium) drawText(visual, 'T reserve ' + compactNumber(thorium.storageAmount) + ' stage ' + compactNumber(thorium.stagingAmount), 1.5, y += 0.7, COLORS.text, 0.5);
+    if (season) {
+        var entries = Object.values(season.reactorPortfolio.reactors || {});
+        var supply = entries.find(function(e) { return e.owned && e.supply; });
+        if (supply) drawText(visual, 'Runway ' + supply.supply.supplyRunwayTicks + 't cargo ' + (supply.inTransit || 0), 1.5, y += 0.7, COLORS.text, 0.5);
+        var mine = season.assignments.mining[roomName];
+        if (mine && mine.resourcePolicy) drawText(visual, mine.resourcePolicy.reason, 1.5, y += 0.7, COLORS.text, 0.45);
+    }
+}
+
 function drawDashboard(room, ownedRoomCount, creepStats) {
     var visual = new RoomVisual(room.name);
     var sourceStats = getRoomSourceStats(room);
@@ -1441,6 +1472,7 @@ function drawDashboard(room, ownedRoomCount, creepStats) {
     var sourcePanel = drawSourcePanel(visual, sourceStats);
     drawRemotePanel(visual, remoteStats, sourcePanel);
     drawSeason11Panel(visual);
+    drawResourceStrategy(visual, room.name);
 }
 
 var Dashboard = {

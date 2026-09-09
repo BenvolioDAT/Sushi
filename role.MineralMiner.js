@@ -102,7 +102,8 @@ function run(creep) {
         retireThoriumMiner(creep, thorium);
         return;
     }
-    if (carried > 0 && (creep.store.getFreeCapacity() === 0 || mineral.mineralAmount <= 0)) {
+    const decision = require('Resource.Policy').extraction(creep.room, mineral.mineralType);
+    if (carried > 0 && (!decision.allowed || creep.store.getFreeCapacity() === 0 || mineral.mineralAmount <= 0)) {
         const deposit = findDeposit(creep, mineral);
         if (!deposit) {
             creep.memory.mineralState = 'waitingForDepositCapacity';
@@ -113,6 +114,7 @@ function run(creep) {
         creep.memory.mineralState = 'depositing';
         return;
     }
+    if (!decision.allowed) { creep.memory.mineralState = decision.reason; return; }
     if (mineral.mineralAmount <= 0) {
         creep.memory.mineralState = 'depleted';
         if (typeof creep.setTrafficLock === 'function') creep.setTrafficLock(true);

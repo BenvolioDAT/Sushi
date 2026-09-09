@@ -40,7 +40,7 @@ const CONFIG_DEFAULTS = Object.freeze({
     },
     resources: {
         enabled: true, minerals: true, links: true,
-        terminals: true, labs: true, observers: true, market: false
+        terminals: true, labs: true, observers: true, market: false, policy: {}
     },
     season11: {},
     power: {

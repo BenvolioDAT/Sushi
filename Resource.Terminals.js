@@ -5,8 +5,6 @@ const Season11Adapter = require('Season11.Adapter');
 
 const ENERGY_RESERVE = 20000;
 const MIN_SEND = 100;
-const BALANCE_LOW = 1000;
-const BALANCE_HIGH = 5000;
 
 function terminalRooms() {
     return TickIndex.get().ownedRooms.filter(room => room.terminal && room.terminal.my !== false && room.controller && room.controller.my);
@@ -67,26 +65,70 @@ function reservedAmount(roomName, resourceType) {
 }
 
 function planBalance() {
-    const rooms = terminalRooms();
-    const types = new Set();
-    for (const room of rooms) for (const type of resourceKeys(room.terminal.store)) types.add(type);
-    for (const type of Array.from(types).sort()) {
-        if (isDedicatedThorium(type)) continue;
-        const donors = rooms.filter(room => amount(room.terminal.store, type) > BALANCE_HIGH + reservedAmount(room.name, type))
-            .sort((a, b) => amount(b.terminal.store, type) - amount(a.terminal.store, type) || a.name.localeCompare(b.name));
-        const receivers = rooms.filter(room => amount(room.terminal.store, type) < BALANCE_LOW)
-            .sort((a, b) => amount(a.terminal.store, type) - amount(b.terminal.store, type) || a.name.localeCompare(b.name));
-        if (!donors[0] || !receivers[0] || donors[0] === receivers[0]) continue;
-        requestTransfer({
-            fromRoom: donors[0].name,
-            toRoom: receivers[0].name,
-            resourceType: type,
-            amount: Math.min(1000, amount(donors[0].terminal.store, type) - BALANCE_HIGH - reservedAmount(donors[0].name, type)),
-            priority: 25,
-            validUntil: Game.time + 100,
-            reason: 'Automatic owned-terminal balance'
-        });
+    const Policy = require('Resource.Policy'), p = Policy.snapshot(), rooms = terminalRooms();
+    // Retire queued legacy symmetry jobs when upgrading an existing empire.
+    const transfers = HiveMemory.ensure().resources.transfers;
+    for (const [id, t] of Object.entries(transfers)) if (t.reason === 'Automatic owned-terminal balance') delete transfers[id];
+    const allocated = {};
+    for (const receiver of rooms) {
+        const local = p.rooms[receiver.name];
+        if (!local) continue;
+        for (const [type, target] of Object.entries(local.needs)) {
+            if (isDedicatedThorium(type) || type === RESOURCE_ENERGY) continue;
+            const shortage = target - (local.inventory[type] || 0);
+            if (shortage <= 0) continue;
+            const donor = rooms.filter(r => r.name !== receiver.name && p.rooms[r.name] &&
+                (p.rooms[r.name].inventory[type] || 0) - (p.rooms[r.name].needs[type] || 0) - (allocated[r.name + ':' + type] || 0) >= MIN_SEND)
+                .sort((a, b) => transferCost(1000, a.name, receiver.name) - transferCost(1000, b.name, receiver.name) || a.name.localeCompare(b.name))[0];
+            if (!donor) continue;
+            const key = donor.name + ':' + type;
+            const n = Math.min(1000, Math.max(MIN_SEND, shortage), (p.rooms[donor.name].inventory[type] || 0) -
+                (p.rooms[donor.name].needs[type] || 0) - (allocated[key] || 0));
+            requestTransfer({ fromRoom: donor.name, toRoom: receiver.name, resourceType: type,
+                amount: n, priority: 70, validUntil: Game.time + 100, reason: local.reasons[type] });
+            allocated[key] = (allocated[key] || 0) + n;
+        }
     }
+    // Relieve a pressured vault only when another colony has genuinely useful headroom.
+    for (const donor of rooms) {
+        const local = p.rooms[donor.name];
+        if (!local || local.capacityPressure !== 'PRESSURE') continue;
+        const receiver = rooms.find(r => r.name !== donor.name && p.rooms[r.name] &&
+            p.rooms[r.name].storageFree > Policy.config().desiredStorageFreeCapacity + 10000);
+        if (!receiver) continue;
+        const type = Object.keys(local.inventory).sort().find(t => t !== RESOURCE_ENERGY &&
+            t !== (typeof RESOURCE_POWER !== 'undefined' ? RESOURCE_POWER : 'power') && !isDedicatedThorium(t) &&
+            (local.inventory[t] || 0) - (local.needs[t] || 0) >= 1000);
+        if (type) requestTransfer({ fromRoom: donor.name, toRoom: receiver.name, resourceType: type,
+            amount: 1000, priority: 30, validUntil: Game.time + 100, reason: 'Storage pressure consolidation' });
+    }
+
+}
+
+function transferCost(n, from, to) {
+    return Game.market && typeof Game.market.calcTransactionCost === 'function' ?
+        Game.market.calcTransactionCost(n, from, to) : Math.ceil(n * 0.5);
+}
+
+function jobs(room) {
+    const Policy = require('Resource.Policy'), c = Policy.config(), result = [];
+    if (!room.terminal || !room.storage || !room.controller || !room.controller.my) return result;
+    const outgoing = {};
+    for (const t of Object.values(HiveMemory.ensure().resources.transfers)) if (t.fromRoom === room.name && t.validUntil >= Game.time && !isDedicatedThorium(t.resourceType)) outgoing[t.resourceType] = (outgoing[t.resourceType] || 0) + t.amount;
+    outgoing[RESOURCE_ENERGY] = c.terminalEnergyReserve + 5000;
+    for (const type of new Set([...Object.keys(outgoing), ...resourceKeys(room.terminal.store)])) {
+        if (isDedicatedThorium(type)) continue;
+        const current = amount(room.terminal.store, type), wanted = outgoing[type] || 0;
+        const loading = current < wanted;
+        const source = loading ? room.storage : room.terminal, target = loading ? room.terminal : room.storage;
+        const n = Math.min(Math.abs(wanted - current), amount(source.store, type),
+            Math.max(0, Policy.free(target.store) - (loading ? c.minimumTerminalFreeCapacity : 0)));
+        if (n <= 0) continue;
+        result.push({ id: `terminal-stage:${room.name}:${type}`, type: 'TRANSFER', roomName: room.name,
+            sourceId: source.id, targetId: target.id, resourceType: type, amount: n, priority: 65,
+            reason: loading ? 'Stage owned transfer buffer' : 'Return transit stock to Storage' });
+    }
+    return result;
 }
 
 function validate(transfer) {
@@ -102,6 +144,14 @@ function validate(transfer) {
     if (!from.terminal || from.terminal.my === false || !to.terminal || to.terminal.my === false) {
         return { ok: false, reason: 'both owned terminals are required' };
     }
+    if (amount(from.terminal.store, RESOURCE_ENERGY) < ENERGY_RESERVE) return { ok: false, reason: 'energy reserve' };
+    const Policy = require('Resource.Policy'), c = Policy.config();
+    const history = Policy.state().transfers;
+    const key = [from.name, to.name].sort().join(':') + ':' + transfer.resourceType;
+    if (history[key] !== undefined && Game.time - history[key] < c.transferCooldown) return { ok: false, reason: 'transfer hysteresis' };
+    if (Policy.free(to.terminal.store) - transfer.amount < c.minimumTerminalFreeCapacity) return { ok: false, reason: 'terminal capacity reserve' };
+    const n = Math.min(transfer.amount, amount(from.terminal.store, transfer.resourceType));
+    if (amount(from.terminal.store, RESOURCE_ENERGY) - transferCost(n, from.name, to.name) - (transfer.resourceType === RESOURCE_ENERGY ? n : 0) < c.terminalEnergyReserve) return { ok: false, reason: 'send energy reserve' };
     if (from.terminal.cooldown > 0) return { ok: false, reason: 'cooldown' };
     if (!Economy.canSpend(from, 'resources')) return { ok: false, reason: 'home economy recovery' };
     if (amount(from.terminal.store, RESOURCE_ENERGY) < ENERGY_RESERVE) return { ok: false, reason: 'energy reserve' };
@@ -129,9 +179,13 @@ function run() {
         const result = check.from.terminal.send(transfer.resourceType, sendAmount, transfer.toRoom, transfer.reason.slice(0, 100));
         report.push({ id: transfer.id, fromRoom: transfer.fromRoom, toRoom: transfer.toRoom, amount: sendAmount, result });
         usedRooms.add(transfer.fromRoom);
-        if (result === OK) delete resources.transfers[transfer.id];
+        if (result === OK) {
+            require('Resource.Policy').state().transfers[[transfer.fromRoom, transfer.toRoom].sort().join(':') + ':' + transfer.resourceType] = Game.time;
+            transfer.amount -= sendAmount;
+            if (transfer.amount < MIN_SEND) delete resources.transfers[transfer.id];
+        }
     }
     return report;
 }
 
-module.exports = { requestTransfer, planBalance, validate, run, amount, terminalRooms, reservedAmount, isDedicatedThorium };
+module.exports = { jobs, transferCost, requestTransfer, planBalance, validate, run, amount, terminalRooms, reservedAmount, isDedicatedThorium };
