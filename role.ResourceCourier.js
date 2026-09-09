@@ -43,6 +43,10 @@ function season11Staging(creep) {
 
 function run(creep) {
     if (!creep || creep.spawning) return;
+    if (creep.memory.powerBankOperationId) {
+        runPowerBankHauler(creep);
+        return;
+    }
     const homeRoomName = creep.memory.homeRoom || creep.room.name;
     const thorium = Season11.getThoriumResourceType();
     if (Season11.isApiAvailable() && thorium) {
@@ -103,4 +107,49 @@ function run(creep) {
     if (result !== OK && result !== ERR_NOT_IN_RANGE) ResourceManager.clearJob(creep);
 }
 
-module.exports = { run, resourceKeys, fallbackDeposit, ownedFallbackDeposit, season11Staging };
+function runPowerBankHauler(creep) {
+    const powerType = typeof RESOURCE_POWER !== 'undefined' ? RESOURCE_POWER : 'power';
+    const homeRoom = creep.memory.powerBankHomeRoom || creep.memory.homeRoom;
+    const targetRoom = creep.memory.targetRoom;
+    const operationKey = String(creep.memory.powerBankOperationId).replace(/^power-bank:/, '');
+    const operation = require('HiveMind.Memory').ensure().power.operations[operationKey];
+    if ((creep.store[powerType] || 0) > 0) {
+        if (operation) operation.state = 'RETURNING';
+        if (creep.room.name !== homeRoom) {
+            travel.moveToRoom(creep, homeRoom, { range: 22, reusePath: 20 });
+            creep.memory.powerBankState = 'returning';
+            return;
+        }
+        const target = [creep.room.powerSpawn, creep.room.storage, creep.room.terminal]
+            .find(item => item && item.store && item.my !== false &&
+                (typeof item.store.getFreeCapacity !== 'function' || item.store.getFreeCapacity(powerType) > 0));
+        const result = target && moveOrAct(creep, target, () => creep.transfer(target, powerType));
+        if (result === OK && operation) {
+            operation.state = 'COMPLETE';
+            operation.completedAt = Game.time;
+            operation.reason = 'Recovered Power delivered to safe owned storage';
+        }
+        creep.memory.powerBankState = target ? 'depositing' : 'waitingForSafeStore';
+        return;
+    }
+    if (!operation || operation.state === 'REJECTED' || operation.state === 'ABORTED' || operation.state === 'COMPLETE') {
+        if (homeRoom && creep.room.name !== homeRoom) travel.moveToRoom(creep, homeRoom, { range: 22, reusePath: 20 });
+        creep.memory.powerBankState = 'aborting';
+        return;
+    }
+    if (creep.room.name !== targetRoom) {
+        travel.moveToRoom(creep, targetRoom, { range: 22, reusePath: 20 });
+        creep.memory.powerBankState = 'inbound';
+        return;
+    }
+    let drops = [];
+    if (typeof FIND_DROPPED_RESOURCES !== 'undefined') {
+        try { drops = creep.room.find(FIND_DROPPED_RESOURCES, { filter: item => item.resourceType === powerType }); }
+        catch (error) { drops = []; }
+    }
+    const drop = creep.pos.findClosestByRange ? creep.pos.findClosestByRange(drops) : drops[0];
+    if (drop) moveOrAct(creep, drop, () => creep.pickup(drop));
+    creep.memory.powerBankState = drop ? 'looting' : 'waitingForDrop';
+}
+
+module.exports = { run, resourceKeys, fallbackDeposit, ownedFallbackDeposit, season11Staging, runPowerBankHauler };

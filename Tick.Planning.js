@@ -14,6 +14,7 @@ const ResourceManager = require('Resource.Manager');
 const Economy = require('HiveMind.Economy');
 const HiveMemory = require('HiveMind.Memory');
 const ColonyState = require('HiveMind.ColonyState');
+const PowerManager = require('Power.Manager');
 
 function isWarRoomEnabled() {
     return HiveMemory.getConfig('combat').useWarRoom === true;
@@ -41,6 +42,7 @@ function runStrategy() {
 
 function generateSpawnRequests() {
     SquadController.plan();
+    PowerManager.plan();
     ResourceManager.plan();
     const report = spawnRequestManager.run();
     const board = DemandBoard.flush();

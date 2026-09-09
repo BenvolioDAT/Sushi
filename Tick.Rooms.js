@@ -3,6 +3,7 @@ const utilityVisual = require('utility.Visual');
 const TickIndex = require('HiveMind.Index');
 const SafeModePolicy = require('SafeMode.Policy');
 const ResourceManager = require('Resource.Manager');
+const PowerManager = require('Power.Manager');
 
 function updateRepairStructureMemory(room) {
     if (!room) return;
@@ -22,9 +23,11 @@ function runStructures() {
         TowerLogic.run(room);
         SafeModePolicy.run(room);
         ResourceManager.runRoom(room);
+        PowerManager.processRoom(room);
         if (Game.time % 10 === 0) updateRepairStructureMemory(room);
     }
     ResourceManager.runEmpireStructures();
+    PowerManager.managePowerCreep();
 }
 
 function drawSourceFlags() {

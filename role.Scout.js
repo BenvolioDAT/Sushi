@@ -3,6 +3,7 @@ var Intel = require('Remote.Intel');
 var utilityTravelCreep = require('utility.Travel.Creep');
 var RemotePlanner = require('Planner.Remote');
 var Season11 = require('Logic.Season11');
+var PowerIntel = require('Power.Intel');
 
 var SCOUT_RADIUS = 3;
 var SCOUT_RESCAN_AFTER_TICKS = 3000;
@@ -55,6 +56,7 @@ var roleScout = {
 
         /* Season intel piggybacks on the existing Scout's normal visibility. */
         Season11.observeRoom(creep.room, creep.memory.homeRoom, true);
+        PowerIntel.observeRoom(creep.room);
         if (creep.memory.season11WatchRoom) {
             var watchRoom = creep.memory.season11WatchRoom;
             var portfolio = Season11.ensureMemory().reactorPortfolio;

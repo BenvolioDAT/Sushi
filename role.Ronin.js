@@ -28,6 +28,11 @@ var roleRonin = {
             return;
         }
 
+        if (creep.memory.powerBankOperationId) {
+            runPowerBankAttacker(creep);
+            return;
+        }
+
         /*
          * Local danger always matters more than a remote flag or target room.
          */
@@ -80,6 +85,29 @@ var roleRonin = {
         WarRoom.idleCombat(creep);
     }
 };
+
+function runPowerBankAttacker(creep) {
+    var operation = require('HiveMind.Memory').ensure().power.operations[
+        String(creep.memory.powerBankOperationId).replace(/^power-bank:/, '')
+    ];
+    var targetRoom = operation && operation.roomName || creep.memory.targetRoom;
+    if (!operation || operation.state === 'REJECTED' || operation.state === 'ABORTED') {
+        var home = creep.memory.homeRoom;
+        if (home && creep.room.name !== home) travel.moveToRoom(creep, home, { range: 22 });
+        creep.memory.powerBankState = 'aborting';
+        return;
+    }
+    var bank = creep.memory.powerBankId && Game.getObjectById(creep.memory.powerBankId);
+    if (creep.hits < creep.hitsMax && creep.getActiveBodyparts(HEAL) > 0) creep.heal(creep);
+    if (!bank) {
+        if (targetRoom && creep.room.name !== targetRoom) travel.moveToRoom(creep, targetRoom, { range: 22 });
+        else creep.memory.powerBankState = 'waitingForLoot';
+        return;
+    }
+    creep.memory.powerBankState = 'attacking';
+    var result = creep.attack(bank);
+    if (result === ERR_NOT_IN_RANGE) travel.move(creep, bank, { range: 1, reusePath: 10 });
+}
 
 function supportCombatHealing(creep, allowMoveToHealTarget) {
     /*

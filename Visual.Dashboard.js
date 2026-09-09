@@ -1215,10 +1215,12 @@ function drawSeason11Panel(visual) {
     var x = 1;
     var y = 20.7;
     var width = 18;
-    var height = 10.2;
+    var height = 13.2;
     var rowY = y + 1;
     var apiColor = diagnostics.apiAvailable ? COLORS.good : COLORS.muted;
     var reactor = diagnostics.selectedReactor;
+    var mine = diagnostics.currentMiningTarget;
+    var power = HiveMemory.ensure().power || {};
     var alerts = [];
 
     for (var i = 0; i < diagnostics.alerts.length; i++) {
@@ -1240,6 +1242,21 @@ function drawSeason11Panel(visual) {
         rowY,
         diagnostics.knownThoriumRemaining > 0 ? COLORS.text : COLORS.muted
     );
+    rowY += LINE_HEIGHT;
+    drawText(visual, mine ? 'Mine ' + mine.roomName + ' RCL ' + (mine.controllerLevel || 0) + '/6 ' +
+        (mine.state || mine.reason) : diagnostics.expansionNomination && diagnostics.expansionNomination.roomName ?
+        'Nominate ' + diagnostics.expansionNomination.roomName + ' ' +
+            (diagnostics.expansionNomination.rejectionReason || 'READY') : 'Mine none',
+        x, rowY, mine && mine.ready ? COLORS.good : COLORS.warning);
+    rowY += LINE_HEIGHT;
+    drawText(visual, mine ? 'Extractor ' + (mine.extractor || '-') + ' Staging ' + (mine.staging || '-') :
+        'Extractor - Staging -', x, rowY, mine && mine.ready ? COLORS.good : COLORS.muted);
+    rowY += LINE_HEIGHT;
+    var powerStats = power.stats || {};
+    var gpl = powerStats.gpl || {};
+    drawText(visual, 'Power ' + (powerStats.processedTotal || 0) + ' GPL ' + (gpl.level || 0) +
+        ' next ' + (gpl.remaining === undefined ? '-' : gpl.remaining) + ' PC ' +
+        (power.lifecycle && power.lifecycle.state || 'INERT'), x, rowY, COLORS.muted);
     rowY += LINE_HEIGHT;
     drawText(
         visual,

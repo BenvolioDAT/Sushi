@@ -184,7 +184,10 @@ function decide(room, economy, summary, lifecycle, alert) {
     }
     const coreBlockedReason = blockedReason;
     const controllerDanger = !!(room.controller && room.controller.ticksToDowngrade < 5000);
-    const baselineTechWork = rcl >= 1 && rcl < 8 ? 1 : 0;
+    const seasonFlag = HiveMemory.getRoomMemory(room.name).season11MiningColony;
+    const seasonRush = !!(seasonFlag && seasonFlag.active !== false && rcl >= 1 && rcl < 6);
+    const seasonWork = Math.max(1, Number(HiveMemory.getConfig('season11').expansionUpgradeWork) || 8);
+    const baselineTechWork = rcl >= 1 && rcl < 8 ? (seasonRush ? seasonWork : 1) : 0;
     /* RCL1-7 are all growth phases; DEVELOPMENT changes infrastructure, not the controller objective. */
     const baselinePhase = rcl >= 1 && rcl < 8;
     let growthAllowed = baselinePhase && !blockedReason && economy.state !== Economy.STATES.SURVIVAL;
@@ -194,7 +197,8 @@ function decide(room, economy, summary, lifecycle, alert) {
     if (!nextMandatoryRole && baselineTechRequired) nextMandatoryRole = 'Tech';
     let reason;
     if (controllerDanger) reason = 'controller downgrade danger; safety policy active';
-    else if (baselineTechRequired) reason = 'core income exists; begin minimum controller progress' +
+    else if (baselineTechRequired) reason = (seasonRush ? 'Season 11 mining colony stable; fast-track controller toward RCL6' :
+        'core income exists; begin minimum controller progress') +
         (economy.protectedStockpileEnergy > 0 ? '; spawn stockpile available' : '');
     else if (!growthAllowed && blockedReason) reason = blockedReason;
     else if (baselinePhase) reason = 'minimum controller growth is covered';
@@ -210,7 +214,8 @@ function decide(room, economy, summary, lifecycle, alert) {
             freighters: active.Freighter || 0, complete: !coreBlockedReason },
         techPlannedWork: summary.techWork, governorNonCombat: summary.nonCombat,
         controllerDowngradeTicks: room.controller && room.controller.ticksToDowngrade || 0,
-        protectedStockpileEnergy: economy.protectedStockpileEnergy || 0
+        protectedStockpileEnergy: economy.protectedStockpileEnergy || 0,
+        season11MiningColony: seasonRush
     };
 }
 
@@ -279,6 +284,7 @@ function update(room) {
         governorNonCombat: decision.governorNonCombat, alert, economy: economy.state,
         controllerDowngradeTicks: decision.controllerDowngradeTicks,
         protectedStockpileEnergy: decision.protectedStockpileEnergy,
+        season11MiningColony: decision.season11MiningColony,
         milestone: milestone.milestone, milestoneSince: record.milestoneSince, milestoneTimedOut,
         requirements: milestone.requirements, unmet: milestone.unmet
     };

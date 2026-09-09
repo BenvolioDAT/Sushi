@@ -22,6 +22,7 @@ var creepBodyConfig = require('role.creepBodyConfig');
 var DemandBoard = require('Spawn.DemandBoard');
 var TickIndex = require('HiveMind.Index');
 var HiveMemory = require('HiveMind.Memory');
+var Season11 = require('Logic.Season11');
 
 var DEFAULT_MAX_ROUTE_DISTANCE = 8;
 var DEFAULT_MIN_RANGE_BETWEEN_BASES = 3;
@@ -420,6 +421,18 @@ function runSelectTarget(expansion, ownedSpawnRooms) {
 
     expansion.targetRoom = selected.roomName;
     expansion.originRoom = selected.originRoom;
+    expansion.targetSource = selected.season11 ? 'season11' : 'economic';
+    expansion.season11Nomination = selected.season11 ? {
+        roomName: selected.roomName,
+        mineralId: selected.mineralId,
+        remaining: selected.remaining,
+        density: selected.density,
+        yieldScore: selected.yieldScore,
+        routeDistance: selected.routeDistance,
+        originRoom: selected.originRoom,
+        reason: selected.nominationReason,
+        nominatedAt: selected.nominatedAt
+    } : null;
     expansion.state = 'claiming';
     expansion.blockReason = null;
 
@@ -569,6 +582,17 @@ function completeOnlineTarget(expansion) {
             originRoom: expansion.originRoom || null,
             completedAt: Game.time
         };
+        if (expansion.targetSource === 'season11') {
+            var roomMemory = HiveMemory.getRoomMemory(completedRoomName);
+            roomMemory['season11MiningColony'] = {
+                active: true,
+                mineralId: expansion.season11Nomination && expansion.season11Nomination.mineralId || null,
+                nominatedAt: expansion.season11Nomination && expansion.season11Nomination.nominatedAt || Game.time,
+                onlineAt: Game.time,
+                targetRcl: 6,
+                reason: 'Claimed by Expansion for Season 11 Thorium'
+            };
+        }
     }
 
     expansion.targetRoom = null;
@@ -577,6 +601,8 @@ function completeOnlineTarget(expansion) {
     expansion.spawnSitePos = null;
     expansion.claimedAt = null;
     expansion.blockReason = null;
+    expansion.targetSource = null;
+    expansion.season11Nomination = null;
 }
 
 function chooseExpansionTarget(expansion, ownedSpawnRooms) {
@@ -652,6 +678,31 @@ function chooseExpansionTarget(expansion, ownedSpawnRooms) {
 
         if (!best || candidate.score > best.score) {
             best = candidate;
+        }
+    }
+
+    var nomination = Season11.isOperatingMode() ? Season11.getExpansionNomination() : null;
+    if (nomination && (!expansion.season11NominationCooldownUntil ||
+        Game.time >= expansion.season11NominationCooldownUntil)) {
+        var nominatedCandidate = buildCandidate(expansion, nomination.roomName,
+            Memory.rooms && Memory.rooms[nomination.roomName]);
+        if (nominatedCandidate) {
+            nominatedCandidate.originRoom = nomination.originRoom;
+            nominatedCandidate.routeDistance = nomination.routeDistance;
+            nominatedCandidate.score = nomination.yieldScore;
+            nominatedCandidate.season11 = true;
+            nominatedCandidate.mineralId = nomination.mineralId;
+            nominatedCandidate.remaining = nomination.remaining;
+            nominatedCandidate.density = nomination.density;
+            nominatedCandidate.yieldScore = nomination.yieldScore;
+            nominatedCandidate.nominatedAt = nomination.nominatedAt;
+            nominatedCandidate.nominationReason = nomination.reason;
+            var candidateMemory = ensureCandidateMemory(expansion, nomination.roomName);
+            candidateMemory['season11'] = true;
+            candidateMemory['season11YieldScore'] = nomination.yieldScore;
+            candidateMemory['season11Reason'] = nomination.reason;
+            candidateMemory.score = nomination.yieldScore;
+            return nominatedCandidate;
         }
     }
 
@@ -770,7 +821,7 @@ function buildCandidate(expansion, roomName, roomMemory) {
         return null;
     }
 
-    if (owner === myUsername || isOwnedRoomName(roomName)) {
+    if ((owner && myUsername && owner === myUsername) || isOwnedRoomName(roomName)) {
         candidateMemory.rejectReason = 'already owned';
         return null;
     }

@@ -13,6 +13,7 @@ var HiveMemory = require('HiveMind.Memory');
 var Portfolio = require('Season11.Portfolio');
 var Economy = require('HiveMind.Economy');
 var BodyConfig = require('role.creepBodyConfig');
+var Scheduler = require('HiveMind.Scheduler');
 
 var SCHEMA_VERSION = 3;
 var REACTOR_CAPACITY = 1000;
@@ -58,7 +59,13 @@ var DEFAULT_CONFIG = {
     claimCooldown: 500,
     recapture: false,
     minimumCpuBucket: 2500,
-    minimumStorageEnergy: 30000
+    minimumStorageEnergy: 30000,
+    expansionValueThreshold: 25000,
+    expansionMinimumThorium: 15000,
+    expansionMinimumSources: 1,
+    expansionMaximumRouteRooms: 8,
+    expansionNominationTtl: 250,
+    expansionUpgradeWork: 8
 };
 
 var observedTick = -1;
@@ -827,6 +834,99 @@ function rankMiningTargets() {
     return targets;
 }
 
+function rememberedSourceCount(roomName) {
+    var roomMemory = typeof Memory !== 'undefined' && Memory.rooms && Memory.rooms[roomName];
+    if (!roomMemory) return 0;
+    if (roomMemory.scoutIntel && typeof roomMemory.scoutIntel.sourceCount === 'number') {
+        return roomMemory.scoutIntel.sourceCount;
+    }
+    return roomMemory.sources ? Object.keys(roomMemory.sources).length : 0;
+}
+
+/* Expansion remains the sole room-claiming state machine. */
+function getExpansionNomination() {
+    var memory = ensureMemory();
+    var config = memory.config;
+    var ranked = rankMiningTargets();
+    var selected = null;
+    var rejection = 'NO_QUALIFYING_THORIUM_TARGET';
+    for (var i = 0; i < ranked.length; i++) {
+        var target = ranked[i];
+        var intel = memory.rooms[target.roomName] || {};
+        var sources = rememberedSourceCount(target.roomName);
+        if (!target.intelFresh) rejection = 'STALE_INTEL';
+        else if (!target.accessible) rejection = 'UNSAFE_OR_UNREACHABLE';
+        else if (intel.controllerMy) rejection = 'ALREADY_OWNED';
+        else if (target.remaining < config.expansionMinimumThorium) rejection = 'INSUFFICIENT_THORIUM';
+        else if (sources < config.expansionMinimumSources) rejection = 'INSUFFICIENT_COLONY_SOURCES';
+        else if (target.routeDistance === null || target.routeDistance > Math.min(
+            config.maximumMiningRouteRooms, config.expansionMaximumRouteRooms)) rejection = 'ROUTE_LIMIT';
+        else if (target.yieldScore < config.expansionValueThreshold) rejection = 'BELOW_VALUE_THRESHOLD';
+        else {
+            selected = {
+                roomName: target.roomName,
+                mineralId: target.mineralId,
+                remaining: target.remaining,
+                density: target.density,
+                yieldScore: target.yieldScore,
+                routeDistance: target.routeDistance,
+                originRoom: target.homeRoom,
+                sourceCount: sources,
+                nominatedAt: getTime(),
+                expiresAt: getTime() + config.expansionNominationTtl,
+                reason: 'Season 11 Thorium value ' + Math.round(target.yieldScore) +
+                    ' exceeds ' + config.expansionValueThreshold
+            };
+            break;
+        }
+    }
+    memory.expansionNomination = selected || {
+        roomName: ranked[0] && ranked[0].roomName || null,
+        mineralId: ranked[0] && ranked[0].mineralId || null,
+        remaining: ranked[0] && ranked[0].remaining || 0,
+        density: ranked[0] && ranked[0].density || null,
+        yieldScore: ranked[0] && ranked[0].yieldScore || 0,
+        routeDistance: ranked[0] && ranked[0].routeDistance || null,
+        originRoom: ranked[0] && ranked[0].homeRoom || null,
+        rejectedAt: getTime(),
+        rejectionReason: rejection
+    };
+    return selected;
+}
+
+function findConstructionSite(room, structureType, mineral) {
+    if (!room) return null;
+    var sites = safeFind(room, typeof FIND_CONSTRUCTION_SITES !== 'undefined' ? FIND_CONSTRUCTION_SITES : null);
+    return sites.find(function(site) {
+        if (!site || site.structureType !== structureType) return false;
+        return structureType !== (typeof STRUCTURE_EXTRACTOR !== 'undefined' ? STRUCTURE_EXTRACTOR : 'extractor') ||
+            !mineral || !site.pos || !site.pos.isEqualTo || site.pos.isEqualTo(mineral.pos);
+    }) || null;
+}
+
+function planHasStructure(roomName, structureType, mineral) {
+    var roomMemory = typeof Memory !== 'undefined' && Memory.rooms && Memory.rooms[roomName];
+    var plan = roomMemory && roomMemory.structurePlanner && roomMemory.structurePlanner.plan;
+    var entries = plan && plan.positions && plan.positions[structureType] || [];
+    return entries.some(function(entry) {
+        return structureType !== (typeof STRUCTURE_EXTRACTOR !== 'undefined' ? STRUCTURE_EXTRACTOR : 'extractor') ||
+            !mineral || entry.x === mineral.pos.x && entry.y === mineral.pos.y;
+    });
+}
+
+function requestInfrastructurePlan(room, mineral, missingType) {
+    var roomMemory = HiveMemory.getRoomMemory(room.name);
+    roomMemory.structurePlanner = roomMemory.structurePlanner || {};
+    roomMemory.structurePlanner.forceReplan = true;
+    roomMemory.structurePlanner.lastBuilt = 0;
+    roomMemory.season11Infrastructure = {
+        mineralId: mineral && mineral.id || null,
+        missing: missingType,
+        requestedAt: getTime()
+    };
+    Scheduler.markDirty('roomPlanning');
+}
+
 function findStagingStructure(room, mineral) {
     if (!room) {
         return null;
@@ -916,10 +1016,24 @@ function refreshMiningAssignments() {
             visibleRoom.controller &&
             visibleRoom.controller.my
         );
-        if (!controllerReady) {
-            continue;
-        }
+        var rcl = controllerReady && visibleRoom.controller.level || 0;
+        var extractorType = typeof STRUCTURE_EXTRACTOR !== 'undefined' ? STRUCTURE_EXTRACTOR : 'extractor';
+        var containerType = typeof STRUCTURE_CONTAINER !== 'undefined' ? STRUCTURE_CONTAINER : 'container';
         var extractorReady = controllerReady && hasActiveExtractor(visibleRoom, mineral);
+        var extractorSite = controllerReady && findConstructionSite(visibleRoom, extractorType, mineral);
+        var stagingSite = controllerReady && findConstructionSite(visibleRoom, containerType, mineral);
+        var extractorPlanned = controllerReady && planHasStructure(target.roomName, extractorType, mineral);
+        var stagingPlanned = controllerReady && (staging || planHasStructure(target.roomName, containerType, mineral));
+        var reason = !visibleRoom ? 'NO_VISION' : !controllerReady ? 'NEEDS_OWNED_ROOM' :
+            rcl < 6 ? 'WAITING_RCL6' : !extractorReady ?
+                (extractorSite ? 'BUILDING_EXTRACTOR' : 'PLANNING_EXTRACTOR') :
+                !staging ? (stagingSite ? 'BUILDING_STAGING' : 'PLANNING_STAGING') : 'READY';
+        if (controllerReady && rcl >= 6 && !extractorReady && !extractorSite && !extractorPlanned) {
+            requestInfrastructurePlan(visibleRoom, mineral, 'extractor');
+        }
+        else if (controllerReady && rcl >= 6 && extractorReady && !staging && !stagingSite && !stagingPlanned) {
+            requestInfrastructurePlan(visibleRoom, mineral, 'staging');
+        }
 
         assignments[target.roomName] = {
             key: 'mine:' + target.roomName,
@@ -930,10 +1044,11 @@ function refreshMiningAssignments() {
             remaining: target.remaining,
             stagingId: staging ? staging.id : null,
             ready: !!(controllerReady && extractorReady && staging),
-            reason: !visibleRoom ? 'NO VISION' :
-                !controllerReady ? 'NEEDS OWNED ROOM' :
-                !extractorReady ? 'NO EXTRACTOR' :
-                !staging ? 'NO STAGING' : 'READY',
+            state: reason,
+            reason: reason,
+            controllerLevel: rcl,
+            extractor: extractorReady ? 'BUILT' : extractorSite ? 'SITE' : extractorPlanned ? 'PLANNED' : 'MISSING',
+            staging: staging ? 'BUILT' : stagingSite ? 'SITE' : stagingPlanned ? 'PLANNED' : 'MISSING',
             plannedAt: getTime()
         };
         selected++;
@@ -2182,6 +2297,8 @@ function getDiagnostics() {
             fallbackThorium: memory.config.agingFallbackThorium
         },
         alerts: alerts,
+        currentMiningTarget: Object.values(memory.assignments.mining || {})[0] || null,
+        expansionNomination: memory.expansionNomination || null,
         rankedMiningTargets: memory.assignments.rankedMiningTargets || [],
         rankedReactors: memory.assignments.rankedReactors || [],
         events: memory.stats.events.slice()
@@ -2301,6 +2418,8 @@ module.exports = {
     getRouteDistance: getRouteDistance,
     noteRouteFailure: noteRouteFailure,
     rankMiningTargets: rankMiningTargets,
+    getExpansionNomination: getExpansionNomination,
+    requestInfrastructurePlan: requestInfrastructurePlan,
     rankReactors: rankReactors,
     selectReactor: selectReactor,
     clearReactorSelection: clearReactorSelection,

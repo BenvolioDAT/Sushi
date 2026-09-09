@@ -43,6 +43,16 @@ const CONFIG_DEFAULTS = Object.freeze({
         terminals: true, labs: true, observers: true, market: false
     },
     season11: {},
+    power: {
+        enabled: true,
+        processing: { enabled: true, energyPerPower: 50, targetPower: 25, targetEnergy: 2500 },
+        banks: { enabled: true, minimumPower: 2500, maximumRouteRooms: 6,
+            maximumHostiles: 0, maxEvaluations: 3, ticksPerRoom: 50,
+            assemblyTicks: 150, decayReserve: 100, attackerDps: 180,
+            maxAttackers: 4, healerPower: 36, maxHealers: 3, haulerCapacity: 800,
+            haulerArrivalMargin: 50 },
+        powerCreeps: { autoCreate: false, autoUpgrade: false, firstName: 'SushiOperator', renewBelow: 1000 }
+    },
     visuals: {
         showDashboard: true, showRemoteRoomDashboard: true,
         dashboardShowRoleCounts: false, showStructurePlanner: false,
@@ -110,6 +120,8 @@ function ensureNewSchema() {
     if (!Array.isArray(season.activeOperationIds)) season.activeOperationIds = [];
     if (!Array.isArray(season.deliveryEvents)) season.deliveryEvents = [];
     ensureObject(season, 'stats');
+    const power = ensureObject(hive, 'power');
+    for (const key of ['banks', 'operations', 'stats', 'lifecycle']) ensureObject(power, key);
     for (const key of ['expansion', 'warRoom', 'telemetry', 'identity']) ensureObject(hive, key);
     const homeRooms = ensureObject(hive, 'homeRooms');
     if (!Array.isArray(homeRooms.names)) homeRooms.names = [];

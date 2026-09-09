@@ -133,7 +133,8 @@ function needsCourier(roomName) {
     const lab = hive.resources.labs[roomName];
     const mineral = hive.resources.rooms[roomName] && hive.resources.rooms[roomName].mineral;
     return !!(lab && (lab.state !== 'IDLE' || lab.reactionGoal) ||
-        mineral && mineral.active && !isDedicatedThorium(mineral.mineralType));
+        mineral && mineral.active && !isDedicatedThorium(mineral.mineralType) ||
+        jobsForRoom(roomName).length > 0);
 }
 
 function scrubGenericThoriumDemands() {
@@ -159,7 +160,7 @@ function scrubGenericThoriumDemands() {
 
 function needsCourierWithoutMineral(roomName) {
     const lab = HiveMemory.ensure().resources.labs[roomName];
-    return !!(lab && (lab.state !== 'IDLE' || lab.reactionGoal));
+    return !!(lab && (lab.state !== 'IDLE' || lab.reactionGoal) || jobsForRoom(roomName).length > 0);
 }
 
 function emitCourierDemand(roomName) {
