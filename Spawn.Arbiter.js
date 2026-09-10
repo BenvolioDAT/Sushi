@@ -12,6 +12,26 @@ function fingerprint(roomName, request, producer) {
     ].join(':');
 }
 
+const validTick = value => Number.isSafeInteger(value) && value >= 0;
+function repairLifetime(request, ttl) {
+    const rollback = [request.requestedAt, request.refreshTick].some(value => validTick(value) && value > Game.time);
+    const invalidExpiry = !validTick(request.expiresAt);
+    const anchors = [request.requestedAt, request.refreshTick].filter(value => validTick(value) && value <= Game.time);
+    const base = anchors.length ? Math.max(...anchors) : Game.time;
+    if (rollback || !validTick(request.requestedAt)) request.requestedAt = rollback ? Game.time : base;
+    if (rollback || !validTick(request.refreshTick)) request.refreshTick = rollback ? Game.time : base;
+    if (invalidExpiry || rollback && request.expiresAt >= Game.time)
+        request.expiresAt = (rollback ? Game.time : base) + ttl;
+    return rollback ? 'queue timestamps rebased after tick rollback' : invalidExpiry ? 'missing or invalid queue expiry repaired' : null;
+}
+
+function recordDecision(roomName, request, decision) {
+    const memory = HiveMemory.getRoomSpawnMemory(roomName);
+    memory.admissionDecision = { tick: Game.time, role: request.role, requestId: request.requestId, ...decision };
+    if (!decision.allowed) memory.lastAdmissionBlock = { ...memory.admissionDecision };
+    return decision;
+}
+
 function normalize(roomName, request, options = {}) {
     const now = Game.time;
     const producer = options.producer || request.producer || 'legacy';
@@ -49,16 +69,17 @@ function normalize(roomName, request, options = {}) {
     normalized.requestId = fingerprint(roomName, normalized, producer);
     normalized.producer = producer;
     normalized.category = normalized.category || normalized.economyCategory || 'unspecified';
-    normalized.requestedAt = normalized.requestedAt === undefined ? now : normalized.requestedAt;
+    const ttl = Number.isSafeInteger(options.ttl) && options.ttl > 0 ? options.ttl :
+        HiveMemory.getConfig('memoryGC').queueRetention;
+    repairLifetime(normalized, ttl);
     normalized.refreshTick = now;
-    normalized.expiresAt = normalized.expiresAt || now +
-        (options.ttl || HiveMemory.getConfig('memoryGC').queueRetention || 50);
     normalized.memory.requestId = normalized.requestId;
     return normalized;
 }
 
 function admit(roomName, request, options = {}) {
     const room = Game.rooms && Game.rooms[roomName];
+    pruneRoom(roomName);
     const normalized = normalize(roomName, request, options);
     if (!room || !normalized.role || !Array.isArray(normalized.body) || !normalized.body.length) {
         return { ok: false, requested: 0, role: normalized.role, reason: 'invalid normalized request' };
@@ -110,8 +131,8 @@ function admit(roomName, request, options = {}) {
         evaluationContext.byRole[displaced.role]--;
         evaluationContext.nonCombatTotal--;
     }
-    const decision = Policy.evaluate(room, normalized, evaluationContext, options);
-    if (!decision.allowed) return { ok: false, requested: 0, role: normalized.role, reason: decision.reason };
+    const decision = recordDecision(roomName, normalized, Policy.evaluate(room, normalized, evaluationContext, options));
+    if (!decision.allowed) return { ...decision, ok: false, requested: 0, role: normalized.role };
     if (displaced) context.queue.splice(context.queue.indexOf(displaced), 1);
     context.queue.push(normalized);
     context.queue.sort((a, b) => (b.priority || 0) - (a.priority || 0) ||
@@ -121,29 +142,44 @@ function admit(roomName, request, options = {}) {
 }
 
 function revalidate(room, request) {
-    return Policy.evaluate(room, request, Context.snapshot(room.name), { revalidate: true });
+    return recordDecision(room.name, request,
+        Policy.evaluate(room, request, Context.snapshot(room.name), { revalidate: true }));
 }
 
 function pruneRoom(roomName, decision) {
-    const queue = HiveMemory.getRoomSpawnMemory(roomName).queue;
-    let removed = 0;
+    const memory = HiveMemory.getRoomSpawnMemory(roomName);
+    const queue = memory.queue;
+    const ttl = HiveMemory.getConfig('memoryGC').queueRetention;
+    let removed = 0, repaired = 0, lastReason = null;
     for (let i = queue.length - 1; i >= 0; i--) {
-        let request = queue[i];
-        if (request && !request.requestId) {
-            request = normalize(roomName, request, { producer: request.producer || 'legacy-migrated', ttl: 25 });
-            queue[i] = request;
+        const request = queue[i];
+        const valid = request && typeof request === 'object' && !Array.isArray(request);
+        if (valid) {
+            // Truly legacy requests get the existing one-time migration grace.
+            if (!request.requestId && !validTick(request.expiresAt)) request.refreshTick = Game.time;
+            const repair = repairLifetime(request, request.requestId ? ttl : Math.min(25, ttl));
+            if (repair) { repaired++; lastReason = repair; }
+            if (!request.requestId) {
+                request.requestId = fingerprint(roomName, request, request.producer || 'legacy-migrated');
+                if (request.memory) request.memory.requestId = request.requestId;
+            }
         }
-        const operation = request && request.operationId && HiveMemory.ensure().operations[request.operationId];
-        if (!request || request.expiresAt && request.expiresAt < Game.time ||
-            operation && ['COMPLETE', 'ABORTED'].includes(operation.state)) {
-            if (decision && !decision.blocked) decision.blocked = {
-                role: request && request.role || 'unknown',
-                reason: !request ? 'invalid request' : request.expiresAt < Game.time ? 'request expired' : 'operation is terminal'
-            };
+        const operation = valid && request.operationId && HiveMemory.ensure().operations[request.operationId];
+        const reason = !valid ? 'invalid request' : request.expiresAt < Game.time ? 'request expired' :
+            operation && ['COMPLETE', 'ABORTED'].includes(operation.state) ? 'operation is terminal' : null;
+        if (reason) {
+            if (decision && !decision.blocked) {
+                decision.blockSource = 'staleQueue';
+                decision.blocked = { role: request && request.role || 'unknown', reason, blockSource: 'staleQueue' };
+            }
             queue.splice(i, 1);
             removed++;
+            lastReason = reason;
         }
     }
+    if (removed || repaired) memory.queueMaintenance = {
+        tick: Game.time, blockSource: 'staleQueue', removed, repaired, reason: lastReason, remaining: queue.length
+    };
     return removed;
 }
 

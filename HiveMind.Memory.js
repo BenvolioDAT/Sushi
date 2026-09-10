@@ -312,9 +312,43 @@ function ensure() {
     return ensureNewSchema().hive;
 }
 
+// Validate only spawn-control fields. Zero limits and explicit false are user choices.
+function sanitizeSpawnControls(schema) {
+    const repairs = [];
+    const repair = (object, key, fallback, path, valid) => {
+        if (valid(object[key])) return;
+        repairs.push({ path, previous: String(object[key]), value: fallback });
+        if (fallback === undefined) delete object[key];
+        else object[key] = clone(fallback);
+    };
+    const count = value => Number.isSafeInteger(value) && value >= 0;
+    const spawn = ensureObject(schema.config, 'spawn');
+    repair(spawn, 'enabled', true, 'spawn.enabled', value => typeof value === 'boolean');
+    for (const key of ['maxQueueLengthPerRoom', 'maxNewRequestsPerRoomPerTick'])
+        repair(spawn, key, CONFIG_DEFAULTS.spawn[key], 'spawn.' + key, count);
+    repair(spawn, 'combatSpawnShare', 0.5, 'spawn.combatSpawnShare',
+        value => Number.isFinite(value) && value >= 0 && value <= 1);
+    for (const key of ['roleCaps', 'maxCreepsPerRoomByRcl', 'economyRoleHardCaps']) {
+        const defaults = CONFIG_DEFAULTS.spawn[key] || { Extractor: 32, Freighter: 64 };
+        if (key === 'economyRoleHardCaps' && spawn[key] === undefined) continue;
+        repair(spawn, key, defaults, 'spawn.' + key, isObject);
+        for (const role of Object.keys(spawn[key]))
+            repair(spawn[key], role, defaults[role], 'spawn.' + key + '.' + role, count);
+        mergeMissing(spawn[key], defaults);
+    }
+    const gc = ensureObject(schema.config, 'memoryGC');
+    repair(gc, 'queueRetention', CONFIG_DEFAULTS.memoryGC.queueRetention, 'memoryGC.queueRetention',
+        value => Number.isSafeInteger(value) && value > 0);
+    const cpu = ensureObject(schema.config, 'cpu');
+    if (cpu.roomPlanningInterval !== undefined) repair(cpu, 'roomPlanningInterval', 3, 'cpu.roomPlanningInterval',
+        value => Number.isSafeInteger(value) && value > 0);
+    if (repairs.length) schema.hive.spawnConfigRepairs = { tick: Game.time, repairs: repairs.slice(-20) };
+}
+
 function getConfig(domain) {
     if (needsMigration()) migrate();
     const schema = ensureNewSchema();
+    if (!domain || ['spawn', 'cpu', 'memoryGC'].includes(domain)) sanitizeSpawnControls(schema);
     return domain ? ensureObject(schema.config, domain) : schema.config;
 }
 

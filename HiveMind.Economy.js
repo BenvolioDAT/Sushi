@@ -679,10 +679,11 @@ function buildSnapshot(room, previous) {
     const energyCapacity = Math.max(1, room.energyCapacityAvailable || 300);
     const liquidEnergy = energyAvailable + storageEnergy + terminalEnergy + backlog;
     const previousTick = previous && previous.sampleTick;
-    const elapsed = previousTick === undefined ? 0 : Math.max(1, Game.time - previousTick);
-    const immediateTrend = previous && typeof previous.liquidEnergy === 'number' ?
+    const comparable = Number.isSafeInteger(previousTick) && previousTick >= 0 && previousTick < Game.time;
+    const elapsed = comparable ? Game.time - previousTick : 1;
+    const immediateTrend = comparable && Number.isFinite(previous.liquidEnergy) ?
         (liquidEnergy - previous.liquidEnergy) / elapsed : 0;
-    const oldTrend = previous && typeof previous.energyTrend === 'number' ? previous.energyTrend : immediateTrend;
+    const oldTrend = comparable && Number.isFinite(previous.energyTrend) ? previous.energyTrend : immediateTrend;
     const energyTrend = Math.round((oldTrend * 0.8 + immediateTrend * 0.2) * 100) / 100;
     const remoteCommitments = creeps.filter(creep => creep && creep.memory &&
         (creep.memory.remoteMining === true || creep.memory.freighterJob === 'remote' ||
@@ -839,7 +840,12 @@ function applyHysteresis(snapshot, previous) {
     const oldRank = STATE_RANK[oldState];
     const rawRank = STATE_RANK[raw.state];
     let state = oldState;
-    let healthyTicks = previous && previous.healthyTicks || 0;
+    const rollback = [previous.sampleTick, previous.lastSampleTick, previous.stateSince, previous.stateChangedAt]
+        .some(value => Number.isFinite(value) && value > Game.time);
+    let healthyTicks = !rollback && Number.isSafeInteger(previous.healthyTicks) && previous.healthyTicks >= 0 ?
+        previous.healthyTicks : 0;
+    snapshot.hysteresisRepair = rollback ? 'tick rollback: recovery confirmation restarted' :
+        healthyTicks !== previous.healthyTicks ? 'invalid recovery confirmation counter reset' : null;
     let reason = raw.reason;
 
     if (rawRank < oldRank) {
@@ -864,8 +870,10 @@ function applyHysteresis(snapshot, previous) {
     snapshot.state = state;
     snapshot.healthyTicks = healthyTicks;
     snapshot.reason = reason;
-    snapshot.stateSince = previous && previous.state === state ? previous.stateSince : Game.time;
-    snapshot.stateChangedAt = previous && previous.state === state ? previous.stateChangedAt : Game.time;
+    snapshot.stateSince = !rollback && previous.state === state && Number.isSafeInteger(previous.stateSince) &&
+        previous.stateSince >= 0 ? previous.stateSince : Game.time;
+    snapshot.stateChangedAt = !rollback && previous.state === state && Number.isSafeInteger(previous.stateChangedAt) &&
+        previous.stateChangedAt >= 0 ? previous.stateChangedAt : Game.time;
     snapshot.rawState = raw.state;
     return snapshot;
 }
@@ -895,6 +903,7 @@ function savePersistent(roomName, snapshot) {
     persistent.healthyTicks = snapshot.healthyTicks;
     persistent.reason = snapshot.reason;
     persistent.recoveryReason = snapshot.recoveryReason;
+    if (snapshot.hysteresisRepair) persistent.hysteresisRepair = { tick: Game.time, reason: snapshot.hysteresisRepair };
     persistent.lastSampleTick = snapshot.sampleTick;
     persistent.lastLiquidEnergy = snapshot.liquidEnergy;
     persistent.energyTrend = snapshot.energyTrend;
@@ -1070,7 +1079,18 @@ function localRecoveryRequest(room, request, queue) {
 function canSpawnRequest(room, request) {
     const category = categoryForRequest(request);
     const spend = checkSpend(room, category);
-    if (!spend.allowed || category !== 'remoteIntel') return spend;
+    if (!spend.allowed) {
+        const snapshot = get(room) || {};
+        const holding = STATE_RANK[snapshot.state] < STATE_RANK[snapshot.rawState];
+        const decision = { ...spend, blockSource: holding ? 'economyHysteresis' : 'economy',
+            state: snapshot.state, rawState: snapshot.rawState, healthyTicks: snapshot.healthyTicks || 0,
+            confirmationTicks: EXIT_TICKS[snapshot.state] || 0, economyReason: snapshot.reason };
+        HiveMemory.getRoomSpawnMemory(typeof room === 'string' ? room : room.name).lastEconomyBlock = {
+            tick: Game.time, role: request.role || request.memory && request.memory.role, category, ...decision
+        };
+        return decision;
+    }
+    if (category !== 'remoteIntel') return spend;
     const scout = require('Scout.Economy').status(room);
     return { allowed: scout.allowed, reason: scout.blockedReason || 'economic intel floor established' };
 }

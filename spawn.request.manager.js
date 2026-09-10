@@ -337,7 +337,7 @@ function getCpuUsed() {
 }
 
 function getPositiveInterval(value, fallback) {
-    if (typeof value !== 'number' || value < 1) {
+    if (!Number.isSafeInteger(value) || value < 1) {
         return fallback;
     }
 
@@ -354,28 +354,22 @@ function getNextStaggeredFullPlanTick(startTick, interval, roomIndex) {
 }
 
 function shouldRunFullPlan(cache, cpuPolicy, roomIndex, skipNormalPlanning) {
-    if (skipNormalPlanning) {
-        return false;
+    var interval = getPositiveInterval(cpuPolicy.roomPlanningInterval, DEFAULT_CPU_POLICY.roomPlanningInterval);
+    const next = cache.nextFullPlanTick;
+    const rollback = Number.isFinite(cache.lastPlanCheckTick) && cache.lastPlanCheckTick > Game.time;
+    const invalid = !Number.isSafeInteger(next) || next < 0 || next > Game.time + interval || rollback;
+    if (invalid) {
+        cache.scheduleRepair = { tick: Game.time, previous: String(next),
+            reason: rollback ? 'tick rollback' : 'invalid or future demand cache schedule' };
+        cache.nextFullPlanTick = getNextStaggeredFullPlanTick(Game.time, interval, roomIndex);
     }
-
-    var interval = getPositiveInterval(
-        cpuPolicy.roomPlanningInterval,
-        DEFAULT_CPU_POLICY.roomPlanningInterval
-    );
-
-    if (interval <= 1) {
-        return true;
-    }
-
-    if (typeof cache.nextFullPlanTick !== 'number') {
-        cache.nextFullPlanTick = getNextStaggeredFullPlanTick(
-            Game.time,
-            interval,
-            roomIndex
-        );
-    }
-
-    return Game.time >= cache.nextFullPlanTick;
+    cache.lastPlanCheckTick = Game.time;
+    const full = !skipNormalPlanning && (interval <= 1 || Game.time >= cache.nextFullPlanTick);
+    cache.controlState = { tick: Game.time, blocked: !full,
+        blockSource: skipNormalPlanning ? 'cpuBudget' : !full ? 'demandCache' : null,
+        reason: skipNormalPlanning ? 'CPU budget' : full ? 'full plan due' : 'waiting for staggered full plan',
+        nextFullPlanTick: cache.nextFullPlanTick, interval };
+    return full;
 }
 
 function setNextFullPlanTick(cache, cpuPolicy, roomIndex) {
@@ -4108,7 +4102,10 @@ function saveSpawnGovernorDebug(context) {
         mandatoryFloorAllowance: MANDATORY_FLOOR_CAP_ALLOWANCE,
         queueLength: context.queue ? context.queue.length : 0,
         maxQueueLength: policy.maxQueueLengthPerRoom,
-        denied: context.denied
+        denied: context.denied,
+        demandCacheState: context.demandCache.controlState,
+        demandCacheRepair: context.demandCache.scheduleRepair || null,
+        configRepairs: HiveMemory.ensure().spawnConfigRepairs || null
     });
 }
 
@@ -4262,6 +4259,7 @@ function runForRoom(room, options) {
     activePlanningContext = context;
 
     try {
+        report.demandCacheState = context.demandCache.controlState;
         report.fullPlan = context.fullPlan;
         report.skippedForCpu = context.skippedForCpu;
         report.nextFullPlanTick = context.demandCache.nextFullPlanTick || null;

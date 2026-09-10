@@ -32,6 +32,15 @@ function isImminentOwnedDefense(request) {
 
 function economyRoleCap(room, role, request, policy) {
     const configured = policy.roleCaps && policy.roleCaps[role];
+    if (request.strategyCategory === 'SPECIAL_STRATEGY' ||
+        request.memory && request.memory.strategyCategory === 'SPECIAL_STRATEGY') {
+        const spawn = HiveMemory.getRoomSpawnMemory(room.name);
+        const governor = spawn.governor || (spawn.governor = {});
+        if (!governor.roleCaps) governor.roleCaps = {};
+        governor.roleCaps[role] = { configured: configured === undefined ? null : configured, effective: null,
+            source: 'strategy demand', reason: 'SPECIAL_STRATEGY uses provider demand, not generic roleCaps' };
+        return undefined;
+    }
     if (['Tech', 'Artificer'].includes(role) && request.maxWorkParts > 0) {
         const view = Capacity.get().rooms[room.name];
         const settings = require('HiveMind.Surplus').config();
@@ -85,7 +94,8 @@ function economyRoleCap(room, role, request, policy) {
             active.reduce((sum, info) => sum + (info.requiredCarry || 0), 0);
         required = Math.ceil(requiredCarry / carry);
     }
-    const hard = policy.economyRoleHardCaps && policy.economyRoleHardCaps[role] || (role === 'Extractor' ? 32 : 64);
+    const hard = policy.economyRoleHardCaps && policy.economyRoleHardCaps[role] !== undefined ?
+        policy.economyRoleHardCaps[role] : (role === 'Extractor' ? 32 : 64);
     return Math.min(hard, Math.max(configured || 0, required + 1)); // One replacement handoff.
 }
 
@@ -97,7 +107,7 @@ function evaluate(room, request, context, options = {}) {
     }
     if (request.expiresAt && request.expiresAt < Game.time) return { allowed: false, reason: 'request expired' };
     const economy = Economy.canSpawnRequest(room, request);
-    if (!economy.allowed) return { allowed: false, reason: economy.reason };
+    if (!economy.allowed) return { ...economy, allowed: false };
     const recovery = Economy.localRecoveryRequest(room, request, context.queue);
     if (recovery.obsolete) return { allowed: false, obsolete: true, reason: recovery.reason };
     const lifecycle = ColonyState.get(room.name);
@@ -133,10 +143,11 @@ function evaluate(room, request, context, options = {}) {
             const itemRole = item && (item.role || item.memory && item.memory.role);
             return Context.isCombatRole(itemRole);
         }).length;
-        const shareLimit = Math.max(1, Math.ceil((policy.maxQueueLengthPerRoom || 8) *
-            Math.max(0.1, Math.min(1, policy.combatSpawnShare || 0.5))));
+        const shareLimit = policy.combatSpawnShare === 0 ? 0 :
+            Math.max(1, Math.ceil(policy.maxQueueLengthPerRoom * policy.combatSpawnShare));
         if (!request.emergency && combatQueued >= shareLimit) {
-            return { allowed: false, reason: 'combat spawn-share budget exhausted' };
+            return { allowed: false, reason: 'combat spawn-share budget exhausted', blockSource: 'persistedConfig',
+                configPath: 'spawn.combatSpawnShare', configured: policy.combatSpawnShare, effectiveLimit: shareLimit };
         }
     }
     const localEconomicRole = recovery.missing !== undefined;
@@ -154,15 +165,18 @@ function evaluate(room, request, context, options = {}) {
         (context.byRole.Tech || 0) <= (options.revalidate ? 1 : 0) &&
         context.nonCombatTotal <= (policy.maxCreepsPerRoomByRcl['RCL' + room.controller.level] || 10) + (options.revalidate ? 1 : 0);
     if (typeof roleCap === 'number' && (context.byRole[role] || 0) - ownQueued - (capacity.replacementCount || 0) >= roleCap && !survivalBypass && !mandatoryFloorBypass) {
-        return { allowed: false, reason: 'role cap reached' };
+        return { allowed: false, reason: 'role cap reached', blockSource: 'persistedConfig',
+            configPath: 'spawn.roleCaps.' + role, configured: policy.roleCaps[role], effectiveLimit: roleCap };
     }
     // Capacity owns the population ceiling; RCL remains a baseline and role guardrail.
     if (!options.revalidate && context.queue.length >= policy.maxQueueLengthPerRoom && !survivalBypass && !defenseBypass) {
-        return { allowed: false, reason: 'spawn queue full' };
+        return { allowed: false, reason: 'spawn queue full', blockSource: 'persistedConfig',
+            configPath: 'spawn.maxQueueLengthPerRoom', configured: policy.maxQueueLengthPerRoom, queueLength: context.queue.length };
     }
     const admitted = context.queue.filter(item => item && item.requestedAt === Game.time).length;
     if (!options.revalidate && admitted >= policy.maxNewRequestsPerRoomPerTick && !survivalBypass && !defenseBypass && !economicScout) {
-        return { allowed: false, reason: 'new request cap reached' };
+        return { allowed: false, reason: 'new request cap reached', blockSource: 'persistedConfig',
+            configPath: 'spawn.maxNewRequestsPerRoomPerTick', configured: policy.maxNewRequestsPerRoomPerTick, admitted };
     }
     return { allowed: true, reason: recovery.mandatory ? recovery.reason : options.revalidate ? 'revalidated' : 'admitted',
         localMissingWork: (request.role || request.memory && request.memory.role) === 'Extractor' ? recovery.missing : undefined,

@@ -248,7 +248,8 @@ test('owned second HOME is excluded from generation and existing remote use', ()
 test('protected full queue remains intact when Scout admission is denied', () => {
     const value = core();
     const queue = Memory.rooms.W1N1.spawn.queue;
-    for (let i = 0; i < 8; i++) queue.push({ role: 'Extractor', body: [WORK, MOVE], priority: 80, memory: {} });
+    for (let i = 0; i < 8; i++) queue.push({ role: 'Extractor', body: [WORK, MOVE], priority: 80, memory: {},
+        requestId: 'protected:' + i, requestedAt: Game.time, refreshTick: Game.time, expiresAt: Game.time + 50 });
     const before = JSON.stringify(queue);
     assert.strictEqual(require('spawn.request.manager').requestEconomicScout(value).ok, false);
     assert.strictEqual(JSON.stringify(queue), before);

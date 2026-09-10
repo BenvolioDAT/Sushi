@@ -500,6 +500,8 @@ function runRoomInternal(roomName, decision, selectedSpawn) {
         var finalAdmission = SpawnArbiter.revalidate(spawn.room, candidate);
         details.arbiterAllowed = finalAdmission.allowed;
         details.arbiterReason = finalAdmission.reason;
+        details.blockSource = finalAdmission.blockSource || null;
+        details.configPath = finalAdmission.configPath || null;
         if (!finalAdmission.allowed) {
             if (!decision.blocked) Object.assign(decision, details, { stage: 'arbiter',
                 blocked: { role: candidate.role, reason: finalAdmission.reason } });

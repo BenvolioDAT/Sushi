@@ -321,6 +321,8 @@ function flush() {
         .sort((a, b) => b.priority - a.priority ||
             (a.deadline || Infinity) - (b.deadline || Infinity) || a.id.localeCompare(b.id));
     const activeIds = new Set(demands.map(demand => demand.id));
+    // Stale queued assignments must not hide a real demand deficit.
+    for (const room of TickIndex.get().ownedSpawnRooms) Arbiter.pruneRoom(room.name);
     cleanupQueues(activeIds);
     const report = { tick: Game.time, demands: {}, rooms: {} };
     for (const demand of demands) {
