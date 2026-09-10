@@ -199,6 +199,7 @@ test('K spawn consumer skips a higher-priority optional request for the bootstra
 });
 
 function runSpawnQueueAtEnergy(energy, queue, spawnResult) {
+    Game.time++; // Each independent attempt starts with a newly idle spawn.
     const room = Game.rooms.W1N1;
     room.energyAvailable = energy;
     room.energyCapacityAvailable = 800;

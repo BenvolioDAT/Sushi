@@ -26,8 +26,8 @@ function build(role, options = {}) {
     const fed = role === 'Tech' && options.controllerFed === true;
     const work = Math.floor(n(options.desiredWork, role === 'Extractor' || role === 'ThoriumMiner' ? 5 : 0));
     const carry = Math.floor(n(options.desiredCarry, 0));
-    const combat = ['Ronin', 'Volley', 'Cleric'].includes(role);
     const breacher = role === 'CoreBreaker' || role === 'Breacher';
+    const combat = require('Combat.Roles').isCombatRole(role) && !breacher;
     const requested = role === 'Scout' ? 1 : role === 'Annex' || role === 'ReactorClaimer' ?
         Math.floor(n(options.desiredClaim, 1)) : combat ? Math.floor(n(options.desiredPower, 1)) :
         ['Freighter', 'Foreman', 'ThoriumHauler', 'ResourceCourier', 'SupplyRunner'].includes(role) ? carry : work;

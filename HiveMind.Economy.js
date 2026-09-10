@@ -13,7 +13,7 @@ const STATES = Object.freeze({
 const STATE_RANK = Object.freeze({ SURVIVAL: 0, RECOVERY: 1, STABLE: 2, SURPLUS: 3 });
 const EXIT_TICKS = Object.freeze({ SURVIVAL: 12, RECOVERY: 40, STABLE: 100 });
 const CORE_ROLES = new Set(['Extractor', 'Freighter', 'Foreman']);
-const COMBAT_ROLES = new Set(['Ronin', 'Volley', 'Cleric']);
+const { isCombatRole } = require('Combat.Roles');
 const GROWTH_MODES = Object.freeze({
     MINIMUM: 'GROWTH_MINIMUM',
     NORMAL: 'GROWTH_NORMAL',
@@ -936,10 +936,10 @@ function categoryForRequest(request) {
         return memory.remoteLifecycle === 'BOOTSTRAPPING' ? 'remoteBootstrap' : 'remoteMaintenance';
     }
     if (CORE_ROLES.has(role)) return role === 'Extractor' ? 'harvest' : 'logistics';
-    if (COMBAT_ROLES.has(role)) {
-        const targetRoom = memory.defendedRoom || memory.targetRoom || request && request.targetRoom;
+    if (isCombatRole(role)) {
+        const targetRoom = memory.defendedRoom || request.defendedRoom || memory.targetRoom || request.targetRoom;
         const target = targetRoom && Game.rooms[targetRoom];
-        if (memory.defenseRequest === true && target && target.controller && target.controller.my) {
+        if ((memory.defenseRequest === true || request.defenseRequest === true) && target && target.controller && target.controller.my) {
             return 'emergencyDefense';
         }
         return 'combat';
@@ -1046,11 +1046,15 @@ function localRecoveryRequest(room, request, queue) {
             covered += creep.spawning ? bodyParts(creep.body, part) : activeParts(creep, part);
         }
     }
-    for (const spawn of index.ownedSpawnsByRoom.get(room.name) || []) {
+    for (const spawn of (index.ownedSpawnsByRoom.get(room.name) || []).concat(
+        require('Spawn.Intents').get().spawns.filter(s => s.room.name === room.name))) {
         const name = spawn.spawning && spawn.spawning.name;
-        const m = name && Memory.creeps && Memory.creeps[name];
+        const m = spawn.request && spawn.request.memory || name && Memory.creeps && Memory.creeps[name];
         const parts = m && (local ? m.extractorSpawnWorkParts : m.freighterSpawnCarryParts);
-        if (Number.isInteger(parts) && parts > 0 && parts <= 50 && !seen.has(name) && matches({ memory: m })) covered += parts;
+        if (Number.isInteger(parts) && parts > 0 && parts <= 50 && !seen.has(name) && matches({ memory: m })) {
+            covered += parts;
+            seen.add(name);
+        }
     }
     for (const pending of queue || []) {
         if (!pending) continue;

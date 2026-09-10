@@ -23,7 +23,7 @@ function classify(request) {
     if (['remoteMaintenance', 'remoteBootstrap', 'remoteIntel', 'resources', 'logistics', 'harvest'].includes(category)) return 'ECONOMIC';
     if (role === 'Tech') return 'GROWTH';
     if (role === 'Artificer') return 'INFRASTRUCTURE';
-    if (['Ronin', 'Volley', 'Cleric'].includes(role)) return 'MILITARY';
+    if (require('Combat.Roles').isCombatRole(role)) return 'MILITARY';
     return 'STRATEGIC';
 }
 function cpuView(status, rolling, settings) {
@@ -63,8 +63,13 @@ function currentSpawn(roomName, queue, settings) {
     if (!global.__sushiCapacitySpawn || global.__sushiCapacitySpawn.tick !== Game.time || global.__sushiCapacitySpawn.hive !== hive)
         global.__sushiCapacitySpawn = { tick: Game.time, hive, rooms: {} };
     const cache = global.__sushiCapacitySpawn.rooms, index = Index.get();
-    if (!cache[roomName]) cache[roomName] = spawnView(index.creepsByHomeRoom.get(roomName) || [],
-        index.ownedSpawnsByRoom.get(roomName) || [], [], settings);
+    const intents = require('Spawn.Intents').get().spawns.filter(s => s.room.name === roomName);
+    if (!cache[roomName] || cache[roomName].intentCount !== intents.length) {
+        const spawns = new Map((index.ownedSpawnsByRoom.get(roomName) || []).map(s => [s.name, s]));
+        for (const intent of intents) spawns.set(intent.name, intent);
+        cache[roomName] = { ...spawnView(index.creepsByHomeRoom.get(roomName) || [],
+            Array.from(spawns.values()), [], settings), intentCount: intents.length };
+    }
     const base = cache[roomName], pending = spawnView([], [], queue, settings);
     return { ...base, plannedLoad: pending.plannedLoad, burstLoad: base.burstLoad + pending.burstLoad,
         headroom: Math.max(0, base.headroom - pending.plannedLoad - pending.burstLoad),
@@ -77,9 +82,13 @@ function commitments(roomName, queue, settings, excludeId) {
         seen.add(creep.name);
         if (creep.ticksToLive === undefined || creep.ticksToLive > (creep.body || []).length * 3 + 50) add(creep.memory);
     }
-    for (const spawn of index.ownedSpawnsByRoom.get(roomName) || []) {
+    for (const spawn of (index.ownedSpawnsByRoom.get(roomName) || []).concat(
+        require('Spawn.Intents').get().spawns.filter(s => s.room.name === roomName))) {
         const name = spawn.spawning && spawn.spawning.name;
-        if (name && !seen.has(name)) add(Memory.creeps && Memory.creeps[name]);
+        if (name && !seen.has(name)) {
+            add(spawn.request && spawn.request.memory || Memory.creeps && Memory.creeps[name]);
+            seen.add(name);
+        }
     }
     for (const request of queue) add(request.memory);
     const result = { load: 0, cpu: 0, count: 0 };
@@ -186,7 +195,10 @@ function evaluate(room, request, context, mandatory, revalidate) {
     spawns.headroom = Math.max(0, spawns.headroom - committed.load);
     const roleSamples = HiveMemory.ensure().telemetry.populationRooms || {};
     const utilization = roleSamples[room.name] && roleSamples[room.name][role];
-    const queuedCpu = queue.reduce((sum, q) => sum + roleCpu(q.role), 0) + committed.cpu;
+    const accepted = require('Spawn.Intents').get().spawns.filter(s => s.room.name === room.name);
+    const acceptedCpu = accepted.filter(s => !Game.creeps[s.spawning.name])
+        .reduce((sum, s) => sum + roleCpu(s.memory.role), 0);
+    const queuedCpu = acceptedCpu + queue.reduce((sum, q) => sum + roleCpu(q.role), 0) + committed.cpu;
     const metrics = Bodies.metrics(request.body || [], request.memory || {});
     const claimed = new Set(queue.flatMap(q => q.replacementFor || []));
     const replacing = ['Tech', 'Artificer'].includes(role) ? (request.replacementFor || []).map(name => Game.creeps[name]).filter(c =>
@@ -204,7 +216,8 @@ function evaluate(room, request, context, mandatory, revalidate) {
             cpu.headroom / Math.max(1, Object.keys(get().rooms).length)) < queuedCpu + roleCpu(role))) reason = 'CPU_CAPACITY_EXHAUSTED';
         else if (spawns.headroom < metrics.estimatedReplacementLoad + metrics.spawnTime / settings.queueHorizon) reason = 'SPAWN_LOAD_HIGH';
         else if (!intelFloor && view.energy.known !== false && (!view.energy.healthy || view.energy.aboveReserve < metrics.cost +
-            queue.reduce((sum, q) => sum + Bodies.cost(q.body || []), 0) || view.energy.trend < -1 && !view.energy.drawdownSpend)) reason = 'ENERGY_BELOW_RESERVE';
+            queue.reduce((sum, q) => sum + Bodies.cost(q.body || []), 0) +
+            accepted.reduce((sum, s) => sum + Bodies.cost(s.request.body), 0) || view.energy.trend < -1 && !view.energy.drawdownSpend)) reason = 'ENERGY_BELOW_RESERVE';
         else if (utilization && utilization.samples >= 8 && utilization.utilization < 0.5 &&
             Game.time - utilization.tick < 200 && ['GROWTH', 'INFRASTRUCTURE'].includes(kind)) reason = 'ROLE_UNDERUTILIZED';
         else if (!intelFloor && !cpuReplacement && total >= view.population.softCap) reason = 'SOFT_CAPACITY_EXHAUSTED';

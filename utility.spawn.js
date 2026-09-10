@@ -8,51 +8,15 @@
  * selection.
  */
 function genCreepName(creepType) {
-    /*
-     * Screeps creep names must be unique. This helper builds names like
-     * Foreman_001, Foreman_002, and so on, then checks whether each is free.
-     */
-    var maxNumber = 100;
-    var creepMemory = Memory.creeps || {};
-
-    /*
-     * Try a fixed range of numbers so the function always finishes quickly.
-     * This prevents an accidental infinite loop if many names are taken.
-     */
-    for (var number = 1; number <= maxNumber; number++) {
-        var paddedNumber = '';
-
-        /*
-         * Pad the number to three digits to keep creep names sorted and readable.
-         */
-        if (number < 10) {
-            paddedNumber = '00' + number;
-        } else if (number < 100) {
-            paddedNumber = '0' + number;
-        } else {
-            paddedNumber = '' + number;
-        }
-
-        var creepName = creepType + '_' + paddedNumber;
-
-        /*
-         * Check both:
-         * - Game.creeps: alive creeps
-         * - Memory.creeps: old memory that may still exist
-         *
-         * This function does NOT create any memory entry.
-         * It only reads memory to avoid name conflicts.
-         */
-        if (!Game.creeps[creepName] && !creepMemory[creepName]) {
-            return creepName;
-        }
+    const occupied = new Set([...Object.keys(Game.creeps || {}), ...Object.keys(Memory.creeps || {})]);
+    for (const spawn of Object.values(Game.spawns || {}).concat(require('Spawn.Intents').get().spawns)) {
+        if (spawn.spawning) occupied.add(spawn.spawning.name);
     }
-
-    /*
-     * If all names from 001 to 100 are taken,
-     * return null so spawn code knows no name is free.
-     */
-    return null;
+    // N occupied names can block at most N suffixes, so N + 1 always terminates.
+    for (let number = 1; number <= occupied.size + 1; number++) {
+        const name = creepType + '_' + String(number).padStart(3, '0');
+        if (!occupied.has(name)) return name;
+    }
 }
 
 /**

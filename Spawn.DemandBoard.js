@@ -16,10 +16,14 @@ function tickState() {
 
 function stableId(demand) {
     if (demand.id) return demand.id;
-    return [
-        'demand', demand.operationId || 'none', demand.role || 'capability',
-        demand.originRoom || 'any', demand.targetRoom || 'none', demand.squadId || 'none'
-    ].join(':');
+    const memory = demand.memory || {};
+    // JSON boundaries avoid delimiter collisions; source fields are independent.
+    return JSON.stringify(['demand', demand.operationId || memory.operationId || null,
+        demand.role || null, demand.originRoom || null, demand.targetRoom || memory.targetRoom || null,
+        demand.squadId || memory.squadId || null, demand.assignmentKey || memory.strategyAssignmentKey ||
+            memory.assignmentKey || null, demand.producer || 'demandBoard',
+        memory.sourceId || null, memory.sourceTargetId || null, memory.remoteSourceId || null,
+        memory.sourceRoom || null, demand.strategyProvider || memory.strategyProvider || null]);
 }
 
 function plainDemand(input) {
@@ -29,7 +33,7 @@ function plainDemand(input) {
         squadId: input.squadId || null,
         role: input.role || null,
         capabilities: input.capabilities ? { ...input.capabilities } : null,
-        count: Math.max(0, Math.floor(input.count || 0)),
+        count: Number.isFinite(input.count) ? Math.max(0, Math.floor(input.count)) : 0,
         priority: Number.isFinite(input.priority) ? input.priority : 50,
         deadline: Number.isFinite(input.deadline) ? input.deadline : null,
         originRoom: input.originRoom || null,
@@ -101,7 +105,11 @@ function emit(input) {
 
 function memoryMatches(demand, memory) {
     if (!memory) return false;
-    if (memory.demandId === demand.id) return true;
+    if (memory.demandId) return memory.demandId === demand.id;
+    if (demand.assignmentKey && (memory.strategyAssignmentKey || memory.assignmentKey) !== demand.assignmentKey) return false;
+    for (const key of ['sourceId', 'sourceTargetId', 'remoteSourceId']) {
+        if (demand.memory && demand.memory[key] && memory[key] !== demand.memory[key]) return false;
+    }
     if (demand.squadId && memory.squadId !== demand.squadId) return false;
     if (demand.operationId && memory.operationId === demand.operationId && memory.role === demand.role) return true;
     if (demand.operationId && demand.operationId.startsWith('expand:') &&
@@ -141,9 +149,9 @@ function assignmentCount(demand) {
             count++;
         }
     }
-    for (const spawn of TickIndex.get().ownedSpawns) {
+    for (const spawn of TickIndex.get().ownedSpawns.concat(require('Spawn.Intents').get().spawns)) {
         const name = spawn && spawn.spawning && spawn.spawning.name;
-        const memory = name && Memory.creeps && Memory.creeps[name];
+        const memory = spawn.request && spawn.request.memory || name && Memory.creeps && Memory.creeps[name];
         if (!name || seen.has(name) || !memoryMatches(demand, memory)) continue;
         seen.add(name);
         count++;
@@ -171,7 +179,16 @@ function roomSurvivalReady(room, demand) {
     return roles.has('Foreman') && roles.has('Extractor') && roles.has('Freighter');
 }
 
+function validScalableDemand(demand) {
+    if (!demand.bodyRequirements || demand.bodyRequirements.scalable !== true) return true;
+    const capabilities = demand.capabilities;
+    return !!(demand.role && capabilities && typeof capabilities === 'object' && !Array.isArray(capabilities) &&
+        Object.values(capabilities).every(value => Number.isFinite(value) && value >= 0) &&
+        ['work', 'carry', 'claim', 'attack', 'ranged_attack', 'heal'].some(key => capabilities[key] > 0));
+}
+
 function bodyForDemand(demand, room) {
+    if (!validScalableDemand(demand)) return null;
     const specified = demand.bodyRequirements && demand.bodyRequirements.body;
     if (Array.isArray(specified) && specified.length) return specified.slice();
     if (demand.capabilities && demand.role && demand.bodyRequirements && demand.bodyRequirements.scalable === true) {
@@ -203,20 +220,37 @@ function spawnRoomScore(room, demand) {
     return score;
 }
 
-function chooseSpawnRoom(demand) {
-    const candidates = TickIndex.get().ownedSpawnRooms.slice();
-    candidates.sort((a, b) => {
-        const difference = spawnRoomScore(b, demand) - spawnRoomScore(a, demand);
-        return difference || a.name.localeCompare(b.name);
-    });
-    return candidates.length && spawnRoomScore(candidates[0], demand) > -Infinity ? candidates[0] : null;
+function eligibleSpawnRooms(demand) {
+    return TickIndex.get().ownedSpawnRooms.map(room => ({ room, score: spawnRoomScore(room, demand) }))
+        .filter(item => item.score > -Infinity)
+        .sort((a, b) => b.score - a.score || a.room.name.localeCompare(b.room.name))
+        .map(item => item.room);
+}
+
+function chooseSpawnRoom(demand) { return eligibleSpawnRooms(demand)[0] || null; }
+
+function nextSlot(demand) {
+    const used = new Set();
+    const inspect = memory => {
+        if (memory && memory.demandId === demand.id && Number.isInteger(memory.demandSlot)) used.add(memory.demandSlot);
+    };
+    for (const creep of TickIndex.get().allCreeps) inspect(creep.memory);
+    for (const spawn of TickIndex.get().ownedSpawns.concat(require('Spawn.Intents').get().spawns)) {
+        inspect(spawn.request && spawn.request.memory || spawn.spawning && Memory.creeps && Memory.creeps[spawn.spawning.name]);
+    }
+    for (const room of Object.values(Memory.rooms || {})) {
+        for (const request of room.spawn && room.spawn.queue || []) inspect(request && request.memory);
+    }
+    let slot = 0;
+    while (used.has(slot)) slot++;
+    return slot;
 }
 
 function queueDemand(demand, room, count) {
     const body = bodyForDemand(demand, room);
     if (!body) return 0;
     let added = 0;
-    const limit = Math.min(count, demand.emergency ? 3 : 1);
+    const limit = count;
     for (let i = 0; i < limit; i++) {
         const memory = {
             role: demand.role,
@@ -234,11 +268,16 @@ function queueDemand(demand, room, count) {
             boostRequirements: demand.boostRequirements
         };
         Object.assign(memory, demand.memory || {});
+        const slot = nextSlot(demand);
+        Object.assign(memory, { demandId: demand.id, demandSlot: slot });
         const result = Arbiter.admit(room.name, {
+            requestId: JSON.stringify(['demand', demand.id, slot]),
             role: demand.role,
             body,
             bodyRequirements: demand.bodyRequirements,
-            bodyProfile: demand.bodyRequirements && demand.bodyRequirements.scalable ? {
+            bodyProfile: demand.bodyRequirements && demand.bodyRequirements.scalable === true ? {
+                desiredWork: demand.capabilities.work, desiredCarry: demand.capabilities.carry,
+                desiredClaim: demand.capabilities.claim,
                 desiredPower: demand.capabilities.attack || demand.capabilities.ranged_attack || demand.capabilities.heal,
                 urgency: demand.emergency ? 'EMERGENCY' : 'NORMAL'
             } : undefined,
@@ -257,7 +296,8 @@ function queueDemand(demand, room, count) {
             memory,
             expiresAt: demand.validUntil
         }, { producer: demand.producer || 'demandBoard', emergency: demand.emergency, ttl: 5 });
-        if (result.ok) added += result.requested;
+        if (result.ok && result.requested > 0) added += result.requested;
+        else break;
     }
     return added;
 }
@@ -286,11 +326,20 @@ function flush() {
     for (const demand of demands) {
         const assigned = assignmentCount(demand);
         const missing = Math.max(0, demand.count - assigned);
-        const room = missing > 0 ? chooseSpawnRoom(demand) : null;
-        const queued = room ? queueDemand(demand, room, missing) : 0;
+        let room = null, queued = 0;
+        if (missing > 0) for (const candidate of eligibleSpawnRooms(demand)) {
+            const added = queueDemand(demand, candidate, missing - queued);
+            if (added > 0) {
+                room = room || candidate;
+                report.rooms[candidate.name] = true;
+                queued += added;
+            }
+            if (queued >= missing) break;
+        }
         report.demands[demand.id] = {
             role: demand.role, desired: demand.count, assigned, missing,
-            queued, spawnRoom: room && room.name || null
+            queued, spawnRoom: room && room.name || null,
+            reason: validScalableDemand(demand) ? null : 'invalid scalable capabilities'
         };
         if (room) report.rooms[room.name] = true;
     }

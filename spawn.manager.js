@@ -20,6 +20,7 @@ var creepBodyConfig = require('role.creepBodyConfig');
 var Economy = require('HiveMind.Economy');
 var HiveMemory = require('HiveMind.Memory');
 var SpawnArbiter = require('Spawn.Arbiter');
+var SpawnIntents = require('Spawn.Intents');
 
 var getBodyCost = creepBodyConfig.getBodyCost;
 
@@ -408,7 +409,7 @@ function findIdleSpawn(roomName) {
             continue;
         }
 
-        if (spawn.spawning) {
+        if (spawn.spawning || SpawnIntents.get().used.has(spawn.name)) {
             continue;
         }
 
@@ -430,7 +431,7 @@ function findIdleSpawn(roomName) {
  * @param {string} roomName
  * @returns {object}
  */
-function runRoomInternal(roomName, decision) {
+function runRoomInternal(roomName, decision, selectedSpawn) {
     var queue = getSpawnQueue(roomName);
     SpawnArbiter.pruneRoom(roomName, decision);
 
@@ -446,7 +447,7 @@ function runRoomInternal(roomName, decision) {
         };
     }
 
-    var spawn = findIdleSpawn(roomName);
+    var spawn = selectedSpawn || findIdleSpawn(roomName);
     decision.spawnName = spawn && spawn.name || null;
     decision.idle = !!spawn;
 
@@ -479,6 +480,9 @@ function runRoomInternal(roomName, decision) {
     var bodySelection = null;
     var blockedReasons = {};
     var unaffordableRoles = [];
+    var waitingPriority = null;
+    const availableEnergy = SpawnIntents.available(spawn.room);
+    const previewSpawn = { room: Object.create(spawn.room, { energyAvailable: { value: availableEnergy } }) };
 
     for (var queueIndex = 0; queueIndex < queue.length; queueIndex++) {
         var candidate = queue[queueIndex];
@@ -514,6 +518,21 @@ function runRoomInternal(roomName, decision) {
             continue;
         }
 
+        const category = Economy.categoryForRequest(candidate);
+        const memory = candidate.memory || {};
+        const localCore = ['Foreman', 'Extractor', 'Freighter'].includes(candidate.role) &&
+            (candidate.role !== 'Freighter' || Economy.isLocalFreighter(candidate)) &&
+            !memory.remoteMining && !memory.remoteSourceId && !memory.remoteWorkTargetId &&
+            (!memory.sourceRoom || memory.sourceRoom === roomName) &&
+            (!memory.targetRoom || memory.targetRoom === roomName);
+        const coreContext = localCore && require('Spawn.Context').snapshot(roomName, 50);
+        const missingCore = coreContext && (coreContext.byRole[candidate.role] || 0) <=
+            coreContext.queue.filter(q => q && q.role === candidate.role).length;
+        const survival = finalAdmission.mandatoryEconomy || missingCore ||
+            ['controllerSafety', 'criticalController'].includes(category) ||
+            require('Spawn.Policy').isImminentOwnedDefense(candidate);
+        if (waitingPriority !== null && (candidate.priority || 0) < waitingPriority && !survival) continue;
+
         /* Select malformed allowed work so the existing cleanup path removes it. */
         if (!candidate || !candidate.role || !candidate.body) {
             request = candidate;
@@ -527,11 +546,19 @@ function runRoomInternal(roomName, decision) {
                 candidate.requestedWorkParts || candidate.maxWorkParts || countBodyParts(candidate.body, WORK),
                 finalAdmission.localMissingWork) });
         }
-        var preview = previewAffordableQueuedBodyForSpawn(spawn, bodyCandidate);
+        var preview = previewAffordableQueuedBodyForSpawn(previewSpawn, bodyCandidate);
         if (!preview.selection.affordable) {
             if (!decision.blocked) Object.assign(decision, details, { stage: 'body',
                 blocked: { role: candidate.role, reason: preview.selection.reason } });
             unaffordableRoles.push(candidate.role);
+            // Reserve future refills only for a body this room can actually build.
+            const atCapacity = { room: Object.create(spawn.room, {
+                energyAvailable: { value: spawn.room.energyCapacityAvailable } }) };
+            const future = previewAffordableQueuedBodyForSpawn(atCapacity, bodyCandidate);
+            if (future.selection.affordable && future.body.length <= 50 && getBodyCost(future.body) > 0) {
+                waitingPriority = Math.max(waitingPriority === null ? -Infinity : waitingPriority, candidate.priority || 0);
+                decision.waitingForEnergy = candidate.requestId || candidate.role;
+            }
             continue;
         }
 
@@ -626,6 +653,7 @@ function runRoomInternal(roomName, decision) {
      * If there is not enough energy, leave the request in queue.
      */
     if (result === OK) {
+        SpawnIntents.record(spawn, creepName, request, getBodyCost(request.body), availableEnergy);
         queue.splice(requestIndex, 1);
 
         console.log(
@@ -710,7 +738,26 @@ function runRoom(roomName) {
     // Persist even if a malformed legacy request or API wrapper throws.
     memory.lastDecision = decision;
     try {
-        const result = runRoomInternal(roomName, decision);
+        const idleSpawns = Object.values(Game.spawns).filter(spawn => spawn && spawn.room &&
+            spawn.room.name === roomName && !spawn.spawning && !SpawnIntents.get().used.has(spawn.name));
+        const attempts = [];
+        const spawned = [];
+        let result;
+        for (const spawn of idleSpawns.length ? idleSpawns : [null]) {
+            const attempt = { tick: Game.time, stage: 'queue', queueLength: memory.queue.length };
+            let outcome;
+            try { outcome = runRoomInternal(roomName, attempt, spawn); }
+            catch (error) { Object.assign(decision, attempt); throw error; }
+            attempts.push({ ...attempt, result: outcome.result, reason: outcome.reason || 'spawn started' });
+            if (!result || outcome.result === OK && result.result !== OK) {
+                result = outcome;
+                Object.assign(decision, attempt);
+            }
+            if (outcome.result === OK) spawned.push({ name: outcome.name, role: outcome.role, spawnName: spawn.name });
+            if (!memory.queue.length || outcome.result === ERR_NOT_ENOUGH_ENERGY) break;
+        }
+        decision.attempts = attempts;
+        result.spawned = spawned;
         decision.result = result.result;
         decision.reason = result.reason || 'spawn started';
         decision.queueRemaining = memory.queue.length;

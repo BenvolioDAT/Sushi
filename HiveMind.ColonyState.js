@@ -15,7 +15,7 @@ const TRANSITIONS = Object.freeze({
 const ORDERED_PHASES = Object.freeze([
     PHASES.OWNED_NO_SPAWN, PHASES.BOOTSTRAP, PHASES.GROWTH, PHASES.DEVELOPMENT, PHASES.MATURE
 ]);
-const COMBAT_ROLES = new Set(['Ronin', 'Volley', 'Cleric']);
+const { isCombatRole } = require('Combat.Roles');
 
 function roleOf(item) { return item && (item.role || item.memory && item.memory.role) || null; }
 function activeParts(item, type) {
@@ -40,7 +40,7 @@ function plannedSummary(roomName) {
         const role = roleOf(item);
         if (!role) return;
         byRole[role] = (byRole[role] || 0) + 1;
-        if (!COMBAT_ROLES.has(role)) nonCombat++;
+        if (!isCombatRole(role)) nonCombat++;
         if (isLocalExtractor(item, roomName)) localExtractors++;
         if (role === 'Tech' && countTechWork !== false) techWork += activeParts(item, typeof WORK !== 'undefined' ? WORK : 'work');
     };

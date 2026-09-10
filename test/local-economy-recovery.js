@@ -76,6 +76,7 @@ test('A-E real snapshot separates queue, spawning, active WORK and income', () =
     const name = Game.spawns.Spawn1.spawning.name;
     unit(room, name, 'Extractor', [...Array(5).fill(WORK), MOVE, CARRY], Memory.creeps[name]);
     Game.spawns.Spawn1.spawning = null;
+    Game.time++; // Simulate completion on a later tick.
     snapshot = sample(room);
     assert.strictEqual(snapshot.harvest.actualOrEstimatedIncome, 10);
     assert.strictEqual(economy.localHarvestCoverage(snapshot).status, 'RECOVERING');
@@ -199,16 +200,16 @@ test('critical local hauling gets a bounded bypass and normal policy resumes onc
     assert.strictEqual(arbiter.admit(room.name, { ...hauler, requestId: 'extra' }).ok, false);
 });
 
-test('name exhaustion, role cap and expiration have explicit diagnostics', () => {
+test('names extend beyond 100 and expiration retains explicit diagnostics', () => {
     const room = setup();
     sample(room);
     Memory.rooms.W5N8.spawn.queue.push(request());
     for (let i = 1; i <= 100; i++) Memory.creeps['Extractor_' + String(i).padStart(3, '0')] = { role: 'Extractor' };
     const manager = require('spawn.manager');
-    assert.strictEqual(manager.runRoom(room.name).result, ERR_NAME_EXISTS);
-    assert.strictEqual(Memory.rooms.W5N8.spawn.lastDecision.stage, 'name');
-    assert.match(Memory.rooms.W5N8.spawn.lastDecision.reason, /No free creep name/);
-    Memory.rooms.W5N8.spawn.queue[0].expiresAt = Game.time - 1;
+    const result = manager.runRoom(room.name);
+    assert.strictEqual(result.result, OK);
+    assert.strictEqual(result.name, 'Extractor_101');
+    Memory.rooms.W5N8.spawn.queue.push({ ...request('sourceB'), expiresAt: Game.time - 1 });
     manager.runRoom(room.name);
     assert.strictEqual(Memory.rooms.W5N8.spawn.lastDecision.reason, 'request expired');
 });

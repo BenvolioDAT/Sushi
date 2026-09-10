@@ -14,9 +14,20 @@ function maxCreeps(room, policy) {
 
 function isOwnedDefense(request) {
     const memory = request.memory || {};
-    const targetName = memory.defendedRoom || request.defendedRoom || request.targetRoom;
+    const targetName = memory.defendedRoom || request.defendedRoom || memory.targetRoom || request.targetRoom;
     const target = targetName && Game.rooms[targetName];
-    return memory.defenseRequest === true && target && target.controller && target.controller.my;
+    return Context.isCombatRole(request.role || memory.role) &&
+        (memory.defenseRequest === true || request.defenseRequest === true) && target && target.controller && target.controller.my;
+}
+
+function isImminentOwnedDefense(request) {
+    if (!isOwnedDefense(request) || request.emergency !== true) return false;
+    const memory = request.memory || {};
+    const target = memory.defendedRoom || request.defendedRoom || memory.targetRoom || request.targetRoom;
+    const threat = HiveMemory.ensure().threats[target];
+    return !!(threat && threat.tick === Game.time && threat.emergency &&
+        (threat.hostiles || []).some(hostile => hostile.autoEngage &&
+            (hostile.attackedUs || hostile.closestCriticalRange <= 3)));
 }
 
 function economyRoleCap(room, role, request, policy) {
@@ -116,10 +127,11 @@ function evaluate(room, request, context, options = {}) {
     const ownedDefense = isOwnedDefense(request);
     if (ownedDefense) {
         const hasAnchor = (context.byRole.Extractor || 0) > 0 && (context.byRole.Freighter || 0) > 0;
-        if (!hasAnchor) return { allowed: false, reason: 'protected survival economy anchor missing' };
+        if (!hasAnchor && !isImminentOwnedDefense(request)) return { allowed: false, reason: 'protected survival economy anchor missing' };
         const combatQueued = context.queue.filter(item => {
+            if (options.revalidate && item === request) return false;
             const itemRole = item && (item.role || item.memory && item.memory.role);
-            return ['Ronin', 'Volley', 'Cleric'].includes(itemRole);
+            return Context.isCombatRole(itemRole);
         }).length;
         const shareLimit = Math.max(1, Math.ceil((policy.maxQueueLengthPerRoom || 8) *
             Math.max(0.1, Math.min(1, policy.combatSpawnShare || 0.5))));
@@ -158,4 +170,4 @@ function evaluate(room, request, context, options = {}) {
             context.nonCombatTotal - ownQueued >= maxCreeps(room, policy) };
 }
 
-module.exports = { economyRoleCap, evaluate, isOwnedDefense, maxCreeps };
+module.exports = { economyRoleCap, evaluate, isOwnedDefense, isImminentOwnedDefense, maxCreeps };

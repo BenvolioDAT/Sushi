@@ -1,6 +1,6 @@
 const HiveMemory = require('HiveMind.Memory');
 const TickIndex = require('HiveMind.Index');
-const COMBAT_ROLES = new Set(['Ronin', 'Volley', 'Cleric']);
+const { isCombatRole } = require('Combat.Roles');
 
 function roleOf(item) {
     return item && (item.role || item.memory && item.memory.role) || null;
@@ -8,10 +8,6 @@ function roleOf(item) {
 
 function increment(map, key) {
     if (key) map[key] = (map[key] || 0) + 1;
-}
-
-function isCombatRole(role) {
-    return COMBAT_ROLES.has(role);
 }
 
 function healthy(creep, replacementBuffer) {
@@ -42,10 +38,11 @@ function snapshot(roomName, replacementBuffer = 0) {
             else nonCombatLiving++;
         }
     }
-    for (const spawn of index.ownedSpawnsByRoom.get(roomName) || []) {
+    for (const spawn of (index.ownedSpawnsByRoom.get(roomName) || []).concat(
+        require('Spawn.Intents').get().spawns.filter(s => s.room.name === roomName))) {
         const name = spawn && spawn.spawning && spawn.spawning.name;
         if (!name || seen.has(name)) continue;
-        const memory = Memory.creeps && Memory.creeps[name];
+        const memory = spawn.request && spawn.request.memory || Memory.creeps && Memory.creeps[name];
         seen.add(name);
         spawning++;
         const role = roleOf({ memory });
@@ -82,9 +79,10 @@ function capability(roomName, role, partType) {
         result[creep.spawning ? 'spawning' : 'active'] += (creep.body || []).filter(p =>
             (p.type || p) === partType && p.hits !== 0).length;
     }
-    for (const spawn of index.ownedSpawnsByRoom.get(roomName) || []) {
+    for (const spawn of (index.ownedSpawnsByRoom.get(roomName) || []).concat(
+        require('Spawn.Intents').get().spawns.filter(s => s.room.name === roomName))) {
         const name = spawn.spawning && spawn.spawning.name;
-        const memory = name && Memory.creeps && Memory.creeps[name];
+        const memory = spawn.request && spawn.request.memory || name && Memory.creeps && Memory.creeps[name];
         if (name && !seen.has(name) && memory && memory.role === role) {
             result.spawning += memory.spawnCapability && memory.spawnCapability[partType] || 0;
             seen.add(name);

@@ -30,7 +30,7 @@ function normalize(roomName, request, options = {}) {
             normalized.deadline = Game.time + Math.min(...expiring.map(c => c.ticksToLive));
         }
     }
-    if (room && ['Tech', 'Artificer', 'Freighter', 'Extractor', 'ThoriumHauler', 'Annex', 'ReactorClaimer'].includes(normalized.role)) {
+    if (room && !(normalized.bodyRequirements && normalized.bodyRequirements.fixed) && ['Tech', 'Artificer', 'Freighter', 'Extractor', 'ThoriumHauler', 'Annex', 'ReactorClaimer'].includes(normalized.role)) {
         const bodyOptions = profiles.requestOptions(room, normalized);
         // Keep established small-body recovery shapes; scale only meaningful capability.
         const scale = normalized.replacementFor || normalized.role === 'Extractor' || normalized.role === 'Annex' ||
@@ -68,6 +68,10 @@ function admit(roomName, request, options = {}) {
     if (!spawnMemory.governor) spawnMemory.governor = {};
     spawnMemory.governor.nextBody = { role: normalized.role, ...normalized.bodyMetrics,
         reason: normalized.bodyReason || 'existing capability-bounded role profile' };
+    const accepted = require('Spawn.Intents').get().spawns.find(spawn => spawn.room.name === roomName &&
+        spawn.request.requestId === normalized.requestId);
+    if (accepted) return { ok: true, requested: 0, role: normalized.role,
+        reason: 'stable request already spawning', request: accepted.request };
     const existing = context.queue.find(item => item && item.requestId === normalized.requestId);
     if (existing) {
         const promoteToGrowthFloor = normalized.memory.controllerGrowthFloor === true &&
