@@ -66,10 +66,7 @@ var DEFAULT_SPAWN_POLICY = {
         Extractor: 6,
         Freighter: 6,
         Pioneer: 2,
-        SupplyRunner: 2,
-        ThoriumMiner: 2,
-        ThoriumHauler: 4,
-        ReactorClaimer: 1
+        SupplyRunner: 2
     },
     maxCreepsPerRoomByRcl: {
         RCL1: 10,
@@ -123,9 +120,6 @@ var PRIORITY = {
     Ronin: 85,
     Volley: 86,
     Cleric: 84,
-    ThoriumMiner: 35,
-    ThoriumHauler: 42,
-    ReactorClaimer: 38,
     MineralMiner: 32,
     ResourceCourier: 48
 };
@@ -160,10 +154,7 @@ var REPLACEMENT_BUFFER_TICKS = {
     Volley: 40,
     Cleric: 40,
     MineralMiner: 75,
-    ResourceCourier: 60,
-    ThoriumMiner: 120,
-    ThoriumHauler: 180,
-    ReactorClaimer: 180
+    ResourceCourier: 60
 };
 
 /*
@@ -4121,7 +4112,7 @@ function saveSpawnGovernorDebug(context) {
     });
 }
 
-function countQueuedSeason11Assignment(roomName, assignmentKey) {
+function countQueuedStrategyAssignment(roomName, assignmentKey) {
     var queue = spawnManager.getSpawnQueue(roomName) || [];
     var count = 0;
 
@@ -4129,7 +4120,8 @@ function countQueuedSeason11Assignment(roomName, assignmentKey) {
         if (
             queue[i] &&
             queue[i].memory &&
-            queue[i].memory.season11AssignmentKey === assignmentKey
+            (queue[i].assignmentKey === assignmentKey ||
+                queue[i].memory.strategyAssignmentKey === assignmentKey)
         ) {
             count++;
         }
@@ -4137,7 +4129,7 @@ function countQueuedSeason11Assignment(roomName, assignmentKey) {
     return count;
 }
 
-function countHealthySeason11Assignment(roomName, plan) {
+function countHealthyStrategyAssignment(roomName, plan) {
     var count = 0;
     var creeps = getHomeLivingCreeps(roomName);
 
@@ -4145,17 +4137,12 @@ function countHealthySeason11Assignment(roomName, plan) {
         var creep = creeps[i];
         if (
             !creep || !creep.memory ||
-            creep.memory.season11AssignmentKey !== plan.assignmentKey
+            creep.memory.strategyAssignmentKey !== plan.assignmentKey
         ) {
             continue;
         }
 
-        var lead = getReplacementLeadTicks(plan.role, creep.body || []);
-        var routeDistance = Number(creep.memory.season11RouteDistance) || 0;
-        if (plan.role === 'ThoriumMiner') {
-            routeDistance *= 50;
-        }
-        lead += Math.min(1000, Math.max(0, routeDistance));
+        var lead = (creep.body || []).length * 3 + Math.max(0, Number(plan.replacementBuffer) || 0);
 
         if (creep.ticksToLive === undefined || creep.ticksToLive > lead) {
             count++;
@@ -4164,10 +4151,10 @@ function countHealthySeason11Assignment(roomName, plan) {
     return count;
 }
 
-function requestSeason11RolesForRoom(room) {
+function requestStrategyRolesForRoom(room) {
     var result = {
         ok: true,
-        role: 'Season11',
+        role: 'Strategy',
         requested: 0,
         plans: []
     };
@@ -4175,13 +4162,9 @@ function requestSeason11RolesForRoom(room) {
 
     for (var i = 0; i < plans.length; i++) {
         var plan = plans[i];
-        var body = plan.role === 'ThoriumHauler' ?
-            creepBodyConfig.getThoriumHaulerBodyForCarry(
-                room,
-                plan.requestedCarryParts || 1
-            ) : creepBodyConfig.getBody(plan.role, room);
-        var healthy = countHealthySeason11Assignment(room.name, plan);
-        var queued = countQueuedSeason11Assignment(
+        var body = plan.body || plan.bodyRequirements && plan.bodyRequirements.body;
+        var healthy = countHealthyStrategyAssignment(room.name, plan);
+        var queued = countQueuedStrategyAssignment(
             room.name,
             plan.assignmentKey
         );
@@ -4201,32 +4184,35 @@ function requestSeason11RolesForRoom(room) {
             continue;
         }
 
-        var operationId = 'season11:' + plan.assignmentKey;
+        var operationId = 'strategy:' + plan.strategyProvider + ':' + plan.assignmentKey;
         var emitted = DemandBoard.emit({
             id: operationId + ':' + plan.role,
             operationId: operationId,
             role: plan.role,
-            count: plan.desired,
+            count: plan.count || plan.desired,
             priority: typeof plan.priority === 'number' ?
                 plan.priority : (PRIORITY[plan.role] || 0),
             originRoom: room.name,
             preferredSpawnRoom: room.name,
-            targetRoom: plan.memory && (
-                plan.memory.season11ThoriumRoom ||
-                plan.memory.season11ReactorRoom
-            ),
-            bodyRequirements: { body: body },
-            replacementBuffer: getReplacementLeadTicks(plan.role, body),
-            validUntil: Game.time + 10,
+            targetRoom: plan.targetRoom,
+            bodyRequirements: plan.bodyRequirements || { body: body },
+            replacementBuffer: plan.replacementBuffer,
+            validUntil: plan.validUntil,
             emergency: plan.emergency === true,
+            strategyProvider: plan.strategyProvider,
+            strategyCategory: plan.strategyCategory,
+            strategyEmergency: plan.strategyEmergency === true,
+            strategyMandatory: plan.strategyMandatory === true,
+            assignmentKey: plan.assignmentKey,
+            economyCategory: plan.economyCategory,
             memory: Object.assign({
                 role: plan.role,
                 homeRoom: room.name
             }, plan.memory || {}),
-            reason: 'Season 11 assignment ' + plan.assignmentKey
+            reason: plan.reason
         });
         planReport.demandId = emitted.id;
-        planReport.requested = Math.max(0, plan.desired - healthy - queued);
+        planReport.requested = Math.max(0, (plan.count || plan.desired) - healthy - queued);
         result.requested += planReport.requested;
         result.plans.push(planReport);
     }
@@ -4350,7 +4336,7 @@ function runForRoom(room, options) {
             room,
             demandCache.artificerDemand
         ));
-        report.requests.push(requestSeason11RolesForRoom(room));
+        report.requests.push(requestStrategyRolesForRoom(room));
 
         return report;
     }
@@ -4446,7 +4432,9 @@ module.exports = {
     requestRemoteExtractorsForRoom: requestRemoteExtractorsForRoom,
     requestAnnexForRoom: requestAnnexForRoom,
     requestEconomicScout: requestEconomicScout,
-    requestSeason11RolesForRoom: requestSeason11RolesForRoom,
+    requestStrategyRolesForRoom: requestStrategyRolesForRoom,
+    /* Compatibility export for console/tests; implementation is provider-generic. */
+    requestSeason11RolesForRoom: requestStrategyRolesForRoom,
     requestDefendersForRoom: requestDefendersForRoom,
     cleanDefenseQueue: cleanDefenseQueue
 };

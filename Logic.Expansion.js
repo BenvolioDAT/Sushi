@@ -171,8 +171,15 @@ function ensureExpansionMemory() {
         expansion.autoSelect = true;
     }
 
-    if (typeof expansion.maxOwnedRooms !== 'number') {
-        expansion.maxOwnedRooms = getGclLevel();
+    if (expansion.configuredRoomLimit === undefined) {
+        if (typeof expansion.maxOwnedRooms === 'number' && expansion.roomLimitSource === 'CONFIG') {
+            expansion.configuredRoomLimit = expansion.maxOwnedRooms;
+        } else {
+            expansion.legacyMaxOwnedRooms = typeof expansion.maxOwnedRooms === 'number' ? expansion.maxOwnedRooms : null;
+            expansion.configuredRoomLimit = null;
+            expansion.roomLimitSource = 'MIGRATED_AUTO_GCL';
+        }
+        delete expansion.maxOwnedRooms;
     }
 
     if (typeof expansion.minRangeBetweenBases !== 'number') {
@@ -239,6 +246,10 @@ function makeReport(expansion, ok, reason) {
         state: expansion.state,
         ownedRooms: ownedRooms,
         maxOwnedRooms: maxOwnedRooms,
+        configuredRoomLimit: typeof expansion.configuredRoomLimit === 'number' ? expansion.configuredRoomLimit : null,
+        effectiveRoomLimit: maxOwnedRooms,
+        roomLimitReason: typeof expansion.configuredRoomLimit === 'number' && expansion.configuredRoomLimit < gcl ?
+            'CONFIG_ROOM_LIMIT' : 'GCL_LIMIT',
         gcl: gcl,
         selectedTarget: selectedTarget,
         selectedOrigin: selectedOrigin,
@@ -261,6 +272,8 @@ function makeReport(expansion, ok, reason) {
         targetRoom: selectedTarget,
         ownedRooms: ownedRooms,
         maxOwnedRooms: maxOwnedRooms,
+        configuredRoomLimit: typeof expansion.configuredRoomLimit === 'number' ? expansion.configuredRoomLimit : null,
+        effectiveRoomLimit: maxOwnedRooms,
         gcl: gcl,
         reason: decisionReason,
         blockReason: expansion.blockReason || null,
@@ -336,11 +349,9 @@ function getGclLevel() {
 }
 
 function getMaxOwnedRooms(expansion) {
-    if (expansion && typeof expansion.maxOwnedRooms === 'number') {
-        return expansion.maxOwnedRooms;
-    }
-
-    return getGclLevel();
+    var gcl = getGclLevel();
+    return expansion && typeof expansion.configuredRoomLimit === 'number' ?
+        Math.min(gcl, Math.max(0, expansion.configuredRoomLimit)) : gcl;
 }
 
 function getMinRangeBetweenBases(expansion) {
@@ -684,15 +695,18 @@ function chooseExpansionTarget(expansion, ownedSpawnRooms) {
             continue;
         }
 
-        candidate.score = (candidate.sourceCount * 100) -
+        candidate.baseEconomicScore = (candidate.sourceCount * 100) -
             (routeDistance * 12) -
             candidate.linearDistance +
             (candidate.spacingDistance * 4);
 
         var resourceBonus = require('Resource.Policy').expansionValue(candidate.mineralType);
-        candidate.score += resourceBonus;
-        ensureCandidateMemory(expansion, candidate.roomName).resourceStrategicValue = resourceBonus;
-        ensureCandidateMemory(expansion, candidate.roomName).score = candidate.score;
+        candidate.resourceStrategicValue = resourceBonus;
+        candidate.score = candidate.baseEconomicScore + resourceBonus;
+        var economicMemory = ensureCandidateMemory(expansion, candidate.roomName);
+        economicMemory.baseEconomicScore = candidate.baseEconomicScore;
+        economicMemory.resourceStrategicValue = resourceBonus;
+        economicMemory.finalScore = economicMemory.score = candidate.score;
 
         if (!best || candidate.score > best.score) {
             best = candidate;
@@ -708,7 +722,12 @@ function chooseExpansionTarget(expansion, ownedSpawnRooms) {
         if (nominatedCandidate) {
             nominatedCandidate.originRoom = nomination.originRoom;
             nominatedCandidate.routeDistance = nomination.routeDistance;
-            nominatedCandidate.score = nomination.yieldScore;
+            if (typeof nominatedCandidate.routeDistance !== 'number') {
+                refreshCandidateRoutes(expansion, ownedSpawnRooms, [nominatedCandidate]);
+            }
+        }
+        if (nominatedCandidate && typeof nominatedCandidate.routeDistance === 'number' &&
+            nominatedCandidate.routeDistance <= maxRouteDistance) {
             nominatedCandidate.strategyProvider = nomination.provider;
             nominatedCandidate.mineralId = nomination.mineralId;
             nominatedCandidate.remaining = nomination.remaining;
@@ -716,11 +735,22 @@ function chooseExpansionTarget(expansion, ownedSpawnRooms) {
             nominatedCandidate.yieldScore = nomination.yieldScore;
             nominatedCandidate.nominatedAt = nomination.nominatedAt;
             nominatedCandidate.nominationReason = nomination.reason;
+            nominatedCandidate.baseEconomicScore = (nominatedCandidate.sourceCount * 100) -
+                (nominatedCandidate.routeDistance * 12) - nominatedCandidate.linearDistance +
+                (nominatedCandidate.spacingDistance * 4);
+            nominatedCandidate.resourceStrategicValue = require('Resource.Policy').expansionValue(nominatedCandidate.mineralType);
+            var rawValue = Math.max(0, Number(nomination.rawValue || nomination.yieldScore || nomination.score) || 0);
+            nominatedCandidate.strategyModifier = Math.min(80, Math.log10(1 + rawValue) * 15);
+            nominatedCandidate.score = nominatedCandidate.baseEconomicScore +
+                nominatedCandidate.resourceStrategicValue + nominatedCandidate.strategyModifier;
             var candidateMemory = ensureCandidateMemory(expansion, nomination.roomName);
             candidateMemory.strategyProvider = nomination.provider;
-            candidateMemory.strategyModifier = nomination.modifier || nomination.score || nomination.yieldScore;
-            candidateMemory.score = nomination.yieldScore;
-            return nominatedCandidate;
+            candidateMemory.baseEconomicScore = nominatedCandidate.baseEconomicScore;
+            candidateMemory.resourceStrategicValue = nominatedCandidate.resourceStrategicValue;
+            candidateMemory.strategyRawValue = rawValue;
+            candidateMemory.strategyModifier = nominatedCandidate.strategyModifier;
+            candidateMemory.finalScore = candidateMemory.score = nominatedCandidate.score;
+            if (!best || nominatedCandidate.score > best.score) best = nominatedCandidate;
         }
     }
 
@@ -1749,6 +1779,7 @@ function sortSpawnQueue(queue) {
 module.exports = {
     run: run,
     ensureExpansionMemory: ensureExpansionMemory,
+    getMaxOwnedRooms: getMaxOwnedRooms,
     chooseExpansionTarget: chooseExpansionTarget,
     chooseSpawnSitePosition: chooseSpawnSitePosition,
     ensureExpansionCreepCount: ensureExpansionCreepCount

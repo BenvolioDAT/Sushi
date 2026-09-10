@@ -842,6 +842,16 @@ function drawGlobalPanel(visual, ownedRoomCount, totalCreeps) {
         '/' + round(capacity.cpu.targetCeiling, 1) + ' of ' + capacity.cpu.limit + ' | Spawn repl ' +
         Math.round(capacity.spawn.replacementLoad / Math.max(1, capacity.spawn.count) * 100) + '% (' +
         capacity.spawn.count + ' spawns) | Use ' + useText, x, y + 1.05, COLORS.text, 0.5);
+    var expansion = Memory.hive && Memory.hive.expansion;
+    var decision = expansion && expansion.lastDecision;
+    if (decision) drawText(visual, 'EXP GCL ' + decision.gcl + ' owned ' + decision.ownedRooms +
+        ' config ' + (decision.configuredRoomLimit === null ? '-' : decision.configuredRoomLimit) +
+        ' effective ' + decision.effectiveRoomLimit + ' ' + decision.roomLimitReason +
+        (decision.bestCandidate ? ' | ' + decision.bestCandidate + ' base ' +
+            round((expansion.candidates[decision.bestCandidate] || {}).baseEconomicScore, 1) + ' strategy +' +
+            round((expansion.candidates[decision.bestCandidate] || {}).strategyModifier, 1) + ' final ' +
+            round((expansion.candidates[decision.bestCandidate] || {}).finalScore, 1) : ''),
+        x, y + 1.55, COLORS.text, 0.48);
 }
 
 function drawRoomPanel(visual, room, sourceStats, remoteStats, roomCreeps) {
@@ -966,7 +976,8 @@ function drawRoomPanel(visual, room, sourceStats, remoteStats, roomCreeps) {
             var storagePolicy = require('Resource.Storage').capacity(room);
             var surplus = roomMemory && roomMemory.surplus;
             drawText(visual, 'Pressure ' + storagePolicy.pressureType + ' Surplus ' +
-                (surplus ? surplus.mode + ' ' + round(surplus.budget, 1) + '/t' : '-'),
+                (surplus ? surplus.mode + ' ' + round(surplus.budget, 1) + '/t ' +
+                    truncate(surplus.reason || '', 22) : '-'),
                 x, rowY, storagePolicy.pressureType === 'NONE' ? COLORS.text : COLORS.warning);
             rowY += LINE_HEIGHT;
             drawText(visual, 'Remote ' + growth.remote.activeSources + '/' + growth.remote.candidateSources +

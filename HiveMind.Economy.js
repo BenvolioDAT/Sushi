@@ -513,9 +513,10 @@ function sourceReplacementCoverage(source, required, distance, assigned, queue, 
 // Job classification shared by live capacity, core floors and spawn recovery.
 function isLocalFreighter(item) {
     const memory = item && item.memory || {};
-    return !!item && (item.role || memory.role) === 'Freighter' &&
-        memory.assignmentFunction !== 'remoteHauling' &&
-        memory.freighterJob !== 'remote' && memory.freighterJob !== 'remoteDelivery';
+    if (!item || (item.role || memory.role) !== 'Freighter') return false;
+    if (memory.assignmentFunction) return memory.assignmentFunction === 'localLogistics';
+    if (['remote', 'remoteDelivery', 'transport', 'transportDelivery'].includes(memory.freighterJob)) return false;
+    return !memory.homeRoom || !item.room || item.room.name === memory.homeRoom;
 }
 
 function isRemoteFreighter(item) {
@@ -523,6 +524,13 @@ function isRemoteFreighter(item) {
     return !!item && (item.role || memory.role) === 'Freighter' &&
         (memory.assignmentFunction === 'remoteHauling' || memory.freighterJob === 'remote' ||
             memory.freighterJob === 'remoteDelivery');
+}
+
+function canUseSurplus(snapshot) {
+    if (!snapshot) return false;
+    if (snapshot.state === STATES.STABLE || snapshot.state === STATES.SURPLUS) return true;
+    return snapshot.state === STATES.RECOVERY && snapshot.recoveryReason === 'LOCAL_HAUL_SHORTAGE' &&
+        !!snapshot.haul && Number(snapshot.haul.localCarryMissing) <= 0;
 }
 
 function pendingFreighterParts(roomName, assignment, partType) {
@@ -945,7 +953,6 @@ function categoryForRequest(request) {
     if (role === 'Scout') return memory.scoutMode === 'expansion' ? 'expansion' : 'remoteIntel';
     if (role === 'Annex' || role === 'Pioneer') return 'expansion';
     if (role === 'MineralMiner' || role === 'ResourceCourier') return 'resources';
-    if (role === 'ThoriumMiner' || role === 'ThoriumHauler' || role === 'ReactorClaimer') return 'special';
     return 'discretionary';
 }
 
@@ -1073,6 +1080,7 @@ function shouldBootstrapSelfDeliver(roomOrName) {
 module.exports = {
     isLocalFreighter,
     isRemoteFreighter,
+    canUseSurplus,
     localHarvestCoverage,
     localRecoveryRequest,
     STATES,

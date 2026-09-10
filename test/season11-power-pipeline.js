@@ -140,6 +140,67 @@ test('extractor construction site is not mining-ready', () => {
     assert.strictEqual(world.assignment.ready, false);
 });
 
+test('Season strategy adds only a bounded Expansion modifier', () => {
+    reset(); const home = homeRoom(); const Season11 = fresh('Logic.Season11.js');
+    Season11.setMode('auto'); thoriumCandidate(Season11, { name: 'W4N3', remaining: 50000 });
+    const nomination = Season11.getExpansionNomination();
+    assert.ok(nomination, JSON.stringify(Season11.ensureMemory().expansionNomination));
+    const Expansion = fresh('Logic.Expansion.js'); const memory = Expansion.ensureExpansionMemory();
+    memory.minRangeBetweenBases = 0; memory.maxRouteDistance = 20;
+    const selected = Expansion.chooseExpansionTarget(memory, [home]);
+    assert.ok(selected, JSON.stringify({ nomination, candidates: memory.candidates }));
+    const diagnostics = memory.candidates.W4N3;
+    assert.ok(Number.isFinite(diagnostics.baseEconomicScore));
+    assert.ok(diagnostics.strategyRawValue >= 50000);
+    assert.ok(diagnostics.strategyModifier > 0 && diagnostics.strategyModifier <= 80);
+    assert.strictEqual(diagnostics.finalScore,
+        diagnostics.baseEconomicScore + diagnostics.resourceStrategicValue + diagnostics.strategyModifier);
+});
+
+test('Season strategy mildly biases unknown northern scouting only', () => {
+    reset(); homeRoom(); const Strategy = fresh('Strategy.Provider.js');
+    assert.ok(Strategy.getScoutModifier({ roomName: 'W8N20', unknown: true }) >
+        Strategy.getScoutModifier({ roomName: 'W8S20', unknown: true }));
+    assert.strictEqual(Strategy.getScoutModifier({ roomName: 'W8N20', unknown: false }), 0);
+    assert.strictEqual(Strategy.getScoutModifier({ roomName: 'W8N20', unknown: true, urgent: true }), 0);
+    assert.strictEqual(global.__sushiSeason11ScoutBias.reason, 'SEASON11_UPPER_WORLD_BIAS');
+});
+
+test('Thorium staging rejects unrelated sites and plans but accepts a nearby site', () => {
+    const extractor = { id: 'extractor', structureType: STRUCTURE_EXTRACTOR,
+        pos: new RoomPosition(20, 20, 'W2N2'), isActive: () => true };
+    let site = { id: 'sourceSite', structureType: STRUCTURE_CONTAINER,
+        pos: new RoomPosition(10, 10, 'W2N2') };
+    let world = miningWorld(6, [extractor], [site]);
+    assert.strictEqual(world.assignment.state, 'PLANNING_STAGING');
+    Memory.rooms.W2N2.structurePlanner.plan = { positions: { [STRUCTURE_CONTAINER]: [{ x: 25, y: 25 }] } };
+    assert.strictEqual(world.Season11.planHasStructure('W2N2', STRUCTURE_CONTAINER, world.mineral), false);
+    Memory.rooms.W2N2.structurePlanner.plan.positions[STRUCTURE_CONTAINER] = [{ x: 22, y: 20 }];
+    assert.strictEqual(world.Season11.planHasStructure('W2N2', STRUCTURE_CONTAINER, world.mineral), true);
+    site = { id: 'mineralSite', structureType: STRUCTURE_CONTAINER,
+        pos: new RoomPosition(22, 20, 'W2N2') };
+    world = miningWorld(6, [extractor], [site]);
+    assert.strictEqual(world.assignment.state, 'BUILDING_STAGING');
+});
+
+test('Thorium staging rejects distant containers and Storage, but accepts nearby Storage', () => {
+    const mineral = { pos: new RoomPosition(20, 20, 'W2N2') };
+    reset();
+    let room = { name: 'W2N2', storage: { id: 'farStorage', my: true,
+        pos: new RoomPosition(25, 25, 'W2N2'), store: {} }, find: () => [] };
+    Game.rooms.W2N2 = room; delete global.__sushiTickIndex;
+    let Season11 = fresh('Logic.Season11.js');
+    assert.strictEqual(Season11.findStagingStructure(room, mineral), null);
+    room.storage = { id: 'nearStorage', my: true, pos: new RoomPosition(22, 20, 'W2N2'), store: {} };
+    delete global.__sushiTickIndex;
+    assert.strictEqual(Season11.findStagingStructure(room, mineral).id, 'nearStorage');
+    const farContainer = { id: 'sourceContainer', structureType: STRUCTURE_CONTAINER,
+        pos: new RoomPosition(10, 10, 'W2N2'), store: {} };
+    room.storage = null; room.find = kind => kind === FIND_STRUCTURES ? [farContainer] : [];
+    delete global.__sushiTickIndex; Season11 = fresh('Logic.Season11.js');
+    assert.strictEqual(Season11.findStagingStructure(room, mineral), null);
+});
+
 test('completed extractor and staging produce exactly one miner demand', () => {
     const extractor = { id: 'extractor', structureType: STRUCTURE_EXTRACTOR,
         pos: new RoomPosition(20, 20, 'W2N2'), isActive: () => true };
@@ -154,6 +215,14 @@ test('completed extractor and staging produce exactly one miner demand', () => {
     const miners = world.Season11.getSpawnPlanForRoom(world.home).filter(plan => plan.role === 'ThoriumMiner');
     assert.strictEqual(miners.length, 1);
     assert.strictEqual(miners[0].desired, 1);
+    world.Season11.setMode('auto');
+    delete global.__sushiStrategyActive;
+    const plans = fresh('Strategy.Provider.js').getSpecialSpawnPlans(world.home);
+    const minerPlan = plans.find(plan => plan.role === 'ThoriumMiner');
+    assert.ok(minerPlan && minerPlan.body.length > 0);
+    for (const field of ['priority', 'originRoom', 'targetRoom', 'assignmentKey',
+        'replacementBuffer', 'travelLeadTicks', 'validUntil', 'reason', 'memory',
+        'economyCategory', 'strategyProvider', 'strategyCategory']) assert.notStrictEqual(minerPlan[field], undefined);
 });
 
 test('Power Bank intel persists and expires as plain data', () => {

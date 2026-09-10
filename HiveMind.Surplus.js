@@ -32,13 +32,10 @@ function allocate(candidates, budget) {
 function plan(room, economy, capacity) {
     const growth = economy && economy.growth || {}, settings = config();
     const memory = Memory.rooms[room.name] || (Memory.rooms[room.name] = {});
-    const haul = economy && economy.haul || {};
-    const localHaulFunded = (haul.localCarryMissing || 0) <= 0;
-    const repairableRecovery = economy && economy.state === 'RECOVERY' &&
-        economy.recoveryReason === 'LOCAL_HAUL_SHORTAGE' && localHaulFunded;
+    const surplusSafe = require('HiveMind.Economy').canUseSurplus(economy);
+    const repairableRecovery = surplusSafe && economy.state === 'RECOVERY';
     const healthy = !!capacity && capacity.energy.healthy && capacity.energy.known !== false &&
-        economy && economy.state !== 'SURVIVAL' &&
-        (economy.state !== 'RECOVERY' || repairableRecovery) && growth.mode !== 'RECOVERY';
+        surplusSafe && (growth.mode !== 'RECOVERY' || repairableRecovery);
     const reason = !healthy || !(growth.storedEnergy > growth.reserveTarget) ? 'ENERGY_RESERVE' : capacity.cpu.headroom <= 0 || capacity.cpu.bucket < 4000 ||
         capacity.cpu.mode === 'critical' ? 'CPU_LIMIT' : capacity.spawn.headroom <= 0 ? 'SPAWN_LIMIT' :
         capacity.reason === 'DEFENSE_EMERGENCY' ? 'DEFENSE_EMERGENCY' : null;

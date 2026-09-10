@@ -44,12 +44,17 @@ function plainDemand(input) {
         defenseRequest: input.defenseRequest === true,
         defendedRoom: input.defendedRoom || null,
         economyCategory: input.economyCategory || null,
+        strategyProvider: input.strategyProvider || null,
+        strategyCategory: input.strategyCategory || null,
+        strategyEmergency: input.strategyEmergency === true,
+        strategyMandatory: input.strategyMandatory === true,
+        assignmentKey: input.assignmentKey || null,
         producer: input.producer || 'demandBoard',
         memory: input.memory ? { ...input.memory } : {},
         reason: input.reason || null,
         emittedTick: Game.time
     };
-    return demand;
+    return require('Strategy.Provider').normalizeDemand(demand);
 }
 
 function beginTick() {
@@ -57,10 +62,11 @@ function beginTick() {
     if (state.hydrated) return state;
     state.hydrated = true;
     const hive = HiveMemory.ensure();
-    for (const [id, saved] of Object.entries(hive.demands)) {
+    for (const [id, rawSaved] of Object.entries(hive.demands)) {
+        const saved = require('Strategy.Provider').normalizeDemand(rawSaved);
         const operation = saved.operationId && hive.operations[saved.operationId];
         const operationEnded = operation && (operation.state === 'COMPLETE' || operation.state === 'ABORTED');
-        if (!saved || saved.validUntil < Game.time || operationEnded || !seasonDemandAllowed(saved)) {
+        if (!saved || saved.validUntil < Game.time || operationEnded || !strategyDemandAllowed(saved)) {
             delete hive.demands[id];
             state.demands.delete(id);
             continue;
@@ -70,29 +76,7 @@ function beginTick() {
     return state;
 }
 
-// Revoke stale Season requests immediately, while retaining the shared economy arbiter.
-function seasonDemandAllowed(demand) {
-    const cm = demand && demand.memory || {};
-    if (!cm.season11AssignmentKey && !cm.season11ReactorGuard) return true;
-    const memory = HiveMemory.getSeasonState();
-    const mode = HiveMemory.getConfig('season11').mode;
-    if (mode === 'disabled' || mode === 'observe') return false;
-    const portfolio = memory.reactorPortfolio;
-    if (!portfolio || !portfolio.plannedAt) return true;
-    const id = cm.season11ReactorId || cm.season11ReactorGuard;
-    if (id) {
-        const entry = portfolio.reactors[id];
-        if (!entry || !entry.active || !entry.healthy) return false;
-        if (demand.role === 'ReactorClaimer') return entry.claimReady === true;
-        if (demand.role === 'ThoriumHauler') return (entry.owned || !entry.owner ||
-            entry.recapture && (entry.recapture.approved || entry.recapture.preparing)) &&
-            entry.assignedMiningRooms.includes(cm.season11SourceRoom);
-        if (cm.season11ReactorGuard) return entry.owned && ['READY', 'HOLD'].includes(entry.defenseTier) ||
-            entry.recapture && entry.recapture.approved;
-    }
-    const assignment = memory.assignments && memory.assignments.mining[cm.season11SourceRoom];
-    return demand.role !== 'ThoriumMiner' || !!(assignment && assignment.ready && assignment.remaining > 0);
-}
+function strategyDemandAllowed(demand) { return require('Strategy.Provider').validateDemand(demand); }
 
 function emit(input) {
     const state = beginTick();
@@ -122,8 +106,7 @@ function memoryMatches(demand, memory) {
     if (demand.operationId && memory.operationId === demand.operationId && memory.role === demand.role) return true;
     if (demand.operationId && demand.operationId.startsWith('expand:') &&
         memory.expansionId === demand.targetRoom && memory.role === demand.role) return true;
-    if (demand.memory && demand.memory.season11AssignmentKey &&
-        memory.season11AssignmentKey === demand.memory.season11AssignmentKey &&
+    if (demand.assignmentKey && memory.strategyAssignmentKey === demand.assignmentKey &&
         memory.role === demand.role) return true;
     return false;
 }
@@ -241,6 +224,11 @@ function queueDemand(demand, room, count) {
             targetRoom: demand.targetRoom,
             operationId: demand.operationId,
             economyCategory: demand.economyCategory,
+            strategyProvider: demand.strategyProvider,
+            strategyCategory: demand.strategyCategory,
+            strategyEmergency: demand.strategyEmergency,
+            strategyMandatory: demand.strategyMandatory,
+            assignmentKey: demand.assignmentKey,
             squadId: demand.squadId,
             demandId: demand.id,
             boostRequirements: demand.boostRequirements
@@ -249,6 +237,7 @@ function queueDemand(demand, room, count) {
         const result = Arbiter.admit(room.name, {
             role: demand.role,
             body,
+            bodyRequirements: demand.bodyRequirements,
             bodyProfile: demand.bodyRequirements && demand.bodyRequirements.scalable ? {
                 desiredPower: demand.capabilities.attack || demand.capabilities.ranged_attack || demand.capabilities.heal,
                 urgency: demand.emergency ? 'EMERGENCY' : 'NORMAL'
@@ -259,6 +248,10 @@ function queueDemand(demand, room, count) {
             operationId: demand.operationId,
             economyCategory: demand.economyCategory,
             emergency: demand.emergency,
+            strategyProvider: demand.strategyProvider,
+            strategyCategory: demand.strategyCategory,
+            strategyEmergency: demand.strategyEmergency,
+            strategyMandatory: demand.strategyMandatory,
             defenseRequest: demand.defenseRequest,
             defendedRoom: demand.defendedRoom,
             memory,
@@ -284,7 +277,7 @@ function cleanupQueues(activeIds) {
 function flush() {
     const state = beginTick();
     const demands = Array.from(state.demands.values())
-        .filter(demand => demand.count > 0 && demand.validUntil >= Game.time && seasonDemandAllowed(demand))
+        .filter(demand => demand.count > 0 && demand.validUntil >= Game.time && strategyDemandAllowed(demand))
         .sort((a, b) => b.priority - a.priority ||
             (a.deadline || Infinity) - (b.deadline || Infinity) || a.id.localeCompare(b.id));
     const activeIds = new Set(demands.map(demand => demand.id));

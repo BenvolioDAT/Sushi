@@ -645,7 +645,11 @@ function syncReactorOperation(memory, diagnostics, activeIds) {
                 economyCategory: 'combat', validUntil: now() + 2,
                 bodyRequirements: { body: [RANGED_ATTACK, RANGED_ATTACK, MOVE, MOVE] },
                 targetRoom: entry.defenseTier === 'READY' && !contested ? entry.homeRoom : entry.roomName,
-                memory: { season11ReactorGuard: reactor.id }, reason: 'Deny Reactor claimant' });
+                strategyProvider: 'SEASON11', strategyCategory: 'SPECIAL_STRATEGY',
+                strategyEmergency: threat.claimThreat > 0,
+                memory: { season11ReactorGuard: reactor.id, strategyProvider: 'SEASON11',
+                    strategyCategory: 'SPECIAL_STRATEGY', strategyEmergency: threat.claimThreat > 0 },
+                reason: 'Deny Reactor claimant' });
         }
         if (entry.active && entry.healthy && entry.defenseTier === 'WATCH' && !entry.fresh) {
             operation.spawnDemands.push({ id: `${id}:watch`, role: 'Scout', count: 1, priority: 50,

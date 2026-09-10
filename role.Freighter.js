@@ -812,6 +812,15 @@ function normalizeFreighterMemory(creep) {
         creep.memory.pickupTargetId = creep.memory.freighterPickupTargetId;
         creep.memory.pickupTargetType = creep.memory.freighterPickupType;
     }
+    if (!creep.memory.assignmentFunction) {
+        if (creep.memory.freighterJob === 'remote' || creep.memory.freighterJob === 'remoteDelivery') {
+            creep.memory.assignmentFunction = 'remoteHauling';
+        } else if (creep.memory.freighterJob === 'transport' || creep.memory.freighterJob === 'transportDelivery') {
+            creep.memory.assignmentFunction = 'otherLogistics';
+        } else if (creep.memory.freighterJob === 'local' && creep.room.name === creep.memory.homeRoom) {
+            creep.memory.assignmentFunction = 'localLogistics';
+        }
+    }
 
     delete creep.memory.remoteFreighting;
     delete creep.memory.remoteFreightingWanted;
@@ -952,6 +961,7 @@ function rememberPickupTarget(creep, target, sourceId, pickupType) {
      * Freighters read those intents when spreading themselves across work.
      */
     creep.memory.freighterJob = 'local';
+    creep.memory.assignmentFunction = 'localLogistics';
     creep.memory.pickupRoom = creep.room.name;
     creep.memory.pickupTargetId = target.id;
     creep.memory.pickupSourceId = sourceId || target.id;

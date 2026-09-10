@@ -900,8 +900,12 @@ function findConstructionSite(room, structureType, mineral) {
     var sites = safeFind(room, typeof FIND_CONSTRUCTION_SITES !== 'undefined' ? FIND_CONSTRUCTION_SITES : null);
     return sites.find(function(site) {
         if (!site || site.structureType !== structureType) return false;
-        return structureType !== (typeof STRUCTURE_EXTRACTOR !== 'undefined' ? STRUCTURE_EXTRACTOR : 'extractor') ||
-            !mineral || !site.pos || !site.pos.isEqualTo || site.pos.isEqualTo(mineral.pos);
+        if (!mineral || !site.pos) return false;
+        if (structureType === (typeof STRUCTURE_EXTRACTOR !== 'undefined' ? STRUCTURE_EXTRACTOR : 'extractor')) {
+            return !site.pos.isEqualTo || site.pos.isEqualTo(mineral.pos);
+        }
+        return structureType !== (typeof STRUCTURE_CONTAINER !== 'undefined' ? STRUCTURE_CONTAINER : 'container') ||
+            site.pos.getRangeTo(mineral) <= 2;
     }) || null;
 }
 
@@ -910,8 +914,12 @@ function planHasStructure(roomName, structureType, mineral) {
     var plan = roomMemory && roomMemory.structurePlanner && roomMemory.structurePlanner.plan;
     var entries = plan && plan.positions && plan.positions[structureType] || [];
     return entries.some(function(entry) {
-        return structureType !== (typeof STRUCTURE_EXTRACTOR !== 'undefined' ? STRUCTURE_EXTRACTOR : 'extractor') ||
-            !mineral || entry.x === mineral.pos.x && entry.y === mineral.pos.y;
+        if (!mineral || !mineral.pos) return false;
+        if (structureType === (typeof STRUCTURE_EXTRACTOR !== 'undefined' ? STRUCTURE_EXTRACTOR : 'extractor')) {
+            return entry.x === mineral.pos.x && entry.y === mineral.pos.y;
+        }
+        return structureType !== (typeof STRUCTURE_CONTAINER !== 'undefined' ? STRUCTURE_CONTAINER : 'container') ||
+            Math.max(Math.abs(entry.x - mineral.pos.x), Math.abs(entry.y - mineral.pos.y)) <= 2;
     });
 }
 
@@ -936,7 +944,9 @@ function findStagingStructure(room, mineral) {
         return s.store && s.pos && mineral && mineral.pos && s.pos.getRangeTo(mineral) <= 2;
     });
     containers.sort(function(a, b) { return a.pos.getRangeTo(mineral) - b.pos.getRangeTo(mineral) || String(a.id).localeCompare(String(b.id)); });
-    return containers[0] || (room.storage && room.storage.my !== false ? room.storage : null);
+    if (containers[0]) return containers[0];
+    return room.storage && room.storage.my !== false && room.storage.pos && mineral && mineral.pos &&
+        room.storage.pos.getRangeTo(mineral) <= 2 ? room.storage : null;
 }
 
 function hasActiveExtractor(room, mineral) {
@@ -2409,6 +2419,9 @@ module.exports = {
     noteRouteFailure: noteRouteFailure,
     rankMiningTargets: rankMiningTargets,
     getExpansionNomination: getExpansionNomination,
+    findConstructionSite: findConstructionSite,
+    planHasStructure: planHasStructure,
+    findStagingStructure: findStagingStructure,
     requestInfrastructurePlan: requestInfrastructurePlan,
     rankReactors: rankReactors,
     selectReactor: selectReactor,

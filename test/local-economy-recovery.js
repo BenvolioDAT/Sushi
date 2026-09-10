@@ -5,6 +5,8 @@ function setup() {
     mocks.installGlobals();
     mocks.clearLocalModules();
     delete global.__sushiEconomy;
+    delete global.__sushiCapacity;
+    delete global.__sushiStrategyActive;
     global.HARVEST_POWER = 2;
     global.ENERGY_REGEN_TIME = 300;
     global.CREEP_LIFE_TIME = 1500;
@@ -216,7 +218,7 @@ test('remoteDelivery Freighters cannot cover the capped RCL5 local recovery floo
     const economy = require('HiveMind.Economy');
     const colony = require('HiveMind.ColonyState');
     const policy = require('Spawn.Policy');
-    const cap = policy.maxCreeps(room, require('HiveMind.Memory').getConfig('spawn'));
+    const cap = require('HiveMind.Memory').getConfig('spawn').maxCreepsPerRoomByRcl.RCL5;
     unit(room, 'minerA', 'Extractor', [...Array(5).fill(WORK), MOVE], { sourceId: 'sourceA' });
     unit(room, 'minerB', 'Extractor', [...Array(5).fill(WORK), MOVE], { sourceId: 'sourceB' });
     unit(room, 'foreman', 'Foreman', [CARRY, MOVE]);
@@ -250,7 +252,7 @@ test('remoteDelivery Freighters cannot cover the capped RCL5 local recovery floo
 });
 
 test('remote jobs in queued or spawning Freighters cannot reserve local recovery CARRY', () => {
-    for (const freighterJob of ['remote', 'remoteDelivery']) {
+    for (const freighterJob of ['remote', 'remoteDelivery', 'transport', 'transportDelivery']) {
         const room = setup();
         const economy = require('HiveMind.Economy');
         const remote = { role: 'Freighter', body: [...Array(24).fill(CARRY), MOVE],
@@ -270,6 +272,9 @@ test('wealthy RCL7 queues assigned local CARRY before pressure-relief Tech spend
     const room = setup();
     room.controller.level = 7;
     room.energyAvailable = room.energyCapacityAvailable = 4300;
+    room.storage.store.energy = 1000000;
+    room.terminal = { id: 'terminal', pos: new RoomPosition(24, 24, room.name), store: { energy: 300000 } };
+    Game.cpu.bucket = 10000;
     unit(room, 'minerA', 'Extractor', [...Array(5).fill(WORK), MOVE], { sourceId: 'sourceA' });
     unit(room, 'minerB', 'Extractor', [...Array(5).fill(WORK), MOVE], { sourceId: 'sourceB' });
     unit(room, 'foreman', 'Foreman', [CARRY, MOVE]);
@@ -289,11 +294,15 @@ test('wealthy RCL7 queues assigned local CARRY before pressure-relief Tech spend
         request.memory && request.memory.assignmentFunction === 'remoteHauling'));
     Game.time++;
     snapshot = sample(room);
+    assert.strictEqual(snapshot.state, 'RECOVERY');
     assert.strictEqual(snapshot.haul.localCarryMissing, 0);
-    const capacity = { energy: { healthy: true, known: true }, cpu: { headroom: 50, bucket: 10000, mode: 'healthy' },
-        spawn: { headroom: 1 }, reason: null };
+    delete global.__sushiCapacity;
+    const capacity = require('HiveMind.Capacity').get(true).rooms[room.name];
+    assert.strictEqual(capacity.energy.healthy, true);
+    assert.strictEqual(capacity.energy.productiveRecovery, true);
     const surplus = require('HiveMind.Surplus').plan(room, snapshot, capacity);
     assert.strictEqual(surplus.recoveryFunded, true);
+    assert.strictEqual(surplus.reason, 'FUNDED_LOCAL_HAUL_PRESSURE_RELIEF');
     assert.ok(surplus.budget > 0);
     assert.ok(surplus.techWork > 0);
 });

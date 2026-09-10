@@ -65,7 +65,10 @@ function selectAffordableQueuedBodyForSpawn(spawn, request) {
     var energyAvailable = spawn.room.energyAvailable;
     var bestBody;
 
-    if (request.bodyProfile && request.role !== 'Extractor') {
+    if (request.bodyRequirements && request.bodyRequirements.fixed === true) {
+        bestBody = getBodyCost(request.body) <= energyAvailable ? request.body.slice() : null;
+    }
+    else if (request.bodyProfile && request.role !== 'Extractor') {
         var profile = Object.assign({}, request.bodyProfile, { energyCapacity: energyAvailable,
             energyAvailable: energyAvailable });
         if (request.role === 'Tech' && spawn.room.controller && spawn.room.controller.ticksToDowngrade < 5000)
@@ -109,14 +112,6 @@ function selectAffordableQueuedBodyForSpawn(spawn, request) {
         bestBody = creepBodyConfig.getFreighterBodyForAvailableEnergy(
             spawn.room,
             requestedCarry
-        );
-    }
-    else if (request.role === 'ThoriumHauler') {
-        var requestedThoriumCarry = request.requestedCarryParts ||
-            request.maxCarryParts || countBodyParts(request.body, CARRY);
-        bestBody = creepBodyConfig.getThoriumHaulerBodyForAvailableEnergy(
-            spawn.room,
-            requestedThoriumCarry
         );
     }
     else {

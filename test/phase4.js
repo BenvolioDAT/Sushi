@@ -218,6 +218,7 @@ test('the best capable spawn is deterministic and queues no duplicates', functio
         id: 'expand:test:Pioneer', operationId: 'expand:test', role: 'Pioneer', count: 1,
         priority: 60, originRoom: roomA.name, preferredSpawnRoom: roomB.name,
         targetRoom: 'W3N3', bodyRequirements: { body: [WORK, CARRY, MOVE] },
+        strategyMandatory: true,
         validUntil: Game.time + 10
     });
     const first = board.flush();

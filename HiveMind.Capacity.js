@@ -18,7 +18,8 @@ function classify(request) {
     const category = require('HiveMind.Economy').categoryForRequest(request);
     if (['controllerSafety', 'criticalController', 'criticalMaintenance', 'criticalInfrastructure', 'emergencyDefense', 'spawnFill'].includes(category) ||
         m.controllerGrowthFloor || role === 'Foreman') return 'MANDATORY';
-    if (m.season11ReactorId || /^Thorium|Reactor/.test(role || '')) return 'STRATEGIC';
+    if (request.strategyCategory === 'SPECIAL_STRATEGY' || m.strategyCategory === 'SPECIAL_STRATEGY' ||
+        request.strategyProvider || m.strategyProvider) return 'STRATEGIC';
     if (['remoteMaintenance', 'remoteBootstrap', 'remoteIntel', 'resources', 'logistics', 'harvest'].includes(category)) return 'ECONOMIC';
     if (role === 'Tech') return 'GROWTH';
     if (role === 'Artificer') return 'INFRASTRUCTURE';
@@ -147,6 +148,8 @@ function get(force = false) {
         const committed = commitments(room.name, queue, settings);
         spawn.commitmentLoad = committed.load;
         spawn.headroom = Math.max(0, spawn.headroom - committed.load);
+        const surplusSafe = require('HiveMind.Economy').canUseSurplus(economy);
+        const productiveRecovery = surplusSafe && economy.state === 'RECOVERY';
         views[room.name] = calculateRoom({ rcl: room.controller.level,
             cpu: { ...cpu, share: cpu.headroom / Math.max(1, rooms.length) },
             spawn,
@@ -154,8 +157,9 @@ function get(force = false) {
                 aboveReserve: safe(growth.energyAboveReserve), grossIncome: safe(growth.localGrossIncome) + safe(growth.remoteGrossIncome),
                 sustainableNetIncome: safe(growth.estimatedNetIncome), trend: economy.energyTrend || 0,
                 drawdownSpend: require('HiveMind.Surplus').drawdown(growth, Memory.rooms[room.name].surplus,
-                    !['SURVIVAL', 'RECOVERY'].includes(economy.state) && growth.mode !== 'RECOVERY').extraSpendPerTick,
-                healthy: !['SURVIVAL', 'RECOVERY'].includes(economy.state) && growth.mode !== 'RECOVERY' },
+                    surplusSafe && (growth.mode !== 'RECOVERY' || productiveRecovery)).extraSpendPerTick,
+                healthy: surplusSafe && (growth.mode !== 'RECOVERY' || productiveRecovery),
+                productiveRecovery },
             population: { current: creeps.length, mandatory, economic: classes.ECONOMIC || 0,
                 discretionary: creeps.length - mandatory, baseline, classes },
             threat: !!(hive.threats[room.name] && hive.threats[room.name].harmfulHostileCount) }, settings);

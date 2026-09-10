@@ -131,13 +131,10 @@ function evaluate(room, request, context, options = {}) {
     const survivalBypass = recovery.mandatory || !localEconomicRole &&
         options.emergency === true && options.bypassRoleCap === true && protectedWork;
     const defenseBypass = ownedDefense && request.emergency === true;
-    const seasonId = request.memory && (request.memory.season11ReactorGuard || request.memory.season11ReactorId);
-    const seasonEmergency = seasonId &&
-        HiveMemory.ensure().season && HiveMemory.ensure().season.season11 &&
-        HiveMemory.ensure().season.season11.reactorPortfolio &&
-        HiveMemory.ensure().season.season11.reactorPortfolio.reactors[seasonId];
     const capacity = Capacity.evaluate(room, request, context, survivalBypass || defenseBypass ||
-        !!(seasonEmergency && seasonEmergency.owned && seasonEmergency.threat && seasonEmergency.threat.claimThreat > 0), options.revalidate);
+        request.strategyEmergency === true || request.strategyMandatory === true || request.memory &&
+            (request.memory.strategyEmergency === true || request.memory.strategyMandatory === true),
+        options.revalidate);
     if (!capacity.allowed) return capacity;
     const roleCap = economyRoleCap(room, role, request, policy);
     const ownQueued = options.revalidate && context.queue.includes(request) ? 1 : 0;

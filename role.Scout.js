@@ -2,7 +2,7 @@ var utility = require('utility');
 var Intel = require('Remote.Intel');
 var utilityTravelCreep = require('utility.Travel.Creep');
 var RemotePlanner = require('Planner.Remote');
-var Season11 = require('Logic.Season11');
+var Strategy = require('Strategy.Provider');
 var PowerIntel = require('Power.Intel');
 
 var SCOUT_RADIUS = 3;
@@ -54,22 +54,9 @@ var roleScout = {
          */
         RemotePlanner.onScoutRoom(creep);
 
-        /* Season intel piggybacks on the existing Scout's normal visibility. */
-        Season11.observeRoom(creep.room, creep.memory.homeRoom, true);
+        Strategy.observeRoom(creep.room, creep.memory.homeRoom, true);
         PowerIntel.observeRoom(creep.room);
-        if (creep.memory.season11WatchRoom) {
-            var watchRoom = creep.memory.season11WatchRoom;
-            var portfolio = Season11.ensureMemory().reactorPortfolio;
-            var needed = Season11.isObserving() && Object.values(portfolio.reactors).some(function(entry) {
-                return entry.roomName === watchRoom && entry.active && entry.defenseTier !== 'NONE';
-            });
-            if (needed && creep.room.name !== watchRoom) {
-                utilityTravelCreep.moveToRoom(creep, watchRoom, { range: 22, reusePath: 20, allowHostile: false });
-            }
-            else if (needed) utilityTravelCreep.moveOffExit(creep);
-            else delete creep.memory.season11WatchRoom;
-            if (needed) return;
-        }
+        if (Strategy.runScoutDirective(creep)) return;
 
         /*
          * If the Scout just arrived, clear targetRoom so the next choice comes
@@ -144,7 +131,7 @@ function ensureScoutPlan(creep) {
 
     var plan = homeMemory[SCOUT_PLAN_MEMORY_KEY];
 
-    var scoutRadius = Season11.getScoutRadius(SCOUT_RADIUS);
+    var scoutRadius = Strategy.getScoutRadius(SCOUT_RADIUS);
 
     if(
         !plan ||
@@ -423,8 +410,10 @@ function chooseNextScoutRoom(creep) {
                 roomRecord.distance < bestNeverScanned.distance ||
                 (
                     roomRecord.distance === bestNeverScanned.distance &&
-                    (Season11.scoutPriority(roomName) > Season11.scoutPriority(bestNeverScanned.roomName) ||
-                        Season11.scoutPriority(roomName) === Season11.scoutPriority(bestNeverScanned.roomName) &&
+                    (Strategy.getScoutModifier({ roomName: roomName, unknown: true }) >
+                        Strategy.getScoutModifier({ roomName: bestNeverScanned.roomName, unknown: true }) ||
+                        Strategy.getScoutModifier({ roomName: roomName, unknown: true }) ===
+                        Strategy.getScoutModifier({ roomName: bestNeverScanned.roomName, unknown: true }) &&
                         roomName < bestNeverScanned.roomName)
                 )
             ) {
@@ -440,8 +429,7 @@ function chooseNextScoutRoom(creep) {
             (
                 roomRecord.lastScanTick === oldestScanned.lastScanTick &&
                 (roomRecord.distance < oldestScanned.distance ||
-                    roomRecord.distance === oldestScanned.distance &&
-                    Season11.scoutPriority(roomName) > Season11.scoutPriority(oldestScanned.roomName))
+                    roomRecord.distance === oldestScanned.distance && roomName < oldestScanned.roomName)
             )
         ) {
             oldestScanned = roomRecord;

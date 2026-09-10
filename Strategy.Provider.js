@@ -7,10 +7,17 @@ function providers() {
 }
 
 function active() {
-    return providers().filter(provider => {
+    const game = typeof Game !== 'undefined' ? Game : null;
+    const tick = game ? game.time : -1;
+    const signature = providers().map(p => p && p.id).join(',');
+    const cached = global.__sushiStrategyActive;
+    if (cached && cached.tick === tick && cached.signature === signature && cached.game === game) return cached.providers;
+    const list = providers().filter(provider => {
         try { return provider && provider.isActive && provider.isActive(); }
         catch (error) { return false; }
     });
+    global.__sushiStrategyActive = { tick, signature, game, providers: list };
+    return list;
 }
 
 function callList(hook, ...args) {
@@ -41,6 +48,31 @@ function getColonyObjectives(room) {
 }
 
 function getSpecialSpawnPlans(room) { return callList('getSpecialSpawnPlans', room); }
+function validateDemand(demand) {
+    if (!demand || !demand.strategyProvider) return true;
+    const provider = active().find(item => item.id === demand.strategyProvider);
+    return !!provider && (typeof provider.validateDemand !== 'function' || provider.validateDemand(demand));
+}
+function normalizeDemand(demand) {
+    for (const provider of providers()) if (typeof provider.normalizeDemand === 'function') {
+        demand = provider.normalizeDemand(demand) || demand;
+    }
+    return demand;
+}
+function getScoutModifier(context) {
+    return callList('getScoutModifier', context).reduce((total, entry) => total +
+        (typeof entry === 'number' ? entry : Number(entry.modifier) || 0), 0);
+}
+function observeRoom(room, homeRoom, viaScout) {
+    for (const provider of active()) if (typeof provider.observeRoom === 'function') provider.observeRoom(room, homeRoom, viaScout);
+}
+function getScoutRadius(fallback) {
+    return active().reduce((radius, provider) => typeof provider.getScoutRadius === 'function' ?
+        Math.max(radius, provider.getScoutRadius(radius)) : radius, fallback);
+}
+function runScoutDirective(creep) {
+    return active().some(provider => typeof provider.runScoutDirective === 'function' && provider.runScoutDirective(creep));
+}
 function getSurplusInvestments(room, economy, capacity) {
     return callList('getSurplusInvestments', room, economy, capacity);
 }
@@ -59,5 +91,6 @@ function diagnostics() {
 }
 
 module.exports = { DEFAULT_CAPABILITIES, active, capabilities, getExpansionNomination,
-    getColonyObjectives, getSpecialSpawnPlans, getSurplusInvestments,
+    getColonyObjectives, getSpecialSpawnPlans, validateDemand, normalizeDemand, getScoutModifier,
+    observeRoom, getScoutRadius, runScoutDirective, getSurplusInvestments,
     getSpecialResourcePolicy, onExpansionOnline, diagnostics };
