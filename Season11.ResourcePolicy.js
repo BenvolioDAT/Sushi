@@ -2,6 +2,15 @@ const Policy = require('Resource.Policy');
 const Economy = require('HiveMind.Economy');
 const TickIndex = require('HiveMind.Index');
 
+const DEFAULTS = Object.freeze({ desiredReactorThorium: 900, thoriumStagingDesired: 200,
+    thoriumStagingUrgent: 450 });
+function config() {
+    const raw = require('HiveMind.Memory').getConfig('season11') || {};
+    return { desiredReactorThorium: Math.min(1000, Math.max(1, Number(raw.desiredReactorThorium) || DEFAULTS.desiredReactorThorium)),
+        thoriumStagingDesired: Math.max(1, Number(raw.thoriumStagingDesired) || DEFAULTS.thoriumStagingDesired),
+        thoriumStagingUrgent: Math.max(1, Number(raw.thoriumStagingUrgent) || DEFAULTS.thoriumStagingUrgent) };
+}
+
 function safeStorage(roomName) {
     const index = TickIndex.get();
     const rooms = index.ownedRooms.filter(room => Policy.active(room.storage) && Policy.free(room.storage.store) > Policy.config().minimumStorageFreeCapacity &&
@@ -12,7 +21,7 @@ function safeStorage(roomName) {
 function prediction(stored, rate, eta) {
     const expectedAtArrival = Math.max(0, stored) + Math.max(0, rate) * Math.max(0, eta);
     return { currentStaging: stored, miningRate: rate, haulerETA: eta, expectedAtArrival,
-        urgent: expectedAtArrival >= Policy.config().thoriumStagingUrgent };
+        urgent: expectedAtArrival >= config().thoriumStagingUrgent };
 }
 function assess(assignment, memory) {
     const Adapter = require('Season11.Adapter'), index = TickIndex.get();
@@ -29,7 +38,7 @@ function assess(assignment, memory) {
     const stored = (staging && staging.store && staging.store[type] || 0);
     const routes = Object.values(memory.reactorPortfolio.reactors).filter(e => e.active && (e.assignedMiningRooms || []).includes(assignment && assignment.roomName));
     if (!reason && (!staging || Policy.free(staging.store) <= 0 || !storage && !routes.length)) reason = 'PAUSED_NO_SAFE_DELIVERY';
-    if (!reason && staging.structureType === (typeof STRUCTURE_CONTAINER !== 'undefined' ? STRUCTURE_CONTAINER : 'container') && stored >= Policy.config().thoriumStagingUrgent) reason = 'PAUSED_STAGING_PRESSURE';
+    if (!reason && staging.structureType === (typeof STRUCTURE_CONTAINER !== 'undefined' ? STRUCTURE_CONTAINER : 'container') && stored >= config().thoriumStagingUrgent) reason = 'PAUSED_STAGING_PRESSURE';
     let work = 0;
     for (const creep of index.creepsByRole.get('ThoriumMiner') || []) if (creep.memory.season11SourceRoom === (assignment && assignment.roomName)) {
         work += typeof creep.getActiveBodyparts === 'function' ? creep.getActiveBodyparts('work') :
@@ -50,7 +59,7 @@ function reservePlans(room, memory, makeHaulerPlan, count) {
         if (!a || a.homeRoom !== room.name || !a.stagingId) continue;
         const report = assess(a, memory), storage = report.storageId && Game.getObjectById(report.storageId);
         if (!storage || storage.id === a.stagingId || !['FINITE_RESOURCE', 'PAUSED_STAGING_PRESSURE', 'DEPLETED'].includes(report.reason)) continue;
-        if (report.expectedAtArrival < Policy.config().thoriumStagingDesired) continue;
+        if (report.expectedAtArrival < config().thoriumStagingDesired) continue;
         const plan = makeHaulerPlan(room.name, a, { id: 'reserve:' + storage.id, roomName: storage.pos.roomName }, false);
         if (!plan) continue;
         plan.memory.season11ReserveStorageId = storage.id;
@@ -65,7 +74,7 @@ function runway(record, deliveryEta, replacementDelay, inTransit = 0) {
     const runwayTicks = Math.max(0, (record.thorium || 0) - Math.max(0, Game.time - (record.lastSeen || Game.time)));
     const required = Math.max(0, deliveryEta || 0) + Math.max(0, replacementDelay || 0) + 150;
     return { supplyRunwayTicks: runwayTicks, requiredRunwayTicks: required, inTransit,
-        desiredReactorThorium: Math.min(1000, Math.max(Policy.config().desiredReactorThorium, required)),
+        desiredReactorThorium: Math.min(1000, Math.max(config().desiredReactorThorium, required)),
         emergencyPriority: runwayTicks < required ? 72 + Math.min(18, Math.log10(1 + (record.continuousWork || 0)) * 3) : 42 };
 }
-module.exports = { safeStorage, prediction, assess, reservePlans, runway };
+module.exports = { DEFAULTS, config, safeStorage, prediction, assess, reservePlans, runway };

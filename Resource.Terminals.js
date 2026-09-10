@@ -1,7 +1,7 @@
 const HiveMemory = require('HiveMind.Memory');
 const Economy = require('HiveMind.Economy');
 const TickIndex = require('HiveMind.Index');
-const Season11Adapter = require('Season11.Adapter');
+const Strategy = require('Strategy.Provider');
 
 const ENERGY_RESERVE = 20000;
 const MIN_SEND = 100;
@@ -31,6 +31,7 @@ function requestTransfer(input) {
         validUntil: input.validUntil || Game.time + 500,
         reason: input.reason || 'Empire resource balance'
     };
+    if (input.allowExternal === true) transfer.allowExternal = true;
     const existing = resources.transfers[id];
     resources.transfers[id] = existing ? { ...existing, ...transfer, amount: Math.max(existing.amount || 0, transfer.amount) } : transfer;
     return resources.transfers[id];
@@ -45,7 +46,8 @@ function isDedicatedThorium(resourceType) {
     /* Intentional Season 11 policy: generic terminal logistics never move
        Thorium, even between owned terminals. Staging and Reactor supply remain
        exclusively under the dedicated creep pipeline. */
-    return Season11Adapter.isAvailable() && resourceType === Season11Adapter.resourceType();
+    const special = Strategy.getSpecialResourcePolicy(resourceType);
+    return !!(special && special.finite);
 }
 
 function reservedAmount(roomName, resourceType) {
@@ -138,18 +140,23 @@ function validate(transfer) {
     }
     const from = Game.rooms[transfer.fromRoom];
     const to = Game.rooms[transfer.toRoom];
-    if (!from || !to || !from.controller || !from.controller.my || !to.controller || !to.controller.my) {
-        return { ok: false, reason: 'both rooms must be mine and visible' };
+    const external = !(to && to.controller && to.controller.my);
+    if (!from || !from.controller || !from.controller.my) {
+        return { ok: false, reason: 'origin room must be mine and visible' };
     }
-    if (!from.terminal || from.terminal.my === false || !to.terminal || to.terminal.my === false) {
-        return { ok: false, reason: 'both owned terminals are required' };
+    if (external && (!transfer.allowExternal || !Strategy.capabilities().externalTerminalTransfers)) {
+        return { ok: false, reason: Strategy.capabilities().externalTerminalTransfers ?
+            'external transfer requires explicit permission' : 'strategy restricts transfers to owned terminals' };
+    }
+    if (!from.terminal || from.terminal.my === false || !external && (!to.terminal || to.terminal.my === false)) {
+        return { ok: false, reason: external ? 'owned origin terminal is required' : 'both owned terminals are required' };
     }
     if (amount(from.terminal.store, RESOURCE_ENERGY) < ENERGY_RESERVE) return { ok: false, reason: 'energy reserve' };
     const Policy = require('Resource.Policy'), c = Policy.config();
     const history = Policy.state().transfers;
     const key = [from.name, to.name].sort().join(':') + ':' + transfer.resourceType;
     if (history[key] !== undefined && Game.time - history[key] < c.transferCooldown) return { ok: false, reason: 'transfer hysteresis' };
-    if (Policy.free(to.terminal.store) - transfer.amount < c.minimumTerminalFreeCapacity) return { ok: false, reason: 'terminal capacity reserve' };
+    if (!external && Policy.free(to.terminal.store) - transfer.amount < c.minimumTerminalFreeCapacity) return { ok: false, reason: 'terminal capacity reserve' };
     const n = Math.min(transfer.amount, amount(from.terminal.store, transfer.resourceType));
     if (amount(from.terminal.store, RESOURCE_ENERGY) - transferCost(n, from.name, to.name) - (transfer.resourceType === RESOURCE_ENERGY ? n : 0) < c.terminalEnergyReserve) return { ok: false, reason: 'send energy reserve' };
     if (from.terminal.cooldown > 0) return { ok: false, reason: 'cooldown' };

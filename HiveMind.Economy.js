@@ -231,8 +231,11 @@ function buildGrowthPolicy(room, snapshot, creeps, spawns) {
         (hasStorage ? 0 : Math.max(0, snapshot.protectedStockpileEnergy || 0));
     const energyAboveReserve = Math.max(0, storedEnergy - reserveTarget);
     const remote = remoteEconomy(room.name);
-    remote.availableCarry = Math.max(snapshot.haul.remoteCarry || 0,
-        Math.max(0, (snapshot.haul.activeCarry || 0) - (snapshot.haul.requiredCarry || 0)));
+    remote.availableCarry = snapshot.haul.remoteCarry || 0;
+    snapshot.haul.remoteCarryRequired = remote.requiredCarry || 0;
+    snapshot.haul.remoteCarryMissing = Math.max(0, (remote.requiredCarry || 0) -
+        (snapshot.haul.remoteCarryLiving || 0) - (snapshot.haul.remoteCarryQueued || 0) -
+        (snapshot.haul.remoteCarrySpawning || 0));
     const localGross = snapshot.harvest.actualOrEstimatedIncome || 0;
     const grossIncome = localGross + remote.gross;
     const economicCreeps = creeps.filter(creep => creep && creep.memory &&
@@ -511,7 +514,34 @@ function sourceReplacementCoverage(source, required, distance, assigned, queue, 
 function isLocalFreighter(item) {
     const memory = item && item.memory || {};
     return !!item && (item.role || memory.role) === 'Freighter' &&
+        memory.assignmentFunction !== 'remoteHauling' &&
         memory.freighterJob !== 'remote' && memory.freighterJob !== 'remoteDelivery';
+}
+
+function isRemoteFreighter(item) {
+    const memory = item && item.memory || {};
+    return !!item && (item.role || memory.role) === 'Freighter' &&
+        (memory.assignmentFunction === 'remoteHauling' || memory.freighterJob === 'remote' ||
+            memory.freighterJob === 'remoteDelivery');
+}
+
+function pendingFreighterParts(roomName, assignment, partType) {
+    const local = assignment === 'local';
+    const matches = item => local ? isLocalFreighter(item) : isRemoteFreighter(item);
+    const queue = Memory.rooms && Memory.rooms[roomName] && Memory.rooms[roomName].spawn &&
+        Memory.rooms[roomName].spawn.queue || [];
+    let queued = 0;
+    for (const request of queue) if (matches(request)) queued += bodyParts(request.body, partType);
+    let spawning = 0;
+    for (const spawn of TickIndex.get().ownedSpawnsByRoom.get(roomName) || []) {
+        const name = spawn && spawn.spawning && spawn.spawning.name;
+        const memory = name && Memory.creeps && Memory.creeps[name];
+        if (!memory || !matches({ memory })) continue;
+        const saved = Number(memory.freighterSpawnCarryParts);
+        spawning += partType === CARRY && Number.isFinite(saved) ? saved :
+            bodyParts(memory.body || [], partType);
+    }
+    return { queued, spawning };
 }
 
 function pendingLocalParts(roomName, role, partType) {
@@ -628,9 +658,10 @@ function buildSnapshot(room, previous) {
     const healthyFreighters = freighters.filter(creep => creep.ticksToLive === undefined ||
         creep.ticksToLive > replacementLead(creep, 25));
     const activeCarry = healthyFreighters.reduce((sum, creep) => sum + activeParts(creep, CARRY), 0);
-    const remoteCarry = healthyFreighters.filter(creep => !isLocalFreighter(creep))
+    const remoteCarry = healthyFreighters.filter(isRemoteFreighter)
         .reduce((sum, creep) => sum + activeParts(creep, CARRY), 0);
-    const localCarry = Math.max(0, activeCarry - remoteCarry);
+    const localCarry = healthyFreighters.filter(isLocalFreighter)
+        .reduce((sum, creep) => sum + activeParts(creep, CARRY), 0);
     const requiredCarry = Math.ceil(sourceRows.reduce((sum, source) =>
         sum + source.transport.creepIncome * Math.max(2, source.distance * 2 + 4) / 50, 0) * 1.15);
 
@@ -659,6 +690,8 @@ function buildSnapshot(room, previous) {
     const floorReachable = energyAvailable >= extractorFloor || selfDeliverWork > 0 ||
         energyAvailable + recoverableStoredEnergy >= extractorFloor;
 
+    const pendingLocalCarry = pendingFreighterParts(room.name, 'local', CARRY);
+    const pendingRemoteCarry = pendingFreighterParts(room.name, 'remote', CARRY);
     const snapshot = {
         roomName: room.name,
         sampleTick: Game.time,
@@ -688,11 +721,19 @@ function buildSnapshot(room, previous) {
         },
         haul: {
             requiredCarry,
+            localCarryRequired: requiredCarry,
             creepRequiredCarry: requiredCarry,
             activeCarry,
             localCarry,
-            queuedCarry: pendingLocalParts(room.name, 'Freighter', CARRY),
+            localCarryLiving: localCarry,
+            localCarryQueued: pendingLocalCarry.queued,
+            localCarrySpawning: pendingLocalCarry.spawning,
+            localCarryMissing: Math.max(0, requiredCarry - localCarry - pendingLocalCarry.queued - pendingLocalCarry.spawning),
+            queuedCarry: pendingLocalCarry.queued,
             remoteCarry,
+            remoteCarryLiving: remoteCarry,
+            remoteCarryQueued: pendingRemoteCarry.queued,
+            remoteCarrySpawning: pendingRemoteCarry.spawning,
             backlog,
             creepHaulIncome: Math.round(creepHaulIncome * 100) / 100,
             linkServedIncome: Math.round(linkServedIncome * 100) / 100,
@@ -729,30 +770,30 @@ function rawState(snapshot) {
 
     if (!capacityExists) {
         if (snapshot.bootstrap && snapshot.bootstrap.unrecoverable) {
-            return { state: STATES.SURVIVAL, reason: 'bootstrap energy floor not reachable' };
+            return { state: STATES.SURVIVAL, reason: 'bootstrap energy floor not reachable', reasonCode: 'LOCAL_HARVEST_SHORTAGE' };
         }
-        return { state: STATES.SURVIVAL, reason: 'zero functional local source miners' };
+        return { state: STATES.SURVIVAL, reason: 'zero functional local source miners', reasonCode: 'LOCAL_HARVEST_SHORTAGE' };
     }
     if (!energyFlowing && snapshot.spawnFill < 0.15 && reserves < 500) {
-        return { state: STATES.SURVIVAL, reason: 'no local source energy flowing at critical reserves' };
+        return { state: STATES.SURVIVAL, reason: 'no local source energy flowing at critical reserves', reasonCode: 'LOCAL_HARVEST_SHORTAGE' };
     }
     if (snapshot.spawnFill < 0.15 && reserves < 500 && incomeRatio < 0.45) {
-        return { state: STATES.SURVIVAL, reason: 'spawn energy critically low and harvest income below replacement level' };
+        return { state: STATES.SURVIVAL, reason: 'spawn energy critically low and harvest income below replacement level', reasonCode: 'SPAWN_FILL_RECOVERY' };
     }
     if (harvestRatio < 0.9 || incomeRatio < 0.65 || (harvest.sources || []).some(row =>
         row.workActive < row.workRequired * 0.9 || row.estimatedIncome < row.expectedIncome * 0.65)) {
-        return { state: STATES.RECOVERY, reason: 'harvesting below sustainable local demand' };
+        return { state: STATES.RECOVERY, reason: 'harvesting below sustainable local demand', reasonCode: 'LOCAL_HARVEST_SHORTAGE' };
     }
     if (haulRatio < 0.85 || haul.backlog > Math.max(500, haul.activeCarry * 75) ||
         (haul.linkBackpressure || 0) > 500) {
-        return { state: STATES.RECOVERY, reason: 'harvest restored, logistics below demand' };
+        return { state: STATES.RECOVERY, reason: 'harvest restored, logistics below demand', reasonCode: 'LOCAL_HAUL_SHORTAGE' };
     }
     if (snapshot.spawnFill < 0.45 && reserves < 2000 &&
         !(snapshot.spawnPressure.busy > 0 && incomeRatio >= 0.9 && haulRatio >= 0.85)) {
-        return { state: STATES.RECOVERY, reason: 'spawn fill recovering' };
+        return { state: STATES.RECOVERY, reason: 'spawn fill recovering', reasonCode: 'SPAWN_FILL_RECOVERY' };
     }
     if (snapshot.replacementRisk > 0 && reserves < 5000) {
-        return { state: STATES.RECOVERY, reason: 'critical economy replacement at risk' };
+        return { state: STATES.RECOVERY, reason: 'critical economy replacement at risk', reasonCode: 'REPLACEMENT_RISK' };
     }
     if (reserves >= 100000 && snapshot.spawnFill >= 0.9 && snapshot.energyTrend >= -1) {
         return { state: STATES.SURPLUS, reason: 'storage reserves high and core economy satisfied' };
@@ -776,6 +817,7 @@ function protectedSpawnStockpileEnergy(room) {
 
 function applyHysteresis(snapshot, previous) {
     const raw = rawState(snapshot);
+    snapshot.recoveryReason = raw.reasonCode || null;
     if (!previous || !STATE_RANK.hasOwnProperty(previous.state)) {
         snapshot.state = raw.state;
         snapshot.rawState = raw.state;
@@ -844,6 +886,7 @@ function savePersistent(roomName, snapshot) {
     persistent.stateChangedAt = snapshot.stateChangedAt;
     persistent.healthyTicks = snapshot.healthyTicks;
     persistent.reason = snapshot.reason;
+    persistent.recoveryReason = snapshot.recoveryReason;
     persistent.lastSampleTick = snapshot.sampleTick;
     persistent.lastLiquidEnergy = snapshot.liquidEnergy;
     persistent.energyTrend = snapshot.energyTrend;
@@ -1029,6 +1072,7 @@ function shouldBootstrapSelfDeliver(roomOrName) {
 
 module.exports = {
     isLocalFreighter,
+    isRemoteFreighter,
     localHarvestCoverage,
     localRecoveryRequest,
     STATES,

@@ -564,7 +564,7 @@ test('terminal balancing rejects dedicated Thorium and still enforces ownership'
     var transfer = { validUntil: 10, fromRoom: 'W1N1', toRoom: 'W2N2', resourceType: 'H' };
     Game.rooms.W1N1 = { controller: { my: true }, terminal: { my: true } };
     Game.rooms.W2N2 = { controller: { my: false }, terminal: { my: false } };
-    assert.strictEqual(ResourceTerminals.validate(transfer).reason, 'both rooms must be mine and visible');
+    assert.strictEqual(ResourceTerminals.validate(transfer).reason, 'strategy restricts transfers to owned terminals');
 });
 
 test('Reactor ownership and starvation reset are taken from fresh game state', function() {

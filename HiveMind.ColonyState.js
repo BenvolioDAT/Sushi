@@ -114,8 +114,11 @@ function rawLifecycle(room, summary, economy) {
     if (!(TickIndex.get().ownedSpawnsByRoom.get(room.name) || []).length) return PHASES.OWNED_NO_SPAWN;
     const rcl = room.controller && room.controller.level || 0;
     const active = summary.activeByRole || summary.byRole;
+    const snapshot = economy || Economy.get(room.name) || {};
+    const haul = snapshot.haul || {};
     const floorsComplete = (active.Foreman || 0) >= 1 &&
-        Economy.localHarvestCoverage(economy || Economy.get(room.name)).status === 'HEALTHY' && (active.Freighter || 0) >= 1;
+        Economy.localHarvestCoverage(snapshot).status === 'HEALTHY' &&
+        (haul.localCarryRequired > 0 ? haul.localCarryLiving >= haul.localCarryRequired * 0.85 : (active.Freighter || 0) >= 1);
     if (rcl <= 1 || !floorsComplete) return PHASES.BOOTSTRAP;
     if (rcl <= 3) return PHASES.GROWTH;
     if (rcl <= 7) return PHASES.DEVELOPMENT;
@@ -178,16 +181,18 @@ function decide(room, economy, summary, lifecycle, alert) {
         nextMandatoryRole = localHarvest.status === 'MISSING' ? 'Extractor' : null;
         blockedReason = localHarvest.status === 'RECOVERING' ? 'local harvest recovery incoming' : 'minimum local miner floor missing';
     }
-    else if ((active.Freighter || 0) < 1) {
+    else if (economy.haul && economy.haul.localCarryRequired > 0 ?
+        economy.haul.localCarryLiving + economy.haul.localCarryQueued + economy.haul.localCarrySpawning <
+            economy.haul.localCarryRequired : (active.Freighter || 0) < 1) {
         nextMandatoryRole = 'Freighter';
-        blockedReason = 'core logistics missing';
+        blockedReason = 'local logistics hauling capability missing';
     }
     const coreBlockedReason = blockedReason;
     const controllerDanger = !!(room.controller && room.controller.ticksToDowngrade < 5000);
-    const seasonFlag = HiveMemory.getRoomMemory(room.name).season11MiningColony;
-    const seasonRush = !!(seasonFlag && seasonFlag.active !== false && rcl >= 1 && rcl < 6);
-    const seasonWork = Math.max(1, Number(HiveMemory.getConfig('season11').expansionUpgradeWork) || 8);
-    const baselineTechWork = rcl >= 1 && rcl < 8 ? (seasonRush ? seasonWork : 1) : 0;
+    const strategyObjective = require('Strategy.Provider').getColonyObjectives(room)[0] || null;
+    const objectiveRush = !!(strategyObjective && strategyObjective.targetRcl > rcl);
+    const objectiveWork = Math.max(1, Number(strategyObjective && strategyObjective.controllerWorkMinimum) || 1);
+    const baselineTechWork = rcl >= 1 && rcl < 8 ? (objectiveRush ? objectiveWork : 1) : 0;
     /* RCL1-7 are all growth phases; DEVELOPMENT changes infrastructure, not the controller objective. */
     const baselinePhase = rcl >= 1 && rcl < 8;
     let growthAllowed = baselinePhase && !blockedReason && economy.state !== Economy.STATES.SURVIVAL;
@@ -197,7 +202,7 @@ function decide(room, economy, summary, lifecycle, alert) {
     if (!nextMandatoryRole && baselineTechRequired) nextMandatoryRole = 'Tech';
     let reason;
     if (controllerDanger) reason = 'controller downgrade danger; safety policy active';
-    else if (baselineTechRequired) reason = (seasonRush ? 'Season 11 mining colony stable; fast-track controller toward RCL6' :
+    else if (baselineTechRequired) reason = (objectiveRush ? strategyObjective.reason :
         'core income exists; begin minimum controller progress') +
         (economy.protectedStockpileEnergy > 0 ? '; spawn stockpile available' : '');
     else if (!growthAllowed && blockedReason) reason = blockedReason;
@@ -215,7 +220,7 @@ function decide(room, economy, summary, lifecycle, alert) {
         techPlannedWork: summary.techWork, governorNonCombat: summary.nonCombat,
         controllerDowngradeTicks: room.controller && room.controller.ticksToDowngrade || 0,
         protectedStockpileEnergy: economy.protectedStockpileEnergy || 0,
-        season11MiningColony: seasonRush
+        strategyObjective
     };
 }
 
@@ -284,7 +289,7 @@ function update(room) {
         governorNonCombat: decision.governorNonCombat, alert, economy: economy.state,
         controllerDowngradeTicks: decision.controllerDowngradeTicks,
         protectedStockpileEnergy: decision.protectedStockpileEnergy,
-        season11MiningColony: decision.season11MiningColony,
+        strategyObjective: decision.strategyObjective,
         milestone: milestone.milestone, milestoneSince: record.milestoneSince, milestoneTimedOut,
         requirements: milestone.requirements, unmet: milestone.unmet
     };

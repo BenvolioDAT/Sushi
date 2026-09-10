@@ -359,6 +359,8 @@ function getAllPickupCandidates(creep) {
 function getLocalPickupCandidates(creep, reservations) {
     var homeRoomName = creep.memory.homeRoom || creep.room.name;
 
+    if (creep.memory.assignmentFunction === 'remoteHauling') return [];
+
     /* Local pickup jobs are only the home room's source-side energy jobs. */
     if(creep.room.name !== homeRoomName) {
         return [];
@@ -445,7 +447,8 @@ function getLocalSourceContainerCandidates(creep, reservations) {
 }
 
 function getRemotePickupCandidates(creep, reservations) {
-    if(!creep || !creep.memory || !creep.store || creep.store.getFreeCapacity(RESOURCE_ENERGY) <= 0) {
+    if(!creep || !creep.memory || creep.memory.assignmentFunction === 'localLogistics' ||
+        !creep.store || creep.store.getFreeCapacity(RESOURCE_ENERGY) <= 0) {
         return [];
     }
 

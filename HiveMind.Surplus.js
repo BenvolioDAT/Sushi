@@ -32,8 +32,13 @@ function allocate(candidates, budget) {
 function plan(room, economy, capacity) {
     const growth = economy && economy.growth || {}, settings = config();
     const memory = Memory.rooms[room.name] || (Memory.rooms[room.name] = {});
+    const haul = economy && economy.haul || {};
+    const localHaulFunded = (haul.localCarryMissing || 0) <= 0;
+    const repairableRecovery = economy && economy.state === 'RECOVERY' &&
+        economy.recoveryReason === 'LOCAL_HAUL_SHORTAGE' && localHaulFunded;
     const healthy = !!capacity && capacity.energy.healthy && capacity.energy.known !== false &&
-        !['SURVIVAL', 'RECOVERY'].includes(economy && economy.state) && growth.mode !== 'RECOVERY';
+        economy && economy.state !== 'SURVIVAL' &&
+        (economy.state !== 'RECOVERY' || repairableRecovery) && growth.mode !== 'RECOVERY';
     const reason = !healthy || !(growth.storedEnergy > growth.reserveTarget) ? 'ENERGY_RESERVE' : capacity.cpu.headroom <= 0 || capacity.cpu.bucket < 4000 ||
         capacity.cpu.mode === 'critical' ? 'CPU_LIMIT' : capacity.spawn.headroom <= 0 ? 'SPAWN_LIMIT' :
         capacity.reason === 'DEFENSE_EMERGENCY' ? 'DEFENSE_EMERGENCY' : null;
@@ -65,10 +70,7 @@ function plan(room, economy, capacity) {
             benefit: 70, income: info.netIncome, risk: finite(info.risk), capabilityPerEnergy: 1,
             sourceId: info.sourceId, requiredWork: info.requiredWork, requiredCarry: info.requiredCarry });
     }
-    const reactors = hive.season && hive.season.season11 && hive.season.season11.reactorPortfolio;
-    for (const owned of [true, false]) candidates.push({ id: owned ? 'reactorContinuity' : 'seasonExpansion',
-        demand: Object.values(reactors && reactors.reactors || {}).filter(r => r.homeRoom === room.name && r.active && !!r.owned === owned).length * 2,
-        benefit: owned ? 90 : 65 });
+    candidates.push(...require('Strategy.Provider').getSurplusInvestments(room, economy, capacity));
     for (const c of candidates) {
         // Replacement estimates, not lifetime operating expenditure (demand is energy/tick).
         c.energyCost = c.demand * 150;
@@ -92,7 +94,9 @@ function plan(room, economy, capacity) {
     const result = { tick: Game.time, ...stock, budget, settings, allocations,
         techWork: amount('controller'), artificerWork: amount('infrastructure'),
         remoteCarry: amount('remoteHauling'), expansionWork: amount('expansionSupport'),
-        reason: reason || (stock.mode === 'DRAWDOWN' ? 'STOCKPILE_DRAWDOWN' : budget ? 'SUSTAINABLE_INCOME' : 'ENERGY_RESERVE') };
+        recoveryFunded: repairableRecovery,
+        reason: reason || (repairableRecovery ? 'FUNDED_LOCAL_HAUL_PRESSURE_RELIEF' :
+            stock.mode === 'DRAWDOWN' ? 'STOCKPILE_DRAWDOWN' : budget ? 'SUSTAINABLE_INCOME' : 'ENERGY_RESERVE') };
     memory.surplus = result;
     return result;
 }
@@ -103,7 +107,9 @@ function requestBias(roomName, request) {
     const id = category === 'upgradeSurplus' ? 'controller' : /^remote/.test(category) ? 'remoteHauling' :
         ['construction', 'criticalInfrastructure'].includes(category) ? 'infrastructure' :
         category === 'special' ? 'seasonExpansion' : category === 'expansion' ? 'expansionSupport' : null;
-    const investment = plan.allocations.find(a => a.id === id && a.allocated > 0);
+    const investment = category === 'special' ? plan.allocations.find(a =>
+        a.category === 'SPECIAL_STRATEGY' && a.allocated > 0) :
+        plan.allocations.find(a => a.id === id && a.allocated > 0);
     return investment ? Math.min(5, Math.max(0, investment.score / 20)) : 0;
 }
 module.exports = { config, drawdown, score, allocate, plan, requestBias };

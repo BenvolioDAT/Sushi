@@ -1,6 +1,5 @@
 var cpuStatusUtility = require('CPU.Status');
-var Season11 = require('Logic.Season11');
-var Season11Operations = require('Season11.Operations');
+var Strategy = require('Strategy.Provider');
 var TickIndex = require('HiveMind.Index');
 var Economy = require('HiveMind.Economy');
 var HiveMemory = require('HiveMind.Memory');
@@ -850,7 +849,7 @@ function drawRoomPanel(visual, room, sourceStats, remoteStats, roomCreeps) {
     var y = 3.7;
     var width = 18;
     var showRoleCounts = HiveMemory.getConfig('visuals').dashboardShowRoleCounts === true;
-    var height = showRoleCounts ? 26.4 : 24.3;
+    var height = showRoleCounts ? 28.5 : 26.4;
     var controller = room.controller;
     var roomMemory = Memory.rooms && Memory.rooms[room.name];
     var queue = getSpawnQueueInfo(room.name);
@@ -930,8 +929,15 @@ function drawRoomPanel(visual, room, sourceStats, remoteStats, roomCreeps) {
             (economy.harvest.workQueued || 0) + 'q | ' + (colony && colony.localHarvest && colony.localHarvest.status || 'UNKNOWN'),
             x, rowY, economyColor);
         rowY += LINE_HEIGHT;
-        drawText(visual, 'Haul ' + economy.haul.localCarry + '/' + economy.haul.requiredCarry +
-            ' backlog ' + compactNumber(economy.haul.backlog), x, rowY, COLORS.text);
+        drawText(visual, 'Local haul ' + (economy.haul.localCarryLiving || 0) + ' +' +
+            (economy.haul.localCarrySpawning || 0) + 's +' + (economy.haul.localCarryQueued || 0) +
+            'q /' + (economy.haul.localCarryRequired || 0) + ' miss ' +
+            (economy.haul.localCarryMissing || 0), x, rowY, COLORS.text);
+        rowY += LINE_HEIGHT;
+        drawText(visual, 'Remote haul ' + (economy.haul.remoteCarryLiving || 0) + ' +' +
+            (economy.haul.remoteCarrySpawning || 0) + 's +' + (economy.haul.remoteCarryQueued || 0) +
+            'q /' + (economy.haul.remoteCarryRequired || 0) + ' miss ' +
+            (economy.haul.remoteCarryMissing || 0), x, rowY, COLORS.text);
         rowY += LINE_HEIGHT;
         if (economy.growth) {
             var growth = economy.growth;
@@ -956,6 +962,12 @@ function drawRoomPanel(visual, room, sourceStats, remoteStats, roomCreeps) {
             drawText(visual, 'Reserve ' + compactNumber(growth.storedEnergy) + '/' +
                 compactNumber(growth.reserveTarget) + ' excess ' + compactNumber(growth.energyAboveReserve),
                 x, rowY, growth.energyAboveReserve > 0 ? COLORS.good : COLORS.warning);
+            rowY += LINE_HEIGHT;
+            var storagePolicy = require('Resource.Storage').capacity(room);
+            var surplus = roomMemory && roomMemory.surplus;
+            drawText(visual, 'Pressure ' + storagePolicy.pressureType + ' Surplus ' +
+                (surplus ? surplus.mode + ' ' + round(surplus.budget, 1) + '/t' : '-'),
+                x, rowY, storagePolicy.pressureType === 'NONE' ? COLORS.text : COLORS.warning);
             rowY += LINE_HEIGHT;
             drawText(visual, 'Remote ' + growth.remote.activeSources + '/' + growth.remote.candidateSources +
                 ' plan/proven ' + round(growth.remote.plannedIncome, 1) + '/' +
@@ -1210,13 +1222,19 @@ function drawRemotePanel(visual, remoteStats, sourcePanel) {
 }
 
 function drawSeason11Panel(visual) {
-    var diagnostics = Season11.getDiagnostics();
-    var operationSummary = Season11Operations.getDashboard();
+    var strategy = Strategy.diagnostics();
+    var diagnostics = strategy.providers[0] || null;
     var x = 1;
     var y = 20.7;
     var width = 18;
     var height = 13.2;
     var rowY = y + 1;
+    drawPanel(visual, x, y, width, height, 'SEASON STRATEGY');
+    if (!diagnostics) {
+        drawText(visual, 'NONE', x, rowY, COLORS.muted);
+        return;
+    }
+    var operationSummary = diagnostics.operationSummary || { operations: [] };
     var apiColor = diagnostics.apiAvailable ? COLORS.good : COLORS.muted;
     var reactor = diagnostics.selectedReactor;
     var mine = diagnostics.currentMiningTarget;
@@ -1227,7 +1245,6 @@ function drawSeason11Panel(visual) {
         alerts.push(diagnostics.alerts[i].code);
     }
 
-    drawPanel(visual, x, y, width, height, 'SEASON 11');
     drawRow(visual, [
         'Mode',
         { text: diagnostics.mode, color: apiColor },
@@ -1449,16 +1466,7 @@ function drawResourceStrategy(visual, roomName) {
         drawText(visual, 'Free ' + compactNumber(room.storageFree) + ' / reserve ' + compactNumber(room.reservedFree), 1.5, y += 0.7, COLORS.text, 0.5);
         drawText(visual, room.capacityPressure + ' Hub: ' + (policy.hubs[0] || '-'), 1.5, y += 0.7, COLORS.text, 0.5);
     }
-    var season = Season11.isApiAvailable() ? Season11.ensureMemory() : null;
-    var type = season && Season11.getThoriumResourceType(), thorium = type && policy.resources[type];
-    if (thorium) drawText(visual, 'T reserve ' + compactNumber(thorium.storageAmount) + ' stage ' + compactNumber(thorium.stagingAmount), 1.5, y += 0.7, COLORS.text, 0.5);
-    if (season) {
-        var entries = Object.values(season.reactorPortfolio.reactors || {});
-        var supply = entries.find(function(e) { return e.owned && e.supply; });
-        if (supply) drawText(visual, 'Runway ' + supply.supply.supplyRunwayTicks + 't cargo ' + (supply.inTransit || 0), 1.5, y += 0.7, COLORS.text, 0.5);
-        var mine = season.assignments.mining[roomName];
-        if (mine && mine.resourcePolicy) drawText(visual, mine.resourcePolicy.reason, 1.5, y += 0.7, COLORS.text, 0.45);
-    }
+    drawText(visual, 'Pressure ' + (room && room.pressureType || 'NONE'), 1.5, y += 0.7, COLORS.text, 0.5);
 }
 
 function drawDashboard(room, ownedRoomCount, creepStats) {

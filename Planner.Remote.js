@@ -2493,7 +2493,7 @@ function countBodyPartsFromCreepBody(body, bodyPartType) {
 }
 
 function claimRemotePickupTarget(creep, pickupInfo) {
-    if (!creep || !creep.memory || !pickupInfo) {
+    if (!creep || !creep.memory || creep.memory.assignmentFunction === 'localLogistics' || !pickupInfo) {
         return false;
     }
 

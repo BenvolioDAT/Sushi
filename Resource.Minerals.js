@@ -2,11 +2,11 @@ const HiveMemory = require('HiveMind.Memory');
 const TickIndex = require('HiveMind.Index');
 const DemandBoard = require('Spawn.DemandBoard');
 const Policy = require('Resource.Policy');
-const Season11Adapter = require('Season11.Adapter');
+const Strategy = require('Strategy.Provider');
 
 function isDedicatedThorium(resourceType) {
-    const thorium = Season11Adapter.resourceType();
-    return Season11Adapter.isAvailable() && thorium !== null && resourceType === thorium;
+    const special = Strategy.getSpecialResourcePolicy(resourceType);
+    return !!(special && special.finite);
 }
 
 function cancelGenericDemands(roomName) {

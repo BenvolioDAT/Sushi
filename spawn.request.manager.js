@@ -16,7 +16,7 @@ var creepBodyConfig = require('role.creepBodyConfig');
 var RemotePlanner = require('Planner.Remote');
 var creepUtility = require('utility.Creep');
 var cpuStatusUtility = require('CPU.Status');
-var Season11 = require('Logic.Season11');
+var Strategy = require('Strategy.Provider');
 var TickIndex = require('HiveMind.Index');
 var defenseDemand = require('Defense.Demand');
 var DemandBoard = require('Spawn.DemandBoard');
@@ -3578,7 +3578,9 @@ function getFreighterCarryDemand(room) {
     var unreservedBacklog = Math.max(0, remoteBacklog - remoteReservedCarry);
     var backlogBonus = Math.min(12, Math.ceil(unreservedBacklog / 500) * 2);
     var ageBonus = worstHaulAge > 100 ? 4 : worstHaulAge > 50 ? 2 : 0;
-    var desiredCarryParts = baseLocalCarry + remoteBaseCarry + backlogBonus + ageBonus;
+    var localCarryRequired = baseLocalCarry;
+    var remoteCarryRequired = remoteBaseCarry + backlogBonus + ageBonus;
+    var desiredCarryParts = localCarryRequired + remoteCarryRequired;
 
     if (
         HiveMemory.getConfig('upgrade').upgradeRush === true &&
@@ -3587,15 +3589,16 @@ function getFreighterCarryDemand(room) {
         var desiredTechWork = getDesiredTechWork(room);
 
         if (desiredTechWork >= 8) {
-            desiredCarryParts += Math.min(
+            localCarryRequired += Math.min(
                 6,
                 Math.ceil((desiredTechWork - 4) / 3)
             );
+            desiredCarryParts = localCarryRequired + remoteCarryRequired;
         }
     }
 
     var idleFreighters = room ? countIdleFreighters(room.name) : 0;
-    var safeMinimum = baseLocalCarry + remoteBaseCarry;
+    var safeMinimum = localCarryRequired + remoteBaseCarry;
     var lowStorageRemoteRecovery = room && room.storage &&
         storageEnergy < 10000 && activeRemoteSources > 0;
 
@@ -3615,7 +3618,7 @@ function getFreighterCarryDemand(room) {
         // Allocate missing CARRY, never duplicate capability already living or committed.
         var committedCarry = countLivingRoleBodyParts(room.name, 'Freighter', CARRY) +
             countQueuedRoleBodyParts(room.name, 'Freighter', CARRY);
-        desiredCarryParts = Math.max(desiredCarryParts, Math.min(baseLocalCarry + remoteBaseCarry,
+        desiredCarryParts = Math.max(desiredCarryParts, Math.min(localCarryRequired + remoteBaseCarry,
             committedCarry + haulInvestment.remoteCarry));
     }
 
@@ -3623,15 +3626,26 @@ function getFreighterCarryDemand(room) {
         countLivingRoleBodyParts(room.name, 'Freighter', CARRY) : 0);
     var queuedCarryParts = room ?
         countQueuedRoleBodyParts(room.name, 'Freighter', CARRY) : 0;
+    var localCarryLiving = economy ? economy.haul.localCarryLiving : livingCarryParts;
+    var localCarryQueued = economy ? economy.haul.localCarryQueued + economy.haul.localCarrySpawning : queuedCarryParts;
+    var remoteCarryLiving = economy ? economy.haul.remoteCarryLiving : 0;
+    var remoteCarryQueued = economy ? economy.haul.remoteCarryQueued + economy.haul.remoteCarrySpawning : 0;
+    var localCarryMissing = Math.max(0, localCarryRequired - localCarryLiving - localCarryQueued);
+    var remoteCarryMissing = Math.max(0, remoteCarryRequired - remoteCarryLiving - remoteCarryQueued);
 
     return {
         desiredCarryParts: desiredCarryParts,
         livingCarryParts: livingCarryParts,
         queuedCarryParts: queuedCarryParts,
-        missingCarryParts: Math.max(
-            0,
-            desiredCarryParts - livingCarryParts - queuedCarryParts
-        ),
+        missingCarryParts: localCarryMissing + remoteCarryMissing,
+        localCarryRequired: localCarryRequired,
+        localCarryLiving: localCarryLiving,
+        localCarryQueued: localCarryQueued,
+        localCarryMissing: localCarryMissing,
+        remoteCarryRequired: remoteCarryRequired,
+        remoteCarryLiving: remoteCarryLiving,
+        remoteCarryQueued: remoteCarryQueued,
+        remoteCarryMissing: remoteCarryMissing,
         remoteBacklog: remoteBacklog,
         remoteReservedCarry: remoteReservedCarry,
         worstHaulAge: worstHaulAge,
@@ -3670,6 +3684,14 @@ function saveFreighterDemandDebug(roomName, demand) {
     roomMemory.freighterQueuedCarry = demand.queuedCarryParts;
     roomMemory.freighterRemoteBacklog = demand.remoteBacklog;
     roomMemory.freighterWorstHaulAge = demand.worstHaulAge;
+    roomMemory.localCarryRequired = demand.localCarryRequired;
+    roomMemory.localCarryLiving = demand.localCarryLiving;
+    roomMemory.localCarryQueued = demand.localCarryQueued;
+    roomMemory.localCarryMissing = demand.localCarryMissing;
+    roomMemory.remoteCarryRequired = demand.remoteCarryRequired;
+    roomMemory.remoteCarryLiving = demand.remoteCarryLiving;
+    roomMemory.remoteCarryQueued = demand.remoteCarryQueued;
+    roomMemory.remoteCarryMissing = demand.remoteCarryMissing;
 }
 
 function getEconomyRequestPriorities(miningDemand, freightDemand) {
@@ -3774,9 +3796,11 @@ function requestDynamicFreightersForRoom(room, priorityOverride, demandOverride,
     };
 
     if (demand.missingCarryParts > 0) {
+        var localRequest = demand.localCarryMissing > 0;
+        var missingForAssignment = localRequest ? demand.localCarryMissing : demand.remoteCarryMissing;
         var body = creepBodyConfig.getFreighterBodyForCarry(
             room,
-            demand.missingCarryParts
+            missingForAssignment
         );
         var requestedCarry = countBodyParts(body, CARRY);
 
@@ -3793,7 +3817,8 @@ function requestDynamicFreightersForRoom(room, priorityOverride, demandOverride,
                 priority: requestPriority,
                 memory: {
                     role: 'Freighter',
-                    homeRoom: room.name
+                    homeRoom: room.name,
+                    assignmentFunction: localRequest ? 'localLogistics' : 'remoteHauling'
                 },
                 requestedAt: Game.time
             }, options);
@@ -3808,9 +3833,18 @@ function requestDynamicFreightersForRoom(room, priorityOverride, demandOverride,
             result.requested = 1;
             result.requestedCarryParts = requestedCarry;
             demand.queuedCarryParts += requestedCarry;
+            if (localRequest) {
+                demand.localCarryQueued += requestedCarry;
+                demand.localCarryMissing = Math.max(0, demand.localCarryRequired -
+                    demand.localCarryLiving - demand.localCarryQueued);
+            }
+            else {
+                demand.remoteCarryQueued += requestedCarry;
+                demand.remoteCarryMissing = Math.max(0, demand.remoteCarryRequired -
+                    demand.remoteCarryLiving - demand.remoteCarryQueued);
+            }
             demand.missingCarryParts = Math.max(
-                0,
-                demand.desiredCarryParts - demand.livingCarryParts - demand.queuedCarryParts
+                0, demand.localCarryMissing + demand.remoteCarryMissing
             );
             result.queuedCarryParts = demand.queuedCarryParts;
             result.missingCarryParts = demand.missingCarryParts;
@@ -4137,7 +4171,7 @@ function requestSeason11RolesForRoom(room) {
         requested: 0,
         plans: []
     };
-    var plans = Season11.getSpawnPlanForRoom(room);
+    var plans = Strategy.getSpecialSpawnPlans(room);
 
     for (var i = 0; i < plans.length; i++) {
         var plan = plans[i];

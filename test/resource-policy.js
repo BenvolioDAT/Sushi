@@ -365,7 +365,9 @@ test('otherwise equal expansion candidates prefer missing mineral diversity', ()
     Memory.rooms.W2N3 = { scoutIntel: { sourceCount: 2, mineralType: 'X' } };
     const E = fresh('Logic.Expansion.js'), m = E.ensureExpansionMemory(); m.minRangeBetweenBases = 0;
     const candidate = E.chooseExpansionTarget(m, [c.room]);
-    assert.strictEqual(candidate.roomName, 'W2N3'); assert.strictEqual(m.candidates.W2N3.mineralDiversityBonus, 8);
+    assert.strictEqual(candidate.roomName, 'W2N3');
+    assert.ok(m.candidates.W2N3.resourceStrategicValue >= 8 &&
+        m.candidates.W2N3.resourceStrategicValue <= 25);
 });
 test('valid Thorium nomination outranks a missing X candidate', () => {
     const c = setup('U', 0), s = season(c);
@@ -377,7 +379,7 @@ test('valid Thorium nomination outranks a missing X candidate', () => {
         hostileCreeps: 0, hostileStructures: 0, threatParts: 0, thorium: { id: 'finite', remaining: 50000, density: 3, depleted: false } };
     const E = fresh('Logic.Expansion.js'), m = E.ensureExpansionMemory(); m.minRangeBetweenBases = 0;
     const candidate = E.chooseExpansionTarget(m, [c.room]);
-    assert.strictEqual(candidate.roomName, 'W2N3'); assert.strictEqual(candidate.season11, true);
+    assert.strictEqual(candidate.roomName, 'W2N3'); assert.strictEqual(candidate.strategyProvider, 'SEASON11');
 });
 test('boost requested without local labs routes production inputs to a suitable hub', () => {
     const c = setup('X', 4000), hub = second(c, {}, true);

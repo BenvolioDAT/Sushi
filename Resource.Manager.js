@@ -7,11 +7,11 @@ const Links = require('Resource.Links');
 const Labs = require('Resource.Labs');
 const Terminals = require('Resource.Terminals');
 const Observers = require('Resource.Observer');
-const Season11Adapter = require('Season11.Adapter');
+const Strategy = require('Strategy.Provider');
 
 function isDedicatedThorium(resourceType) {
-    const thorium = Season11Adapter.resourceType();
-    return Season11Adapter.isAvailable() && thorium !== null && resourceType === thorium;
+    const special = Strategy.getSpecialResourcePolicy(resourceType);
+    return !!(special && special.finite);
 }
 
 function jobBoard() {
@@ -111,8 +111,6 @@ function needsCourier(roomName) {
 }
 
 function scrubGenericThoriumDemands() {
-    if (!Season11Adapter.isAvailable()) return 0;
-    const thorium = Season11Adapter.resourceType();
     let removed = 0;
     for (const demand of DemandBoard.getDemands()) {
         if (!demand || !['MineralMiner', 'ResourceCourier'].includes(demand.role)) continue;
@@ -121,11 +119,11 @@ function scrubGenericThoriumDemands() {
         const roomName = demand.originRoom || demand.targetRoom;
         const saved = roomName && HiveMemory.ensure().resources.rooms[roomName];
         const savedMineral = saved && saved.mineral;
-        const genericMineralDemand = mineralRoom && (memory.mineralType === thorium ||
-            savedMineral && savedMineral.mineralType === thorium);
+        const genericMineralDemand = mineralRoom && (isDedicatedThorium(memory.mineralType) ||
+            savedMineral && isDedicatedThorium(savedMineral.mineralType));
         const resourceOnlyCourier = demand.id === `resource:${roomName}:ResourceCourier` &&
-            savedMineral && savedMineral.mineralType === thorium && !needsCourierWithoutMineral(roomName);
-        if (memory.mineralType !== thorium && !genericMineralDemand && !resourceOnlyCourier) continue;
+            savedMineral && isDedicatedThorium(savedMineral.mineralType) && !needsCourierWithoutMineral(roomName);
+        if (!isDedicatedThorium(memory.mineralType) && !genericMineralDemand && !resourceOnlyCourier) continue;
         if (DemandBoard.cancel(demand.id)) removed++;
     }
     return removed;

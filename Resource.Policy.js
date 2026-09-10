@@ -57,15 +57,6 @@ function snapshot(force = false) {
             Economy.canSpend(room, 'resources') && local.capacityPressure === 'OK' ?
             room.controller.level * 10 + cluster.outputs.length * 2 : 0;
     }
-    const season = HiveMemory.ensure().season && HiveMemory.ensure().season.season11;
-    const thoriumType = typeof RESOURCE_THORIUM !== 'undefined' ? RESOURCE_THORIUM : null;
-    for (const reactor of Object.values(season && season.reactors || {})) {
-        if (!thoriumType || reactor.my !== true || seenStores.has(reactor.id)) continue;
-        const live = Game.getObjectById(reactor.id);
-        if (live && live.my !== true) continue;
-        const stored = live ? amount(live.store, thoriumType) : Math.max(0, (reactor.thorium || 0) - (Game.time - (reactor.lastSeen || Game.time)));
-        const r = get(thoriumType); r.totalStored += stored; r.reactorAmount += stored;
-    }
     p.hubs = Object.keys(rooms).filter(name => rooms[name].hubScore > 0)
         .sort((a, b) => rooms[b].hubScore - rooms[a].hubScore || a.localeCompare(b));
     if (Array.isArray(c.hubs)) p.hubs.sort((a, b) => (c.hubs.includes(b) ? 1 : 0) - (c.hubs.includes(a) ? 1 : 0));
@@ -122,11 +113,11 @@ function snapshot(force = false) {
                 r.targetHigh = Math.max(r.targetHigh, r.demandAmount);
             } else { r.targetLow += r.demandAmount; r.targetDesired += r.demandAmount; r.targetHigh += r.demandAmount; }
         }
-        if (type === thoriumType) {
+        const special = require('Strategy.Provider').getSpecialResourcePolicy(type);
+        if (special && special.stockBands === false) {
             r.targetLow = r.targetDesired = r.targetHigh = 0;
-            r.demandReason = 'FINITE_RESOURCE';
-            r.reservedAmount = Object.values(season && season.thoriumReservations && season.thoriumReservations.stores || {})
-                .reduce((sum, store) => sum + Object.values(store.reactors || {}).reduce((n, value) => n + value, 0), 0);
+            r.demandReason = special.reason || 'SPECIAL_STRATEGY';
+            r.reservedAmount = Math.max(r.reservedAmount, special.reservedAmount || 0);
         }
         r.availableAmount = Math.max(0, r.totalStored - r.reservedAmount);
         r.state = r.totalStored < r.targetLow ? 'CRITICAL' : r.totalStored < r.targetDesired ? 'NEEDED' : r.totalStored >= r.targetHigh && r.targetHigh > 0 ? 'SURPLUS' : 'TARGET';
@@ -155,7 +146,22 @@ function deposit(room, type) {
     if (active(room.storage) && free(room.storage.store) > 0) return room.storage;
     return null;
 }
-function diversity(type) { return STOCKS[type] && type !== 'G' && !(snapshot().sources[type] > 0) ? Math.min(10, Math.max(0, config().diversityBonus)) : 0; }
+function expansionValue(type, empireContext) {
+    if (!STOCKS[type] || type === 'G') return 0;
+    const p = empireContext || snapshot();
+    const resource = p.resources[type] || record(type);
+    const sourceCount = p.sources[type] || 0;
+    const missingSource = sourceCount === 0 ? config().diversityBonus : 0;
+    const target = Math.max(1, resource.targetDesired || STOCKS[type][1]);
+    const inventoryDeficit = Math.max(0, target - (resource.totalStored || 0)) / target;
+    const operationDemand = Math.min(1, (resource.demandAmount || 0) / target);
+    /* Resource access can decide close candidates, but cannot overpower room quality. */
+    return Math.round(Math.min(25, Math.max(0, missingSource + inventoryDeficit * 10 + operationDemand * 7)) * 100) / 100;
+}
+function diversity(type) {
+    return STOCKS[type] && type !== 'G' && !(snapshot().sources[type] > 0) ?
+        Math.min(10, Math.max(0, config().diversityBonus)) : 0;
+}
 function planReactions() {
     const p = snapshot();
     for (const task of p.production) {
@@ -175,4 +181,5 @@ function planReactions() {
         goal.policyManaged = true;
     }
 }
-module.exports = { STOCKS, DEFAULTS, config, state, snapshot, capacity, extraction, deposit, diversity, planReactions, free, active };
+module.exports = { STOCKS, DEFAULTS, config, state, snapshot, capacity, extraction, deposit,
+    diversity, expansionValue, planReactions, free, active };

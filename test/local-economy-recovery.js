@@ -266,6 +266,38 @@ test('remote jobs in queued or spawning Freighters cannot reserve local recovery
     }
 });
 
+test('wealthy RCL7 queues assigned local CARRY before pressure-relief Tech spending', () => {
+    const room = setup();
+    room.controller.level = 7;
+    room.energyAvailable = room.energyCapacityAvailable = 4300;
+    unit(room, 'minerA', 'Extractor', [...Array(5).fill(WORK), MOVE], { sourceId: 'sourceA' });
+    unit(room, 'minerB', 'Extractor', [...Array(5).fill(WORK), MOVE], { sourceId: 'sourceB' });
+    unit(room, 'foreman', 'Foreman', [CARRY, MOVE]);
+    for (let i = 0; i < 3; i++) unit(room, 'remote' + i, 'Freighter',
+        [...Array(12).fill(CARRY), ...Array(6).fill(MOVE)], { assignmentFunction: 'remoteHauling',
+            freighterJob: 'remoteDelivery', remoteDeliverySourceId: 'remote' + i });
+    let snapshot = sample(room);
+    assert.strictEqual(snapshot.recoveryReason, 'LOCAL_HAUL_SHORTAGE');
+    assert.strictEqual(snapshot.haul.localCarryLiving, 0);
+    assert.ok(snapshot.haul.localCarryMissing > 0);
+    const manager = require('spawn.request.manager');
+    const result = manager.requestDynamicFreightersForRoom(room, 100, manager.getFreighterCarryDemand(room));
+    assert.strictEqual(result.requested, 1);
+    assert.ok(Memory.rooms[room.name].spawn.queue.some(request =>
+        request.memory && request.memory.assignmentFunction === 'localLogistics'));
+    assert.ok(!Memory.rooms[room.name].spawn.queue.some(request =>
+        request.memory && request.memory.assignmentFunction === 'remoteHauling'));
+    Game.time++;
+    snapshot = sample(room);
+    assert.strictEqual(snapshot.haul.localCarryMissing, 0);
+    const capacity = { energy: { healthy: true, known: true }, cpu: { headroom: 50, bucket: 10000, mode: 'healthy' },
+        spawn: { headroom: 1 }, reason: null };
+    const surplus = require('HiveMind.Surplus').plan(room, snapshot, capacity);
+    assert.strictEqual(surplus.recoveryFunded, true);
+    assert.ok(surplus.budget > 0);
+    assert.ok(surplus.techWork > 0);
+});
+
 test('a baseline Tech still upgrades during downgrade danger while growth is paused', () => {
     const room = setup();
     room.controller.ticksToDowngrade = 1000;

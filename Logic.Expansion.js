@@ -22,7 +22,7 @@ var creepBodyConfig = require('role.creepBodyConfig');
 var DemandBoard = require('Spawn.DemandBoard');
 var TickIndex = require('HiveMind.Index');
 var HiveMemory = require('HiveMind.Memory');
-var Season11 = require('Logic.Season11');
+var Strategy = require('Strategy.Provider');
 
 var DEFAULT_MAX_ROUTE_DISTANCE = 8;
 var DEFAULT_MIN_RANGE_BETWEEN_BASES = 3;
@@ -134,7 +134,8 @@ function run() {
 
     if (!canStartExpansion(expansion)) {
         expansion.state = 'complete';
-        return makeReport(expansion, true, 'Expansion room limit or GCL limit reached');
+        expansion.blockReason = countOwnedRooms() >= getGclLevel() ? 'GCL_LIMIT' : 'CONFIG_ROOM_LIMIT';
+        return makeReport(expansion, true, expansion.blockReason);
     }
 
     if (
@@ -229,6 +230,10 @@ function makeReport(expansion, ok, reason) {
     var selectedOrigin = expansion.originRoom || null;
     var decisionReason = reason || null;
 
+    var candidates = Object.values(expansion.candidates || {}).filter(function(candidate) {
+        return candidate && typeof candidate.score === 'number';
+    }).sort(function(a, b) { return b.score - a.score; });
+    var bestCandidate = candidates[0] || null;
     expansion.lastDecision = {
         tick: Game.time,
         state: expansion.state,
@@ -237,7 +242,16 @@ function makeReport(expansion, ok, reason) {
         gcl: gcl,
         selectedTarget: selectedTarget,
         selectedOrigin: selectedOrigin,
-        reason: decisionReason
+        reason: decisionReason,
+        blockReason: expansion.blockReason || null,
+        autoSelect: isAutoSelectEnabled(expansion),
+        bestCandidate: bestCandidate && bestCandidate.roomName || null,
+        candidateScore: bestCandidate && bestCandidate.score || null,
+        candidateSources: bestCandidate && bestCandidate.sourceCount || null,
+        candidateMineral: bestCandidate && bestCandidate.mineralType || null,
+        resourceStrategicValue: bestCandidate && bestCandidate.resourceStrategicValue || 0,
+        routeDistance: bestCandidate && bestCandidate.routeDistance || null,
+        strategyModifier: bestCandidate && bestCandidate.strategyModifier || 0
     };
 
     return {
@@ -248,7 +262,9 @@ function makeReport(expansion, ok, reason) {
         ownedRooms: ownedRooms,
         maxOwnedRooms: maxOwnedRooms,
         gcl: gcl,
-        reason: decisionReason
+        reason: decisionReason,
+        blockReason: expansion.blockReason || null,
+        bestCandidate: bestCandidate && bestCandidate.roomName || null
     };
 }
 
@@ -416,13 +432,16 @@ function runSelectTarget(expansion, ownedSpawnRooms) {
         if (expansion.state !== 'manualTargetRejected') {
             expansion.state = 'selectTarget';
         }
-        return makeReport(expansion, true, 'No safe expansion target available yet');
+        expansion.blockReason = Object.keys(expansion.candidates || {}).length ?
+            'NO_SAFE_CANDIDATE' : 'INTEL_INSUFFICIENT';
+        return makeReport(expansion, true, expansion.blockReason);
     }
 
     expansion.targetRoom = selected.roomName;
     expansion.originRoom = selected.originRoom;
-    expansion.targetSource = selected.season11 ? 'season11' : 'economic';
-    expansion.season11Nomination = selected.season11 ? {
+    expansion.targetSource = selected.strategyProvider ? 'strategy' : 'economic';
+    expansion.strategyNomination = selected.strategyProvider ? {
+        provider: selected.strategyProvider,
         roomName: selected.roomName,
         mineralId: selected.mineralId,
         remaining: selected.remaining,
@@ -433,6 +452,9 @@ function runSelectTarget(expansion, ownedSpawnRooms) {
         reason: selected.nominationReason,
         nominatedAt: selected.nominatedAt
     } : null;
+    /* Read-only compatibility mirror for old dashboard/console tooling. */
+    expansion.season11Nomination = expansion.strategyNomination &&
+        expansion.strategyNomination.provider === 'SEASON11' ? expansion.strategyNomination : null;
     expansion.state = 'claiming';
     expansion.blockReason = null;
 
@@ -582,16 +604,8 @@ function completeOnlineTarget(expansion) {
             originRoom: expansion.originRoom || null,
             completedAt: Game.time
         };
-        if (expansion.targetSource === 'season11') {
-            var roomMemory = HiveMemory.getRoomMemory(completedRoomName);
-            roomMemory['season11MiningColony'] = {
-                active: true,
-                mineralId: expansion.season11Nomination && expansion.season11Nomination.mineralId || null,
-                nominatedAt: expansion.season11Nomination && expansion.season11Nomination.nominatedAt || Game.time,
-                onlineAt: Game.time,
-                targetRcl: 6,
-                reason: 'Claimed by Expansion for Season 11 Thorium'
-            };
+        if (expansion.targetSource === 'strategy' && expansion.strategyNomination) {
+            Strategy.onExpansionOnline(completedRoomName, expansion.strategyNomination);
         }
     }
 
@@ -603,6 +617,7 @@ function completeOnlineTarget(expansion) {
     expansion.blockReason = null;
     expansion.targetSource = null;
     expansion.season11Nomination = null;
+    expansion.strategyNomination = null;
 }
 
 function chooseExpansionTarget(expansion, ownedSpawnRooms) {
@@ -674,9 +689,9 @@ function chooseExpansionTarget(expansion, ownedSpawnRooms) {
             candidate.linearDistance +
             (candidate.spacingDistance * 4);
 
-        var resourceBonus = require('Resource.Policy').diversity(candidate.mineralType);
+        var resourceBonus = require('Resource.Policy').expansionValue(candidate.mineralType);
         candidate.score += resourceBonus;
-        ensureCandidateMemory(expansion, candidate.roomName).mineralDiversityBonus = resourceBonus;
+        ensureCandidateMemory(expansion, candidate.roomName).resourceStrategicValue = resourceBonus;
         ensureCandidateMemory(expansion, candidate.roomName).score = candidate.score;
 
         if (!best || candidate.score > best.score) {
@@ -684,16 +699,17 @@ function chooseExpansionTarget(expansion, ownedSpawnRooms) {
         }
     }
 
-    var nomination = Season11.isOperatingMode() ? Season11.getExpansionNomination() : null;
-    if (nomination && (!expansion.season11NominationCooldownUntil ||
-        Game.time >= expansion.season11NominationCooldownUntil)) {
+    var nomination = Strategy.getExpansionNomination();
+    var nominationCooldownUntil = expansion.strategyNominationCooldownUntil ||
+        expansion.season11NominationCooldownUntil || 0;
+    if (nomination && Game.time >= nominationCooldownUntil) {
         var nominatedCandidate = buildCandidate(expansion, nomination.roomName,
             Memory.rooms && Memory.rooms[nomination.roomName]);
         if (nominatedCandidate) {
             nominatedCandidate.originRoom = nomination.originRoom;
             nominatedCandidate.routeDistance = nomination.routeDistance;
             nominatedCandidate.score = nomination.yieldScore;
-            nominatedCandidate.season11 = true;
+            nominatedCandidate.strategyProvider = nomination.provider;
             nominatedCandidate.mineralId = nomination.mineralId;
             nominatedCandidate.remaining = nomination.remaining;
             nominatedCandidate.density = nomination.density;
@@ -701,9 +717,8 @@ function chooseExpansionTarget(expansion, ownedSpawnRooms) {
             nominatedCandidate.nominatedAt = nomination.nominatedAt;
             nominatedCandidate.nominationReason = nomination.reason;
             var candidateMemory = ensureCandidateMemory(expansion, nomination.roomName);
-            candidateMemory['season11'] = true;
-            candidateMemory['season11YieldScore'] = nomination.yieldScore;
-            candidateMemory['season11Reason'] = nomination.reason;
+            candidateMemory.strategyProvider = nomination.provider;
+            candidateMemory.strategyModifier = nomination.modifier || nomination.score || nomination.yieldScore;
             candidateMemory.score = nomination.yieldScore;
             return nominatedCandidate;
         }
