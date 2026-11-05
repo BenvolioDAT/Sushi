@@ -1,3 +1,7 @@
+> Historical engineering record. Season 11 runtime was retired on November 5, 2026.
+> Seasonal commands and results below describe the earlier implementation.
+> Current operation: [SUSHI-OPERATIONS.md](SUSHI-OPERATIONS.md).
+
 # Sushi Season 11: Thorium and Reactors
 
 Sushi now has a guarded Season 11 subsystem built around `Logic.Season11.js`,

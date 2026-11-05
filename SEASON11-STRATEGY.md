@@ -1,3 +1,7 @@
+> Historical engineering record. Season 11 runtime was retired on November 5, 2026.
+> Seasonal commands and results below describe the earlier implementation.
+> Current operation: [SUSHI-OPERATIONS.md](SUSHI-OPERATIONS.md).
+
 # Season 11 strategy audit (before implementation)
 
 Discovery is feature gated through Season11.Adapter. Scouts and the bounded visible-room scan record finite Thorium deposits and Reactor snapshots. Depletion remains sticky. Mining ranking excludes stale/hostile/foreign rooms, prefers remaining yield, then distance. The planner selects up to maxMiningRooms; actual mining requires an owned room, active extractor and staging store.

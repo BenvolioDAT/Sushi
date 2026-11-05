@@ -1,3 +1,7 @@
+> Historical engineering record. Season 11 runtime was retired on November 5, 2026.
+> Seasonal commands and results below describe the earlier implementation.
+> Current operation: [SUSHI-OPERATIONS.md](SUSHI-OPERATIONS.md).
+
 # NPC-first combat diplomacy
 
 Baseline: main at `84e781c977328eb01b21619fa2c617c229766699`.

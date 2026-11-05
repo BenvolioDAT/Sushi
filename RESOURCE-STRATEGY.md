@@ -1,3 +1,7 @@
+> Historical engineering record. Season 11 runtime was retired on November 5, 2026.
+> Seasonal commands and results below describe the earlier implementation.
+> Current operation: [SUSHI-OPERATIONS.md](SUSHI-OPERATIONS.md).
+
 # Resource economy strategy
 
 Implemented against local and GitHub `main` at `7b920875a066c22794d73b6899488fd281677ff5` (verified before editing).
@@ -118,12 +122,12 @@ Power has no renewable stock cap. Existing Power Bank safety/profitability, econ
 
 ## Manual traces
 
-- **A — 28,000 U, no active demand:** above the 25,000 high threshold. Policy latches PAUSED_TARGET_REACHED; replacement demand is canceled; an existing miner deposits its cargo and stops harvesting.
-- **B — 7,000 U after a pause:** below 8,000, so mining resumes. It continues through 15,000 toward 25,000 rather than toggling around the low threshold.
-- **C — 4,000 X plus a combat boost request:** X is already below its 15,000 low threshold. Missing X-based production increases its effective target; eligible X miners run. Inputs move to the reaction colony/hub when its concrete need exceeds its inventory, and the resulting boost moves to the requesting colony.
-- **D — 25,000 stored Thorium plus 12,000 unmined:** safe owned RCL6 extraction continues within existing operational limits. Stored quantity does not pause mining; a temporary container-pressure stop resumes after dedicated hauling drains the container.
-- **E — 250 staging, 5/tick, ETA 60:** forecast is `250 + 5 * 60 = 550`. Request reserve hauling now; the forecast exceeds both the desired staging stock and urgent threshold.
-- **F — Reactor stolen:** a visible enemy Reactor is never a delivery target. Carried Thorium goes to safe owned Storage. Dedicated reserve hauling can continue to drain safe staging while the existing Reactor strategy reevaluates ownership.
+- **A ï¿½ 28,000 U, no active demand:** above the 25,000 high threshold. Policy latches PAUSED_TARGET_REACHED; replacement demand is canceled; an existing miner deposits its cargo and stops harvesting.
+- **B ï¿½ 7,000 U after a pause:** below 8,000, so mining resumes. It continues through 15,000 toward 25,000 rather than toggling around the low threshold.
+- **C ï¿½ 4,000 X plus a combat boost request:** X is already below its 15,000 low threshold. Missing X-based production increases its effective target; eligible X miners run. Inputs move to the reaction colony/hub when its concrete need exceeds its inventory, and the resulting boost moves to the requesting colony.
+- **D ï¿½ 25,000 stored Thorium plus 12,000 unmined:** safe owned RCL6 extraction continues within existing operational limits. Stored quantity does not pause mining; a temporary container-pressure stop resumes after dedicated hauling drains the container.
+- **E ï¿½ 250 staging, 5/tick, ETA 60:** forecast is `250 + 5 * 60 = 550`. Request reserve hauling now; the forecast exceeds both the desired staging stock and urgent threshold.
+- **F ï¿½ Reactor stolen:** a visible enemy Reactor is never a delivery target. Carried Thorium goes to safe owned Storage. Dedicated reserve hauling can continue to drain safe staging while the existing Reactor strategy reevaluates ownership.
 
 ## Validation
 

@@ -1,3 +1,7 @@
+> Historical engineering record. Season 11 runtime was retired on November 5, 2026.
+> Seasonal commands and results below describe the earlier implementation.
+> Current operation: [SUSHI-OPERATIONS.md](SUSHI-OPERATIONS.md).
+
 # Season 11 recapture and startup hardening
 
 Restoration note: the subsequent population-capacity preflight found clean main

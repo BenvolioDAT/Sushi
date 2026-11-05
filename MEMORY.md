@@ -69,7 +69,8 @@ Memory
 ├── meta
 │   ├── schemaVersion
 │   ├── migratedAt
-│   └── lastMigration
+│   ├── lastMigration
+│   └── season11Retired, season11Retirement
 ├── config
 │   ├── general
 │   ├── cpu
@@ -80,14 +81,17 @@ Memory
 │   ├── upgrade
 │   ├── combat
 │   ├── resources
-│   ├── season11
+│   ├── diagnostics
+│   ├── power
 │   ├── visuals
 │   └── pixels
 ├── hive
 │   ├── homeRooms                  inspector mirror synchronized from TickIndex
 │   ├── operations, squads, players, threats, demands, counters
-│   ├── resources, season, expansion, warRoom
+│   ├── resources, power, expansion, warRoom
+│   ├── segmentOwners              reserved diagnostic segment registry
 │   ├── telemetry
+│   │   └── blackbox              bounded fallback, ids, segment flush metadata
 │   ├── gc                         last bounded collector report
 │   └── identity
 ├── cpu
@@ -111,6 +115,10 @@ Memory
 
 Screeps conventional roots such as `spawns`, `flags`, and `powerCreeps` remain
 valid when the engine or user code needs them.
+
+The historical pre-v8 audit above intentionally retains old season paths.
+Current code retires them once; it preserves unknown fields in a legacy `hive.season`
+branch if present. See [SUSHI-OPERATIONS.md](SUSHI-OPERATIONS.md) for the recorder.
 
 ## Runtime truth versus persistence
 
