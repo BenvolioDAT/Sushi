@@ -86,7 +86,9 @@ function emit(input) {
     const state = beginTick();
     const incoming = plainDemand(input || {});
     if (!incoming.role && !incoming.capabilities) throw new Error('Spawn demand requires a role or capabilities');
-    const existing = state.demands.get(incoming.id);
+    // Persisted demand is a fallback between producer runs, not a permanent
+    // high-water mark. Only concurrent emissions in this tick are merged.
+    const existing = state.emitted.has(incoming.id) && state.demands.get(incoming.id);
     const merged = existing ? {
         ...existing,
         ...incoming,
@@ -136,7 +138,7 @@ function cancel(id) {
     return existed;
 }
 
-function assignmentCount(demand) {
+function assignmentCount(demand, includeQueued = true) {
     const seen = new Set();
     let count = 0;
     for (const creep of TickIndex.get().allCreeps) {
@@ -156,6 +158,7 @@ function assignmentCount(demand) {
         seen.add(name);
         count++;
     }
+    if (!includeQueued) return count;
     const rooms = Memory.rooms || {};
     for (const [roomName, roomMemory] of Object.entries(rooms)) {
         const queue = roomMemory && roomMemory.spawn && roomMemory.spawn.queue || [];
@@ -170,6 +173,39 @@ function assignmentCount(demand) {
         }
     }
     return count;
+}
+
+function reconcileQueued(demand) {
+    const active = assignmentCount(demand, false);
+    let remaining = Math.max(0, demand.count - active), kept = 0;
+    // Stable room/queue order retains earlier admitted work. Living and spawning
+    // assignments remain untouched, including expiring replacement handoffs.
+    for (const roomName of Object.keys(Memory.rooms || {}).sort()) {
+        const room = Memory.rooms[roomName];
+        const queue = room && room.spawn && room.spawn.queue;
+        if (!Array.isArray(queue)) continue;
+        for (let i = 0; i < queue.length; i++) {
+            const request = queue[i];
+            if (!request || !memoryMatches(demand, request.memory)) continue;
+            if (remaining <= 0) { queue.splice(i--, 1); continue; }
+            remaining--; kept++;
+            // Retained requests must also shed stale emergency exemptions.
+            request.priority = demand.priority + require('HiveMind.Surplus').requestBias(roomName, demand);
+            request.emergency = demand.emergency;
+            request.deadline = demand.deadline;
+            request.defenseRequest = demand.defenseRequest;
+            request.defendedRoom = demand.defendedRoom;
+            request.memory.defenseRequest = demand.defenseRequest || demand.memory.defenseRequest === true;
+            request.memory.defendedRoom = demand.defendedRoom || demand.memory.defendedRoom || null;
+            request.memory.emergencyDefense = demand.memory.emergencyDefense === true;
+            request.strategyEmergency = demand.strategyEmergency;
+            request.strategyMandatory = demand.strategyMandatory;
+            request.memory.strategyEmergency = demand.strategyEmergency;
+            request.memory.strategyMandatory = demand.strategyMandatory;
+            request.expiresAt = demand.validUntil;
+        }
+    }
+    return active + kept;
 }
 
 function roomSurvivalReady(room, demand) {
@@ -326,7 +362,7 @@ function flush() {
     cleanupQueues(activeIds);
     const report = { tick: Game.time, demands: {}, rooms: {} };
     for (const demand of demands) {
-        const assigned = assignmentCount(demand);
+        const assigned = reconcileQueued(demand);
         const missing = Math.max(0, demand.count - assigned);
         let room = null, queued = 0;
         if (missing > 0) for (const candidate of eligibleSpawnRooms(demand)) {

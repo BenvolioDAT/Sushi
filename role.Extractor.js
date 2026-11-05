@@ -76,6 +76,12 @@ var roleExtractor = {
             return;
         }
 
+        // Finish emergency delivery before seat correction can pull a loaded
+        // miner back to its source on the following tick. Start with a full load.
+        if (creep.store[RESOURCE_ENERGY] > 0 &&
+            (creep.store.getFreeCapacity(RESOURCE_ENERGY) === 0 || creep.memory.extractorState === 'bootstrapSelfDelivery') &&
+            isHomeRoomSource(creep, source) && deliverBootstrapEnergy(creep)) return;
+
         creep.memory.extractorState = isHomeRoomSource(creep, source) ?
             'miningLocalSource' :
             'miningRemoteSource';
@@ -127,12 +133,6 @@ var roleExtractor = {
 
         if(creep.store.getFreeCapacity(RESOURCE_ENERGY) > 0) {
             harvestSource(creep, source);
-            return;
-        }
-
-        /* During a total wipe the miner temporarily closes the source-to-spawn
-         * loop itself. This stops naturally as soon as local hauling returns. */
-        if (isHomeRoomSource(creep, source) && deliverBootstrapEnergy(creep)) {
             return;
         }
 

@@ -21,6 +21,34 @@ function oldTick(record) {
     return record && (record.updatedTick || record.lastIncidentTick || record.lastSeen || record.lastScanned || record.tick || 0) || 0;
 }
 
+// Regenerate from current Memory on every run. Only a scalar cursor survives:
+// Screeps may deserialize Memory again or reset globals between GC passes.
+function* records(hive) {
+    const domains = ['squads', 'operations', 'demands'];
+    for (let i = 0; i < domains.length; i++) {
+        const kind = domains[i];
+        for (const key of Object.keys(hive[kind] || {}).sort()) yield { kind, object: hive[kind], key, cursor: i + ':' + key };
+    }
+    for (const name of Object.keys(Memory.rooms || {}).sort()) {
+        const room = Memory.rooms[name];
+        const queue = room && room.spawn && room.spawn.queue;
+        if (!Array.isArray(queue)) continue;
+        for (let key = queue.length - 1; key >= 0; key--) yield { kind: 'queue', object: queue, key,
+            cursor: '3:' + name + ':' + String(0xffffffff - key).padStart(10, '0') };
+    }
+    for (const key of Object.keys(hive.players || {}).sort()) yield { kind: 'players', object: hive.players, key, cursor: '4:' + key };
+    const candidates = hive.expansion && hive.expansion.candidates || {};
+    for (const key of Object.keys(candidates).sort()) yield { kind: 'candidates', object: candidates, key, cursor: '5:' + key };
+    const resources = ['transfers', 'boosts', 'observers'];
+    for (let i = 0; i < resources.length; i++) {
+        const kind = resources[i];
+        const object = hive.resources && hive.resources[kind];
+        for (const key of Object.keys(object || {}).sort()) yield { kind: 'resources', object, key, cursor: (6 + i) + ':' + key };
+    }
+    const rooms = Memory.rooms || {};
+    for (const key of Object.keys(rooms).sort()) yield { kind: 'intel', object: rooms, key, cursor: '9:' + key };
+}
+
 function run(options = {}) {
     const hive = HiveMemory.ensure();
     const settings = HiveMemory.getConfig('memoryGC');
@@ -29,74 +57,59 @@ function run(options = {}) {
     const budget = Math.max(1, settings.workBudget || 25);
     let work = 0;
     let removed = 0;
-    let stale = 0;
-    function sweep(object, predicate) {
-        if (!object) return;
-        for (const key of Object.keys(object).sort()) {
-            if (work >= budget) break;
-            work++;
-            if (predicate(object[key], key)) { delete object[key]; removed++; }
-            else if (predicate.stale && predicate.stale(object[key], key)) stale++;
-        }
-    }
-    sweep(hive.squads, squad => squad && TERMINAL.has(squad.state) &&
-        Game.time - (squad.completedTick || squad.abortedTick || oldTick(squad)) > settings.squadRetention);
-    sweep(hive.operations, operation => operation && TERMINAL.has(operation.state) &&
-        Game.time - (operation.completedTick || operation.abortedTick || oldTick(operation)) > settings.operationRetention);
-    sweep(hive.demands, demand => !demand || demand.validUntil < Game.time ||
-        demand.operationId && hive.operations[demand.operationId] && TERMINAL.has(hive.operations[demand.operationId].state));
-    for (const room of Object.values(Memory.rooms || {})) {
-        if (work >= budget) break;
-        const queue = room && room.spawn && room.spawn.queue;
-        if (!Array.isArray(queue)) continue;
-        for (let i = queue.length - 1; i >= 0 && work < budget; i--) {
-            work++;
-            if (!queue[i] || queue[i].expiresAt && queue[i].expiresAt < Game.time) { queue.splice(i, 1); removed++; }
-        }
-    }
-    sweep(hive.players, player => player && player.manual !== true &&
-        (player.incidentScore || 0) <= 0 && Game.time - oldTick(player) > settings.playerRetention);
-    const expansion = hive.expansion || {};
-    const candidates = expansion.candidates || {};
-    for (const [name, candidate] of Object.entries(candidates).sort()) {
-        if (work >= budget) break;
-        if (name === expansion.targetRoom) continue;
+    let protectedSet = null;
+    if (!hive.gc || typeof hive.gc !== 'object') hive.gc = {};
+    const gc = hive.gc;
+    const after = gc.lastReport && gc.lastReport.tick > Game.time ? null : gc.cursor;
+    const iterator = records(hive);
+    let pending = true;
+    while (work < budget) {
+        const next = iterator.next();
+        if (next.done) { gc.cursor = null; pending = false; break; }
+        if (typeof after === 'string' && next.value.cursor <= after) continue;
+        const { kind, object, key } = next.value;
+        gc.cursor = next.value.cursor;
+        const record = object[key];
         work++;
-        const routes = candidate && candidate.routes || {};
-        const freshest = Object.values(routes).reduce((tick, route) => Math.max(tick, route && route.lastChecked || 0), 0);
-        if (freshest && Game.time - freshest > settings.expansionRetention) {
-            delete candidates[name];
+        let discard = false;
+        if (kind === 'squads' || kind === 'operations') {
+            const retention = kind === 'squads' ? settings.squadRetention : settings.operationRetention;
+            discard = record && TERMINAL.has(record.state) &&
+                Game.time - (record.completedTick || record.abortedTick || oldTick(record)) > retention;
+        } else if (kind === 'demands') {
+            const operation = record && record.operationId && hive.operations[record.operationId];
+            discard = !record || record.validUntil < Game.time || operation && TERMINAL.has(operation.state);
+        } else if (kind === 'queue') {
+            discard = !record || record.expiresAt && record.expiresAt < Game.time;
+        } else if (kind === 'players') {
+            discard = record && record.manual !== true && (record.incidentScore || 0) <= 0 &&
+                Game.time - oldTick(record) > settings.playerRetention;
+        } else if (kind === 'candidates') {
+            const freshest = Object.values(record && record.routes || {}).reduce((tick, route) =>
+                Math.max(tick, route && route.lastChecked || 0), 0);
+            discard = key !== (hive.expansion || {}).targetRoom && freshest > 0 &&
+                Game.time - freshest > settings.expansionRetention;
+        } else if (kind === 'resources') {
+            discard = record && record.active !== true && Game.time - oldTick(record) > settings.debugRetention;
+        } else if (kind === 'intel') {
+            // Protection is evaluated at execution, since an operation may have
+            // acquired a target while this sweep was suspended between runs.
+            if (!protectedSet) protectedSet = protectedRooms(hive);
+            if (protectedSet.has(key) || !record || record.identity && record.identity.type !== 'INTEL') continue;
+            const age = Game.time - (record.lastScanned || record.scoutIntel && oldTick(record.scoutIntel) || 0);
+            if (age <= settings.intelRetention) continue;
+            for (const field of ['scoutIntel', 'controller', 'sources', 'Mineral', 'defenseSummary']) {
+                if (record[field] !== undefined) { delete record[field]; removed++; }
+            }
+            if (record.cache && record.cache.economyDistances) { delete record.cache.economyDistances; removed++; }
+        }
+        if (discard) {
+            if (kind === 'queue') object.splice(key, 1);
+            else delete object[key];
             removed++;
         }
     }
-    const resources = hive.resources || {};
-    for (const domain of ['transfers', 'boosts', 'observers']) {
-        const records = resources[domain];
-        if (!records || typeof records !== 'object') continue;
-        for (const key of Object.keys(records).sort()) {
-            if (work >= budget) break;
-            work++;
-            const record = records[key];
-            if (record && record.active !== true && Game.time - oldTick(record) > settings.debugRetention) {
-                delete records[key];
-                removed++;
-            }
-        }
-    }
-    const protectedSet = protectedRooms(hive);
-    for (const [name, room] of Object.entries(Memory.rooms || {}).sort()) {
-        if (work >= budget) break;
-        if (protectedSet.has(name) || !room || room.identity && room.identity.type !== 'INTEL') continue;
-        work++;
-        const age = Game.time - (room.lastScanned || room.scoutIntel && oldTick(room.scoutIntel) || 0);
-        if (age <= settings.intelRetention) continue;
-        for (const key of ['scoutIntel', 'controller', 'sources', 'Mineral', 'defenseSummary']) {
-            if (room[key] !== undefined) { delete room[key]; removed++; }
-        }
-        if (room.cache && room.cache.economyDistances) { delete room.cache.economyDistances; removed++; }
-    }
-    if (!hive.gc || typeof hive.gc !== 'object') hive.gc = {};
-    hive.gc.lastReport = { tick: Game.time, work, removed, stale: Math.max(stale, removed) };
+    hive.gc.lastReport = { tick: Game.time, work, removed, stale: removed, sweepPending: pending };
     return hive.gc.lastReport;
 }
 

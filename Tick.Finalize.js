@@ -47,8 +47,12 @@ function buildTrafficCostMatrix(room, index = TickIndex.get()) {
     const costs = new PathFinder.CostMatrix();
     for (const structure of structures) {
         if (structure.structureType === STRUCTURE_ROAD) costs.set(structure.pos.x, structure.pos.y, 1);
-        else if (structure.structureType === STRUCTURE_CONTAINER) costs.set(structure.pos.x, structure.pos.y, 5);
-        else if (isTrafficBlockedStructure(structure)) costs.set(structure.pos.x, structure.pos.y, 255);
+        else if (structure.structureType === STRUCTURE_CONTAINER && costs.get(structure.pos.x, structure.pos.y) !== 1)
+            costs.set(structure.pos.x, structure.pos.y, 5);
+    }
+    // Impassable overlays always win, regardless of room.find ordering.
+    for (const structure of structures) {
+        if (isTrafficBlockedStructure(structure)) costs.set(structure.pos.x, structure.pos.y, 255);
     }
     for (const site of sites) {
         if (![STRUCTURE_ROAD, STRUCTURE_CONTAINER, STRUCTURE_RAMPART].includes(site.structureType)) {

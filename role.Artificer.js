@@ -237,7 +237,9 @@ function getSpendingPolicy(creep, homeRoomName) {
 function tryRepairWork(creep, criticalOnly) {
     if(!hasRepairWork(creep.room, criticalOnly)) return false;
     if(!claimRepairWorkerSlot(creep)) return false;
-    return repairClaimedTarget(creep, criticalOnly);
+    if(repairClaimedTarget(creep, criticalOnly)) return true;
+    delete Memory.rooms[creep.room.name][REPAIR_WORKERS_MEMORY_KEY][creep.name];
+    return false;
 }
 
 function setupRepairMemory(room) {
@@ -428,7 +430,7 @@ function getRememberedRepairTarget(creep) {
 
     var target = Game.getObjectById(creep.memory.repairTargetId);
 
-    if(!target || !structureNeedsRepair(target)) {
+    if(!target || !structureNeedsRepair(target) || getCachedConstructionReachability(creep, target) === false) {
         releaseRepairTarget(creep);
         return null;
     }
@@ -483,6 +485,7 @@ function claimNewRepairTarget(creep, criticalOnly) {
         if(!repairClassMatches(target, criticalOnly)) {
             continue;
         }
+        if(getCachedConstructionReachability(creep, target) === false) continue;
 
         /*
          * If another Artificer already claimed this target, skip it.
@@ -567,14 +570,21 @@ function repairTarget(creep, target) {
     var result = creep.repair(target);
 
     if(result === ERR_NOT_IN_RANGE) {
-        utilityTravelCreep.move(creep, target, {
+        var moveResult = utilityTravelCreep.move(creep, target, {
+            range: 3,
             visualizePathStyle: {
                 stroke: '#ffaa00'
             }
         });
+        if(moveResult !== ERR_NO_PATH && moveResult !== ERR_NOT_FOUND &&
+            moveResult !== ERR_INVALID_TARGET && moveResult !== ERR_INVALID_ARGS) return true;
+        result = moveResult;
     }
-
-    return true;
+    if(result === OK) return true;
+    cacheConstructionReachability(creep, target, false);
+    creep.memory.artificerRepairFailure = { targetId: target.id, result: result, tick: Game.time };
+    releaseRepairTarget(creep);
+    return false;
 }
 
 function collectEnergyForArtificer(creep) {

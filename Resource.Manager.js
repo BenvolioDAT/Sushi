@@ -80,7 +80,10 @@ function getJobForCreep(creep) {
 }
 
 function clearJob(creep) {
-    if (creep && creep.memory) delete creep.memory.resourceJobId;
+    if (creep && creep.memory) {
+        delete creep.memory.resourceJobId;
+        delete creep.memory.resourceDelivery;
+    }
 }
 
 function hasRequirements(requirements) {

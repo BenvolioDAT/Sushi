@@ -190,6 +190,7 @@ test('invalid planned coordinates are rejected consistently', () => {
 });
 test('traffic preserves station but accepts explicit emergency movement', () => {
     const f = setup(); f.addSite(); f.tick();
+    f.creep.body.push({ type: MOVE, hits: 100 });
     const traffic = require('traffic_manager');
     assert.deepStrictEqual(traffic.getPossibleMoves(f.creep), []);
     delete f.creep._cachedMoveOptions;

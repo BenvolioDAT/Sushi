@@ -9,9 +9,11 @@ function updateRepairStructureMemory(room) {
     if (!room) return;
     if (!Memory.rooms) Memory.rooms = {};
     if (!Memory.rooms[room.name]) Memory.rooms[room.name] = {};
-    const ids = room.find(FIND_STRUCTURES, {
-        filter: structure => structure.hits < structure.hitsMax
-    }).map(structure => structure.id);
+    const ids = [];
+    const byType = TickIndex.get().structuresByRoom.get(room.name);
+    if (byType) for (const structures of byType.values()) {
+        for (const structure of structures) if (structure.hits < structure.hitsMax) ids.push(structure.id);
+    }
     const previous = Memory.rooms[room.name].RepairStructure;
     if (!previous || previous.length !== ids.length || previous.some((id, index) => id !== ids[index])) {
         Memory.rooms[room.name].RepairStructure = ids;

@@ -423,10 +423,11 @@ function buildRouteCostMatrix(roomName) {
         }
 
         if (structure.structureType === STRUCTURE_CONTAINER) {
-            costs.set(structure.pos.x, structure.pos.y, 5);
+            if (costs.get(structure.pos.x, structure.pos.y) !== 1) costs.set(structure.pos.x, structure.pos.y, 5);
             continue;
         }
-
+    }
+    for (var structure of structures) {
         if (isBlockingStructure(structure)) {
             costs.set(structure.pos.x, structure.pos.y, 255);
         }
@@ -810,7 +811,7 @@ function trySharedRoute(creep, target, targetPosition, moveOptions) {
         return null;
     }
 
-    var range = moveOptions.range || 1;
+    var range = moveOptions.range === undefined ? 1 : moveOptions.range;
     var activeRouteMemory = creep.memory._sushiRoute;
     var cache = getRoomRouteCache(creep.pos.roomName);
     var routeKey;

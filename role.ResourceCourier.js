@@ -9,8 +9,7 @@ function resourceKeys(store) {
 }
 
 function fallbackDeposit(creep, resourceType) {
-    return [creep.room.storage].find(structure => structure && structure.store &&
-        structure.store.getFreeCapacity(resourceType) > 0) || null;
+    return ownedFallbackDeposit(creep, resourceType);
 }
 
 function ownedFallbackDeposit(creep, resourceType) {
@@ -78,18 +77,27 @@ function run(creep) {
         return;
     }
     const carriedTypes = resourceKeys(creep.store);
-    const job = ResourceManager.getJobForCreep(creep);
+    if (!carriedTypes.length) delete creep.memory.resourceDelivery;
+    // The source may now be empty, so the heap board need not emit the pickup
+    // job again. Keep the delivery leg independently until cargo is discharged.
+    const delivery = creep.memory.resourceDelivery;
+    const job = delivery ? null : ResourceManager.getJobForCreep(creep);
     if (carriedTypes.length) {
         const resourceType = carriedTypes[0];
-        const target = job && job.resourceType === resourceType && Game.getObjectById(job.targetId) ||
-            fallbackDeposit(creep, resourceType);
+        const assignedId = delivery && delivery.resourceType === resourceType ? delivery.targetId :
+            job && job.resourceType === resourceType && job.targetId;
+        const assigned = assignedId && Game.getObjectById(assignedId);
+        const valid = assigned && assigned.my !== false && assigned.store && assigned.pos &&
+            assigned.pos.roomName === creep.room.name && assigned.store.getFreeCapacity(resourceType) > 0;
+        if (!valid) ResourceManager.clearJob(creep);
+        const target = valid ? assigned : fallbackDeposit(creep, resourceType);
         if (!target) {
             creep.memory.resourceCourierState = 'waitingForDeposit';
             return;
         }
         const result = moveOrAct(creep, target, () => creep.transfer(target, resourceType));
         creep.memory.resourceCourierState = 'delivering';
-        if (result === OK) ResourceManager.clearJob(creep);
+        if (result !== ERR_NOT_IN_RANGE) ResourceManager.clearJob(creep);
         return;
     }
     if (!job) {
@@ -104,6 +112,7 @@ function run(creep) {
     const result = moveOrAct(creep, source, () => creep.withdraw(source, job.resourceType,
         Math.min(job.amount, creep.store.getFreeCapacity(job.resourceType))));
     creep.memory.resourceCourierState = 'collecting';
+    if (result === OK) creep.memory.resourceDelivery = { targetId: job.targetId, resourceType: job.resourceType };
     if (result !== OK && result !== ERR_NOT_IN_RANGE) ResourceManager.clearJob(creep);
 }
 

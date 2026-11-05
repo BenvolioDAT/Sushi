@@ -480,8 +480,9 @@ class Traveler {
          * Structure matrices are cached by room name so repeated movement calls
          * in the same tick do not rebuild the same costs over and over.
          */
-        if (!this.structureMatrixCache[room.name] || (freshMatrix && Game.time !== this.structureMatrixTick)) {
-            this.structureMatrixTick = Game.time;
+        if (!this.structureMatrixTicks) this.structureMatrixTicks = {};
+        if (!this.structureMatrixCache[room.name] || (freshMatrix && Game.time !== this.structureMatrixTicks[room.name])) {
+            this.structureMatrixTicks[room.name] = Game.time;
             let matrix = new PathFinder.CostMatrix();
             this.structureMatrixCache[room.name] = Traveler.addStructuresToMatrix(room, matrix, 1);
         }
@@ -493,8 +494,9 @@ class Traveler {
      * @returns {any}
      */
     static getCreepMatrix(room) {
-        if (!this.creepMatrixCache[room.name] || Game.time !== this.creepMatrixTick) {
-            this.creepMatrixTick = Game.time;
+        if (!this.creepMatrixTicks) this.creepMatrixTicks = {};
+        if (!this.creepMatrixCache[room.name] || Game.time !== this.creepMatrixTicks[room.name]) {
+            this.creepMatrixTicks[room.name] = Game.time;
             this.creepMatrixCache[room.name] = Traveler.addCreepsToMatrix(room, this.getStructureMatrix(room, true).clone());
         }
         return this.creepMatrixCache[room.name];

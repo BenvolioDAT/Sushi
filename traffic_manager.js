@@ -238,7 +238,12 @@ function isLegalAlternate(creep, coord, costs, threshold) {
 
 function getPossibleMoves(creep, costs, threshold = 255) {
     if (creep._cachedMoveOptions) return creep._cachedMoveOptions;
-    if (creep.fatigue > 0) return (creep._cachedMoveOptions = []);
+    // The resolver issues directional moves, including for displaced actors.
+    // A spawning or MOVE-less actor cannot vacate its tile for a movement chain.
+    if (creep.spawning || creep.fatigue > 0 || Array.isArray(creep.body) &&
+        !creep.body.some(part => (part.type || part) === MOVE && part.hits !== 0)) {
+        return (creep._cachedMoveOptions = []);
+    }
 
     const intent = creep._trafficIntent;
     if (intent) {
@@ -249,7 +254,12 @@ function getPossibleMoves(creep, costs, threshold = 255) {
         const packed = [intent.packedTarget].concat(intent.fallbackPacked || [], sides.map(packCoordinates));
         const unique = Array.from(new Set(packed)).map(unpackCoordinates);
         return (creep._cachedMoveOptions = unique.filter((coord, index) => {
-            return index === 0 || isLegalAlternate(creep, coord, costs, threshold);
+            if (index !== 0) return isLegalAlternate(creep, coord, costs, threshold);
+            if (Math.max(Math.abs(coord.x - creep.pos.x), Math.abs(coord.y - creep.pos.y)) !== 1) return false;
+            // Keep explicit outward border steps; sidesteps must stay inside.
+            if (coord.x < 0 || coord.x > 49 || coord.y < 0 || coord.y > 49) return true;
+            return Game.map.getRoomTerrain(creep.room.name).get(coord.x, coord.y) !== TERRAIN_MASK_WALL &&
+                (!costs || costs.get(coord.x, coord.y) < 255);
         }));
     }
 
@@ -373,6 +383,13 @@ function run(room, costs, threshold = 255, options = {}) {
         const result = changed ? creep.move(creep.pos.getDirectionTo(matched.x, matched.y)) : null;
         if (changed && result === OK) {
             moved++;
+            if (!intent || creep._matchedPackedCoord !== intent.packedTarget) {
+                // Traveler consumes directions relative to the planned origin.
+                // A traffic sidestep/push changes that origin; replan next tick.
+                delete creep.memory._trav;
+                delete creep.memory._move;
+                delete creep.memory._sushiRoute;
+            }
             if (metadata) {
                 recordTraffic(metadata, creep._matchedPackedCoord === intent.packedTarget ? 'moves' : 'detours');
                 if (creep._matchedPackedCoord !== intent.packedTarget) recordTraffic(metadata, 'sidesteps');

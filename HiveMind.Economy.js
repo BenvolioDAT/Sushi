@@ -663,8 +663,8 @@ function buildSnapshot(room, previous) {
 
     const freighters = creeps.filter(creep => creep && creep.memory && creep.memory.role === 'Freighter' &&
         (!creep.memory.homeRoom || creep.memory.homeRoom === room.name));
-    const healthyFreighters = freighters.filter(creep => creep.ticksToLive === undefined ||
-        creep.ticksToLive > replacementLead(creep, 25));
+    const healthyFreighters = freighters.filter(creep => !creep.spawning &&
+        (creep.ticksToLive === undefined || creep.ticksToLive > replacementLead(creep, 25)));
     const activeCarry = healthyFreighters.reduce((sum, creep) => sum + activeParts(creep, CARRY), 0);
     const remoteCarry = healthyFreighters.filter(isRemoteFreighter)
         .reduce((sum, creep) => sum + activeParts(creep, CARRY), 0);
@@ -1098,7 +1098,7 @@ function canSpawnRequest(room, request) {
 function shouldBootstrapSelfDeliver(roomOrName) {
     const snapshot = get(roomOrName);
     return !!snapshot && snapshot.state === STATES.SURVIVAL &&
-        (!snapshot.haul || snapshot.haul.localCarry + snapshot.haul.queuedCarry < 1);
+        (!snapshot.haul || snapshot.haul.localCarry < 1);
 }
 
 module.exports = {

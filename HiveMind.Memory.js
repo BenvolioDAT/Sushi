@@ -2,7 +2,7 @@ const SCHEMA_VERSION = 8;
 
 const CONFIG_DEFAULTS = Object.freeze({
     general: { enabled: true, useTrafficManager: true },
-    cpu: { telemetry: { persistInterval: 100, debug: false } },
+    cpu: { telemetry: { persistInterval: 100, debug: false, errorLogInterval: 100 } },
     capacity: { interval: 5, absoluteMaximum: 150, spawnTarget: 0.75, queueHorizon: 300,
         cpuCritical: 0.55, cpuLow: 0.65, cpuHealthy: 0.78, cpuFull: 0.83 },
     spawn: {
