@@ -100,6 +100,7 @@ function abort(id, reason = 'Manual abort') {
 
 function rescore(operation, breakdown) {
     operation.utility = Utility.score(breakdown || operation.utility && operation.utility.components || {});
+    operation.utilityUpdatedTick = Game.time;
     operation.updatedTick = Game.time;
     return operation.utility;
 }
@@ -242,7 +243,8 @@ function runOperation(operation, budgets) {
 
 function emitDemands() {
     for (const operation of Object.values(HiveMemory.ensure().operations)) {
-        if (!operation || TERMINAL_STATES.has(operation.state) || operation.strategyDecision !== 'allow') continue;
+        if (!operation || TERMINAL_STATES.has(operation.state) || operation.strategyDecision !== 'allow' ||
+            operation.strategyTick !== Game.time) continue;
         for (const specification of operation.spawnDemands || []) {
             const demand = DemandBoard.emit({
                 ...specification,
@@ -275,8 +277,8 @@ function run(ranked) {
         .sort((a, b) => (b.utility && b.utility.total || 0) - (a.utility && a.utility.total || 0) ||
             b.priority - a.priority || a.id.localeCompare(b.id));
     const budgets = {
-        empireLimit: Math.max(0, settings.maxActiveNonEmergency || 3),
-        colonyLimit: Math.max(0, settings.maxActivePerColony || 2),
+        empireLimit: Number.isFinite(settings.maxActiveNonEmergency) ? Math.max(0, settings.maxActiveNonEmergency) : 3,
+        colonyLimit: Number.isFinite(settings.maxActivePerColony) ? Math.max(0, settings.maxActivePerColony) : 2,
         minimumUtility: Number.isFinite(settings.minimumUtility) ? settings.minimumUtility : -100,
         empireUsed: 0, byColony: {}
     };

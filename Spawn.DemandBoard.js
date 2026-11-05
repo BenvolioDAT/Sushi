@@ -82,6 +82,13 @@ function beginTick() {
 
 function strategyDemandAllowed(demand) { return require('Strategy.Provider').validateDemand(demand); }
 
+function operationDemandAllowed(demand) {
+    const operation = demand.operationId && HiveMemory.ensure().operations[demand.operationId];
+    if (!operation) return true; // Some producers use an assignment id without a generic operation.
+    if (['COMPLETE', 'ABORTED'].includes(operation.state)) return false;
+    return !operation.strategyDecision || operation.strategyDecision === 'allow' && operation.strategyTick === Game.time;
+}
+
 function emit(input) {
     const state = beginTick();
     const incoming = plainDemand(input || {});
@@ -353,7 +360,8 @@ function cleanupQueues(activeIds) {
 function flush() {
     const state = beginTick();
     const demands = Array.from(state.demands.values())
-        .filter(demand => demand.count > 0 && demand.validUntil >= Game.time && strategyDemandAllowed(demand))
+        .filter(demand => demand.count > 0 && demand.validUntil >= Game.time &&
+            strategyDemandAllowed(demand) && operationDemandAllowed(demand))
         .sort((a, b) => b.priority - a.priority ||
             (a.deadline || Infinity) - (b.deadline || Infinity) || a.id.localeCompare(b.id));
     const activeIds = new Set(demands.map(demand => demand.id));

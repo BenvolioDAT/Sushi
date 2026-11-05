@@ -14,8 +14,9 @@ function scoreOperations() {
     const settings = HiveMemory.getConfig('combat').strategy;
     const candidates = Object.values(HiveMemory.ensure().operations)
         .filter(operation => operation && operation.state !== 'COMPLETE' && operation.state !== 'ABORTED')
-        .sort((a, b) => String(a.id).localeCompare(String(b.id)))
-        .slice(0, settings.maxCandidates || 12);
+        .sort((a, b) => (a.utilityUpdatedTick ?? -1) - (b.utilityUpdatedTick ?? -1) ||
+            String(a.id).localeCompare(String(b.id)))
+        .slice(0, Number.isFinite(settings.maxCandidates) ? Math.max(0, Math.floor(settings.maxCandidates)) : 12);
     for (const operation of candidates) {
         const current = operation.utility && operation.utility.components || {};
         Operations.rescore(operation, {
