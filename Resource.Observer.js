@@ -1,5 +1,4 @@
 const HiveMemory = require('HiveMind.Memory');
-const Season11 = require('Logic.Season11');
 
 function stateFor(roomName) {
     const observers = HiveMemory.ensure().resources.observers;
@@ -22,13 +21,7 @@ function buildQueue(origin, radius = 5) {
             queue.push({ roomName, range: current.range + 1 });
         }
     }
-    if (Season11.isObserving()) {
-        result.sort((a, b) => {
-            const aDistance = Game.map.getRoomLinearDistance(origin, a);
-            const bDistance = Game.map.getRoomLinearDistance(origin, b);
-            return aDistance - bDistance || Season11.scoutPriority(b) - Season11.scoutPriority(a) || a.localeCompare(b);
-        });
-    }
+
     return result;
 }
 
@@ -38,9 +31,6 @@ function priorityRooms(origin) {
     for (const threat of Object.values(hive.threats)) if (threat && threat.roomName) priorities.push(threat.roomName);
     const expansion = HiveMemory.ensure().expansion;
     if (expansion.targetRoom) priorities.push(expansion.targetRoom);
-    const seasonRooms = Season11.isObserving() && hive.season && hive.season.season11 &&
-        hive.season.season11.rooms || {};
-    for (const roomName of Object.keys(seasonRooms)) priorities.push(roomName);
     return Array.from(new Set(priorities)).filter(roomName => roomName !== origin &&
         Game.map.getRoomLinearDistance(origin, roomName) <= 10).sort();
 }

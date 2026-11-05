@@ -3,6 +3,9 @@ const SCHEMA_VERSION = 8;
 const CONFIG_DEFAULTS = Object.freeze({
     general: { enabled: true, useTrafficManager: true },
     cpu: { telemetry: { persistInterval: 100, debug: false, errorLogInterval: 100 } },
+    diagnostics: { mode: 'NORMAL', level: 'INFO', maxEvents: 1000, maxChars: 90000,
+        useSegments: true, segment: 98, snapshotInterval: 100, flushInterval: 25,
+        fallbackEvents: 64, fallbackChars: 16000, retentionTicks: 50000, duplicateWindow: 50 },
     capacity: { interval: 5, absoluteMaximum: 150, spawnTarget: 0.75, queueHorizon: 300,
         cpuCritical: 0.55, cpuLow: 0.65, cpuHealthy: 0.78, cpuFull: 0.83 },
     spawn: {
@@ -42,7 +45,6 @@ const CONFIG_DEFAULTS = Object.freeze({
         enabled: true, minerals: true, links: true,
         terminals: true, labs: true, observers: true, market: false, policy: {}
     },
-    season11: {},
     power: {
         enabled: true,
         processing: { enabled: true, energyPerPower: 50, targetPower: 25, targetEnergy: 2500 },
@@ -54,7 +56,7 @@ const CONFIG_DEFAULTS = Object.freeze({
         powerCreeps: { autoCreate: false, autoUpgrade: false, firstName: 'SushiOperator', renewBelow: 1000 }
     },
     visuals: {
-        showDashboard: true, showRemoteRoomDashboard: true,
+        showDashboard: true, dashboardMode: 'NORMAL', showRemoteRoomDashboard: true,
         dashboardShowRoleCounts: false, showStructurePlanner: false,
         showRoadPlanner: false, visualInterval: 1
     },
@@ -116,10 +118,6 @@ function ensureNewSchema() {
     }
     const resources = ensureObject(hive, 'resources');
     for (const key of ['rooms', 'labs', 'transfers', 'boosts', 'observers']) ensureObject(resources, key);
-    const season = ensureObject(hive, 'season');
-    if (!Array.isArray(season.activeOperationIds)) season.activeOperationIds = [];
-    if (!Array.isArray(season.deliveryEvents)) season.deliveryEvents = [];
-    ensureObject(season, 'stats');
     const power = ensureObject(hive, 'power');
     for (const key of ['banks', 'operations', 'stats', 'lifecycle']) ensureObject(power, key);
     for (const key of ['expansion', 'warRoom', 'telemetry', 'identity']) ensureObject(hive, key);
@@ -298,6 +296,7 @@ function migrate() {
     cachedSchema = null;
     const schema = ensureNewSchema();
     if (!schema.meta.schemaVersion || schema.meta.schemaVersion < SCHEMA_VERSION) schema.meta.schemaVersion = SCHEMA_VERSION;
+    require('Season.Retirement').run();
     return schema.hive;
 }
 
@@ -369,9 +368,6 @@ function getRoomEconomyMemory(roomName) {
     return ensureObject(getRoomMemory(roomName), 'economy');
 }
 
-function getSeasonState() {
-    return ensureObject(ensureObject(ensure(), 'season'), 'season11');
-}
 
 function remoteParents() {
     const parents = {};
@@ -448,6 +444,6 @@ function installConsoleHelpers() {
 
 module.exports = {
     ensure, migrate, getConfig, getRoomMemory, getRoomSpawnMemory,
-    getRoomEconomyMemory, getSeasonState, syncHomeRooms, memoryMap,
+    getRoomEconomyMemory, syncHomeRooms, memoryMap,
     installConsoleHelpers, mergeMissing, SCHEMA_VERSION
 };

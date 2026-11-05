@@ -42,7 +42,6 @@ function defaultPriority(creep) {
     if (['Ronin', 'Volley', 'Cleric'].includes(memory.role)) return 70;
     if (memory.role === 'Extractor' && (memory.homeRoom || memory.sourceId || memory.targetSourceId)) return 70;
     if (memory.role === 'Freighter') return 50;
-    if (['ThoriumMiner', 'ThoriumHauler', 'ReactorClaimer'].includes(memory.role) || memory.season11Maintenance) return 50;
     if (memory.role === 'Annex') return 40;
     if (memory.role === 'Artificer' && memory.remoteWorkRoomName) return 35;
     if (!memory.assignment && !memory.targetRoom && !memory.remoteWorkRoomName &&

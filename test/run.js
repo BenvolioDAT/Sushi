@@ -95,9 +95,8 @@ function testExportCompatibility() {
     assertExports('CPU.Status.js', ['getCpuStatus', 'chooseMode']);
     assertExports('Planner.Brain.js', ['run', 'runRoom', 'planRoom', 'buildSites', 'resetRoom', 'packCoord', 'unpackCoord']);
     assertExports('Logic.Expansion.js', ['run', 'ensureExpansionMemory', 'chooseExpansionTarget', 'chooseSpawnSitePosition']);
-    assertExports('Logic.Season11.js', ['run', 'plan', 'observeRoom', 'ensureMemory', 'isApiAvailable', 'rankMiningTargets', 'rankReactors', 'getDiagnostics']);
     assertExports('spawn.manager.js', ['getBodyCost', 'getSpawnQueue', 'countAliveRole', 'countQueuedRole', 'requestRoleCount', 'findIdleSpawn', 'runRoom']);
-    assertExports('spawn.request.manager.js', ['run', 'runForRoom', 'runRoom', 'getOwnedSpawnRooms', 'requestRoleForRoom', 'requestTechWorkForRoom', 'getTechWorkDemand', 'getSourceMiningDemand', 'getFreighterCarryDemand', 'getDesiredTechWork', 'getCpuStatus', 'getReplacementLeadTicks', 'requestDynamicExtractorsForRoom', 'requestDynamicFreightersForRoom', 'requestRemoteExtractorsForRoom', 'requestAnnexForRoom', 'requestSeason11RolesForRoom']);
+    assertExports('spawn.request.manager.js', ['run', 'runForRoom', 'runRoom', 'getOwnedSpawnRooms', 'requestRoleForRoom', 'requestTechWorkForRoom', 'getTechWorkDemand', 'getSourceMiningDemand', 'getFreighterCarryDemand', 'getDesiredTechWork', 'getCpuStatus', 'getReplacementLeadTicks', 'requestDynamicExtractorsForRoom', 'requestDynamicFreightersForRoom', 'requestRemoteExtractorsForRoom', 'requestAnnexForRoom', 'requestStrategyRolesForRoom']);
     assertExports('utility.Travel.Creep.js', ['move', 'moveToRoom', 'moveDirection', 'requestMove', 'cleanupRouteCaches']);
     assertExports('Tick.Bootstrap.js', ['run', 'ensureSettings', 'maybeGeneratePixel', 'getPixelStatus']);
     assertExports('Tick.Planning.js', ['refreshIntelAndThreats', 'runStrategy', 'generateSpawnRequests', 'runSpawning']);
@@ -123,8 +122,6 @@ function testExportCompatibility() {
     assertExports('Squad.Controller.js', ['createDuo', 'createQuad', 'get', 'transition', 'abort', 'plan', 'execute', 'runSquad', 'emitDemands']);
     assertExports('Squad.Quad.js', ['create', 'get', 'transition', 'buildFormationCostMatrix', 'positionsFor', 'chooseTransform', 'runSquad', 'plan', 'abort']);
     assertExports('Combat.Operations.js', ['evaluate', 'run', 'createManual', 'setManualTarget', 'roomSnapshot']);
-    assertExports('Season11.Adapter.js', ['isAvailable', 'findReactors', 'claim', 'harvestThorium', 'snapshot', 'capabilities']);
-    assertExports('Season11.Operations.js', ['transition', 'utilityFor', 'agingMetrics', 'deliveryThroughput', 'noteDelivery', 'run', 'getDashboard']);
     assertExports('Resource.Minerals.js', ['observe', 'emitDemands', 'jobs', 'plan']);
     assertExports('Resource.Links.js', ['run', 'classify']);
     assertExports('Resource.Terminals.js', ['requestTransfer', 'planBalance', 'validate', 'run']);
@@ -141,15 +138,11 @@ function testRoleBodySpawnConsistency() {
     const roles = [
         'Foreman', 'Extractor', 'Tech', 'Freighter', 'Annex', 'Artificer',
         'Pioneer', 'SupplyRunner', 'Scout', 'Ronin', 'Volley', 'Cleric',
-        'ThoriumMiner', 'ThoriumHauler', 'ReactorClaimer',
         'MineralMiner', 'ResourceCourier'
     ];
     for (const role of roles) {
         assert(dispatched[role] && typeof dispatched[role].run === 'function', `missing dispatch for ${role}`);
-        if (role === 'ThoriumHauler') {
-            assert.strictEqual(typeof bodyConfig.getThoriumHaulerBodyForAvailableEnergy, 'function');
-        }
-        else if (role !== 'ThoriumMiner' && role !== 'ReactorClaimer') {
+        {
             assert.strictEqual(typeof bodyConfig[`get${role}Body`], 'function', `missing body configuration: ${role}`);
         }
     }

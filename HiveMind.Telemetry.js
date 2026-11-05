@@ -23,10 +23,11 @@ function startTick() {
 function measure(name, fn) {
     const telemetry = startTick();
     const before = getUsed();
-    const result = fn();
-    const used = Math.max(0, getUsed() - before);
-    telemetry.phases[name] = (telemetry.phases[name] || 0) + used;
-    return result;
+    try { return fn(); }
+    finally {
+        const used = Math.max(0, getUsed() - before);
+        telemetry.phases[name] = (telemetry.phases[name] || 0) + used;
+    }
 }
 
 function finish() {

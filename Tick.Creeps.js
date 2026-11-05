@@ -11,9 +11,6 @@ const roles = {
     Ronin: require('role.Ronin'),
     Volley: require('role.Volley'),
     Cleric: require('role.Cleric'),
-    ThoriumMiner: require('role.ThoriumMiner'),
-    ThoriumHauler: require('role.ThoriumHauler'),
-    ReactorClaimer: require('role.ReactorClaimer'),
     MineralMiner: require('role.MineralMiner'),
     ResourceCourier: require('role.ResourceCourier'),
     CoreBreaker: require('role.CoreBreaker'),
@@ -35,11 +32,12 @@ function recordRoleError(creep, error) {
         message: String(error && error.message || error).slice(0, 200), tick: Game.time,
         count: Math.min(1000000000, (previous && previous.count || 0) + 1),
         lastLogTick: log ? Game.time : previous.lastLogTick };
-    if (log) console.log(`[Sushi role error] ${role} ${creep.name}: ${String(error && error.stack || error).slice(0, 1800)}`);
+    require('Diagnostics').exception('ROLE_EXCEPTION', creep.room && creep.room.name, error, role);
+    try { if (log) console.log(`[Sushi role error] ${role} ${creep.name}: ${String(error && error.stack || error).slice(0, 1800)}`); } catch (loggingError) { /* Logging cannot stop other roles. */ }
 }
 
 function run() {
-    const sample = Game.time % 25 === 0 && Game.cpu && typeof Game.cpu.getUsed === 'function';
+    const sample = (Game.time % 25 === 0 || require('Diagnostics').config().mode === 'PROFILE') && Game.cpu && typeof Game.cpu.getUsed === 'function';
     const samples = {};
     const squadBefore = sample ? Game.cpu.getUsed() : 0;
     const squadControlled = SquadController.execute();

@@ -60,15 +60,12 @@ var roleArtificer = {
         }
 
         var homeRoomName = creep.memory.homeRoom || creep.room.name;
-        if (creep.room.name !== homeRoomName && !creep.memory.season11Maintenance && RemotePlanner.hasSeriousDanger(creep.room)) {
+        if (creep.room.name !== homeRoomName && RemotePlanner.hasSeriousDanger(creep.room)) {
             clearRemoteWorkTarget(creep);
             RemotePlanner.retreatRemoteCreep(creep, homeRoomName);
             return;
         }
-        if(creep.memory.season11Maintenance && !getSeason11OperationMaintenanceTarget(creep)) {
-            clearRemoteWorkTarget(creep);
-            clearSeason11MaintenanceAssignment(creep);
-        }
+
         var spend = getSpendingPolicy(creep, homeRoomName);
         getRememberedBuildTarget(creep, spend);
 
@@ -583,6 +580,8 @@ function repairTarget(creep, target) {
     if(result === OK) return true;
     cacheConstructionReachability(creep, target, false);
     creep.memory.artificerRepairFailure = { targetId: target.id, result: result, tick: Game.time };
+    require('Diagnostics').record('JOBS', 'WARN', 'JOB_TARGET_UNREACHABLE', creep.room.name,
+        { creep: creep.name, target: target.id, result: result });
     releaseRepairTarget(creep);
     return false;
 }
@@ -1109,7 +1108,6 @@ function findRemoteBootstrapTarget(creep) {
 }
 
 function remoteWorkRouteAvailable(creep, roomName, target) {
-    if (creep.memory.season11Maintenance) return true;
     var home = Memory.rooms[getHomeRoomName(creep)];
     var planner = home && home.remotePlanner;
     if (!planner || !planner.sourceInfos) return true;
@@ -1144,13 +1142,6 @@ function getRememberedRemoteWorkTarget(creep) {
 
     var roomName = creep.memory.remoteWorkRoomName;
 
-    if(creep.memory.season11Maintenance) {
-        var currentMaintenance = getSeason11OperationMaintenanceTarget(creep);
-        if(!currentMaintenance || currentMaintenance.id !== creep.memory.remoteWorkTargetId) {
-            clearRemoteWorkTarget(creep);
-            return null;
-        }
-    }
 
     var target = Game.getObjectById(creep.memory.remoteWorkTargetId);
 
@@ -1167,10 +1158,6 @@ function getRememberedRemoteWorkTarget(creep) {
         return null;
     }
 
-    if(creep.memory.season11Maintenance && !isSafeSeason11MaintenanceTarget(creep, target)) {
-        clearRemoteWorkTarget(creep);
-        return null;
-    }
 
     if(creep.memory.remoteWorkType === 'repairRemoteContainer' || creep.memory.remoteWorkType === 'repairRemoteRoad') {
         if(target.hits >= target.hitsMax) {
@@ -1203,7 +1190,7 @@ function travelToRememberedRemoteWorkPosition(creep) {
     if(creep.memory.remoteWorkX === undefined || creep.memory.remoteWorkY === undefined) {
         utilityTravelCreep.moveToRoom(creep, roomName, {
             range: 22,
-            allowHostile: creep.memory.season11Maintenance ? false : undefined,
+            allowHostile: undefined,
             visualizePathStyle: {stroke: '#ffffff'}
         });
         return true;
@@ -1211,7 +1198,7 @@ function travelToRememberedRemoteWorkPosition(creep) {
 
     utilityTravelCreep.move(creep, new RoomPosition(creep.memory.remoteWorkX, creep.memory.remoteWorkY, roomName), {
         range: 3,
-        allowHostile: creep.memory.season11Maintenance ? false : undefined,
+        allowHostile: undefined,
         visualizePathStyle: {
             stroke: '#ffffff'
         }
@@ -1224,18 +1211,6 @@ function findRemoteInfrastructureTarget(creep) {
         return null;
     }
 
-    if(creep.memory.season11Maintenance) {
-        var maintenance = getSeason11OperationMaintenanceTarget(creep);
-        var seasonTarget = maintenance && Game.getObjectById(maintenance.id);
-        if(seasonTarget && isSafeSeason11MaintenanceTarget(creep, seasonTarget)) {
-            creep.memory.season11RepairTargetId = maintenance.id;
-            creep.memory.season11SupportRoom = maintenance.roomName;
-            rememberRemoteWorkTarget(creep, seasonTarget, maintenance.workType);
-            return seasonTarget;
-        }
-        creep.memory.remoteWorkNextScan = Game.time + REMOTE_WORK_EMPTY_SCAN_COOLDOWN;
-        return null;
-    }
 
     var homeRoomName = getHomeRoomName(creep);
     var remoteRooms = getActiveRemoteRoomNames(homeRoomName);
@@ -1274,41 +1249,6 @@ function findRemoteInfrastructureTarget(creep) {
     return null;
 }
 
-function getSeason11OperationMaintenanceTarget(creep) {
-    var operation = creep.memory.operationId &&
-        HiveMemory.ensure().operations[creep.memory.operationId];
-    var lease = operation && operation.season11MaintenanceLease;
-    var target = operation && operation.season11MaintenanceTarget;
-    return operation && operation.season11 === true && target && lease &&
-        lease.creepName === creep.name && lease.targetId === target.id &&
-        lease.expiresTick >= Game.time ? target : null;
-}
-
-function isSafeSeason11MaintenanceTarget(creep, target) {
-    var roomName = creep.memory.season11SupportRoom;
-    if(!roomName || !target || !target.pos || target.pos.roomName !== roomName ||
-        target.my === false || !(target.hits < target.hitsMax) ||
-        target.structureType !== STRUCTURE_CONTAINER && target.structureType !== STRUCTURE_ROAD) return false;
-    var homeRoomName = getHomeRoomName(creep);
-    var homeRoom = Game.rooms && Game.rooms[homeRoomName];
-    if(!homeRoom || !homeRoom.controller || !homeRoom.controller.my) return false;
-    if(typeof FIND_HOSTILE_CREEPS !== 'undefined' && typeof homeRoom.find === 'function' &&
-        (homeRoom.find(FIND_HOSTILE_CREEPS) || []).length > 0) return false;
-    var room = Game.rooms && Game.rooms[roomName];
-    if(!room || !room.controller || !room.controller.my) return false;
-    if(typeof FIND_HOSTILE_CREEPS !== 'undefined' && typeof room.find === 'function' &&
-        (room.find(FIND_HOSTILE_CREEPS) || []).length > 0) return false;
-    return true;
-}
-
-function clearSeason11MaintenanceAssignment(creep) {
-    if(!creep.memory.season11Maintenance) return;
-    delete creep.memory.operationId;
-    delete creep.memory.demandId;
-    delete creep.memory.season11Maintenance;
-    delete creep.memory.season11SupportRoom;
-    delete creep.memory.season11RepairTargetId;
-}
 
 function rememberRemoteWorkTarget(creep, target, workType) {
     creep.memory.remoteWorkTargetId = target.id;
@@ -1480,7 +1420,7 @@ function remoteStructureNeedsRepair(structure) {
 }
 
 function doBuildOrRepairTarget(creep, target, workType) {
-    if (!creep.memory.season11Maintenance && target.pos.roomName !== creep.room.name &&
+    if (target.pos.roomName !== creep.room.name &&
         RemotePlanner.moveToRemoteRoomAlongRoute(creep, creep.memory.remoteWorkHomeRoom || getHomeRoomName(creep), target.pos.roomName)) return;
     var result;
 
@@ -1493,7 +1433,7 @@ function doBuildOrRepairTarget(creep, target, workType) {
     if(result === ERR_NOT_IN_RANGE) {
         utilityTravelCreep.move(creep, target, {
             range: 3,
-            allowHostile: creep.memory.season11Maintenance ? false : undefined,
+            allowHostile: undefined,
             visualizePathStyle: {stroke: '#ffffff'}
         });
     }

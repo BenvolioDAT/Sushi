@@ -200,45 +200,8 @@ test('storage pressure blocks mining without deleting or dropping stock', () => 
     const before = JSON.stringify(c.vault.store); assert.strictEqual(c.Policy.extraction(c.room, 'U').reason, 'PAUSED_STORAGE_PRESSURE');
     assert.strictEqual(JSON.stringify(c.vault.store), before); assert.strictEqual(c.Policy.capacity(c.room).reservedFree, 100000);
 });
-function season(c) {
-    global.RESOURCE_THORIUM = 'T'; global.FIND_REACTORS = 10051; Creep.prototype.claimReactor = () => OK;
-    const S = fresh('Logic.Season11.js'), memory = S.ensureMemory(); memory.mode = 'active';
-    const a = { key: 'mine:W1N1', roomName: 'W1N1', homeRoom: 'W1N1', remaining: 12000, ready: true, mineralId: c.node.id, stagingId: c.staging.id };
-    memory.assignments.mining.W1N1 = a;
-    return { S, memory, a, R: fresh('Season11.ResourcePolicy.js') };
-}
-test('finite Thorium ignores raw high water marks', () => {
-    const c = setup('T', 25000), s = season(c);
-    assert.strictEqual(s.R.assess(s.a, s.memory).reason, 'FINITE_RESOURCE'); assert.strictEqual(s.S.shouldPauseMining('W1N1'), false);
-});
-test('Thorium pauses for true SURVIVAL', () => {
-    const c = setup('T', 25000), s = season(c); Memory.rooms.W1N1.economy = { state: 'SURVIVAL' };
-    assert.strictEqual(s.R.assess(s.a, s.memory).reason, 'PAUSED_SURVIVAL');
-});
-test('generic mineral pipeline never owns Thorium', () => {
-    const c = setup('T', 0); season(c); const M = fresh('Resource.Minerals.js'), state = M.observe(c.room);
-    assert.strictEqual(state.mineral.active, false); assert.deepStrictEqual(M.emitDemands(c.room, state), []); assert.deepStrictEqual(M.jobs(c.room, state), []);
-});
-test('250 plus 5 per tick times 60 predicts 550 and dispatches now', () => {
-    const c = setup('T', 0), s = season(c);
-    assert.deepStrictEqual(s.R.prediction(250, 5, 60), { currentStaging: 250, miningRate: 5, haulerETA: 60, expectedAtArrival: 550, urgent: true });
-    c.staging.store.T = 250; s.a.observedHarvestRate = 5;
-    const plans = s.R.reservePlans(c.room, s.memory, () => ({ requestedCarryParts: 2, memory: {}, assignmentKey: 'haul:test' }), () => 0);
-    assert.strictEqual(plans.length, 1); assert.ok(plans[0].desired >= 1);
-});
-test('unowned Reactor diverts cargo to owned Storage', () => {
-    const c = setup('T', 0), s = season(c); let delivered = null;
-    const reactor = structure('enemy', 'reactor', 22, 20, {}, 1000); reactor.my = false;
-    installObjectLookup(c.structures.concat(c.node, reactor));
-    s.memory.reactors.enemy = { id: 'enemy', my: false, roomName: 'W1N1' };
-    const creep = { room: c.room, pos: pos(20, 20), memory: { role: 'ThoriumHauler', season11SourceRoom: 'W1N1', season11StagingId: c.staging.id, season11ReactorId: 'enemy' }, store: store({ T: 100 }), transfer(target) { delivered = target.id; return OK; } };
-    fresh('role.ThoriumHauler.js').run(creep); assert.strictEqual(delivered, c.vault.id);
-});
-test('missing Reactor and staging still preserve carried Thorium in Storage', () => {
-    const c = setup('T', 0); season(c); let delivered;
-    const creep = { room: c.room, pos: pos(20, 20), memory: { season11SourceRoom: 'W1N1' }, store: store({ T: 100 }), transfer(target) { delivered = target.id; return OK; } };
-    fresh('role.ThoriumHauler.js').run(creep); assert.strictEqual(delivered, c.vault.id);
-});
+
+
 test('terminals do not distribute raw minerals for symmetry', () => {
     const c = setup('U', 50000); second(c); c.terminal.store.U = 10000;
     fresh('Resource.Terminals.js').planBalance(); assert.deepStrictEqual(c.hive.resources.transfers, {});
@@ -288,12 +251,7 @@ test('snapshot caches inventory and excludes creep cargo; diagnostics serialize'
     assert.strictEqual(c.Policy.snapshot(), first); assert.strictEqual(first.resources.U.totalStored, 200);
     assert.doesNotThrow(() => JSON.stringify(first)); assert.strictEqual(refresh(c).resources.U.totalStored, 999);
 });
-test('Reactor runway subtracts observation age and protects established streaks', () => {
-    const c = setup('T'); const s = season(c);
-    const a = s.R.runway({ thorium: 844, lastSeen: Game.time - 10, continuousWork: 10000 }, 400, 400);
-    assert.strictEqual(a.supplyRunwayTicks, 834); assert.strictEqual(a.requiredRunwayTicks, 950);
-    assert.ok(a.emergencyPriority > s.R.runway({ thorium: 844, lastSeen: Game.time, continuousWork: 1 }, 400, 400).emergencyPriority);
-});
+
 
 test('Ghodium demand stops at 10k and reports missing chemistry inputs', () => {
     const c = setup('U', 0), hub = second(c, {}, true);
@@ -317,32 +275,8 @@ test('Storage consolidation has a concrete pressure trigger', () => {
     const transfer = Object.values(c.hive.resources.transfers)[0];
     assert.strictEqual(transfer.toRoom, receiver.name); assert.strictEqual(transfer.reason, 'Storage pressure consolidation');
 });
-test('finite Thorium in Storage never triggers the container pile cap', () => {
-    const c = setup('T', 25000), s = season(c); s.a.stagingId = c.vault.id;
-    assert.strictEqual(s.R.assess(s.a, s.memory).allowed, true);
-});
-test('startup reservations can move into Storage without delaying owned Reactor fuel', () => {
-    const c = setup('T', 0), s = season(c); c.staging.store.T = 450;
-    s.memory.reactors.new = { my: false }; s.memory.reactors.owned = { my: true };
-    s.memory.thoriumReservations = { tick: Game.time, stores: { stage: { total: 450, reactors: { new: 300, owned: 150 } } } };
-    let withdrawn = 0;
-    const creep = { room: c.room, pos: pos(11, 10), memory: { season11SourceRoom: 'W1N1', season11StagingId: 'stage', season11ReserveStorageId: 'storage' },
-        store: store({}, 500), withdraw(target, type, n) { withdrawn = n; return OK; } };
-    fresh('role.ThoriumHauler.js').run(creep); assert.strictEqual(withdrawn, 300);
-    assert.strictEqual(s.memory.thoriumReservations.stores.stage.reactors.owned, 150);
-    assert.strictEqual(s.memory.thoriumReservations.stores.stage.reactors.new, 0);
-});
-test('dedicated Reactor hauler withdraws reserved Storage fuel when staging is empty', () => {
-    const c = setup('T', 1000), s = season(c); let source = null;
-    const reactor = structure('reactor', 'reactor', 22, 20, { T: 100 }, 1000);
-    installObjectLookup(c.structures.concat(c.node, reactor));
-    s.memory.reactors.reactor = { my: true, roomName: c.room.name };
-    s.memory.thoriumReservations = { tick: Game.time, stores: { storage: { total: 1000, reactors: { reactor: 800 } } } };
-    const creep = { room: c.room, pos: pos(20, 20), memory: { season11SourceRoom: 'W1N1', season11StagingId: 'stage', season11ReactorId: 'reactor' },
-        store: store({}, 500), withdraw(target) { source = target.id; return OK; } };
-    fresh('role.ThoriumHauler.js').run(creep); assert.strictEqual(source, 'storage');
-    assert.strictEqual(s.memory.thoriumReservations.stores.storage.reactors.reactor, 300);
-});
+
+
 test('terminal pressure pauses extraction even with a healthy Storage', () => {
     const c = setup('U', 0); c.terminal.store.energy = 260000;
     assert.strictEqual(c.Policy.extraction(c.room, 'U').reason, 'PAUSED_STORAGE_PRESSURE');
@@ -369,18 +303,7 @@ test('otherwise equal expansion candidates prefer missing mineral diversity', ()
     assert.ok(m.candidates.W2N3.resourceStrategicValue >= 8 &&
         m.candidates.W2N3.resourceStrategicValue <= 25);
 });
-test('valid Thorium nomination outranks a missing X candidate', () => {
-    const c = setup('U', 0), s = season(c);
-    Game.spawns.Spawn1 = { my: true, room: c.room }; Game.map.getRoomLinearDistance = () => 2;
-    Game.map.findRoute = () => [{ room: 'W2N2' }];
-    Memory.rooms.W3N3 = { scoutIntel: { sourceCount: 2, mineralType: 'X' } };
-    Memory.rooms.W2N3 = { scoutIntel: { sourceCount: 2 } };
-    s.memory.rooms.W2N3 = { roomName: 'W2N3', lastSeen: Game.time, controllerOwner: null, controllerReservation: null,
-        hostileCreeps: 0, hostileStructures: 0, threatParts: 0, thorium: { id: 'finite', remaining: 50000, density: 3, depleted: false } };
-    const E = fresh('Logic.Expansion.js'), m = E.ensureExpansionMemory(); m.minRangeBetweenBases = 0;
-    const candidate = E.chooseExpansionTarget(m, [c.room]);
-    assert.strictEqual(candidate.roomName, 'W2N3'); assert.strictEqual(candidate.strategyProvider, 'SEASON11');
-});
+
 test('boost requested without local labs routes production inputs to a suitable hub', () => {
     const c = setup('X', 4000), hub = second(c, {}, true);
     fresh('Resource.Labs.js').requestBoost('s', c.room.name, { a: [{ compound: 'XUH2O', parts: 100 }] });

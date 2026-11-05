@@ -3,7 +3,7 @@ const DEFAULT_CAPABILITIES = Object.freeze({ market: true, externalTerminalTrans
 
 function providers() {
     /* Keep package discovery here so permanent modules never import a season directly. */
-    return [require('Season11.Strategy')];
+    return [];
 }
 
 function active() {

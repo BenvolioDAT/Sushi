@@ -9,7 +9,7 @@ const Terminals = require('Resource.Terminals');
 const Observers = require('Resource.Observer');
 const Strategy = require('Strategy.Provider');
 
-function isDedicatedThorium(resourceType) {
+function isStrategyResource(resourceType) {
     const special = Strategy.getSpecialResourcePolicy(resourceType);
     return !!(special && special.finite);
 }
@@ -39,7 +39,7 @@ function addJobs(jobs) {
     const board = jobBoard();
     for (const job of jobs || []) {
         if (!job || !job.id || !job.sourceId || !job.targetId || job.amount <= 0) continue;
-        if (isDedicatedThorium(job.resourceType)) continue;
+        if (isStrategyResource(job.resourceType)) continue;
         const existing = board.jobs.get(job.id);
         board.jobs.set(job.id, existing ? {
             ...existing, ...job,
@@ -69,13 +69,20 @@ function getJobForCreep(creep) {
     const board = jobBoard();
     const remembered = creep.memory.resourceJobId && board.jobs.get(creep.memory.resourceJobId);
     if (remembered && remembered.roomName === creep.room.name && Game.getObjectById(remembered.sourceId) &&
-        Game.getObjectById(remembered.targetId) && !isDedicatedThorium(remembered.resourceType)) return remembered;
+        Game.getObjectById(remembered.targetId) && !isStrategyResource(remembered.resourceType)) return remembered;
+    if (creep.memory.resourceJobId) require('Diagnostics').record('JOBS', 'WARN', 'JOB_ASSIGNMENT_INVALID',
+        creep.room.name, { creep: creep.name, job: creep.memory.resourceJobId });
     delete creep.memory.resourceJobId;
     const reservations = currentReservations();
-    const selected = jobsForRoom(creep.room.name).find(job => !isDedicatedThorium(job.resourceType) &&
+    const selected = jobsForRoom(creep.room.name).find(job => !isStrategyResource(job.resourceType) &&
         (reservations.get(job.id) || 0) === 0 &&
         Game.getObjectById(job.sourceId) && Game.getObjectById(job.targetId)) || null;
-    if (selected) creep.memory.resourceJobId = selected.id;
+    if (selected) {
+        creep.memory.resourceJobId = selected.id;
+        const D = require('Diagnostics');
+        if (['DEBUG', 'PROFILE'].includes(D.config().mode)) D.record('JOBS', 'INFO', 'JOB_ASSIGNED',
+            creep.room.name, { creep: creep.name, job: selected.id, source: selected.sourceId, target: selected.targetId });
+    }
     return selected;
 }
 
@@ -109,32 +116,8 @@ function needsCourier(roomName) {
     const lab = hive.resources.labs[roomName];
     const mineral = hive.resources.rooms[roomName] && hive.resources.rooms[roomName].mineral;
     return !!(lab && (lab.state !== 'IDLE' || lab.reactionGoal) ||
-        mineral && mineral.active && !isDedicatedThorium(mineral.mineralType) ||
+        mineral && mineral.active && !isStrategyResource(mineral.mineralType) ||
         jobsForRoom(roomName).length > 0);
-}
-
-function scrubGenericThoriumDemands() {
-    let removed = 0;
-    for (const demand of DemandBoard.getDemands()) {
-        if (!demand || !['MineralMiner', 'ResourceCourier'].includes(demand.role)) continue;
-        const memory = demand.memory || {};
-        const mineralRoom = demand.operationId && demand.operationId.indexOf('mineral:') === 0;
-        const roomName = demand.originRoom || demand.targetRoom;
-        const saved = roomName && HiveMemory.ensure().resources.rooms[roomName];
-        const savedMineral = saved && saved.mineral;
-        const genericMineralDemand = mineralRoom && (isDedicatedThorium(memory.mineralType) ||
-            savedMineral && isDedicatedThorium(savedMineral.mineralType));
-        const resourceOnlyCourier = demand.id === `resource:${roomName}:ResourceCourier` &&
-            savedMineral && isDedicatedThorium(savedMineral.mineralType) && !needsCourierWithoutMineral(roomName);
-        if (!isDedicatedThorium(memory.mineralType) && !genericMineralDemand && !resourceOnlyCourier) continue;
-        if (DemandBoard.cancel(demand.id)) removed++;
-    }
-    return removed;
-}
-
-function needsCourierWithoutMineral(roomName) {
-    const lab = HiveMemory.ensure().resources.labs[roomName];
-    return !!(lab && (lab.state !== 'IDLE' || lab.reactionGoal) || jobsForRoom(roomName).length > 0);
 }
 
 function emitCourierDemand(roomName) {
@@ -156,7 +139,6 @@ function emitCourierDemand(roomName) {
 
 function plan() {
     const settings = HiveMemory.getConfig('resources');
-    scrubGenericThoriumDemands();
     if (settings.enabled === false) return { enabled: false };
     syncBoostRequests();
     const policy = require('Resource.Policy').snapshot();
@@ -215,7 +197,20 @@ function runEmpireStructures() {
     return Terminals.run();
 }
 
-module.exports = {
+function jobDiagnostics() {
+    const couriers = (TickIndex.get().creepsByRole.get('ResourceCourier') || []).filter(c => !c.spawning);
+    return Array.from(jobBoard().jobs.values()).filter(job => job.amount > 0 &&
+        Game.getObjectById(job.sourceId) && Game.getObjectById(job.targetId)).slice(0, 128).map(job => {
+        const local = couriers.filter(c => c.room.name === job.roomName);
+        const assigned = local.find(c => c.memory.resourceJobId === job.id);
+        const idle = local.filter(c => !c.memory.resourceJobId && !c.memory.resourceDelivery &&
+            c.store && c.store.getUsedCapacity() === 0 && c.store.getFreeCapacity() > 0 &&
+            Economy.canSpend(c.memory.homeRoom || job.roomName, 'resources')).length;
+        return { id: job.id, room: job.roomName, assigned: assigned && assigned.name, idle };
+    });
+}
+
+module.exports = { jobDiagnostics,
     plan,
     runRoom,
     runEmpireStructures,
@@ -224,6 +219,5 @@ module.exports = {
     getJobForCreep,
     clearJob,
     syncBoostRequests,
-    emitCourierDemand,
-    scrubGenericThoriumDemands
+    emitCourierDemand
 };

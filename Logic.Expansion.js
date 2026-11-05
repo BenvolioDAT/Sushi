@@ -464,8 +464,6 @@ function runSelectTarget(expansion, ownedSpawnRooms) {
         nominatedAt: selected.nominatedAt
     } : null;
     /* Read-only compatibility mirror for old dashboard/console tooling. */
-    expansion.season11Nomination = expansion.strategyNomination &&
-        expansion.strategyNomination.provider === 'SEASON11' ? expansion.strategyNomination : null;
     expansion.state = 'claiming';
     expansion.blockReason = null;
 
@@ -627,7 +625,6 @@ function completeOnlineTarget(expansion) {
     expansion.claimedAt = null;
     expansion.blockReason = null;
     expansion.targetSource = null;
-    expansion.season11Nomination = null;
     expansion.strategyNomination = null;
 }
 
@@ -714,8 +711,7 @@ function chooseExpansionTarget(expansion, ownedSpawnRooms) {
     }
 
     var nomination = Strategy.getExpansionNomination();
-    var nominationCooldownUntil = expansion.strategyNominationCooldownUntil ||
-        expansion.season11NominationCooldownUntil || 0;
+    var nominationCooldownUntil = expansion.strategyNominationCooldownUntil || 0;
     if (nomination && Game.time >= nominationCooldownUntil) {
         var nominatedCandidate = buildCandidate(expansion, nomination.roomName,
             Memory.rooms && Memory.rooms[nomination.roomName]);

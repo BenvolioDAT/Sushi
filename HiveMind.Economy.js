@@ -917,8 +917,16 @@ function updateRoom(room) {
     const persistent = HiveMemory.getRoomEconomyMemory(room.name);
     const previous = previousSnapshot(persistent);
     const snapshot = applyHysteresis(buildSnapshot(room, previous), previous);
+    // buildSnapshot uses the previous state. On a transition, finalize the growth
+    // policy against this tick's hysteresis result so it cannot display yesterday's gate.
+    if (previous && previous.state !== snapshot.state) {
+        const index = TickIndex.get();
+        snapshot.growth = buildGrowthPolicy(room, snapshot, index.creepsByHomeRoom.get(room.name) || [],
+            index.ownedSpawnsByRoom.get(room.name) || []);
+    }
     heapEconomy().rooms[room.name] = snapshot;
     savePersistent(room.name, snapshot);
+    require('Diagnostics').observeEconomy(room.name, snapshot);
     return snapshot;
 }
 

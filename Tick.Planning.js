@@ -33,8 +33,8 @@ function runStrategy() {
     Telemetry.measure('remotePlanning', () => {
         Scheduler.run('remotePlanning', () => RemotePlanner.run(), { interval: 5 });
     });
-    Scheduler.run('roomPlanning', () => PlannerBrain.run(), { interval: 3 });
-    Scheduler.run('roadPlanning', () => RoadPlanner.run(), { interval: 5 });
+    Telemetry.measure('roomPlanning', () => Scheduler.run('roomPlanning', () => PlannerBrain.run(), { interval: 3 }));
+    Telemetry.measure('roadPlanning', () => Scheduler.run('roadPlanning', () => RoadPlanner.run(), { interval: 5 }));
     Telemetry.measure('hiveMindStrategy', () => {
         HiveStrategy.run();
     });
@@ -57,7 +57,8 @@ function generateSpawnRequests() {
 function runSpawning(requestReport) {
     if (!requestReport || !requestReport.rooms) return;
     for (const roomName of Object.keys(requestReport.rooms)) {
-        requestReport.rooms[roomName].spawnResult = spawnManager.runRoom(roomName);
+        try { requestReport.rooms[roomName].spawnResult = spawnManager.runRoom(roomName); }
+        catch (error) { require('Diagnostics').exception('SPAWN_SUBSYSTEM_FAILED', roomName, error, 'spawnManager'); }
     }
 }
 

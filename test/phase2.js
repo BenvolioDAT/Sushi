@@ -236,11 +236,9 @@ test('static traffic matrices are reused and invalidated by structure changes', 
 });
 
 
-
-
 test('mission priorities precede idle and only seated stationary Extractors are protected', () => {
     const traffic = trafficWorld();
-    for (const role of ['Volley', 'Ronin', 'Cleric', 'ReactorClaimer', 'ThoriumMiner', 'ThoriumHauler']) {
+    for (const role of ['Volley', 'Ronin', 'Cleric']) {
         assert.ok(traffic.defaultPriority({ memory: { role } }) > 5);
     }
     assert.strictEqual(traffic.defaultPriority({ memory: { squadId: 'squad' } }), 80);
@@ -306,8 +304,6 @@ test('canonical fallbacks reject source seats, walls, structures, exits and host
     const possible = traffic.getPossibleMoves(worker, new PathFinder.CostMatrix(), 20);
     assert.deepStrictEqual(possible.map(traffic.packCoordinates), ['10:9']);
 });
-
-
 
 
 test('route rejoin and observed stuck events use transient intent metadata and reject stale revisions', () => {

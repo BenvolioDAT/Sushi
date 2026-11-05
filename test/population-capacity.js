@@ -49,7 +49,7 @@ test('E V spawn time accounts for giants and doubles available throughput with t
     assert.ok(one.replacementLoad >= 0.79); assert.strictEqual(one.headroom, 0); assert.ok(two.headroom > 0.69);
     const claim = C.spawnView([{ body: ['claim', 'move'], memory: {} }], [{}], [], C.DEFAULTS);
     assert.strictEqual(claim.replacementLoad, 6 / 600);
-    const aged = C.spawnView([{ body: Array(50).fill('carry'), memory: { season11AgingMultiplier: 5 } }], [{}], [], C.DEFAULTS);
+    const aged = C.spawnView([{ body: Array(50).fill('carry'), memory: { expectedUsefulLifetime: 300 } }], [{}], [], C.DEFAULTS);
     assert.strictEqual(aged.replacementLoad, 0.5);
 });
 test('P Q sustained idle Artificers are denied while productive useful Techs are admitted through Arbiter', () => {

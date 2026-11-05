@@ -3,8 +3,6 @@ const Scheduler = require('HiveMind.Scheduler');
 const Utility = require('HiveMind.Utility');
 const Operations = require('HiveMind.Operations');
 const Expansion = require('Logic.Expansion');
-const Season11 = require('Logic.Season11');
-const Season11Operations = require('Season11.Operations');
 const CombatOperations = require('Combat.Operations');
 const Stronghold = require('Combat.Stronghold');
 const PowerIntel = require('Power.Intel');
@@ -31,18 +29,12 @@ function scoreOperations() {
 
 function run() {
     const settings = HiveMemory.getConfig('combat').strategy;
-    // Seasonal ownership/fuel safety is independent of optional strategy scheduling.
-    const seasonDiagnostics = Season11.run();
     Scheduler.run('powerIntel', () => PowerIntel.scanVisible(), { interval: 25 });
     Scheduler.run('powerOperations', () => PowerOperations.run(), { interval: 25 });
     if (settings.enabled === false) return { enabled: false };
     const expansion = HiveMemory.ensure().expansion;
     const expansionActive = expansion && ['claiming', 'placeSpawn', 'buildSpawn', 'bootstrap'].includes(expansion.state);
     Scheduler.run('expansionStrategy', () => Expansion.run(), { interval: expansionActive ? 1 : 17 });
-    Scheduler.run('season11Operations', () => {
-        return Season11Operations.run(seasonDiagnostics);
-    }, { interval: 1, emergency: !!(seasonDiagnostics.portfolioDashboard &&
-        seasonDiagnostics.portfolioDashboard.reactors.some(entry => entry.claimThreat > 0)) });
     Stronghold.run();
     CombatOperations.run();
     Operations.syncExpansion();

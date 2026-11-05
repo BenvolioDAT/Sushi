@@ -153,6 +153,18 @@ function selectAffordableQueuedBodyForSpawn(spawn, request) {
  * Evaluate an affordable body without changing the queued request. Candidate
  * scanning must not resize requests that are not ultimately selected.
  */
+function minimumQueuedBodyCost(room, request) {
+    if (request.bodyRequirements && request.bodyRequirements.fixed) return getBodyCost(request.body);
+    if (request.role === 'Extractor' || request.bodyProfile) {
+        const profile = request.role === 'Extractor' ? { desiredWork: 1, maxWork: 1 } : { ...request.bodyProfile };
+        if (request.role === 'Tech' && room.controller && room.controller.ticksToDowngrade < 5000) profile.urgency = 'EMERGENCY';
+        const generated = require('BodyProfiles').build(request.role, { ...profile, maxUnits: 1,
+            energyCapacity: room.energyCapacityAvailable, energyAvailable: room.energyCapacityAvailable });
+        return generated && generated.cost;
+    }
+    return creepBodyConfig.minimumBodyCost(request.role, request);
+}
+
 function previewAffordableQueuedBodyForSpawn(spawn, request) {
     var preview = Object.assign({}, request);
     var selection = selectAffordableQueuedBodyForSpawn(spawn, preview);
@@ -560,6 +572,7 @@ function runRoomInternal(roomName, decision, selectedSpawn) {
             if (future.selection.affordable && future.body.length <= 50 && getBodyCost(future.body) > 0) {
                 waitingPriority = Math.max(waitingPriority === null ? -Infinity : waitingPriority, candidate.priority || 0);
                 decision.waitingForEnergy = candidate.requestId || candidate.role;
+                decision.requiredEnergy = minimumQueuedBodyCost(spawn.room, bodyCandidate) || getBodyCost(future.body);
             }
             continue;
         }
@@ -567,8 +580,11 @@ function runRoomInternal(roomName, decision, selectedSpawn) {
         request = candidate;
         requestIndex = queueIndex;
         request.body = preview.body;
+        delete decision.waitingForEnergy;
+        delete decision.blocked;
+        decision.requiredEnergy = getBodyCost(request.body);
         bodySelection = preview.selection;
-        Object.assign(decision, details, { stage: 'name', bodyCost: getBodyCost(request.body),
+        Object.assign(decision, details, { emergencyReplacement: !!finalAdmission.mandatoryEconomy, stage: 'name', bodyCost: getBodyCost(request.body),
             work: countBodyParts(request.body, WORK) });
         break;
     }
@@ -658,7 +674,7 @@ function runRoomInternal(roomName, decision, selectedSpawn) {
         SpawnIntents.record(spawn, creepName, request, getBodyCost(request.body), availableEnergy);
         queue.splice(requestIndex, 1);
 
-        console.log(
+        try { console.log(
             'Spawning ' + creepName +
             ' as ' + request.role +
             ' in ' + roomName +
@@ -666,7 +682,7 @@ function runRoomInternal(roomName, decision, selectedSpawn) {
                 ' after downgrading body from ' + bodySelection.oldCost +
                 ' to ' + bodySelection.newCost + ' energy' :
                 ' using affordable body cost ' + bodySelection.newCost)
-        );
+        ); } catch (loggingError) { /* The accepted spawn remains successful. */ }
 
         return {
             ok: true,
@@ -755,7 +771,8 @@ function runRoom(roomName) {
                 result = outcome;
                 Object.assign(decision, attempt);
             }
-            if (outcome.result === OK) spawned.push({ name: outcome.name, role: outcome.role, spawnName: spawn.name });
+            if (outcome.result === OK) spawned.push({ name: outcome.name, role: outcome.role, spawnName: spawn.name,
+                cost: attempt.bodyCost, emergency: !!attempt.emergencyReplacement });
             if (!memory.queue.length || outcome.result === ERR_NOT_ENOUGH_ENERGY) break;
         }
         decision.attempts = attempts;
@@ -765,6 +782,15 @@ function runRoom(roomName) {
         decision.queueRemaining = memory.queue.length;
         decision.status = result.result === OK ? 'BUSY' : !decision.idle ? 'BUSY' :
             result.ok && !decision.blocked ? 'IDLE' : decision.stage === 'spawnCreep' || decision.stage === 'name' ? 'ERROR' : 'BLOCK';
+        const Diagnostics = require('Diagnostics');
+        if (spawned.length) for (const unit of spawned) Diagnostics.record('SPAWNING', 'INFO', unit.emergency ? 'SPAWN_EMERGENCY_REPLACEMENT' : 'SPAWN_STARTED', roomName,
+            { role: unit.role, creep: unit.name, spawn: unit.spawnName, cost: unit.cost });
+        else if (decision.status === 'ERROR' || decision.status === 'BLOCK') Diagnostics.record('SPAWNING',
+            decision.status === 'ERROR' ? 'ERROR' : 'WARN', decision.waitingForEnergy ? 'SPAWN_WAITING_ENERGY' : 'SPAWN_REJECTED',
+            roomName, { role: decision.selectedRole, reason: decision.blocked && decision.blocked.reason || decision.reason,
+                available: decision.energyAvailable, required: decision.requiredEnergy || decision.bodyCost });
+        else if (decision.idle && memory.queue.length) Diagnostics.record('SPAWNING', 'WARN', 'SPAWN_IDLE_WITH_DEMAND',
+            roomName, { queue: memory.queue.length, reason: decision.reason });
         return result;
     } catch (error) {
         decision.status = 'ERROR';

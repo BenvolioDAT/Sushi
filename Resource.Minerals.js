@@ -4,7 +4,7 @@ const DemandBoard = require('Spawn.DemandBoard');
 const Policy = require('Resource.Policy');
 const Strategy = require('Strategy.Provider');
 
-function isDedicatedThorium(resourceType) {
+function isStrategyResource(resourceType) {
     const special = Strategy.getSpecialResourcePolicy(resourceType);
     return !!(special && special.finite);
 }
@@ -65,7 +65,7 @@ function observe(room) {
     const depleted = mineral.mineralAmount <= 0;
     const decision = Policy.extraction(room, mineral.mineralType);
     const constrained = !!Policy.capacity(room).extractionBlockedReason;
-    const seasonal = isDedicatedThorium(mineral.mineralType);
+    const special = isStrategyResource(mineral.mineralType);
     state.mineral = {
         id: mineral.id,
         mineralType: mineral.mineralType,
@@ -78,23 +78,23 @@ function observe(room) {
         containerId: container && container.id || null,
         depleted,
         storageConstrained: constrained,
-        active: !seasonal && !!extractor && (!extractor.isActive || extractor.isActive()) && !depleted && decision.allowed,
-        reasonCode: seasonal ? 'DEDICATED_THORIUM' : !extractor || extractor.isActive && !extractor.isActive() ? 'WAITING_EXTRACTOR' : depleted ? 'DEPLETED_REGENERATING' : decision.reason,
-        seasonalDedicated: seasonal,
+        active: !special && !!extractor && (!extractor.isActive || extractor.isActive()) && !depleted && decision.allowed,
+        reasonCode: special ? 'STRATEGY_RESOURCE' : !extractor || extractor.isActive && !extractor.isActive() ? 'WAITING_EXTRACTOR' : depleted ? 'DEPLETED_REGENERATING' : decision.reason,
+        reservedByStrategy: special,
         lastSeen: Game.time,
-        debugReason: seasonal ? 'Thorium reserved for the dedicated Season 11 pipeline' :
+        debugReason: special ? 'Resource reserved by active strategy' :
             !extractor ? 'Waiting for planned extractor' :
             depleted ? 'Mineral depleted until regeneration' :
                 decision.detail || decision.reason
     };
-    if (seasonal) cancelGenericDemands(room.name);
+    if (special) cancelGenericDemands(room.name);
     state.updatedTick = Game.time;
     return state;
 }
 
 function emitDemands(room, state) {
     const mineral = state && state.mineral;
-    if (!mineral || isDedicatedThorium(mineral.mineralType)) {
+    if (!mineral || isStrategyResource(mineral.mineralType)) {
         if (room && room.name) cancelGenericDemands(room.name);
         return [];
     }
@@ -125,7 +125,7 @@ function emitDemands(room, state) {
 
 function jobs(room, state) {
     const mineral = state && state.mineral;
-    if (!mineral || isDedicatedThorium(mineral.mineralType) || !mineral.containerId) return [];
+    if (!mineral || isStrategyResource(mineral.mineralType) || !mineral.containerId) return [];
     const container = Game.getObjectById(mineral.containerId);
     const stored = container && amount(container.store, mineral.mineralType);
     if (!stored) return [];
@@ -152,5 +152,5 @@ function plan() {
 
 module.exports = {
     stateFor, mineralInRoom, extractorFor, mineralContainer, observe, emitDemands, jobs, plan,
-    isDedicatedThorium, cancelGenericDemands
+    isStrategyResource, cancelGenericDemands
 };

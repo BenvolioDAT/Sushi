@@ -168,11 +168,6 @@ test('1-13 representative schema-7 Memory migrates safely and idempotently', fun
     assert.strictEqual(Memory.rooms.W1N1.economy.lastSampleTick, 99);
     assert.strictEqual(Memory.rooms.W1N1.economy.energyTrend, 4.2);
     assert.strictEqual(Memory.rooms.W1N1.economy.harvest, undefined, 'live snapshot remained persistent');
-    assert.strictEqual(Memory.config.season11.mode, 'observe');
-    assert.strictEqual(Memory.config.season11.startupReserve, 777);
-    assert.strictEqual(Memory.hive.season.season11.rooms.W8N8.thorium, 12);
-    assert.strictEqual(Memory.hive.season.season11.reactors.reactor1.roomName, 'W8N8');
-    assert.strictEqual(Memory.hive.season.season11.stats.delivered, 4);
     assert.strictEqual(Memory.hive.operations.op1.type, 'DEFEND');
     assert.strictEqual(Memory.hive.squads.squad1.customSquadData, true);
     assert.strictEqual(Memory.hive.identity.username, 'SushiPlayer');
@@ -190,6 +185,9 @@ test('1-13 representative schema-7 Memory migrates safely and idempotently', fun
     }
     assert.strictEqual(Memory.hive.settings, undefined);
     assert.strictEqual(Memory.hive.schemaVersion, undefined);
+    assert.strictEqual(Memory.config.season11, undefined);
+    assert.strictEqual(Memory.hive.season, undefined);
+    assert.strictEqual(Memory.meta.season11Retired, 1);
     assert.strictEqual(Memory.hive.economy.rooms, undefined);
 
     representativeAfter = JSON.stringify(Memory).length;
@@ -322,7 +320,7 @@ test('obsolete Sushi root paths are confined to the migration layer', function()
     ];
     const violations = [];
     for (const file of productionJavaScriptFiles(mocks.root)) {
-        if (path.basename(file) === 'HiveMind.Memory.js') continue;
+        if (['HiveMind.Memory.js', 'Season.Retirement.js'].includes(path.basename(file))) continue;
         const source = fs.readFileSync(file, 'utf8');
         for (const pattern of forbidden) {
             if (pattern.test(source)) violations.push(path.relative(mocks.root, file) + ': ' + pattern);

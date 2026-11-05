@@ -1,6 +1,5 @@
 const travelUtility = require('utility.Travel.Creep');
 const cpuStatusUtility = require('CPU.Status');
-const Season11 = require('Logic.Season11');
 const TickIndex = require('HiveMind.Index');
 const HiveMemory = require('HiveMind.Memory');
 const DemandBoard = require('Spawn.DemandBoard');
@@ -22,7 +21,6 @@ function ensureSettings() {
 function maybeGeneratePixel() {
     const settings = ensureSettings().pixels;
     if (!settings.enabled) return null;
-    if (Season11.shouldSuppressPixelGeneration()) return null;
     if (!Game.cpu || typeof Game.cpu.generatePixel !== 'function') return null;
     if (Game.shard && Game.shard.name === 'sim') return null;
     if (Game.cpu.bucket !== FULL_CPU_BUCKET) return null;

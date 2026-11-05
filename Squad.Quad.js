@@ -250,7 +250,7 @@ function emitDemands(squad) {
         squad.debugReason = 'Replacement cannot arrive before operation timeout';
         return [];
     }
-    const offensive = operation && ['ATTACK_PLAYER', 'RAID_REMOTE', 'CONTEST_REACTOR'].includes(operation.type);
+    const offensive = operation && ['ATTACK_PLAYER', 'RAID_REMOTE'].includes(operation.type);
     const ownedDefense = !!(operation && operation.type === 'DEFEND_OWNED_ROOM');
     const definitionsBySlot = new Map(definitions(squad.type).map(definition => [definition.slot, definition]));
     const demands = squad.memberSlots.map(slot => {
@@ -873,10 +873,9 @@ function syncOperations() {
     const created = [];
     for (const operation of Object.values(HiveMemory.ensure().operations)) {
         if (!operation || ['COMPLETE', 'ABORTED'].includes(operation.state) || !operation.originRoom || !operation.targetRoom) continue;
-        if (operation.season11 && operation.requestedSquadSize < 4) continue;
-        const offensive = ['ATTACK_PLAYER', 'RAID_REMOTE', 'CONTEST_REACTOR', 'CLEAR_NPC_STRONGHOLD'].includes(operation.type);
+        const offensive = ['ATTACK_PLAYER', 'RAID_REMOTE', 'CLEAR_NPC_STRONGHOLD'].includes(operation.type);
         const heavyDefense = settings.autoDefenseQuads !== false &&
-            ['DEFEND_OWNED_ROOM', 'DEFEND_REMOTE', 'HOLD_REACTOR'].includes(operation.type) &&
+            ['DEFEND_OWNED_ROOM', 'DEFEND_REMOTE'].includes(operation.type) &&
             ((operation.desiredCapabilities && operation.desiredCapabilities.damage || 0) >= 300 ||
                 (operation.desiredCapabilities && operation.desiredCapabilities.guardDamage || 0) >= 20);
         if (offensive && operation.policyApproved !== true || !offensive && !heavyDefense && !TYPES.includes(operation.preferredSquadType)) continue;

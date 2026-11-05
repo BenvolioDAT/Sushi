@@ -17,7 +17,7 @@ function amount(store, resourceType) {
 
 function requestTransfer(input) {
     if (!input || !input.fromRoom || !input.toRoom || input.fromRoom === input.toRoom || !input.resourceType) return null;
-    if (isDedicatedThorium(input.resourceType)) return null;
+    if (isStrategyResource(input.resourceType)) return null;
     const resources = HiveMemory.ensure().resources;
     const id = input.id || `terminal:${input.fromRoom}:${input.toRoom}:${input.resourceType}`;
     const transfer = {
@@ -42,10 +42,7 @@ function resourceKeys(store) {
     return Object.keys(store).filter(key => typeof store[key] === 'number' && store[key] > 0 && key !== RESOURCE_ENERGY);
 }
 
-function isDedicatedThorium(resourceType) {
-    /* Intentional Season 11 policy: generic terminal logistics never move
-       Thorium, even between owned terminals. Staging and Reactor supply remain
-       exclusively under the dedicated creep pipeline. */
+function isStrategyResource(resourceType) {
     const special = Strategy.getSpecialResourcePolicy(resourceType);
     return !!(special && special.finite);
 }
@@ -76,7 +73,7 @@ function planBalance() {
         const local = p.rooms[receiver.name];
         if (!local) continue;
         for (const [type, target] of Object.entries(local.needs)) {
-            if (isDedicatedThorium(type) || type === RESOURCE_ENERGY) continue;
+            if (isStrategyResource(type) || type === RESOURCE_ENERGY) continue;
             const shortage = target - (local.inventory[type] || 0);
             if (shortage <= 0) continue;
             const donor = rooms.filter(r => r.name !== receiver.name && p.rooms[r.name] &&
@@ -99,7 +96,7 @@ function planBalance() {
             p.rooms[r.name].storageFree > Policy.config().desiredStorageFreeCapacity + 10000);
         if (!receiver) continue;
         const type = Object.keys(local.inventory).sort().find(t => t !== RESOURCE_ENERGY &&
-            t !== (typeof RESOURCE_POWER !== 'undefined' ? RESOURCE_POWER : 'power') && !isDedicatedThorium(t) &&
+            t !== (typeof RESOURCE_POWER !== 'undefined' ? RESOURCE_POWER : 'power') && !isStrategyResource(t) &&
             (local.inventory[t] || 0) - (local.needs[t] || 0) >= 1000);
         if (type) requestTransfer({ fromRoom: donor.name, toRoom: receiver.name, resourceType: type,
             amount: 1000, priority: 30, validUntil: Game.time + 100, reason: 'Storage pressure consolidation' });
@@ -116,10 +113,10 @@ function jobs(room) {
     const Policy = require('Resource.Policy'), c = Policy.config(), result = [];
     if (!room.terminal || !room.storage || !room.controller || !room.controller.my) return result;
     const outgoing = {};
-    for (const t of Object.values(HiveMemory.ensure().resources.transfers)) if (t.fromRoom === room.name && t.validUntil >= Game.time && !isDedicatedThorium(t.resourceType)) outgoing[t.resourceType] = (outgoing[t.resourceType] || 0) + t.amount;
+    for (const t of Object.values(HiveMemory.ensure().resources.transfers)) if (t.fromRoom === room.name && t.validUntil >= Game.time && !isStrategyResource(t.resourceType)) outgoing[t.resourceType] = (outgoing[t.resourceType] || 0) + t.amount;
     outgoing[RESOURCE_ENERGY] = c.terminalEnergyReserve + 5000;
     for (const type of new Set([...Object.keys(outgoing), ...resourceKeys(room.terminal.store)])) {
-        if (isDedicatedThorium(type)) continue;
+        if (isStrategyResource(type)) continue;
         const current = amount(room.terminal.store, type), wanted = outgoing[type] || 0;
         const loading = current < wanted;
         const source = loading ? room.storage : room.terminal, target = loading ? room.terminal : room.storage;
@@ -135,8 +132,8 @@ function jobs(room) {
 
 function validate(transfer) {
     if (!transfer || transfer.validUntil < Game.time) return { ok: false, reason: 'expired' };
-    if (isDedicatedThorium(transfer.resourceType)) {
-        return { ok: false, reason: 'Thorium is reserved for the Season 11 Reactor pipeline' };
+    if (isStrategyResource(transfer.resourceType)) {
+        return { ok: false, reason: 'Resource is reserved by active strategy' };
     }
     const from = Game.rooms[transfer.fromRoom];
     const to = Game.rooms[transfer.toRoom];
@@ -177,7 +174,7 @@ function run() {
         const check = validate(transfer);
         if (!check.ok) {
             if (check.reason === 'expired' || check.reason === 'both rooms must be mine and visible' ||
-                check.reason === 'Thorium is reserved for the Season 11 Reactor pipeline') delete resources.transfers[transfer.id];
+                check.reason === 'Resource is reserved by active strategy') delete resources.transfers[transfer.id];
             report.push({ id: transfer.id, result: null, reason: check.reason });
             continue;
         }
@@ -195,4 +192,4 @@ function run() {
     return report;
 }
 
-module.exports = { jobs, transferCost, requestTransfer, planBalance, validate, run, amount, terminalRooms, reservedAmount, isDedicatedThorium };
+module.exports = { jobs, transferCost, requestTransfer, planBalance, validate, run, amount, terminalRooms, reservedAmount, isStrategyResource };

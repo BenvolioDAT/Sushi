@@ -1,5 +1,7 @@
 # Sushi HiveMind operator runbook
 
+Current diagnostics and display instructions: [SUSHI-OPERATIONS.md](SUSHI-OPERATIONS.md).
+
 This document describes the Season 11 HiveMind and combat architecture as it
 exists in this repository. The code is intentionally additive: legacy economy,
 remote mining, spawn, road, and role behavior still run through compatibility
@@ -53,8 +55,8 @@ The main layers are:
 - `Squad.Controller` and `Squad.Quad`: coordinated duo and quad state machines.
 - `Resource.Manager`: mineral, link, terminal, lab, boost, observer, and courier
   coordination.
-- `Season11.Adapter` and `Season11.Operations`: guarded seasonal API access and
-  operation lifecycle integration.
+- `Diagnostics`: bounded structured history, console inspection and safe segment persistence.
+- `Season.Retirement`: one-time removal of confirmed obsolete seasonal assignments.
 
 Heap caches are disposable and rebuild after a global reset. Durable Memory
 contains only JSON-safe ids, names, coordinates, counters, settings, and state.
@@ -81,13 +83,13 @@ Generic operations live at `Memory.hive.operations[id]` and contain:
 Generic states are `PENDING`, `DISCOVERING`, `SELECTING`, `ACTIVE`,
 `RECOVERING`, `COMPLETE`, and `ABORTED`. State changes use
 `HiveMind.Operations.transition`; terminal records are cleaned after 1,000
-ticks. Season 11 records add guarded seasonal states and `seasonMetrics`.
+ticks.
 Offensive records add an explicit directive, objective, retreat destination,
 preferred quad, and an `offensiveAssessment` with viability evidence.
 
 Supported generic types include owned/remote defense, recovery, expansion,
 remote mining, scouting, fortification, boost production, explicit player
-attack or raid, and Thorium/Reactor work. Offense is never inferred merely from
+attack or raid. Offense is never inferred merely from
 a harmless neighboring player.
 
 ## Utility scoring
@@ -100,15 +102,9 @@ urgency + expectedValue + strategicValue
 ```
 
 The result stores both `total` and all normalized components, so a decision is
-auditable. Generic operations rescore on a staggered 17-tick cadence. Season 11
-also rescales finite supply, route length, estimated loaded-cargo aging,
-maintenance, current Reactor continuity, score rate, threat, and starvation.
+auditable. Generic operations rescore on a staggered 17-tick cadence.
 Combat operations include target value, travel, boost mineral cost, opposing
 tower damage, creep damage, healing, repair, barriers, and retreat viability.
-
-The Thorium aging calculation is an explicit planning estimate for live
-calibration, not a claim that the exact aging formula is exposed by the season
-API.
 
 The score now controls execution. Eligible operations are ordered by utility,
 priority, and stable id. `PENDING` work must pass origin, economy,
@@ -223,7 +219,7 @@ Defaults retain terminal squads for 250 ticks, terminal operations for 1,000,
 inactive non-manual players for 50,000, stale intel for 20,000, expansion
 candidates/routes for 10,000, and inactive known resource/debug records for
 5,000 ticks; demands and queues use their explicit TTL. HOME, owned bootstrap,
-active remote, operation and expansion targets, current Season assignments,
+active remote, operation and expansion targets,
 manual diplomacy, and unknown user fields are protected. Old INTEL records are
 compacted by deleting known Sushi subtrees rather than deleting the whole room.
 
@@ -238,8 +234,7 @@ threshold.
 Allies are excluded from defense and offense. Neutral creeps are actionable
 when they attack us or have harmful attack/claim capability; harmless neutral
 scouts are not an offensive pretext. An offensive operation requires an
-explicit manual directive, except a Reactor recapture that the operator has
-explicitly enabled. Safe mode causes offensive operations to wait, while an
+explicit manual directive.
 ally target, missing directive, impossible healing/repair matchup,
 unsurvivable tower field, or missing retreat route aborts the operation.
 
@@ -316,20 +311,14 @@ Normal resource cadence is: mineral plan every 11 ticks, courier demand every
 checks every 5 ticks, active labs every tick, terminal work every 10 ticks, and
 links every owned-room tick. Room offsets stagger the periodic work.
 
-## Season 11 adapter
+## Seasonal retirement
 
-`Season11.Adapter` is the sole narrow wrapper for seasonal constants and object
-methods. It feature-detects `RESOURCE_THORIUM`, `FIND_REACTORS`, and
-`claimReactor`; without them, normal shards load safely and the seasonal
-pipeline remains inert. The implementation harvests Thorium as a regular
-mineral through an active extractor, claims only while adjacent with a CLAIM
-creep, delivers only to a live Reactor reporting `my === true`, and stores only
-plain snapshots.
-
-Season mode, schema, ranking, mining/hauling, Reactor continuity, recapture,
-dashboard fields, and live calibration checks are detailed in `SEASON11.md`.
-The implementation intentionally has no market, portal, or legacy ScoreRunner
-path.
+Season 11 runtime modules and roles have been removed. The one-shot
+`Season.Retirement` migration removes only confirmed seasonal records and
+converts surviving actors to standard roles. Standard power processing, Power
+Banks, power creeps, labs, resources, combat and remote planning remain.
+See [SUSHI-OPERATIONS.md](SUSHI-OPERATIONS.md) for diagnostics and deployment.
+The `SEASON11*.md` documents are historical records.
 
 ## CPU budget review
 
@@ -357,7 +346,6 @@ The main protections are shared one-tick indexing; staggered room, remote,
 road, resource, lab, terminal, visual, and utility work; dirty-task wakeups;
 structural-signature matrices; heap route/squad/resource caches; bounded
 operation candidates and event histories; and sparse telemetry persistence.
-Season 11 now consumes the shared index for its empire-wide scans.
 
 Remaining legacy scan concentration is mainly in expansion planning, the
 WarRoom compatibility layer, remote/road/room planners, spawn governance,
@@ -370,7 +358,7 @@ CPU, any phase consumes more than 25 CPU for several persisted samples, bucket
 stays below 5,000 for 500 ticks, or critical mode repeats without combat. These
 are operational thresholds, not claimed benchmark results. Disable optional
 work in this order: structure-planner visuals, remote/dashboard visuals,
-Season 11 operation mode if unused, observers/inactive labs/minerals, automatic
+observers/inactive labs/minerals, automatic
 quads, then broader strategy. Do not disable traffic or immediate defense as a
 first response.
 
@@ -451,14 +439,13 @@ squad, demand, threat, expansion-candidate, and stale-record counts.
    market/portal behavior, and direct movement calls.
 4. Deploy to a non-critical shard/branch first when available. This repository
    does not perform a remote push as part of validation.
-5. For the first 100 ticks, keep Season 11 in `observe`, safe-mode manual
-   confirmation on, automatic recapture off, and CPU debug logging off.
-6. Check CPU mode/bucket, spawn queues, demand deduplication, movement, threat
-   summaries, resource lab states, and the dashboard.
-7. Enable Season `auto` or `active` only after the live seasonal API, Thorium
-   deposits, routes, and Reactor ownership fields are observed.
-8. Enable any offensive or recapture directive manually and inspect its
-   assessment before squads leave the rally room.
+5. For the first 100 ticks, keep diagnostics in NORMAL, safe-mode manual
+   confirmation on, and CPU debug console logging off.
+6. Check CPU/bucket, spawn decisions, local harvesting, movement, resource states,
+   and the dashboard. Use `Sushi.debug.room("W3S47")` to inspect recovery.
+7. Enable offensive directives manually and inspect their assessment first.
+8. Follow [SUSHI-OPERATIONS.md](SUSHI-OPERATIONS.md) for the complete deployment
+   and diagnostic export instructions.
 
 ## Emergency switches
 
@@ -485,8 +472,8 @@ Memory.config.resources.terminals = false
 Memory.config.resources.observers = false
 Memory.config.resources.minerals = false
 
-// Stop seasonal work while retaining intel and operation history.
-require('Logic.Season11').setMode('disabled')
+// Disable diagnostic history; existing history remains readable.
+Sushi.debug.mode("OFF")
 
 // Stop optional visuals.
 Memory.config.visuals.showDashboard = false
@@ -580,13 +567,9 @@ Memory.config.combat.independentCombat = true
 Memory.config.combat.independentCombat = false
 ```
 
-Set Season mode and pixel policy:
+Set diagnostic mode and pixel policy:
 
 ```js
-require('Logic.Season11').setMode('observe')
-require('Logic.Season11').setMode('auto')
-require('Logic.Season11').setMode('active')
-require('Logic.Season11').setMode('disabled')
 Memory.config.pixels.enabled = true
 Memory.config.pixels.enabled = false
 ```
@@ -644,14 +627,13 @@ require('HiveMind.Operations').abort('manual:attack:W2N2', 'Operator abort')
 require('Squad.Controller').abort('quad:manual:attack:W2N2', 'Operator abort')
 ```
 
-Inspect an operation, squad, Reactor pipeline, and seasonal dashboard:
+Inspect an operation, squad, and colony diagnostics:
 
 ```js
 Memory.hive.operations['manual:attack:W2N2']
 require('Squad.Controller').get('quad:manual:attack:W2N2')
-require('Logic.Season11').getDiagnostics()
-require('Season11.Operations').getDashboard()
-Memory.hive.operations['season11:reactor:reactorObjectId']
+Sushi.debug.status()
+Sushi.debug.room("W3S47")
 ```
 
 Inspect CPU telemetry and change visual cadence:
@@ -690,11 +672,9 @@ require('HiveMind.Telemetry').getView().growth.W1N1
 Memory.rooms.W1N1.remotePlanner.rampReason
 ```
 
-Configure Reactor selection/recapture and boost production:
+Configure boost production:
 
 ```js
-require('Logic.Season11').selectReactor('reactorObjectId')
-require('Logic.Season11').configure({ recapture: true, startupReserve: 800 })
 require('Resource.Labs').configureReaction('W1N1', 'XKHO2', 3000)
 Memory.hive.resources.labs.W1N1
 Memory.hive.resources.boosts

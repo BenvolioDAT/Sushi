@@ -4432,7 +4432,6 @@ module.exports = {
     requestEconomicScout: requestEconomicScout,
     requestStrategyRolesForRoom: requestStrategyRolesForRoom,
     /* Compatibility export for console/tests; implementation is provider-generic. */
-    requestSeason11RolesForRoom: requestStrategyRolesForRoom,
     requestDefendersForRoom: requestDefendersForRoom,
     cleanDefenseQueue: cleanDefenseQueue
 };

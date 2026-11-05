@@ -322,3 +322,43 @@ test('a baseline Tech still upgrades during downgrade danger while growth is pau
     require('role.Tech').run(tech);
     assert.strictEqual(upgraded, true);
 });
+
+test('growth policy uses the finalized current economy state on a recovery transition', () => {
+    const room = setup();
+    unit(room, 'minerA', 'Extractor', [...Array(5).fill(WORK), MOVE], { sourceId: 'sourceA' });
+    unit(room, 'minerB', 'Extractor', [...Array(5).fill(WORK), MOVE], { sourceId: 'sourceB' });
+    unit(room, 'foreman', 'Foreman', [CARRY, MOVE]);
+    unit(room, 'hauler', 'Freighter', [...Array(24).fill(CARRY), MOVE]);
+    Memory.rooms[room.name].economy = { state: 'SURVIVAL', healthyTicks: 11, lastSampleTick: Game.time - 1,
+        stateSince: Game.time - 20, stateChangedAt: Game.time - 20, lastLiquidEnergy: 952000 };
+    const snapshot = sample(room);
+    assert.strictEqual(snapshot.state, 'RECOVERY');
+    assert.notStrictEqual(snapshot.growth.blockedReason, 'LOCAL_HARVEST_SHORTAGE',
+        'previous SURVIVAL must not report a current harvest shortage after active capacity is healthy');
+    assert.ok(snapshot.growth.controllerBudget > 0);
+});
+
+test('energy blocker reports the affordable recovery floor rather than the full-capacity body', () => {
+    const room = setup(); room.energyAvailable = 100;
+    unit(room, 'foreman', 'Foreman', [CARRY, MOVE]); sample(room);
+    Memory.rooms[room.name].spawn.queue.push(request('sourceA'));
+    require('spawn.manager').runRoom(room.name);
+    const decision = Memory.rooms[room.name].spawn.lastDecision;
+    assert.ok(decision.waitingForEnergy);
+    assert.strictEqual(decision.requiredEnergy, 200);
+    assert.strictEqual(decision.energyAvailable, 100);
+});
+
+test('spawn success survives console failure and drops stale waiting diagnostics', () => {
+    const room = setup(); room.energyAvailable = 300;
+    unit(room, 'foreman', 'Foreman', [CARRY, MOVE]); sample(room);
+    Memory.rooms[room.name].spawn.queue.push(request('sourceA'));
+    const log = console.log; console.log = () => { throw Error('logger offline'); };
+    let result;
+    try { result = require('spawn.manager').runRoom(room.name); } finally { console.log = log; }
+    assert.strictEqual(result.result, OK);
+    const decision = Memory.rooms[room.name].spawn.lastDecision;
+    assert.strictEqual(decision.status, 'BUSY');
+    assert.strictEqual(decision.waitingForEnergy, undefined);
+    assert.strictEqual(decision.blocked, undefined);
+});

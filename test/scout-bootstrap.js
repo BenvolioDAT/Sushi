@@ -155,7 +155,7 @@ test('early BOOTSTRAP cannot substitute queued miners or controller work for a l
 test('full optional queue and exhausted admission budget cannot starve economic intel', () => {
     const value = core();
     const queue = Memory.rooms.W1N1.spawn.queue;
-    for (let i = 0; i < 8; i++) queue.push({ role: ['Artificer', 'Tech', 'ThoriumMiner'][i % 3],
+    for (let i = 0; i < 8; i++) queue.push({ role: ['Artificer', 'Tech', 'ResourceCourier'][i % 3],
         body: [MOVE], priority: 20, requestedAt: Game.time, memory: { homeRoom: value.name } });
     const result = require('spawn.request.manager').requestEconomicScout(value);
     assert.strictEqual(result.requested, 1, result.reason);

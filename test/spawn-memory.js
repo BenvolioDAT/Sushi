@@ -28,14 +28,14 @@ function isolateAdmission() {
 
 test('upgrade preserves useful Memory and ignores old generic caps only for SPECIAL_STRATEGY', () => {
     const room = setup();
-    Memory.config.spawn.roleCaps = { ThoriumMiner: 0, ThoriumHauler: 1, ReactorClaimer: 0, Volley: 0, customRole: 7 };
+    Memory.config.spawn.roleCaps = { TestStrategicMiner: 0, TestStrategicHauler: 1, TestStrategicClaimer: 0, Volley: 0, customRole: 7 };
     Memory = JSON.parse(JSON.stringify(Memory)); // Restore current-schema Memory under new code.
     mocks.clearLocalModules();
     isolateAdmission();
     const policy = require('Spawn.Policy');
     const config = require('HiveMind.Memory').getConfig('spawn');
-    const context = { queue: [], byRole: { ThoriumMiner: 10, ThoriumHauler: 10, ReactorClaimer: 10 }, total: 30, nonCombatTotal: 30 };
-    for (const role of ['ThoriumMiner', 'ThoriumHauler', 'ReactorClaimer']) {
+    const context = { queue: [], byRole: { TestStrategicMiner: 10, TestStrategicHauler: 10, TestStrategicClaimer: 10 }, total: 30, nonCombatTotal: 30 };
+    for (const role of ['TestStrategicMiner', 'TestStrategicHauler', 'TestStrategicClaimer']) {
         for (const useMemory of [false, true]) {
             const q = request({ role, strategyCategory: useMemory ? undefined : 'SPECIAL_STRATEGY',
                 memory: { role, strategyCategory: useMemory ? 'SPECIAL_STRATEGY' : undefined } });
@@ -45,7 +45,7 @@ test('upgrade preserves useful Memory and ignores old generic caps only for SPEC
     }
     assert.strictEqual(policy.evaluate(room, request(), { ...context, byRole: {} }).reason, 'role cap reached');
     assert.strictEqual(config.roleCaps.customRole, 7);
-    assert.strictEqual(config.roleCaps.ThoriumMiner, 0);
+    assert.strictEqual(config.roleCaps.TestStrategicMiner, 0);
     assert.deepStrictEqual(Memory.rooms.W1N1.useful, { keep: true });
     require('HiveMind.Capacity').evaluate = () => ({ allowed: false, reason: 'HARD_SAFETY_CAP' });
     assert.strictEqual(policy.evaluate(room, request({ strategyCategory: 'SPECIAL_STRATEGY' }), context).reason, 'HARD_SAFETY_CAP');

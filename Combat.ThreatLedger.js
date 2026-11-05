@@ -12,7 +12,7 @@ function getStructures(roomName) {
 }
 
 function criticalPositions(room) {
-    const important = new Set(['spawn', 'tower', 'storage', 'terminal', 'powerSpawn', 'reactor']);
+    const important = new Set(['spawn', 'tower', 'storage', 'terminal', 'powerSpawn']);
     const positions = getStructures(room.name)
         .filter(structure => important.has(structure.structureType))
         .map(structure => structure.pos);

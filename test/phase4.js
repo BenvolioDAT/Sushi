@@ -87,8 +87,7 @@ test('operation registry supports every requested type and durable schema fields
     const required = [
         'DEFEND_OWNED_ROOM', 'DEFEND_REMOTE', 'RECOVER_ROOM', 'EXPAND',
         'MINE_REMOTE', 'SCOUT_INTEL', 'FORTIFY', 'PRODUCE_BOOSTS',
-        'ATTACK_PLAYER', 'RAID_REMOTE', 'HARVEST_THORIUM', 'SUPPLY_REACTOR',
-        'HOLD_REACTOR', 'CAPTURE_REACTOR', 'CONTEST_REACTOR'
+        'ATTACK_PLAYER', 'RAID_REMOTE'
     ];
     assert.deepStrictEqual(Array.from(operations.TYPES), required);
     const operation = operations.create('SCOUT_INTEL', {

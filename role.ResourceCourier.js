@@ -2,7 +2,6 @@ const ResourceManager = require('Resource.Manager');
 const travel = require('utility.Travel.Creep');
 const Economy = require('HiveMind.Economy');
 const creepUtility = require('utility.Creep');
-const Season11 = require('Logic.Season11');
 
 function resourceKeys(store) {
     return Object.keys(store || {}).filter(type => typeof store[type] === 'number' && store[type] > 0);
@@ -24,50 +23,22 @@ function moveOrAct(creep, target, action) {
     return result;
 }
 
-function season11Staging(creep) {
-    if (!Season11.isApiAvailable()) return null;
-    const assignments = Season11.ensureMemory().assignments.mining || {};
-    const local = assignments[creep.room.name] || Object.values(assignments)
-        .find(item => item && item.roomName === (creep.memory.homeRoom || creep.room.name));
-    const staging = local && local.stagingId && Game.getObjectById(local.stagingId) || null;
-    const roomName = staging && staging.pos && staging.pos.roomName;
-    const room = roomName && Game.rooms && Game.rooms[roomName];
-    const validType = staging && [STRUCTURE_CONTAINER, STRUCTURE_STORAGE, STRUCTURE_TERMINAL]
-        .includes(staging.structureType);
-    return staging && validType && staging.store && staging.my !== false && roomName === local.roomName &&
-        room && room.controller && room.controller.my &&
-        (typeof staging.store.getFreeCapacity !== 'function' || staging.store.getFreeCapacity(Season11.getThoriumResourceType()) > 0) ?
-        staging : null;
-}
 
 function run(creep) {
     if (!creep || creep.spawning) return;
+    if (creep.memory.returnHomeAfterRetirement) {
+        if (creep.memory.homeRoom && creep.room.name !== creep.memory.homeRoom) {
+            travel.moveToRoom(creep, creep.memory.homeRoom, { range: 22, allowHostile: false });
+            return;
+        }
+        delete creep.memory.returnHomeAfterRetirement;
+    }
     if (creep.memory.powerBankOperationId) {
         runPowerBankHauler(creep);
         return;
     }
     const homeRoomName = creep.memory.homeRoom || creep.room.name;
-    const thorium = Season11.getThoriumResourceType();
-    if (Season11.isApiAvailable() && thorium) {
-        const staleThoriumJob = creep.memory.mineralType === thorium ||
-            creep.memory.resourceJobId && String(creep.memory.resourceJobId).endsWith(`:${thorium}`);
-        if (staleThoriumJob) ResourceManager.clearJob(creep);
-        if ((creep.store[thorium] || 0) > 0) {
-            const target = season11Staging(creep) || ownedFallbackDeposit(creep, thorium);
-            if (!target) {
-                creep.memory.resourceCourierState = 'waitingToRetireThoriumCargo';
-                return;
-            }
-            moveOrAct(creep, target, () => creep.transfer(target, thorium));
-            creep.memory.resourceCourierState = 'returningThoriumToSeason11';
-            return;
-        }
-        if (staleThoriumJob) {
-            delete creep.memory.mineralId;
-            delete creep.memory.mineralType;
-            creep.memory.resourceCourierState = 'retiredThoriumAssignment';
-        }
-    }
+
     if (!Economy.canSpend(homeRoomName, 'resources')) {
         ResourceManager.clearJob(creep);
         if ((creep.store[RESOURCE_ENERGY] || 0) > 0 && creep.room.name === homeRoomName) {
@@ -167,4 +138,4 @@ function runPowerBankHauler(creep) {
     creep.memory.powerBankState = drop ? 'looting' : 'waitingForDrop';
 }
 
-module.exports = { run, resourceKeys, fallbackDeposit, ownedFallbackDeposit, season11Staging, runPowerBankHauler };
+module.exports = { run, resourceKeys, fallbackDeposit, ownedFallbackDeposit, runPowerBankHauler };

@@ -5,9 +5,9 @@ const CombatMath = require('Combat.Math');
 const Utility = require('HiveMind.Utility');
 const TickIndex = require('HiveMind.Index');
 
-const OFFENSIVE_TYPES = Object.freeze(['ATTACK_PLAYER', 'RAID_REMOTE', 'CONTEST_REACTOR', 'CLEAR_NPC_STRONGHOLD']);
+const OFFENSIVE_TYPES = Object.freeze(['ATTACK_PLAYER', 'RAID_REMOTE', 'CLEAR_NPC_STRONGHOLD']);
 const OBJECTIVES = Object.freeze([
-    'REMOTE_DEFENSE', 'REMOTE_DENIAL', 'REACTOR_CONTEST', 'HARASSMENT',
+    'REMOTE_DEFENSE', 'REMOTE_DENIAL', 'HARASSMENT',
     'TOWER_SIEGE', 'DISMANTLE_BREACH'
 ]);
 const HARD_FAILURES = new Set([
@@ -31,14 +31,8 @@ function ownerName(subject) {
 }
 
 function operationDirective(operation) {
-    if (operation.season11 && ['disabled', 'observe'].includes(HiveMemory.getConfig('season11').mode)) return false;
-    if (operation.season11 && operation.type === 'CONTEST_REACTOR' && operation.season11RecaptureApproved) {
-        return CombatPolicy.mayLaunchOffense(operation.targetOwner, operation.manualDirective === true);
-    }
     if (operation.type === 'CLEAR_NPC_STRONGHOLD') return operation.npcOnly === true;
-    if (operation.manualDirective === true) return true;
-    return !!(operation.type === 'CONTEST_REACTOR' && operation.season11 &&
-        HiveMemory.getConfig('season11').recaptureMode === 'manual' && HiveMemory.getConfig('season11').recapture === true);
+    return operation.manualDirective === true;
 }
 
 function roomSnapshot(operation) {
@@ -175,7 +169,7 @@ function evaluate(operation) {
     const utility = Utility.score({
         urgency: operation.priority || 50,
         expectedValue: metrics.targetValue,
-        strategicValue: operation.type === 'CONTEST_REACTOR' ? 85 : 50,
+        strategicValue: 50,
         energyCost: Utility.normalize(metrics.boostMineralCost / 30),
         spawnCost: operation.preferredSquadType === 'SIEGE_QUAD' ? 55 : 40,
         travelTime: Utility.normalize(distance * 5),
@@ -334,7 +328,7 @@ function createManual(type, options = {}) {
         return { ok: false, reason: `${options.targetOwner} is configured as an ally` };
     }
     const objective = OBJECTIVES.includes(options.objective) ? options.objective :
-        type === 'CONTEST_REACTOR' ? 'REACTOR_CONTEST' : 'HARASSMENT';
+        'HARASSMENT';
     const preferredSquadType = options.squadType === 'SIEGE_QUAD' ? 'SIEGE_QUAD' : 'RANGED_QUAD';
     const operation = Operations.create(type, {
         ...options,

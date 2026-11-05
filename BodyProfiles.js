@@ -4,9 +4,8 @@ const n = (v, fallback = 0) => Number.isFinite(v) ? Math.max(0, v) : fallback;
 function cost(body) { return (body || []).reduce((sum, p) => sum + (COST[p.type || p] || 0), 0); }
 function lifetime(body, memory = {}) {
     const base = body.some(p => (p.type || p) === 'claim') ? 600 : 1500;
-    const aging = Math.max(1, n(memory.season11AgingMultiplier, 1));
-    return Math.max(1, Math.min(base / aging, n(memory.expectedUsefulLifetime, base),
-        base - n(memory.remoteTravelTicks || memory.season11RouteDistance)));
+    return Math.max(1, Math.min(base, n(memory.expectedUsefulLifetime, base),
+        base - n(memory.remoteTravelTicks)));
 }
 function metrics(body, options = {}) {
     const counts = {};
@@ -24,20 +23,20 @@ function build(role, options = {}) {
     const energy = n(emergency ? options.energyAvailable : options.energyCapacity);
     const road = options.routeProfile === 'ROAD_HEAVY' && options.provenRoads === true;
     const fed = role === 'Tech' && options.controllerFed === true;
-    const work = Math.floor(n(options.desiredWork, role === 'Extractor' || role === 'ThoriumMiner' ? 5 : 0));
+    const work = Math.floor(n(options.desiredWork, role === 'Extractor' ? 5 : 0));
     const carry = Math.floor(n(options.desiredCarry, 0));
     const breacher = role === 'CoreBreaker' || role === 'Breacher';
     const combat = require('Combat.Roles').isCombatRole(role) && !breacher;
-    const requested = role === 'Scout' ? 1 : role === 'Annex' || role === 'ReactorClaimer' ?
+    const requested = role === 'Scout' ? 1 : role === 'Annex' ?
         Math.floor(n(options.desiredClaim, 1)) : combat ? Math.floor(n(options.desiredPower, 1)) :
-        ['Freighter', 'Foreman', 'ThoriumHauler', 'ResourceCourier', 'SupplyRunner'].includes(role) ? carry : work;
-    const maximum = Math.min(50, requested, role === 'Extractor' ? n(options.maxWork, work) : 50);
+        ['Freighter', 'Foreman', 'ResourceCourier', 'SupplyRunner'].includes(role) ? carry : work;
+    const maximum = Math.min(50, n(options.maxUnits, 50), requested, role === 'Extractor' ? n(options.maxWork, work) : 50);
     let chosen = null;
     // At most 50 small candidates. Emergency chooses the first viable capability.
     for (let amount = 1; amount <= maximum; amount++) {
         let counts;
         if (role === 'Scout') counts = { move: 1 };
-        else if (role === 'Annex' || role === 'ReactorClaimer') counts = { claim: amount, move: amount };
+        else if (role === 'Annex') counts = { claim: amount, move: amount };
         else if (breacher) {
             const workParts = Math.max(1, amount);
             counts = { tough: Math.ceil(workParts / 3), work: workParts,
@@ -50,7 +49,7 @@ function build(role, options = {}) {
             if (heal) counts.heal = heal;
         } else if (carry > 0 && !work) counts = { carry: amount, move: Math.ceil(amount / (road ? 2 : 1)) };
         else {
-            const c = role === 'Extractor' || role === 'ThoriumMiner' ? 1 :
+            const c = role === 'Extractor' ? 1 :
                 fed ? Math.max(1, Math.ceil(amount / 4)) : role === 'Tech' ? Math.ceil(amount / 3) : Math.ceil(amount / 2);
             const movement = emergency && amount === 1 ? 1 : role === 'Extractor' && options.routeProfile !== 'REMOTE_OFFROAD' ? Math.ceil(amount / 2) :
                 road || fed ? Math.ceil((amount + c) / 2) : amount + c;
@@ -59,7 +58,6 @@ function build(role, options = {}) {
         const body = Object.entries(counts).flatMap(([part, count]) => Array(count).fill(part));
         if (body.length > 50 || cost(body) > energy) continue;
         if (options.urgency === 'REPLACEMENT' && body.length * 3 > n(options.replacementDeadline, 150)) continue;
-        if (role === 'ThoriumHauler' && lifetime(body, options) <= body.length * 3 + n(options.roundTrip, 100)) continue;
         chosen = body;
         if (emergency && !combat) break;
     }
@@ -81,8 +79,7 @@ function requestOptions(room, request) {
         s.pos && room.controller && room.controller.pos &&
         Math.max(Math.abs(s.pos.x - room.controller.pos.x), Math.abs(s.pos.y - room.controller.pos.y)) <= 3 &&
         s.store && s.store.energy > 0));
-    return { season11AgingMultiplier: m.season11AgingMultiplier || 1,
-        season11RouteDistance: m.season11RouteDistance || 0,
+    return { remoteTravelTicks: m.remoteTravelTicks || 0,
         energyCapacity: room.energyCapacityAvailable, energyAvailable: room.energyAvailable,
         desiredWork: request.requestedWorkParts || request.maxWorkParts || counts.WORK,
         maxWork: request.requestedWorkParts || request.maxWorkParts || counts.WORK,

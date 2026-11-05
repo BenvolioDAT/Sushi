@@ -50,7 +50,7 @@ function normalize(roomName, request, options = {}) {
             normalized.deadline = Game.time + Math.min(...expiring.map(c => c.ticksToLive));
         }
     }
-    if (room && !(normalized.bodyRequirements && normalized.bodyRequirements.fixed) && ['Tech', 'Artificer', 'Freighter', 'Extractor', 'ThoriumHauler', 'Annex', 'ReactorClaimer'].includes(normalized.role)) {
+    if (room && !(normalized.bodyRequirements && normalized.bodyRequirements.fixed) && ['Tech', 'Artificer', 'Freighter', 'Extractor', 'Annex'].includes(normalized.role)) {
         const bodyOptions = profiles.requestOptions(room, normalized);
         // Keep established small-body recovery shapes; scale only meaningful capability.
         const scale = normalized.replacementFor || normalized.role === 'Extractor' || normalized.role === 'Annex' ||

@@ -1066,12 +1066,14 @@ function move(creep, target, options) {
      * inspect the result code if they need to debug movement behavior.
      */
     if (!creep || !target) {
+        require('Diagnostics').movement(creep, ERR_INVALID_ARGS);
         return ERR_INVALID_ARGS;
     }
 
     var targetPosition = getTargetPosition(target);
 
     if (!targetPosition) {
+        require('Diagnostics').movement(creep, ERR_INVALID_TARGET);
         return ERR_INVALID_TARGET;
     }
 
@@ -1191,6 +1193,7 @@ function move(creep, target, options) {
         creep.memory._sushiMoveTick = Game.time;
     }
 
+    require('Diagnostics').movement(creep, result, targetPosition);
     return result;
 }
 
@@ -1268,6 +1271,7 @@ function moveDirection(creep, direction, options) {
         direction > 8 ||
         Math.floor(direction) !== direction
     ) {
+        require('Diagnostics').movement(creep, ERR_INVALID_ARGS);
         return ERR_INVALID_ARGS;
     }
 
@@ -1279,6 +1283,7 @@ function moveDirection(creep, direction, options) {
     }
 
     var result = requestMove(creep, direction, options);
+    require('Diagnostics').movement(creep, result);
 
     /*
      * These results mean the wrapper safely handled this tick's movement

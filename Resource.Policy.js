@@ -18,7 +18,7 @@ function state() {
 }
 function record(type) {
     return { resourceType: type, totalStored: 0, storageAmount: 0, terminalAmount: 0,
-        labAmount: 0, stagingAmount: 0, factoryAmount: 0, powerSpawnAmount: 0, reactorAmount: 0,
+        labAmount: 0, stagingAmount: 0, factoryAmount: 0, powerSpawnAmount: 0,
         reservedAmount: 0, availableAmount: 0, targetLow: 0, targetDesired: 0, targetHigh: 0,
         demandAmount: 0, demandReason: 'No active demand', state: 'TARGET', updatedAt: Game.time };
 }
@@ -43,7 +43,7 @@ function snapshot(force = false) {
             }
         };
         add(room.storage, 'storageAmount'); add(room.terminal, 'terminalAmount');
-        for (const [type, field] of [['lab', 'labAmount'], ['factory', 'factoryAmount'], ['powerSpawn', 'powerSpawnAmount'], ['reactor', 'reactorAmount']]) {
+        for (const [type, field] of [['lab', 'labAmount'], ['factory', 'factoryAmount'], ['powerSpawn', 'powerSpawnAmount']]) {
             for (const s of byType.get(type) || []) add(s, field);
         }
         const saved = HiveMemory.ensure().resources.rooms[room.name];

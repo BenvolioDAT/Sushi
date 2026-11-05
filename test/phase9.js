@@ -37,25 +37,15 @@ function assertFunctions(file, names) {
     for (const name of names) assert.strictEqual(typeof api[name], 'function', `${file}.${name}`);
 }
 
-test('release public APIs include combat operations, quads, resources, and Season 11 adapters', function() {
+test('release public APIs include combat operations, quads, resources, and diagnostics', function() {
     reset();
     assertFunctions('Combat.Operations.js', ['evaluate', 'run', 'createManual', 'setManualTarget']);
     assertFunctions('Squad.Controller.js', ['createDuo', 'createQuad', 'abort', 'plan', 'execute']);
     assertFunctions('Squad.Quad.js', ['create', 'transition', 'buildFormationCostMatrix', 'runSquad']);
     assertFunctions('Squad.Tactics.js', ['evaluateDuo', 'evaluateQuad', 'chooseKitePositions']);
     assertFunctions('Resource.Manager.js', ['plan', 'runRoom', 'runEmpireStructures', 'getJobForCreep']);
-    assertFunctions('Season11.Adapter.js', ['isAvailable', 'findReactors', 'claim', 'harvestThorium', 'snapshot']);
-    assertFunctions('Season11.Operations.js', ['transition', 'utilityFor', 'agingMetrics', 'noteDelivery', 'getDashboard']);
 });
 
-test('Season 11 orchestration consumes the shared tick index instead of rescanning globals', function() {
-    const text = source('Logic.Season11.js');
-    assert(/require\(['"]HiveMind\.Index['"]\)/.test(text));
-    assert(!/for\s*\([^)]*\bin\s+Game\.(?:creeps|spawns|rooms)\s*\)/.test(text));
-    for (const field of ['allCreeps', 'ownedRooms', 'ownedSpawnRooms', 'visibleRooms', 'spawnRequests']) {
-        assert(text.includes(field), `missing indexed field ${field}`);
-    }
-});
 
 test('Hive migrations are additive and emergency switches have safe defaults', function() {
     reset();
@@ -108,19 +98,16 @@ test('hot subsystems declare cadence, dirty scheduling, and heap caches', functi
     assert(source('spawn.request.manager.js').includes("getConfig('combat').independentCombat === false"));
 });
 
-test('Season 11 production path contains no market, portal, or legacy scorer behavior', function() {
-    const season = productionSources().filter(item => /Season11|Thorium|Reactor/.test(item.file));
-    const combined = season.map(item => item.text).join('\n');
-    assert(!/Game\.market|STRUCTURE_PORTAL|find.*portal/i.test(combined));
-    assert(!/ScoreRunner|Season\.Score|role\.scorerunner/i.test(combined));
+test('production graph contains no retired seasonal modules', function() {
+    assert.deepStrictEqual(productionSources().filter(item => /Season11|Thorium|Reactor/.test(item.file)), []);
 });
 
 test('the complete validation command includes every phase and structural audit', function() {
     const pkg = JSON.parse(source('package.json'));
     for (const command of [
         'test/run.js', 'test/phase2.js', 'test/phase3.js', 'test/phase4.js',
-        'test/phase5.js', 'test/phase6.js', 'test/phase7.js', 'test/phase8.js',
-        'test/phase9.js', 'test/module-graph.js', 'test/movement-audit.js', 'test.Season11.js'
+        'test/phase5.js', 'test/phase6.js', 'test/phase8.js',
+        'test/phase9.js', 'test/module-graph.js', 'test/movement-audit.js', 'test/power-pipeline.js'
     ]) assert(pkg.scripts.validate.includes(command), `validate omits ${command}`);
 });
 
@@ -129,13 +116,13 @@ test('operator runbook covers architecture, CPU review, deployment, and emergenc
     for (const heading of [
         'Tick order', 'HiveMind architecture', 'Operation schema', 'Utility scoring',
         'Spawn demand flow', 'Diplomacy and threat policy', 'Duo and quad squads',
-        'Movement ownership', 'Minerals, labs, and boosts', 'Season 11 adapter',
+        'Movement ownership', 'Minerals, labs, and boosts', 'Seasonal retirement',
         'CPU budget review', 'Debugging', 'Memory migrations', 'Deployment',
         'Emergency switches', 'Console cookbook'
     ]) assert(runbook.includes(`## ${heading}`), `runbook missing ${heading}`);
     for (const command of [
-        'setClassification', 'createManual', "abort('", 'getDiagnostics()',
-        'getDashboard()', 'getView()', 'independentCombat', 'pixels.enabled'
+        'setClassification', 'createManual', "abort('", 'Sushi.debug.status()',
+        'Sushi.debug.room(', 'getView()', 'independentCombat', 'pixels.enabled'
     ]) assert(runbook.includes(command), `runbook missing console example ${command}`);
 });
 
