@@ -1,5 +1,9 @@
 # Sushi engineering report — November 5, 2026
 
+> Historical review-stage report. The completed changes have since been integrated
+> into the original working Sushi repository. See [INTEGRATION-2026-11-05.md](INTEGRATION-2026-11-05.md)
+> for the current repository, validation and synchronization status.
+
 The standard-game update is implemented in an isolated review checkout on
 `codex/black-box-dashboard-v2`, based on `7b1ce32`. The original watched Screeps
 checkout remains unchanged. No pull request, push, game deployment, live account

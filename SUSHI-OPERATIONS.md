@@ -1,52 +1,39 @@
 # Sushi operation and troubleshooting
 
-Updated November 5, 2026. These instructions apply to the standard, nonseasonal
-implementation. No code was deployed during this work.
-
-## Deploy the reviewed code
-
-The reviewed Git checkout is deliberately outside the watched Screeps directory:
-
-`C:\Users\xbenv\.codex\visualizations\2026\11\05\01a1adc0-0eb1-7f41-ba62-598237388608\Sushi-review`
-
-The original checkout remains at:
+Updated November 5, 2026. The standard-game implementation is integrated into the
+original working repository on local branch `main`:
 
 `C:\Users\xbenv\AppData\Local\Screeps\scripts\192_168_0_217___21025\Sushi`
 
-1. Review the commits and `ENGINEERING-REPORT.md` in the reviewed checkout.
-2. Save a copy of the running branch and the affected Memory/settings. In
-   particular, save any seasonal state you want to keep as historical evidence;
-   retirement is a deliberate, one-time removal of obsolete assignments.
-3. Run `npm run validate` and `git diff --check` in the reviewed checkout.
-4. When you explicitly choose to deploy, close the Screeps client and stop any
-   independent file uploader before updating its watched directory.
-5. In PowerShell, run the following **only when you intend to deploy**. It copies
-   production modules and removes the exact retired root modules. It does not
-   erase or replace the target's `.git` directory or game Memory.
+All three review commits were integrated through a Git fast-forward, preserving
+history and removing retired files. No copying from the review checkout is
+needed. See [INTEGRATION-2026-11-05.md](INTEGRATION-2026-11-05.md) for the recovery
+point, integration checks and validation performed in this repository.
 
-```powershell
-$review = 'C:\Users\xbenv\.codex\visualizations\2026\11\05\01a1adc0-0eb1-7f41-ba62-598237388608\Sushi-review'
-$target = 'C:\Users\xbenv\AppData\Local\Screeps\scripts\192_168_0_217___21025\Sushi'
-Get-ChildItem -LiteralPath $review -Filter '*.js' -File | Copy-Item -Destination $target
-$retired = @(
-    'Logic.Season11.js', 'Season11.Adapter.js', 'Season11.Operations.js',
-    'Season11.Portfolio.js', 'Season11.ResourcePolicy.js', 'Season11.Strategy.js',
-    'role.ThoriumMiner.js', 'role.ThoriumHauler.js', 'role.ReactorClaimer.js',
-    'test.Season11.js'
-)
-foreach ($file in $retired) {
-    $path = Join-Path $target $file
-    if (Test-Path -LiteralPath $path) { Remove-Item -LiteralPath $path }
-}
-```
+## Synchronization and verification
 
-6. Reopen the client, select the intended local server and `Sushi` branch, and
-   confirm its code has synchronized. Check that `Diagnostics`, `Visual.Layout`,
-   and `Season.Retirement` exist and `main` imports the new recorder. A Git commit
-   or push alone does not establish that code has reached the game.
-7. After a completed tick, run `Sushi.debug.status()`. Inspect the affected room,
-   source harvesting, spawning, movement and CPU/bucket for 300–500 ticks. Obtain
-   a live dashboard screenshot; the supplied preview is a mock rendering.
+1. The directory above is watched by the Screeps client. Its files were updated
+   with explicit user authorization and may already have synchronized.
+2. Synchronization was not checked against the client or server. Confirm the
+   intended local-server branch has received the complete update before relying
+   on it. Check that `Diagnostics`, `Diagnostics.View`, `Visual.Layout` and
+   `Season.Retirement` exist, and that `main` imports the recorder and view.
+   A local Git commit alone does not prove server synchronization.
+3. Re-run `npm run validate` and `git diff --check` from this original repository
+   when validating subsequent changes. These checks use local mocks and do not
+   connect to the game server or change live game Memory.
+4. After synchronization and a completed game tick, inspect
+   `Sushi.debug.status()` and `Sushi.debug.room('W3S47')` in your game console.
+   The application's one-time seasonal retirement runs through its normal tick
+   bootstrap; no manual live-Memory changes were made during integration.
+5. Observe harvesting, spawning, movement and CPU/bucket for 300–500 ticks and
+   obtain a current dashboard screenshot. The supplied preview is a mock.
+
+The pre-integration recovery point is local branch
+`codex/backup-before-review-integration-20261105` at `7b1ce32`. Switching the
+watched files back to this branch would itself be another synchronization action;
+it has not been done. Restoring code does not restore any game Memory already
+migrated by running it.
 
 ## Diagnostic modes
 
