@@ -27,6 +27,7 @@ var roleExtractor = {
         if(!creep || creep.spawning) {
             return;
         }
+        if (utilityCreep.runExtractorLifecycle(creep)) return;
         /*
          * Keep source container planning fresh for this room. This may read
          * Memory.rooms[roomName].sources and write container planning fields.

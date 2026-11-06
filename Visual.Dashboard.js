@@ -40,16 +40,24 @@ function build(room, mode = 'NORMAL') {
         sourceRows.push('Source ' + (i + 1) + ' | WORK ' + s.activeWork + '/' + s.requiredWork);
         sourceRows.push('  Income ' + number(s.income) + '/' + number(s.expectedIncome) +
             ' | incoming ' + (s.spawningWork + s.queuedWork) + ' WORK');
-        if (mode === 'DEBUG') sourceRows.push('  At source ' + s.stationedWork + ' WORK | backlog ' + number(s.backlog));
+        sourceRows.push('  Seats ' + (s.seats ?? '?') + ' | max ' + (s.maximumWork ?? '?') +
+            ' WORK | ' + (s.replacement === 'PENDING' ? 'replacement pending' : s.constraint || 'unknown'));
+        if (mode === 'DEBUG') {
+            sourceRows.push('  At source ' + s.stationedWork + ' WORK | planned ' + (s.plannedWork ?? '?'));
+            sourceRows.push('  ' + (s.planningReason || 'No source plan'));
+            s.miners.forEach(m => sourceRows.push('  ' + m.name + ' ' + m.body.WORK + 'W/' + m.body.CARRY + 'C/' +
+                m.body.MOVE + 'M' + (m.replaces ? ' replaces ' + m.replaces : '')));
+            sourceRows.push('  Next: ' + (s.recommendedAction || 'observe'));
+        }
     });
-    Layout.add(layout, 1, 'LOCAL SOURCES', sourceRows, { maxRows: mode === 'DEBUG' ? 9 : 6 });
+    Layout.add(layout, 1, 'LOCAL SOURCES', sourceRows, { maxRows: mode === 'DEBUG' ? 12 : 6 });
     Layout.add(layout, 1, 'SPAWNING', view.spawn ? [
         (view.spawn.current ? '' : 'Stale @' + view.spawn.tick + ' | ') + (view.spawn.status || 'Unknown'),
         'Next role: ' + (view.spawn.role || 'none') + ' | Queue ' + view.spawn.queue,
         view.spawn.reason || 'No decision reason',
-        'Energy: ' + view.spawn.available + '/' + (view.spawn.required || '-'),
-        'Harvest: ' + view.activeWork + '/' + view.requiredWork + ' active WORK',
-        'Incoming: ' + view.spawningWork + ' spawning + ' + view.queuedWork + ' queued WORK'
+        'Energy: ' + view.spawn.available + '/' + (view.spawn.capacity || '?') + ' | body ' + (view.spawn.required || '-'),
+        view.spawn.sizingReason || 'Harvest: ' + view.activeWork + '/' + view.requiredWork + ' active WORK',
+        view.spawn.admission || 'Incoming: ' + view.spawningWork + ' spawning + ' + view.queuedWork + ' queued WORK'
     ].slice(0, mode === 'DEBUG' ? 6 : 4) : ['No spawn decision this tick'], { maxRows: mode === 'DEBUG' ? 6 : 4 });
     Layout.add(layout, 1, 'REMOTE OPERATIONS', view.remotes.map(r => r.room + ' | ' + r.status + ' | ' + r.sources + ' sources'),
         { when: view.remotes.length > 0, maxRows: 4 });

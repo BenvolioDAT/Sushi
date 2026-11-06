@@ -256,7 +256,8 @@ function buildGrowthPolicy(room, snapshot, creeps, spawns) {
     const spawnPressure = Math.min(1, (queue.length + snapshot.spawnPressure.busy * 0.5) /
         Math.max(2, spawns.length * 4));
     const controllerEmergency = room.controller && room.controller.ticksToDowngrade < 5000;
-    const localHealthy = snapshot.harvest.workActive >= Math.max(1, snapshot.harvest.workRequired * 0.9);
+    const localHealthy = snapshot.harvest.workActive >= Math.max(1, snapshot.harvest.workRequired * 0.9) ||
+        snapshot.harvest.infrastructureRecovery === true;
     const haulingHealthy = snapshot.haul.localCarry >= snapshot.haul.requiredCarry * 0.85 &&
         snapshot.haul.backlog <= Math.max(500, snapshot.haul.activeCarry * 75);
     let mode = GROWTH_MODES.NORMAL;
@@ -301,6 +302,11 @@ function buildGrowthPolicy(room, snapshot, creeps, spawns) {
     }
     utilization *= 1 - (spawnPressure * 0.4);
     let budget = sustainableNetIncome * utilization;
+    if (snapshot.harvest.infrastructureRecovery) {
+        mode = GROWTH_MODES.MINIMUM;
+        blockedReason = 'SPAWN_CAPACITY_INFRASTRUCTURE_RECOVERY';
+        budget = Math.min(1, sustainableNetIncome * 0.15);
+    }
     if (rcl === 1 && localHealthy) budget = Math.max(1, budget);
     if (rcl >= 1 && rcl < 8 && mode !== GROWTH_MODES.RECOVERY) budget = Math.max(1, budget);
     if (rcl >= 8) budget = Math.min(15, budget);
@@ -605,13 +611,13 @@ function buildSnapshot(room, previous) {
         const required = Math.max(1, Math.ceil((capacity / regeneration) / harvestPower));
         const assigned = creeps.filter(creep => isLocalExtractor(creep, room.name) &&
             sourceIdFor(creep.memory) === source.id);
-        const activeAssigned = assigned.filter(creep => !creep.spawning);
+        const activeAssigned = assigned.filter(creep => !creep.spawning && !creep.memory.extractorRetiring);
         const activeWork = activeAssigned.reduce((sum, creep) => sum + activeParts(creep, WORK), 0);
         const distance = getDistance(room, source, dropoff);
         const stationedWork = activeAssigned.reduce((sum, creep) => {
             if (!creep.pos || creep.pos.roomName !== room.name ||
                 typeof creep.pos.getRangeTo !== 'function' || creep.pos.getRangeTo(source.pos) > 1) return sum;
-            return sum + activeParts(creep, WORK);
+            return sum + (['waitingForReplacementSeat', 'waitingForContainerSeat'].includes(creep.memory.extractorState) ? 0 : activeParts(creep, WORK));
         }, 0);
         const sourceIncome = capacity / regeneration;
         const estimated = Math.min(sourceIncome, stationedWork * harvestPower);
@@ -646,7 +652,8 @@ function buildSnapshot(room, previous) {
             estimatedIncome: Math.round(estimated * 100) / 100,
             backlog: rowBacklog.energy,
             transport,
-            ...coverage
+            ...coverage,
+            ...require('Harvest.Planning').describe(room, source, assigned, queue, distance)
         });
     }
 
@@ -726,6 +733,7 @@ function buildSnapshot(room, previous) {
             workQueued: queuedWork,
             workSpawning: spawningWork,
             workIncoming: queuedWork + spawningWork,
+            maxAchievableWork: sourceRows.reduce((sum, row) => sum + row.maxAchievableWork, 0),
             sources: sourceRows
         },
         haul: {
@@ -761,6 +769,15 @@ function buildSnapshot(room, previous) {
         protectedStockpileEnergy: protectedSpawnStockpileEnergy(room),
         spawnPressure: { queued: queue.length, busy: busySpawns }
     };
+    const constrained = sourceRows.some(row => row.constraint === 'SPAWN_CAPACITY');
+    const attainableCovered = sourceRows.length > 0 && sourceRows.every(row => row.maxAchievableWork > 0 &&
+        row.workActive >= row.maxAchievableWork && row.stationedWork >= row.maxAchievableWork * 0.65);
+    snapshot.harvest.infrastructureRecovery = constrained && attainableCovered && energyAvailable >= 200 &&
+        energyTrend >= -1 && localCarry >= requiredCarry * 0.85 &&
+        creeps.some(c => !c.spawning && c.memory.role === 'Foreman' && activeParts(c, CARRY) > 0);
+    snapshot.harvest.constraint = constrained ? 'SPAWN_CAPACITY' : sourceRows.some(row => !row.seatCount) ? 'NO_HARVEST_SEAT' :
+        sourceRows.some(row => row.workActive < row.workRequired) ? 'WORKFORCE' :
+            localCarry < requiredCarry * 0.85 ? 'ENERGY_LOGISTICS' : 'NONE';
     snapshot.growth = buildGrowthPolicy(room, snapshot, creeps, spawns);
     return snapshot;
 }
@@ -981,7 +998,7 @@ function checkSpend(roomOrName, category) {
         return { allowed: true, reason: 'core economy' };
     }
     if (category === 'controllerGrowth' && snapshot.harvest && snapshot.harvest.workRequired > 0 &&
-        localHarvestCoverage(snapshot).status !== 'HEALTHY') {
+        localHarvestCoverage(snapshot).status !== 'HEALTHY' && !snapshot.harvest.infrastructureRecovery) {
         return { allowed: false, reason: 'local harvest must recover before controller growth' };
     }
     if (snapshot.state === STATES.SURVIVAL) {
@@ -1023,6 +1040,7 @@ function localHarvestCoverage(snapshot) {
         row.workActive + (row.workSpawning || 0) + (row.workQueued || 0) >= row.workRequired * 0.9) :
         activeWork + spawningWork + queuedWork >= requiredWork * 0.9;
     return { activeWork, spawningWork, queuedWork, requiredWork, activeRatio,
+        infrastructureRecovery: harvest.infrastructureRecovery === true,
         incomingWork: spawningWork + queuedWork,
         status: healthy ? 'HEALTHY' : requiredWork > 0 && incomingCovered ? 'RECOVERING' : 'MISSING' };
 }
@@ -1047,6 +1065,24 @@ function localRecoveryRequest(room, request, queue) {
     const source = local && rows && rows.find(row => row.id === sourceId);
     if (local && rows && rows.length && (!sourceId || !source)) return { mandatory: false, obsolete: true, reason: 'invalid local source assignment' };
     if (local && !source || localHauler && !(snapshot && snapshot.haul)) return { mandatory: false };
+    if (local && memory.extractorReplacementFor) {
+        const predecessor = Game.creeps[memory.extractorReplacementFor];
+        const successor = (TickIndex.get().creepsByHomeRoom.get(room.name) || []).find(c =>
+            c.memory.extractorReplacementFor === memory.extractorReplacementFor && !c.memory.extractorRetiring);
+        const earlier = (queue || []).find(q => q !== request && q.memory &&
+            q.memory.extractorReplacementFor === memory.extractorReplacementFor);
+        if (successor || earlier) return { mandatory: false, obsolete: true, reason: 'replacement pending' };
+        const sourceObject = Game.getObjectById(sourceId);
+        const maxBody = sourceObject && require('Harvest.Planning').body(room, request.requestedWorkParts || source.workRequired);
+        const oldWork = predecessor && activeParts(predecessor, WORK) || 0;
+        const validOld = !predecessor || isLocalExtractor(predecessor, room.name) && sourceIdFor(predecessor.memory) === sourceId;
+        if (!validOld || !source.seatCount || !maxBody || request.minimumWorkParts > maxBody.WORK ||
+            request.minerUpgrade && predecessor && oldWork >= maxBody.WORK) {
+            return { mandatory: false, obsolete: true, reason: 'replacement has no productive body or harvesting seat' };
+        }
+        return { mandatory: true, missing: request.requestedWorkParts,
+            reason: predecessor ? 'productive local miner replacement' : 'predecessor died; preserve source replacement' };
+    }
     const part = local ? WORK : CARRY;
     const matches = item => {
         const m = item.memory || {};
@@ -1080,6 +1116,9 @@ function localRecoveryRequest(room, request, queue) {
     }
     const required = local ? source.workRequired : snapshot.haul.requiredCarry;
     const missing = Math.max(0, required - covered);
+    if (local && source.seatCount !== undefined && source.availableSeats === 0 && source.workSpawning === 0 && !source.dyingWork && missing > 0) {
+        return { mandatory: false, obsolete: true, reason: 'no available harvesting seat; targeted replacement required' };
+    }
     return { mandatory: missing > 0, missing, obsolete: local && missing === 0,
         reason: missing > 0 ? 'mandatory local economy recovery' : 'local source already covered' };
 }

@@ -63,7 +63,7 @@ function selectAffordableQueuedBodyForSpawn(spawn, request) {
         };
     }
 
-    var energyAvailable = spawn.room.energyAvailable;
+    var energyAvailable = Math.min(spawn.room.energyAvailable, require('Harvest.Planning').energyCapacity(spawn.room));
     var bestBody;
 
     if (request.bodyRequirements && request.bodyRequirements.fixed === true) {
@@ -122,12 +122,12 @@ function selectAffordableQueuedBodyForSpawn(spawn, request) {
         );
     }
 
-    if (!bestBody || bestBody.length === 0) {
+    if (!bestBody || bestBody.length === 0 || request.minimumWorkParts > countBodyParts(bestBody, WORK)) {
         return {
             changed: false,
             affordable: false,
             energyAvailable: energyAvailable,
-            reason: 'no affordable body for current energy'
+            reason: request.minimumWorkParts > 1 ? 'insufficient current energy for productive replacement' : 'no affordable body for current energy'
         };
     }
 
@@ -156,9 +156,10 @@ function selectAffordableQueuedBodyForSpawn(spawn, request) {
 function minimumQueuedBodyCost(room, request) {
     if (request.bodyRequirements && request.bodyRequirements.fixed) return getBodyCost(request.body);
     if (request.role === 'Extractor' || request.bodyProfile) {
-        const profile = request.role === 'Extractor' ? { desiredWork: 1, maxWork: 1 } : { ...request.bodyProfile };
+        const minimum = request.minimumWorkParts || 1;
+        const profile = request.role === 'Extractor' ? { desiredWork: minimum, maxWork: minimum } : { ...request.bodyProfile };
         if (request.role === 'Tech' && room.controller && room.controller.ticksToDowngrade < 5000) profile.urgency = 'EMERGENCY';
-        const generated = require('BodyProfiles').build(request.role, { ...profile, maxUnits: 1,
+        const generated = require('BodyProfiles').build(request.role, { ...profile, maxUnits: request.role === 'Extractor' ? minimum : 1,
             energyCapacity: room.energyCapacityAvailable, energyAvailable: room.energyCapacityAvailable });
         return generated && generated.cost;
     }
@@ -166,13 +167,20 @@ function minimumQueuedBodyCost(room, request) {
 }
 
 function previewAffordableQueuedBodyForSpawn(spawn, request) {
+    const signature = JSON.stringify([spawn.room.energyAvailable, require('Harvest.Planning').energyCapacity(spawn.room),
+        request.role, request.requestedWorkParts, request.maxWorkParts, request.minimumWorkParts,
+        request.requestedCarryParts, request.maxCarryParts, request.bodyProfile,
+        !!request.bodyRequirements?.fixed, request.body, spawn.room.controller?.ticksToDowngrade < 5000]);
+    if (request.affordableBodyCache?.signature === signature) return request.affordableBodyCache.preview;
     var preview = Object.assign({}, request);
     var selection = selectAffordableQueuedBodyForSpawn(spawn, preview);
 
-    return {
+    const result = {
         body: selection.affordable ? preview.body : null,
         selection: selection
     };
+    request.affordableBodyCache = { signature, preview: result };
+    return result;
 }
 
 /**
@@ -452,10 +460,23 @@ function runRoomInternal(roomName, decision, selectedSpawn) {
      * no creep request to process this tick.
      */
     if (!queue || queue.length === 0) {
+        const rejected = Object.values(Memory.rooms[roomName]?.sources || {}).map(s => s.harvestPlanning)
+            .find(p => p?.tick === Game.time && p.admissionAllowed === false);
+        if (rejected && !decision.blocked) Object.assign(decision, { stage: 'admission',
+            selectedRole: 'Extractor', arbiterAllowed: false, arbiterReason: rejected.admissionReason,
+            blockSource: rejected.blockSource, configPath: rejected.configPath,
+            blocked: { role: 'Extractor', reason: rejected.admissionReason } });
+        const harvest = Economy.get(roomName)?.harvest;
+        const constrained = harvest?.sources?.find(s => s.constraint && s.constraint !== 'COVERED');
+        if (constrained) {
+            decision.harvestConstraint = constrained.constraint;
+            decision.recommendedAction = constrained.recommendedAction;
+        }
         return {
             ok: true,
             result: null,
-            reason: decision.blocked ? decision.blocked.reason : 'Queue empty'
+            reason: decision.blocked ? decision.blocked.reason : constrained ?
+                constrained.planningReason + '; ' + constrained.recommendedAction : 'Queue empty'
         };
     }
 
@@ -479,6 +500,10 @@ function runRoomInternal(roomName, decision, selectedSpawn) {
      * Highest priority request should already be first because requestRoleCount()
      * sorts the queue. We sort again just in case something else added to queue.
      */
+    const urgentRequests = new Set(queue.filter(q => q && !q.minerUpgrade &&
+        (Economy.localRecoveryRequest(spawn.room, q, queue).mandatory ||
+            require('Spawn.Policy').isImminentOwnedDefense(q) ||
+            ['controllerSafety', 'criticalController'].includes(Economy.categoryForRequest(q)))));
     queue.sort(function(a, b) {
         if (b.priority !== a.priority) {
             return b.priority - a.priority;
@@ -486,6 +511,16 @@ function runRoomInternal(roomName, decision, selectedSpawn) {
 
         return a.requestedAt - b.requestedAt;
     });
+    // Keep established recovery priorities. Only move urgent work ahead of an
+    // earlier discretionary upgrade, rather than reordering the whole economy.
+    for (const urgent of queue.filter(q => urgentRequests.has(q))) {
+        const index = queue.indexOf(urgent);
+        const upgrade = queue.findIndex((q, i) => i < index && q.minerUpgrade);
+        if (upgrade >= 0) {
+            queue.splice(index, 1);
+            queue.splice(upgrade, 0, urgent);
+        }
+    }
 
     var request = null;
     var requestIndex = -1;
@@ -542,7 +577,7 @@ function runRoomInternal(roomName, decision, selectedSpawn) {
         const coreContext = localCore && require('Spawn.Context').snapshot(roomName, 50);
         const missingCore = coreContext && (coreContext.byRole[candidate.role] || 0) <=
             coreContext.queue.filter(q => q && q.role === candidate.role).length;
-        const survival = finalAdmission.mandatoryEconomy || missingCore ||
+        const survival = finalAdmission.mandatoryEconomy && !candidate.minerUpgrade || missingCore ||
             ['controllerSafety', 'criticalController'].includes(category) ||
             require('Spawn.Policy').isImminentOwnedDefense(candidate);
         if (waitingPriority !== null && (candidate.priority || 0) < waitingPriority && !survival) continue;
@@ -561,15 +596,30 @@ function runRoomInternal(roomName, decision, selectedSpawn) {
                 finalAdmission.localMissingWork) });
         }
         var preview = previewAffordableQueuedBodyForSpawn(previewSpawn, bodyCandidate);
+        candidate.affordableBodyCache = bodyCandidate.affordableBodyCache;
+        const sizing = require('Spawn.Sizing').evaluate(spawn.room, candidate, preview, survival);
+        details.sizingReason = sizing.reason;
+        details.energyCapacity = sizing.capacity;
+        details.preferredCost = sizing.preferredCost;
+        details.selectedBody = preview.body;
+        if (sizing.wait) {
+            waitingPriority = Math.max(waitingPriority === null ? -Infinity : waitingPriority, candidate.priority || 0);
+            if (!decision.waitingForEnergy) Object.assign(decision, details, { stage: 'body',
+                waitingForEnergy: candidate.requestId || candidate.role, requiredEnergy: sizing.preferredCost,
+                blocked: { role: candidate.role, reason: sizing.reason } });
+            unaffordableRoles.push(candidate.role);
+            continue;
+        }
         if (!preview.selection.affordable) {
             if (!decision.blocked) Object.assign(decision, details, { stage: 'body',
-                blocked: { role: candidate.role, reason: preview.selection.reason } });
+                blocked: { role: candidate.role, reason: sizing.reason === 'insufficient maximum spawning capacity' ?
+                    sizing.reason : preview.selection.reason } });
             unaffordableRoles.push(candidate.role);
             // Reserve future refills only for a body this room can actually build.
             const atCapacity = { room: Object.create(spawn.room, {
                 energyAvailable: { value: spawn.room.energyCapacityAvailable } }) };
             const future = previewAffordableQueuedBodyForSpawn(atCapacity, bodyCandidate);
-            if (future.selection.affordable && future.body.length <= 50 && getBodyCost(future.body) > 0) {
+            if (sizing.reserve && future.selection.affordable && future.body.length <= 50 && getBodyCost(future.body) > 0) {
                 waitingPriority = Math.max(waitingPriority === null ? -Infinity : waitingPriority, candidate.priority || 0);
                 decision.waitingForEnergy = candidate.requestId || candidate.role;
                 decision.requiredEnergy = minimumQueuedBodyCost(spawn.room, bodyCandidate) || getBodyCost(future.body);

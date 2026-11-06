@@ -15,10 +15,19 @@ function room(name) {
     const sources = (harvest.sources || []).map(s => ({ id: s.id, activeWork: s.workActive,
         stationedWork: s.stationedWork, requiredWork: s.workRequired, spawningWork: s.workSpawning || 0,
         queuedWork: s.workQueued || 0, income: s.estimatedIncome, expectedIncome: s.expectedIncome,
-        assigned: s.assigned, backlog: s.backlog }));
+        assigned: s.assigned, backlog: s.backlog, seats: s.seatCount, availableSeats: s.availableSeats,
+        maximumWork: s.maxAchievableWork, plannedWork: s.plannedWork,
+        miners: s.miners || [], replacement: s.replacementStatus,
+        constraint: s.constraint, planningReason: s.planningReason, recommendedAction: s.recommendedAction,
+        preferredBody: s.preferredBody, preferredCost: s.preferredCost }));
     const decision = spawn.lastDecision || null, current = decision && decision.tick === Game.time;
     const colony = Colony.get(name) || {}, growth = economy.growth || {};
     const alerts = [];
+    if (harvest.constraint && harvest.constraint !== 'NONE') alerts.push('Harvest constraint: ' + harvest.constraint);
+    if (harvest.infrastructureRecovery) alerts.push('Build extensions: sustainable minimum growth permitted during recovery');
+    for (const source of sources) if (source.constraint === 'SPAWN_CAPACITY' || source.constraint === 'NO_HARVEST_SEAT') {
+        alerts.push(source.recommendedAction + ' | ' + source.planningReason);
+    }
     const economyTick = economy.sampleTick ?? economy.lastSampleTick ?? null;
     if (economyTick !== Game.time) alerts.push('Economy sample unavailable this tick' +
         (economyTick !== null ? ' (last tick ' + economyTick + ')' : ''));
@@ -52,6 +61,9 @@ function room(name) {
         healthyTicks: economy.healthyTicks || 0, counts, spawning, queued, sources, remotes, resources, alerts,
         spawn: decision ? { tick: decision.tick, current, status: decision.status, role: decision.selectedRole,
             reason: decision.blocked?.reason || decision.reason, available: decision.energyAvailable,
-            required: decision.requiredEnergy || decision.bodyCost, stage: decision.stage, queue: (spawn.queue || []).length } : null };
+            required: decision.requiredEnergy || decision.bodyCost, capacity: decision.energyCapacity || visible?.energyCapacityAvailable,
+            preferredCost: decision.preferredCost, selectedBody: decision.selectedBody,
+            sizingReason: decision.sizingReason, admission: decision.arbiterReason,
+            stage: decision.stage, queue: (spawn.queue || []).length } : null };
 }
 module.exports = { room };

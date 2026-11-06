@@ -115,7 +115,7 @@ function evaluate(room, request, context, options = {}) {
     const controllerGrowthFloor = category === 'controllerGrowth' && request.memory &&
         request.memory.controllerGrowthFloor === true;
     const protectedWork = ['harvest', 'logistics', 'spawnFill', 'controllerSafety',
-        'criticalController', 'controllerGrowth'].includes(category);
+        'criticalController', 'controllerGrowth', 'criticalInfrastructure'].includes(category);
     if (controllerGrowthFloor) {
         const floorCoveredOnlyByThisRequest = lifecycle && lifecycle.growthAllowed &&
             lifecycle.baselineTechWork > 0 && (context.byRole.Tech || 0) <= (options.revalidate ? 1 : 0);

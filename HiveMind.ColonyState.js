@@ -166,7 +166,7 @@ function decide(room, economy, summary, lifecycle, alert) {
     const floorReachable = !economy.bootstrap || economy.bootstrap.floorReachable !== false;
     const localHarvest = Economy.localHarvestCoverage(economy);
     const active = summary.activeByRole || summary.byRole;
-    const functionalMining = localHarvest.status === 'HEALTHY';
+    const functionalMining = localHarvest.status === 'HEALTHY' || localHarvest.infrastructureRecovery;
     let nextMandatoryRole = null;
     let blockedReason = null;
     if (!functionalMining && !floorReachable) {
@@ -215,8 +215,9 @@ function decide(room, economy, summary, lifecycle, alert) {
             baselinePhase ? PRIORITY_BANDS.BASELINE_GROWTH : PRIORITY_BANDS.DEVELOPMENT,
         growthAllowed, baselineTechRequired, baselineTechWork,
         blockedReason: growthAllowed ? null : blockedReason, reason, nextMandatoryRole,
+        infrastructureRecovery: localHarvest.infrastructureRecovery,
         coreFloor: { foreman: active.Foreman || 0, localExtractors: summary.activeLocalExtractors || 0,
-            freighters: active.Freighter || 0, complete: !coreBlockedReason },
+            freighters: active.Freighter || 0, complete: !coreBlockedReason && localHarvest.status === 'HEALTHY' },
         techPlannedWork: summary.techWork, governorNonCombat: summary.nonCombat,
         controllerDowngradeTicks: room.controller && room.controller.ticksToDowngrade || 0,
         protectedStockpileEnergy: economy.protectedStockpileEnergy || 0,

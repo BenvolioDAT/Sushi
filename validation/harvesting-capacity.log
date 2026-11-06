@@ -1,0 +1,35 @@
+PASS 1 one-seat source distinguishes required, achievable, active and planned WORK
+PASS 2 six-seat source counts mixed active parts and excludes destroyed WORK
+PASS 3 300 energy chooses two WORK, CARRY and MOVE; 200 permits emergency one WORK
+Spawning Extractor_001 as Extractor in W3S47 using affordable body cost 700
+PASS 4 extensions enable a five-WORK replacement for a full one-seat source
+PASS 5 full 300-energy idle spawn reports capacity constraint instead of redundant miners
+PASS 6 underpowered unique-seat miner upgrades once without double-counting planned WORK
+Spawning Extractor_001 as Extractor in W3S47 using affordable body cost 300
+PASS 7 spawning replacement reserves source even before Game.creeps exposes it
+PASS 8 blocked handoff times out without retiring incumbent; cooldown prevents loops
+PASS 9 recovery stays unhealthy when infrastructure limits harvesting
+PASS 10 infrastructure escape permits bounded construction and minimum sustainable growth
+Spawning Extractor_001 as Extractor in W3S47 after downgrading body from 700 to 200 energy
+PASS 11 emergency miner uses current energy immediately when no income exists
+Spawning Extractor_001 as Extractor in W3S47 after downgrading body from 700 to 300 energy
+PASS 12 preferred energy never arrives: bounded wait releases to a useful upgrade
+PASS 13 incumbent death preserves replacement and lets successor claim the unique seat
+Spawning Extractor_001 as Extractor in W3S47 after downgrading body from 700 to 300 energy
+PASS 14 economic deterioration cancels discretionary wait without spawning a weaker upgrade
+PASS 15 unavailable or destroyed extensions bound body capacity; partial damage stays usable
+PASS handoff keeps incumbent mining until arrival, uses a free exit and unique seat ownership
+Spawning Freighter_001 as Freighter in W3S47 using affordable body cost 100
+PASS urgent local hauling preempts a discretionary miner wait
+PASS logistics shortage and falling income cannot enable infrastructure escape
+PASS replacement pending does not conceal death risk or allow a duplicate admission
+PASS failed early upgrade is not retried repeatedly against an unchanged handoff
+PASS extension loss cancels an upgrade that cannot beat the incumbent at realistic capacity
+PASS dead predecessor and lost seat recycle the successor instead of leaving it stranded
+PASS full planning pipeline admits the construction needed to leave capacity recovery
+PASS Black Box records plan transitions without generating an event each unchanged tick
+Spawning Extractor_001 as Extractor in W3S47 using affordable body cost 700
+PASS unchanged available energy reuses body preview; changed energy reevaluates it
+PASS admission rejection remains visible when it leaves the spawn queue empty
+PASS an affordable partial upgrade does not immediately trigger another replacement wave
+Harvesting capacity scenarios passed: 27

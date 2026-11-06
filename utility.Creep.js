@@ -949,6 +949,8 @@ function sourceHasOpenWorkCapacity(sourceRecord, requestingCreep) {
     var roomName = sourceRecord.source && sourceRecord.source.pos ? sourceRecord.source.pos.roomName : null;
     var assignedSummary = getAssignedExtractorSummary(sourceRecord);
     var workTarget = getSourceWorkTarget(sourceRecord.source);
+    if (requestingCreep && !requestingCreep.memory.remoteMining && !requestingCreep.memory.extractorRetiring &&
+        isExtractorAssignedToSource(requestingCreep, sourceRecord.sourceId, roomName)) return true;
 
     if (requestingCreep && requestingCreep.memory.remoteMining && requestingCreep.memory.homeRoom !== roomName) {
         // Remote planner owns admission; never discard a targeted overlap miner when
@@ -1185,7 +1187,126 @@ function getAssignedMiningSeat(creep, source) {
         return seatPosition;
     }
 
+    if (!remote) creep.memory.extractorState = 'waitingForContainerSeat';
     return null;
+}
+
+/* Replacement staging uses the existing source/seat reservations and Traveler.
+ * The incumbent keeps mining until a viable successor is at the handoff tile.
+ * Retired miners are recycled, never assigned to another source. */
+function runExtractorLifecycle(creep) {
+    var m = creep.memory;
+    if (m.extractorRetiring) {
+        var successor = Game.creeps[m.extractorRetiring];
+        // If the successor dies before taking the seat, resume the incumbent.
+        if (!successor && !m.extractorReplacementAborted) {
+            delete m.extractorRetiring;
+            delete m.extractorRetirePos;
+            return false;
+        }
+        clearMiningSeatMemory(creep);
+        m.extractorState = 'retiringMiner';
+        if (m.extractorRetirePos) {
+            var exit = new RoomPosition(m.extractorRetirePos.x, m.extractorRetirePos.y, m.extractorRetirePos.roomName);
+            if (!sameRoomPosition(creep.pos, exit)) {
+                travel.move(creep, exit, { range: 0 });
+                return true;
+            }
+            delete m.extractorRetirePos;
+        }
+        var spawn = Object.values(Game.spawns).find(s => s.room.name === m.homeRoom);
+        if (spawn) {
+            if (creep.pos.getRangeTo(spawn) <= 1) {
+                if (creep.store && creep.store[RESOURCE_ENERGY] > 0) creep.transfer(spawn, RESOURCE_ENERGY);
+                if (typeof spawn.recycleCreep === 'function') spawn.recycleCreep(creep);
+            } else travel.move(creep, spawn, { range: 1 });
+        }
+        return true;
+    }
+    if (!m.extractorReplacementFor || m.remoteMining) return false;
+    var source = Game.getObjectById(m.sourceId);
+    var memory = source && getSourceMemoryForSource(source.pos.roomName, source.id);
+    var old = Game.creeps[m.extractorReplacementFor];
+    var positions = source && memory ? require('Harvest.Planning').seats(source, memory) : [];
+    if (!old) {
+        if (!positions.length) {
+            m.extractorRetiring = creep.name;
+            m.extractorReplacementAborted = true;
+            if (memory) memory.upgradeRetryAt = Game.time + 250;
+            delete m.extractorReplacementFor;
+            return true;
+        }
+        delete m.extractorReplacementFor;
+        delete m.extractorHandoffStarted;
+        return false;
+    }
+    var target = positions.find(pos => old.memory.miningSeat && sameRoomPosition(pos, old.memory.miningSeat)) ||
+        positions.find(pos => sameRoomPosition(pos, old.pos)) || positions[0];
+    if (!m.extractorHandoffStarted) m.extractorHandoffStarted = Game.time;
+    var validOld = old.memory.role === 'Extractor' && !old.memory.remoteMining &&
+        old.memory.homeRoom === m.homeRoom && (old.memory.sourceId || old.memory.targetSourceId) === m.sourceId;
+    if (!target || !validOld || getCreepWorkParts(creep) === 0 || getCreepWorkParts(creep) <= getCreepWorkParts(old) && old.ticksToLive > 150 ||
+        Game.time - m.extractorHandoffStarted > 150) {
+        if (memory) {
+            memory.upgradeRetryAt = Game.time + 250;
+            memory.upgradeBlockedFor = old.name;
+            memory.upgradeBlockedCapacity = require('Harvest.Planning').energyCapacity(creep.room);
+            memory.upgradeBlockedSeatCount = positions.length;
+        }
+        if (old.memory.extractorRetiring === creep.name) {
+            delete old.memory.extractorRetiring;
+            delete old.memory.extractorRetirePos;
+        }
+        m.extractorRetiring = creep.name;
+        m.extractorReplacementAborted = true;
+        delete m.extractorReplacementFor;
+        require('Diagnostics').record('SPAWNING', 'WARN', 'MINER_HANDOFF_ABORTED', m.homeRoom,
+            { creep: creep.name, reason: !target ? 'no harvesting seat' : !validOld ? 'predecessor assignment changed' : 'handoff unavailable or timed out' });
+        return true;
+    }
+    m.extractorState = 'waitingForReplacementSeat';
+    clearMiningSeatMemory(creep);
+    // Reserve no harvesting seat while approaching the incumbent.
+    if (creep.pos.getRangeTo(target) > 1) {
+        travel.move(creep, target, { range: 1 });
+        return true;
+    }
+    var obstruction = target.lookFor(LOOK_CREEPS).some(c => c.name !== creep.name && c.name !== old.name) ||
+        Object.values(Game.creeps).some(c => c.name !== old.name && c.name !== creep.name &&
+            c.memory?.miningSeat && sameRoomPosition(c.memory.miningSeat, target));
+    if (obstruction) return true;
+    if (!sameRoomPosition(old.pos, target)) {
+        // The predecessor has vacated (or was delivering). Keep it retired and
+        // let the successor claim through the normal seat helper this tick.
+        old.memory.extractorRetiring = creep.name;
+        clearMiningSeatMemory(old);
+        if (getCreepWorkParts(creep) > getCreepWorkParts(old)) memory.upgradeRetryAt = Game.time + 250;
+        delete m.extractorReplacementFor;
+        delete m.extractorHandoffStarted;
+        require('Diagnostics').record('SPAWNING', 'INFO', 'MINER_HANDOFF_COMPLETED', m.homeRoom,
+            { creep: creep.name, predecessor: old.name, source: source.id });
+        return false;
+    }
+    if (getCreepWorkParts(old) > 0 && typeof old.getActiveBodyparts === 'function' && old.getActiveBodyparts(MOVE) === 0) return true;
+    // Do not evict the incumbent into a blocked tile or onto the successor.
+    var exits = [];
+    for (var x = target.x - 1; x <= target.x + 1; x++) {
+        for (var y = target.y - 1; y <= target.y + 1; y++) {
+            if (x < 1 || x > 48 || y < 1 || y > 48 || x === source.pos.x && y === source.pos.y) continue;
+            var pos = new RoomPosition(x, y, target.roomName);
+            if (sameRoomPosition(pos, target) || sameRoomPosition(pos, creep.pos) ||
+                Game.map.getRoomTerrain(pos.roomName).get(x, y) === TERRAIN_MASK_WALL ||
+                pos.lookFor(LOOK_CREEPS).length || pos.lookFor(LOOK_STRUCTURES).some(s =>
+                    OBSTACLE_OBJECT_TYPES.includes(s.structureType) || s.structureType === STRUCTURE_RAMPART && !s.my && !s.isPublic)) continue;
+            exits.push(pos);
+        }
+    }
+    exits.sort((a, b) => b.getRangeTo(source.pos) - a.getRangeTo(source.pos));
+    if (!exits.length) return true;
+    old.memory.extractorRetiring = creep.name;
+    old.memory.extractorRetirePos = { x: exits[0].x, y: exits[0].y, roomName: exits[0].roomName };
+    // The successor stays staged until physical occupancy clears next tick.
+    return true;
 }
 
 function getSourceMemoryForSource(roomName, sourceId) {
@@ -2173,6 +2294,7 @@ module.exports = {
 
     getAssignedSource,
     getAssignedMiningSeat,
+    runExtractorLifecycle,
 
     dropEnergy,
 

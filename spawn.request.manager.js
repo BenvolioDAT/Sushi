@@ -2232,6 +2232,10 @@ function requestDynamicArtificersForRoom(room, demandOverride, options) {
         (demand.hasCriticalWork ? 'criticalMaintenance' : 'construction');
     var categoryMissingWork = demand.missingWorkByEconomyCategory ?
         demand.missingWorkByEconomyCategory[requestEconomyCategory] : demand.missingWork;
+    if (requestEconomyCategory === 'criticalInfrastructure' && Economy.get(room.name)?.harvest?.infrastructureRecovery) {
+        categoryMissingWork = Math.min(categoryMissingWork, Math.max(0, 2 - demand.livingWork - demand.queuedWork));
+        if (categoryMissingWork <= 0) return result;
+    }
     result.economyCategory = requestEconomyCategory;
 
     var body = creepBodyConfig.getArtificerBodyForWork(room, categoryMissingWork);
@@ -2697,346 +2701,40 @@ function requestRoleForRoom(room, role, desiredCount, priorityOverride, options)
             };
         }
 
-        for (var sourceId in sourcesMemory) {
-            if (!sourcesMemory.hasOwnProperty(sourceId)) {
-                continue;
-            }
-
-            var sourceMemory = sourcesMemory[sourceId];
-
-            if (!sourceMemory) {
-                continue;
-            }
-
+        for (var source of ensureVisibleLocalSourceMemories(room)) {
             managedSourceCount++;
-
-            if (!sourceMemory.assignedMiner) {
-                /*
-                 * assignedMiner is persistent memory, so normalize its shape
-                 * before using it. Old versions may have saved a string or a
-                 * non-array value; this keeps the current loop predictable.
-                 */
-                sourceMemory.assignedMiner = [];
-            }
-            else if (typeof sourceMemory.assignedMiner === 'string') {
-                sourceMemory.assignedMiner = [sourceMemory.assignedMiner];
-            }
-            else if (!Array.isArray(sourceMemory.assignedMiner)) {
-                sourceMemory.assignedMiner = [];
-            }
-
-            var realSourceId = sourceMemory.id || sourceId;
-            var economySnapshot = Economy.get(roomName);
-            var economySource = economySnapshot && economySnapshot.harvest &&
-                economySnapshot.harvest.sources ? economySnapshot.harvest.sources.find(function(row) {
-                    return row.id === realSourceId;
-                }) : null;
-            var sourceWorkTarget = economySource ? economySource.workRequired : SOURCE_WORK_TARGET;
-            if (economySource && economySource.workSpawning > 0 &&
-                economySource.healthyWork + economySource.workSpawning >= sourceWorkTarget) {
-                continue;
-            }
-            var sourceTravelDistance = economySource ? economySource.distance : 30;
-            var maxSeats = 1;
-            var livingAssignedCount = 0;
-            var totalAssignedWorkParts = 0;
-            var healthyAssignedCount = 0;
-            var hasDyingAssignedExtractor = false;
-            var cleanAssignedMiners = [];
-            var seenAssignedCreeps = {};
-
-            if (sourceMemory.seatCount && sourceMemory.seatCount > 0) {
-                maxSeats = sourceMemory.seatCount;
-            }
-            else if (sourceMemory.seats && sourceMemory.seats.length > 0) {
-                maxSeats = sourceMemory.seats.length;
-            }
-
-            for (var assignedIndex = 0; assignedIndex < sourceMemory.assignedMiner.length; assignedIndex++) {
-                var assignedReference = sourceMemory.assignedMiner[assignedIndex];
-                var assignedCreep = Game.getObjectById(assignedReference) || Game.creeps[assignedReference];
-
-                if (!assignedCreep || !assignedCreep.my || !assignedCreep.memory) {
-                    continue;
-                }
-
-                var assignedRole = assignedCreep.memory.role;
-                var assignedTask = assignedCreep.memory.task;
-
-                if (
-                    assignedRole !== 'Extractor' &&
-                    assignedRole !== 'Miner' &&
-                    assignedTask !== 'Extractor' &&
-                    assignedTask !== 'Miner' &&
-                    assignedTask !== 'extractor' &&
-                    assignedTask !== 'miner'
-                ) {
-                    continue;
-                }
-
-                if (
-                    assignedCreep.memory.sourceId !== realSourceId &&
-                    assignedCreep.memory.targetSourceId !== realSourceId &&
-                    assignedCreep.memory.assignedSource !== realSourceId
-                ) {
-                    continue;
-                }
-
-                if (assignedCreep.memory.sourceRoom && assignedCreep.memory.sourceRoom !== roomName) {
-                    continue;
-                }
-
-                if (assignedCreep.memory.targetRoom && assignedCreep.memory.targetRoom !== roomName) {
-                    continue;
-                }
-
-                if (
-                    !assignedCreep.memory.sourceRoom &&
-                    !assignedCreep.memory.targetRoom &&
-                    assignedCreep.memory.homeRoom &&
-                    assignedCreep.memory.homeRoom !== roomName
-                ) {
-                    continue;
-                }
-
-                if (seenAssignedCreeps[assignedCreep.id]) {
-                    continue;
-                }
-
-                seenAssignedCreeps[assignedCreep.id] = true;
-                cleanAssignedMiners.push(assignedCreep.id);
-                livingAssignedCount++;
-
-                var assignedWorkParts = 0;
-
-                if (typeof assignedCreep.getActiveBodyparts === 'function') {
-                    assignedWorkParts = assignedCreep.getActiveBodyparts(WORK);
-                }
-
-                if (assignedWorkParts <= 0 && assignedCreep.spawning && assignedCreep.body) {
-                    for (var bodyIndex = 0; bodyIndex < assignedCreep.body.length; bodyIndex++) {
-                        if (assignedCreep.body[bodyIndex] && assignedCreep.body[bodyIndex].type === WORK) {
-                            assignedWorkParts++;
-                        }
-                    }
-                }
-
-                totalAssignedWorkParts += assignedWorkParts;
-
-                if (
-                    assignedCreep.ticksToLive !== undefined &&
-                    assignedCreep.ticksToLive <= Math.max(
-                        EXTRACTOR_HANDOFF_TICKS,
-                        (assignedCreep.body ? assignedCreep.body.length * 3 : 0) + sourceTravelDistance + 10
-                    )
-                ) {
-                    hasDyingAssignedExtractor = true;
-                }
-                else {
-                    healthyAssignedCount++;
-                }
-            }
-
-            /*
-             * Include living or spawning creeps that already have this targeted
-             * source memory, even if assignedMiner has not caught up yet.
-             * This closes the race between "request queued/spawned" and
-             * "source memory list updated by the running creep."
-             */
-            for (var livingIndex = 0; livingIndex < homeLivingCreeps.length; livingIndex++) {
-                var livingCreep = homeLivingCreeps[livingIndex];
-
-                if (!livingCreep || !livingCreep.my || !livingCreep.memory) {
-                    continue;
-                }
-
-                var livingRole = livingCreep.memory.role;
-                var livingTask = livingCreep.memory.task;
-
-                if (
-                    livingRole !== 'Extractor' &&
-                    livingRole !== 'Miner' &&
-                    livingTask !== 'Extractor' &&
-                    livingTask !== 'Miner' &&
-                    livingTask !== 'extractor' &&
-                    livingTask !== 'miner'
-                ) {
-                    continue;
-                }
-
-                if (
-                    livingCreep.memory.sourceId !== realSourceId &&
-                    livingCreep.memory.targetSourceId !== realSourceId &&
-                    livingCreep.memory.assignedSource !== realSourceId
-                ) {
-                    continue;
-                }
-
-                if (livingCreep.memory.sourceRoom && livingCreep.memory.sourceRoom !== roomName) {
-                    continue;
-                }
-
-                if (livingCreep.memory.targetRoom && livingCreep.memory.targetRoom !== roomName) {
-                    continue;
-                }
-
-                if (
-                    !livingCreep.memory.sourceRoom &&
-                    !livingCreep.memory.targetRoom &&
-                    livingCreep.memory.homeRoom &&
-                    livingCreep.memory.homeRoom !== roomName
-                ) {
-                    continue;
-                }
-
-                if (seenAssignedCreeps[livingCreep.id]) {
-                    continue;
-                }
-
-                seenAssignedCreeps[livingCreep.id] = true;
-                cleanAssignedMiners.push(livingCreep.id);
-                livingAssignedCount++;
-
-                var livingWorkParts = 0;
-
-                if (typeof livingCreep.getActiveBodyparts === 'function') {
-                    livingWorkParts = livingCreep.getActiveBodyparts(WORK);
-                }
-
-                if (livingWorkParts <= 0 && livingCreep.spawning && livingCreep.body) {
-                    for (var livingBodyIndex = 0; livingBodyIndex < livingCreep.body.length; livingBodyIndex++) {
-                        if (livingCreep.body[livingBodyIndex] && livingCreep.body[livingBodyIndex].type === WORK) {
-                            livingWorkParts++;
-                        }
-                    }
-                }
-
-                totalAssignedWorkParts += livingWorkParts;
-
-                if (
-                    livingCreep.ticksToLive !== undefined &&
-                    livingCreep.ticksToLive <= Math.max(
-                        EXTRACTOR_HANDOFF_TICKS,
-                        (livingCreep.body ? livingCreep.body.length * 3 : 0) + sourceTravelDistance + 10
-                    )
-                ) {
-                    hasDyingAssignedExtractor = true;
-                }
-                else {
-                    healthyAssignedCount++;
-                }
-            }
-
-            sourceMemory.assignedMiner = cleanAssignedMiners;
-
-            var hasPendingSourceRequest = false;
-
-            for (var queueIndex = 0; queueIndex < queue.length; queueIndex++) {
-                var queuedRequest = queue[queueIndex];
-
-                if (!queuedRequest) {
-                    continue;
-                }
-
-                var queuedMemory = queuedRequest.memory || {};
-                var queuedRole = queuedRequest.role || queuedMemory.role;
-                var queuedTask = queuedRequest.task || queuedMemory.task;
-
-                if (
-                    queuedRole !== 'Extractor' &&
-                    queuedRole !== 'Miner' &&
-                    queuedTask !== 'Extractor' &&
-                    queuedTask !== 'Miner' &&
-                    queuedTask !== 'extractor' &&
-                    queuedTask !== 'miner'
-                ) {
-                    continue;
-                }
-
-                var queuedRoom = (
-                    queuedRequest.roomName ||
-                    queuedMemory.sourceRoom ||
-                    queuedMemory.targetRoom ||
-                    queuedMemory.homeRoom ||
-                    roomName
-                );
-
-                if (queuedRoom !== roomName) {
-                    continue;
-                }
-
-                var queuedSourceId = (
-                    queuedRequest.sourceId ||
-                    queuedRequest.targetSourceId ||
-                    queuedRequest.assignedSource ||
-                    queuedMemory.sourceId ||
-                    queuedMemory.targetSourceId ||
-                    queuedMemory.assignedSource
-                );
-
-                if (queuedSourceId === realSourceId) {
-                    hasPendingSourceRequest = true;
-                    queuedRequest.refreshTick = Game.time;
-                    queuedRequest.expiresAt = Game.time + (HiveMemory.getConfig('memoryGC').queueRetention || 50);
-                    break;
-                }
-            }
-
-            if (hasPendingSourceRequest) {
-                continue;
-            }
-
-            var hasLiveContainer = sourceHasLiveContainer(realSourceId, sourceMemory);
-
-            if (hasLiveContainer) {
-                if (!containerSourceNeedsExtractor(
-                    livingAssignedCount,
-                    totalAssignedWorkParts,
-                    hasDyingAssignedExtractor,
-                    healthyAssignedCount,
-                    sourceWorkTarget
-                )) {
-                    continue;
-                }
-            }
-            else if (
-                livingAssignedCount >= maxSeats ||
-                totalAssignedWorkParts >= sourceWorkTarget
-            ) {
-                continue;
-            }
-
-            var missingSourceWork = Math.max(1, sourceWorkTarget - totalAssignedWorkParts);
-            if (hasDyingAssignedExtractor && healthyAssignedCount === 0) {
-                missingSourceWork = sourceWorkTarget;
-            }
-            var sourceBody = creepBodyConfig.getExtractorBodyForWork(room, missingSourceWork) || body;
-
-            var addSourceResult = addSpawnRequest(roomName, {
-                role: role,
-                body: sourceBody,
-                requestedWorkParts: Math.max(1, countBodyParts(sourceBody, WORK)),
-                maxWorkParts: Math.max(1, countBodyParts(sourceBody, WORK)),
+            var sourceMemory = ensureLocalSourceMemory(roomName, source.id);
+            var assigned = homeLivingCreeps.filter(function(c) {
+                return c.memory && c.memory.role === 'Extractor' && !c.memory.remoteMining &&
+                    (!c.memory.sourceRoom || c.memory.sourceRoom === roomName) &&
+                    (!c.memory.targetRoom || c.memory.targetRoom === roomName) &&
+                    (c.memory.sourceId || c.memory.targetSourceId || c.memory.assignedSource) === source.id;
+            });
+            sourceMemory.assignedMiner = assigned.map(function(c) { return c.id || c.name; });
+            var row = Economy.get(roomName)?.harvest?.sources?.find(function(r) { return r.id === source.id; });
+            var plan = require('Harvest.Planning').describe(room, source, assigned, queue, row?.distance || 30);
+            sourceMemory.harvestPlanning = { tick: Game.time, reason: plan.planningReason,
+                constraint: plan.constraint, recommendedAction: plan.recommendedAction };
+            if (!plan.action) continue;
+            var action = plan.action;
+            var selected = require('Harvest.Planning').body(room, action.work);
+            if (!selected) continue;
+            var result = addSpawnRequest(roomName, {
+                role: 'Extractor', body: selected.body,
+                requestedWorkParts: action.work, maxWorkParts: action.work,
+                minimumWorkParts: action.minWork || 1, minerUpgrade: !!action.upgrade,
+                replacementFor: action.replacementFor ? [action.replacementFor] : undefined,
                 priority: priority,
-                memory: {
-                    role: role,
-                    homeRoom: roomName,
-                    sourceRoom: roomName,
-                    targetRoom: roomName,
-                    sourceId: realSourceId,
-                    targetSourceId: realSourceId
-                },
+                memory: { role: 'Extractor', homeRoom: roomName, sourceRoom: roomName,
+                    targetRoom: roomName, sourceId: source.id, targetSourceId: source.id,
+                    ...(action.replacementFor ? { extractorReplacementFor: action.replacementFor } : {}) },
                 requestedAt: Game.time
             }, options);
-
-            if (!addSourceResult.ok) {
-                break;
-            }
-
-            sourceRequestsAdded++;
-
-            /* Fill one source assignment per tick instead of creating a wave. */
-            break;
+            Object.assign(sourceMemory.harvestPlanning, { admissionAllowed: result.ok,
+                admissionReason: result.reason || null, blockSource: result.blockSource || null,
+                configPath: result.configPath || null });
+            if (result.ok) sourceRequestsAdded += result.requested || 0;
+            break; // Keep the established one-source-per-tick admission hysteresis.
         }
 
         if (managedSourceCount > 0) {
@@ -3205,16 +2903,23 @@ function runStartupBootstrap(room, report) {
         report.requests.push(requestRoleForRoom(room, 'Foreman', 1, 108, emergencyOptions));
         return true;
     }
-    if (economy.harvest && economy.harvest.sources && economy.harvest.sources.length ?
+    if (!economy.harvest?.infrastructureRecovery && (economy.harvest && economy.harvest.sources && economy.harvest.sources.length ?
         economy.harvest.sources.some(function(source) {
             return source.workActive + (source.workSpawning || 0) + (source.workQueued || 0) < source.workRequired;
-        }) : localMinerCount < 2) {
+        }) : localMinerCount < 2)) {
         report.requests.push(requestDynamicExtractorsForRoom(room, 116, null, emergencyOptions));
         return true;
     }
     if (getPlannedRoleCount(context, 'Freighter') < 1) {
         report.requests.push(requestDynamicFreightersForRoom(room, 112, null, emergencyOptions));
         return true;
+    }
+    if (economy.harvest?.infrastructureRecovery) {
+        // Do not let the theoretical mining target indefinitely return from
+        // bootstrap before the builder that can raise its attainable capacity.
+        var infrastructure = requestDynamicArtificersForRoom(room);
+        report.requests.push(infrastructure);
+        if (infrastructure.requested > 0) return true;
     }
     if (colony.baselineTechRequired && colony.growthAllowed) {
         var livingWork = countLivingRoleWork(room.name, 'Tech');
@@ -3433,13 +3138,6 @@ function getSourceMiningDemand(room) {
         var sourceWork = Math.max(1, Math.ceil(sourceIncome /
             (typeof HARVEST_POWER !== 'undefined' ? HARVEST_POWER : 2)));
 
-        /* Without a container, available mining seats cap useful miner bodies. */
-        if (!sourceHasLiveContainer(source.id, sourceMemory)) {
-            sourceWork = Math.min(
-                SOURCE_WORK_TARGET,
-                getSourceSeatCount(source, sourceMemory) * bodyWork
-            );
-        }
 
         desiredWork += sourceWork;
     }

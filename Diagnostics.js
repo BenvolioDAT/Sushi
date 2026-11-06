@@ -270,6 +270,16 @@ function observeEconomy(room, snapshot) {
         const paused = growth.mode === 'RECOVERY';
         const belowReserve = (growth.energyAboveReserve || 0) <= 0;
         const missing = snapshot.harvest.workActive < snapshot.harvest.workRequired * 0.9;
+        const sourceSignature = (snapshot.harvest.sources || []).map(s =>
+            [s.id, s.constraint, s.planningReason, s.replacementStatus, s.maxAchievableWork, s.seatCount].join(':')).join('|');
+        if (!old || old.sourceSignature !== sourceSignature) {
+            for (const source of snapshot.harvest.sources || []) record('SPAWNING',
+                source.constraint === 'COVERED' ? 'INFO' : 'WARN', 'HARVEST_PLAN_CHANGED', room,
+                { source: source.id, required: source.workRequired, active: source.workActive,
+                    stationed: source.stationedWork, maximum: source.maxAchievableWork, seats: source.seatCount,
+                    replacement: source.replacementStatus, constraint: source.constraint,
+                    reason: source.planningReason, next: source.recommendedAction });
+        }
         const starving = snapshot.energyAvailable < 200;
         const transitions = [
             [recovering, old && old.recovering, 'RECOVERY_ACTIVATED', 'RECOVERY_COMPLETED'],
@@ -284,7 +294,7 @@ function observeEconomy(room, snapshot) {
         if (missing && (!old || !old.missing)) record('SPAWNING', 'WARN', 'CRITICAL_HARVEST_CAPACITY_MISSING', room,
             { activeWork: snapshot.harvest.workActive, requiredWork: snapshot.harvest.workRequired,
                 spawningWork: snapshot.harvest.workSpawning, queuedWork: snapshot.harvest.workQueued });
-        h.rooms.set(room, { signature, state: snapshot.state, recovering, paused, belowReserve, missing, starving });
+        h.rooms.set(room, { signature, sourceSignature, state: snapshot.state, recovering, paused, belowReserve, missing, starving });
     } catch (error) { /* Observation must not affect policy. */ }
 }
 function movement(creep, result, destination) {
