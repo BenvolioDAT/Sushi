@@ -180,6 +180,8 @@ function evaluate(room, request, context, options = {}) {
     }
     return { allowed: true, reason: recovery.mandatory ? recovery.reason : options.revalidate ? 'revalidated' : 'admitted',
         localMissingWork: (request.role || request.memory && request.memory.role) === 'Extractor' ? recovery.missing : undefined,
+        lifetimeReplacement: recovery.lifetimeReplacement,
+        minimumWorkParts: recovery.minimumWorkParts,
         mandatoryEconomy: recovery.mandatory, mandatoryFloorBypass: mandatoryFloorBypass || recovery.mandatory &&
             context.nonCombatTotal - ownQueued >= maxCreeps(room, policy) };
 }

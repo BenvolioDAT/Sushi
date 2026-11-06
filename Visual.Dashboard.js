@@ -39,7 +39,7 @@ function build(room, mode = 'NORMAL') {
     view.sources.forEach((s, i) => {
         sourceRows.push('Source ' + (i + 1) + ' | WORK ' + s.activeWork + '/' + s.requiredWork);
         sourceRows.push('  Income ' + number(s.income) + '/' + number(s.expectedIncome) +
-            ' | incoming ' + (s.spawningWork + s.queuedWork) + ' WORK');
+            ' | incoming ' + (s.spawningWork + s.queuedWork + s.stagingWork) + ' WORK');
         sourceRows.push('  Seats ' + (s.seats ?? '?') + ' | max ' + (s.maximumWork ?? '?') +
             ' WORK | ' + (s.replacement === 'PENDING' ? 'replacement pending' : s.constraint || 'unknown'));
         if (mode === 'DEBUG') {

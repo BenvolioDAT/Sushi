@@ -64,6 +64,7 @@ function selectAffordableQueuedBodyForSpawn(spawn, request) {
     }
 
     var energyAvailable = Math.min(spawn.room.energyAvailable, require('Harvest.Planning').energyCapacity(spawn.room));
+    var bodyRoom = Object.create(spawn.room, { energyAvailable: { value: energyAvailable } });
     var bestBody;
 
     if (request.bodyRequirements && request.bodyRequirements.fixed === true) {
@@ -81,7 +82,7 @@ function selectAffordableQueuedBodyForSpawn(spawn, request) {
         var requestedExtractorWork = request.requestedWorkParts ||
             request.maxWorkParts || countBodyParts(request.body, WORK);
         bestBody = creepBodyConfig.getExtractorBodyForAvailableEnergy(
-            spawn.room,
+            bodyRoom,
             requestedExtractorWork
         );
     }
@@ -93,7 +94,7 @@ function selectAffordableQueuedBodyForSpawn(spawn, request) {
          */
         var requestedWork = request.maxWorkParts || countBodyParts(request.body, WORK);
         bestBody = creepBodyConfig.getTechBodyForAvailableEnergy(
-            spawn.room,
+            bodyRoom,
             requestedWork
         );
     }
@@ -102,7 +103,7 @@ function selectAffordableQueuedBodyForSpawn(spawn, request) {
         var requestedArtificerWork = request.requestedWorkParts ||
             request.maxWorkParts || countBodyParts(request.body, WORK);
         bestBody = creepBodyConfig.getArtificerBodyForAvailableEnergy(
-            spawn.room,
+            bodyRoom,
             requestedArtificerWork
         );
     }
@@ -111,14 +112,14 @@ function selectAffordableQueuedBodyForSpawn(spawn, request) {
         var requestedCarry = request.requestedCarryParts ||
             request.maxCarryParts || countBodyParts(request.body, CARRY);
         bestBody = creepBodyConfig.getFreighterBodyForAvailableEnergy(
-            spawn.room,
+            bodyRoom,
             requestedCarry
         );
     }
     else {
         bestBody = creepBodyConfig.getBestBodyForAvailableEnergy(
             request.role,
-            spawn.room
+            bodyRoom
         );
     }
 
@@ -500,10 +501,13 @@ function runRoomInternal(roomName, decision, selectedSpawn) {
      * Highest priority request should already be first because requestRoleCount()
      * sorts the queue. We sort again just in case something else added to queue.
      */
-    const urgentRequests = new Set(queue.filter(q => q && !q.minerUpgrade &&
-        (Economy.localRecoveryRequest(spawn.room, q, queue).mandatory ||
+    const urgentRequests = new Set(queue.filter(q => {
+        if (!q) return false;
+        const recovery = Economy.localRecoveryRequest(spawn.room, q, queue);
+        return recovery.mandatory && (!q.minerUpgrade || recovery.lifetimeReplacement) ||
             require('Spawn.Policy').isImminentOwnedDefense(q) ||
-            ['controllerSafety', 'criticalController'].includes(Economy.categoryForRequest(q)))));
+            ['controllerSafety', 'criticalController'].includes(Economy.categoryForRequest(q));
+    }));
     queue.sort(function(a, b) {
         if (b.priority !== a.priority) {
             return b.priority - a.priority;
@@ -558,6 +562,12 @@ function runRoomInternal(roomName, decision, selectedSpawn) {
                 queueIndex--;
             }
             continue;
+        }
+        // The job can change while queued. A once-discretionary upgrade must
+        // preserve income when its predecessor is dying or has already died.
+        if (finalAdmission.lifetimeReplacement) {
+            candidate.minerUpgrade = false;
+            candidate.minimumWorkParts = finalAdmission.minimumWorkParts;
         }
         var policy = Economy.canSpawnRequest(spawn.room, candidate);
         details.economyAllowed = policy.allowed;

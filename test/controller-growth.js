@@ -257,13 +257,25 @@ test('zero-miner collapse queues an affordable Extractor ahead of Foreman or Tec
     assert.strictEqual(Memory.rooms[room.name].spawn.queue.some(request => request.role === 'Tech'), false);
 });
 
-test('funded zero-miner startup keeps Foreman first when the Extractor floor is recoverable', () => {
+test('funded zero-miner startup protects the income body when no refill reserve exists', () => {
     reset();
     const room = makeRoom();
     Memory.rooms[room.name].economy.state = 'SURVIVAL';
     Memory.rooms[room.name].economy.harvest.workActive = 0;
     Memory.rooms[room.name].economy.bootstrap.floorReachable = true;
     Memory.rooms[room.name].economy.bootstrap.unrecoverable = false;
+    refreshColony(room);
+    fresh('spawn.request.manager.js').runForRoom(room);
+    assert.strictEqual(Memory.rooms[room.name].spawn.queue[0].role, 'Extractor');
+    assert.ok(Memory.rooms[room.name].spawn.queue[0].priority > 108);
+});
+
+test('zero-miner startup keeps Foreman first when stored energy can refill the spawn', () => {
+    reset();
+    const room = makeRoom();
+    Memory.rooms[room.name].economy.state = 'SURVIVAL';
+    Memory.rooms[room.name].economy.harvest.workActive = 0;
+    Memory.rooms[room.name].economy.storageEnergy = 1000;
     refreshColony(room);
     fresh('spawn.request.manager.js').runForRoom(room);
     assert.strictEqual(Memory.rooms[room.name].spawn.queue[0].role, 'Foreman');

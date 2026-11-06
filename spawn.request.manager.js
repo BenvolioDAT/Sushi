@@ -2908,6 +2908,12 @@ function runStartupBootstrap(room, report) {
             return source.workActive + (source.workSpawning || 0) + (source.workQueued || 0) < source.workRequired;
         }) : localMinerCount < 2)) {
         report.requests.push(requestDynamicExtractorsForRoom(room, 116, null, emergencyOptions));
+        // Hauling is a prerequisite for the infrastructure escape permission.
+        // A theoretical harvest shortage must not starve the haulers needed to
+        // build capacity, even when one small Freighter already exists.
+        if (economy.haul && economy.haul.localCarryMissing > 0) {
+            report.requests.push(requestDynamicFreightersForRoom(room, 112, null, emergencyOptions));
+        }
         return true;
     }
     if (getPlannedRoleCount(context, 'Freighter') < 1) {
@@ -3611,8 +3617,15 @@ function runEmergencyPlanning(room, report, context) {
     var unrecoverableMinerFloor = survival && economy.bootstrap &&
         economy.bootstrap.floorReachable === false;
     var localHarvestPlanned = context.healthyLocalExtractors + context.queuedLocalExtractors > 0;
+    // A carrier cannot create income from an empty room. When no miners or
+    // reserves exist, protect the first harvest body even if it is affordable
+    // right now; spending that energy on a Foreman would restart the wait.
+    var minerFirst = !localHarvestPlanned && (unrecoverableMinerFloor || economy &&
+        !(economy.harvest?.workActive > 0) &&
+        (economy.storageEnergy || 0) + (economy.terminalEnergy || 0) + (economy.haul?.backlog || 0) <
+            (economy.bootstrap?.extractorFloor || 200));
 
-    if (getPlannedRoleCount(context, 'Foreman') < 1 && (!unrecoverableMinerFloor || localHarvestPlanned)) {
+    if (getPlannedRoleCount(context, 'Foreman') < 1 && !minerFirst) {
         report.requests.push(requestRoleForRoom(
             room,
             'Foreman',
@@ -3631,7 +3644,7 @@ function runEmergencyPlanning(room, report, context) {
             room,
             'Extractor',
             1,
-            unrecoverableMinerFloor ? 120 : PRIORITY.Extractor + 10,
+            minerFirst ? 120 : PRIORITY.Extractor + 10,
             emergencyOptions
         ));
         localHarvestPlanned = true;

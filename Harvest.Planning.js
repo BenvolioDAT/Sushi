@@ -25,6 +25,14 @@ function seats(source, memory = {}) {
 function body(room, work, energy = energyCapacity(room)) {
     return Bodies.build('Extractor', { energyCapacity: energy, desiredWork: work, maxWork: work });
 }
+// A successor remains incoming until the physical handoff completes. Retiring
+// incumbents still consume population, but no longer cover future source work.
+function activeMiner(creep) {
+    return !creep.spawning && !creep.memory.extractorRetiring && !creep.memory.extractorReplacementFor;
+}
+function replacementLead(room, work, distance = 30, preferred = body(room, work)) {
+    return Math.max(100, (preferred?.spawnTime || 12) + distance * 2 + 10);
+}
 function describe(room, source, assigned, queue = [], distance = 30) {
     assigned = assigned.slice();
     for (const spawn of [...Object.values(Game.spawns), ...require('Spawn.Intents').get().spawns]) {
@@ -41,14 +49,14 @@ function describe(room, source, assigned, queue = [], distance = 30) {
         (typeof HARVEST_POWER === 'number' ? HARVEST_POWER : 2));
     const positions = seats(source, memory), maximum = body(room, required);
     const atAvailable = body(room, required, Math.min(room.energyAvailable, energyCapacity(room)));
-    const active = assigned.filter(c => !c.spawning && !c.memory.extractorRetiring);
-    const incoming = assigned.filter(c => c.spawning);
+    const active = assigned.filter(activeMiner);
+    const incoming = assigned.filter(c => !c.memory.extractorRetiring && (c.spawning || c.memory.extractorReplacementFor));
     const pending = queue.filter(q => q && q.role === 'Extractor' && !q.memory?.remoteMining &&
         sourceId(q.memory) === source.id && !(q.expiresAt < Game.time));
     const replacement = pending.find(q => q.memory.extractorReplacementFor) ||
         assigned.find(c => c.memory.extractorReplacementFor && !c.memory.extractorRetiring);
     const replaced = new Set([...pending, ...assigned].flatMap(c => c.memory?.extractorReplacementFor || []));
-    const lead = Math.max(100, (maximum?.spawnTime || 12) + distance * 2 + 10);
+    const lead = replacementLead(room, required, distance, maximum);
     const healthy = active.filter(c => c.ticksToLive === undefined || c.ticksToLive > lead);
     const healthyWork = healthy.reduce((n, c) => n + parts(c, WORK), 0);
     const maximumWork = Math.min(required, positions.length * (maximum?.WORK || 0));
@@ -89,6 +97,7 @@ function describe(room, source, assigned, queue = [], distance = 30) {
             memory.upgradeRetryAt > Game.time ? 'miner upgrade cooldown' : 'existing worker assigned; upgrade does not repay';
     }
     return { seatCount: positions.length, availableSeats: Math.max(0, positions.length - active.length - incoming.length),
+        workStaging: incoming.filter(c => !c.spawning).reduce((sum, c) => sum + parts(c, WORK), 0),
         maxAchievableWork: maximumWork, maxWorkPerMiner: maximum?.WORK || 0,
         availableBodyWork: atAvailable?.WORK || 0, spawnEnergyCapacity: energyCapacity(room),
         preferredBody: maximum?.body || [], preferredCost: maximum?.cost || 0,
@@ -102,4 +111,4 @@ function describe(room, source, assigned, queue = [], distance = 30) {
             action ? reason : replacement ? 'complete miner handoff' : constraint === 'SPAWN_CAPACITY' ?
                 'build and fill active extensions' : 'maintain harvesting and logistics', action };
 }
-module.exports = { energyCapacity, seats, body, describe, parts, sourceId };
+module.exports = { energyCapacity, seats, body, describe, parts, sourceId, activeMiner, replacementLead };

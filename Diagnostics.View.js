@@ -14,7 +14,7 @@ function room(name) {
     for (const q of spawn.queue || []) queued[q.role || 'Unknown'] = (queued[q.role || 'Unknown'] || 0) + 1;
     const sources = (harvest.sources || []).map(s => ({ id: s.id, activeWork: s.workActive,
         stationedWork: s.stationedWork, requiredWork: s.workRequired, spawningWork: s.workSpawning || 0,
-        queuedWork: s.workQueued || 0, income: s.estimatedIncome, expectedIncome: s.expectedIncome,
+        queuedWork: s.workQueued || 0, stagingWork: s.workStaging || 0, income: s.estimatedIncome, expectedIncome: s.expectedIncome,
         assigned: s.assigned, backlog: s.backlog, seats: s.seatCount, availableSeats: s.availableSeats,
         maximumWork: s.maxAchievableWork, plannedWork: s.plannedWork,
         miners: s.miners || [], replacement: s.replacementStatus,
@@ -35,7 +35,8 @@ function room(name) {
         (/local.*(?:miner|harvest)/i.test(colony.blockedReason || '') ? 'waiting for local harvesting capacity' : colony.blockedReason || colony.reason || 'core recovery'));
     if (harvest.workRequired > 0 && Economy.localHarvestCoverage(economy).status !== 'HEALTHY') {
         alerts.push('Harvest WORK: ' + (harvest.workActive || 0) + '/' + harvest.workRequired +
-            ' active; ' + (harvest.workSpawning || 0) + ' spawning; ' + (harvest.workQueued || 0) + ' queued');
+            ' active; ' + (harvest.workSpawning || 0) + ' spawning; ' + (harvest.workQueued || 0) + ' queued' +
+            (harvest.workStaging ? '; ' + harvest.workStaging + ' staging' : ''));
     }
     if (decision && current && decision.waitingForEnergy) alerts.push('Spawn waiting for energy: ' +
         decision.energyAvailable + '/' + (decision.requiredEnergy || '?'));
@@ -54,7 +55,7 @@ function room(name) {
         reason: economy.reason, priority: colony.nextMandatoryRole ? 'Restore ' + colony.nextMandatoryRole : colony.objective || growth.mode || 'Observe',
         growthAllowed: colony.growthAllowed, blockedReason: colony.blockedReason || growth.blockedReason,
         activeWork: harvest.workActive || 0, requiredWork: harvest.workRequired || 0,
-        spawningWork: harvest.workSpawning || 0, queuedWork: harvest.workQueued || 0,
+        spawningWork: harvest.workSpawning || 0, queuedWork: harvest.workQueued || 0, stagingWork: harvest.workStaging || 0,
         income: harvest.actualOrEstimatedIncome || 0, expectedIncome: harvest.expectedIncome || 0,
         energy: visible?.energyAvailable || 0, energyCapacity: visible?.energyCapacityAvailable || 0,
         stored: (economy.storageEnergy || 0) + (economy.terminalEnergy || 0), reserveTarget: growth.reserveTarget || 0,

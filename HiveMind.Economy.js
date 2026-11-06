@@ -2,6 +2,7 @@ const RemoteIntel = require('Remote.Intel');
 const HiveMemory = require('HiveMind.Memory');
 const TickIndex = require('HiveMind.Index');
 const Links = require('Resource.Links');
+const Harvest = require('Harvest.Planning');
 
 const STATES = Object.freeze({
     SURVIVAL: 'SURVIVAL',
@@ -461,7 +462,7 @@ function spawningRemaining(name, spawns) {
 }
 
 function sourceReplacementCoverage(source, required, distance, assigned, queue, spawns) {
-    const active = assigned.filter(creep => !creep.spawning);
+    const active = assigned.filter(Harvest.activeMiner);
     const healthy = [];
     const dying = [];
     const incoming = [];
@@ -478,6 +479,9 @@ function sourceReplacementCoverage(source, required, distance, assigned, queue, 
             work: bodyParts(creep.body, WORK),
             at: spawningRemaining(creep.name, spawns) + distance
         });
+    }
+    for (const creep of assigned.filter(c => !c.spawning && !c.memory.extractorRetiring && c.memory.extractorReplacementFor)) {
+        incoming.push({ work: activeParts(creep, WORK), at: distance });
     }
 
     let queueDelay = spawns.reduce((longest, spawn) => Math.max(longest,
@@ -611,7 +615,7 @@ function buildSnapshot(room, previous) {
         const required = Math.max(1, Math.ceil((capacity / regeneration) / harvestPower));
         const assigned = creeps.filter(creep => isLocalExtractor(creep, room.name) &&
             sourceIdFor(creep.memory) === source.id);
-        const activeAssigned = assigned.filter(creep => !creep.spawning && !creep.memory.extractorRetiring);
+        const activeAssigned = assigned.filter(Harvest.activeMiner);
         const activeWork = activeAssigned.reduce((sum, creep) => sum + activeParts(creep, WORK), 0);
         const distance = getDistance(room, source, dropoff);
         const stationedWork = activeAssigned.reduce((sum, creep) => {
@@ -653,7 +657,7 @@ function buildSnapshot(room, previous) {
             backlog: rowBacklog.energy,
             transport,
             ...coverage,
-            ...require('Harvest.Planning').describe(room, source, assigned, queue, distance)
+            ...Harvest.describe(room, source, assigned, queue, distance)
         });
     }
 
@@ -732,7 +736,8 @@ function buildSnapshot(room, previous) {
             stationedWork: sourceRows.reduce((sum, row) => sum + Math.min(row.workRequired, row.stationedWork), 0),
             workQueued: queuedWork,
             workSpawning: spawningWork,
-            workIncoming: queuedWork + spawningWork,
+            workStaging: sourceRows.reduce((sum, row) => sum + row.workStaging, 0),
+            workIncoming: queuedWork + spawningWork + sourceRows.reduce((sum, row) => sum + row.workStaging, 0),
             maxAchievableWork: sourceRows.reduce((sum, row) => sum + row.maxAchievableWork, 0),
             sources: sourceRows
         },
@@ -1037,7 +1042,7 @@ function localHarvestCoverage(snapshot) {
     const healthy = activeRatio >= 0.9 && incomeRatio >= 0.65 &&
         sources.every(row => row.workActive >= row.workRequired * 0.9 && row.estimatedIncome >= row.expectedIncome * 0.65);
     const incomingCovered = sources.length ? sources.every(row =>
-        row.workActive + (row.workSpawning || 0) + (row.workQueued || 0) >= row.workRequired * 0.9) :
+        (row.plannedWork ?? row.workActive + (row.workSpawning || 0) + (row.workQueued || 0)) >= row.workRequired * 0.9) :
         activeWork + spawningWork + queuedWork >= requiredWork * 0.9;
     return { activeWork, spawningWork, queuedWork, requiredWork, activeRatio,
         infrastructureRecovery: harvest.infrastructureRecovery === true,
@@ -1073,15 +1078,20 @@ function localRecoveryRequest(room, request, queue) {
             q.memory.extractorReplacementFor === memory.extractorReplacementFor);
         if (successor || earlier) return { mandatory: false, obsolete: true, reason: 'replacement pending' };
         const sourceObject = Game.getObjectById(sourceId);
-        const maxBody = sourceObject && require('Harvest.Planning').body(room, request.requestedWorkParts || source.workRequired);
+        const maxBody = sourceObject && Harvest.body(room, request.requestedWorkParts || source.workRequired);
         const oldWork = predecessor && activeParts(predecessor, WORK) || 0;
+        const lifetimeReplacement = !predecessor || predecessor.ticksToLive <= Harvest.replacementLead(room, source.workRequired, source.distance);
+        const minimumWorkParts = lifetimeReplacement ? 1 : request.minimumWorkParts;
+        if (source.healthyWork >= source.workRequired) {
+            return { mandatory: false, obsolete: true, reason: 'healthy local workers already cover source; replacement no longer needed' };
+        }
         const validOld = !predecessor || isLocalExtractor(predecessor, room.name) && sourceIdFor(predecessor.memory) === sourceId;
-        if (!validOld || !source.seatCount || !maxBody || request.minimumWorkParts > maxBody.WORK ||
-            request.minerUpgrade && predecessor && oldWork >= maxBody.WORK) {
+        if (!validOld || !source.seatCount || !maxBody || minimumWorkParts > maxBody.WORK ||
+            request.minerUpgrade && !lifetimeReplacement && oldWork >= maxBody.WORK) {
             return { mandatory: false, obsolete: true, reason: 'replacement has no productive body or harvesting seat' };
         }
-        return { mandatory: true, missing: request.requestedWorkParts,
-            reason: predecessor ? 'productive local miner replacement' : 'predecessor died; preserve source replacement' };
+        return { mandatory: true, missing: request.requestedWorkParts, lifetimeReplacement, minimumWorkParts,
+            reason: lifetimeReplacement ? 'local miner lifetime replacement' : 'productive local miner replacement' };
     }
     const part = local ? WORK : CARRY;
     const matches = item => {
@@ -1095,6 +1105,7 @@ function localRecoveryRequest(room, request, queue) {
     for (const creep of index.creepsByHomeRoom.get(room.name) || []) {
         if (!matches(creep)) continue;
         seen.add(creep.name);
+        if (local && creep.memory.extractorRetiring) continue;
         if (creep.spawning || creep.ticksToLive === undefined || creep.ticksToLive > replacementLead(creep, source && source.distance || 25)) {
             covered += creep.spawning ? bodyParts(creep.body, part) : activeParts(creep, part);
         }
@@ -1144,7 +1155,9 @@ function canSpawnRequest(room, request) {
 
 function shouldBootstrapSelfDeliver(roomOrName) {
     const snapshot = get(roomOrName);
-    return !!snapshot && snapshot.state === STATES.SURVIVAL &&
+    // Recovery can begin before the first hauler exists. Reclassifying the
+    // economy must not strand harvested energy away from the spawn.
+    return !!snapshot && [STATES.SURVIVAL, STATES.RECOVERY].includes(snapshot.state) &&
         (!snapshot.haul || snapshot.haul.localCarry < 1);
 }
 
