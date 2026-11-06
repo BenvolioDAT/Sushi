@@ -10,6 +10,9 @@ function status(room) {
         (!c.memory.sourceRoom || c.memory.sourceRoom === room.name) &&
         (!c.memory.targetRoom || c.memory.targetRoom === room.name);
     const miners = working.filter(c => c.memory.role === 'Extractor' && local(c) && parts(c, WORK));
+    const sources = require('HiveMind.Index').getSources(room).filter(source => !source.pos ||
+        require('utility').getValidSourceMiningSeats((memory.sources || {})[source.id], source.pos).length > 0);
+    const sourceFloor = Math.max(1, sources.length);
     const queue = memory.spawn && memory.spawn.queue || [];
     const scouts = creeps.filter(c => c.memory.role === 'Scout');
     const spawning = Object.values(Game.spawns || {}).filter(s => s.room.name === room.name && s.spawning &&
@@ -33,7 +36,10 @@ function status(room) {
     else if (!Object.values(Game.spawns || {}).some(s => s.room.name === room.name && s.my !== false)) blockedReason = 'owned spawn missing';
     else if (!miners.length) blockedReason = 'working local Extractor missing';
     else if (!working.some(c => c.memory.role === 'Foreman' && parts(c, CARRY))) blockedReason = 'Foreman floor missing';
-    else if (miners.length < 2) blockedReason = 'local Extractor floor missing';
+    else if (miners.length < sourceFloor || sources.some(source => !miners.some(c =>
+        (c.memory.sourceId || c.memory.targetSourceId || c.memory.assignedSource) === source.id))) {
+        blockedReason = 'local Extractor floor missing';
+    }
     else if (!working.some(c => c.memory.role === 'Freighter' && local(c) && parts(c, CARRY))) blockedReason = 'local Freighter floor missing';
     else if (room.controller && room.controller.level < 8 && !working.some(c => c.memory.role === 'Tech' && local(c) && parts(c, WORK))) blockedReason = 'baseline controller work missing';
     const living = scouts.length + spawning;

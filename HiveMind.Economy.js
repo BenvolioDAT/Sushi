@@ -351,7 +351,11 @@ function getDistance(room, source, dropoff) {
     const targetId = dropoff && dropoff.id || 'center';
     const key = source.id + ':' + targetId;
     const cached = roomMemory.cache.economyDistances[key];
-    if (cached && cached.version === 1 && cached.distance > 0) return cached.distance;
+    const targetPosition = dropoff && dropoff.pos ? dropoff.pos.x + ':' + dropoff.pos.y : 'center';
+    const structures = TickIndex.get().structuresByRoom.get(room.name);
+    const structureCount = structures ? Array.from(structures.values()).reduce((sum, list) => sum + list.length, 0) : 0;
+    if (cached && cached.version === 2 && cached.distance > 0 && cached.targetPosition === targetPosition &&
+        cached.structureCount === structureCount && cached.tick <= Game.time && Game.time - cached.tick < 500) return cached.distance;
     let distance = dropoff && source.pos && dropoff.pos && typeof source.pos.getRangeTo === 'function' ?
         Math.max(1, source.pos.getRangeTo(dropoff.pos)) : 25;
     if (dropoff && source.pos && dropoff.pos && typeof room.findPath === 'function') {
@@ -365,7 +369,11 @@ function getDistance(room, source, dropoff) {
             /* Range distance remains a safe low-CPU fallback for unusual mocks/shards. */
         }
     }
-    roomMemory.cache.economyDistances[key] = { version: 1, distance, tick: Game.time };
+    // One entry per source: storage replacement must not accumulate old target IDs.
+    for (const oldKey of Object.keys(roomMemory.cache.economyDistances)) {
+        if (oldKey.startsWith(source.id + ':') && oldKey !== key) delete roomMemory.cache.economyDistances[oldKey];
+    }
+    roomMemory.cache.economyDistances[key] = { version: 2, distance, tick: Game.time, targetPosition, structureCount };
     return distance;
 }
 
@@ -582,7 +590,7 @@ function pendingLocalParts(roomName, role, partType) {
 function buildSnapshot(room, previous) {
     const index = TickIndex.get();
     const creeps = (index.creepsByHomeRoom.get(room.name) || []).slice();
-    const sources = typeof room.find === 'function' ? room.find(FIND_SOURCES) || [] : [];
+    const sources = TickIndex.getSources(room);
     const spawns = index.ownedSpawnsByRoom.get(room.name) || [];
     for (const spawn of spawns) {
         const name = spawn.spawning && spawn.spawning.name;
@@ -609,10 +617,8 @@ function buildSnapshot(room, previous) {
     let linkBackpressure = 0;
 
     for (const source of sources) {
-        const capacity = source.energyCapacity || 3000;
-        const regeneration = typeof ENERGY_REGEN_TIME !== 'undefined' ? ENERGY_REGEN_TIME : 300;
-        const harvestPower = typeof HARVEST_POWER !== 'undefined' ? HARVEST_POWER : 2;
-        const required = Math.max(1, Math.ceil((capacity / regeneration) / harvestPower));
+        const { capacity, regeneration, harvestPower, income: sourceIncome, requiredWork: required } =
+            require('utility').getSourceHarvestProfile(source);
         const assigned = creeps.filter(creep => isLocalExtractor(creep, room.name) &&
             sourceIdFor(creep.memory) === source.id);
         const activeAssigned = assigned.filter(Harvest.activeMiner);
@@ -623,7 +629,6 @@ function buildSnapshot(room, previous) {
                 typeof creep.pos.getRangeTo !== 'function' || creep.pos.getRangeTo(source.pos) > 1) return sum;
             return sum + (['waitingForReplacementSeat', 'waitingForContainerSeat'].includes(creep.memory.extractorState) ? 0 : activeParts(creep, WORK));
         }, 0);
-        const sourceIncome = capacity / regeneration;
         const estimated = Math.min(sourceIncome, stationedWork * harvestPower);
         const rowBacklog = sourceBacklog(source);
         const transport = analyzeSourceTransport(source, sourceIncome, rowBacklog, transportContext);

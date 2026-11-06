@@ -95,12 +95,17 @@ function prepareReplan() {
 function core(level = 3, state = 'RECOVERY') {
     reset();
     const value = home();
+    const find = value.find;
+    value.find = function(kind, options) {
+        return kind === FIND_SOURCES ? ['local1', 'local2'].map(id => ({ id })) : find.call(this, kind, options);
+    };
     value.controller.level = level;
     Memory.rooms.W1N1.economy.state = state;
     const roles = ['Foreman', 'Extractor', 'Extractor', 'Freighter', 'Tech'];
     roles.forEach((role, i) => {
         Game.creeps['core' + i] = { name: 'core' + i, room: value, ticksToLive: 1000,
-            memory: { role, homeRoom: value.name }, body: [MOVE, role === 'Extractor' || role === 'Tech' ? WORK : CARRY] };
+            memory: { role, homeRoom: value.name, sourceId: role === 'Extractor' ? 'local' + i : undefined },
+            body: [MOVE, role === 'Extractor' || role === 'Tech' ? WORK : CARRY] };
     });
     require('HiveMind.ColonyState').update(value);
     return value;

@@ -17,10 +17,7 @@ function energyCapacity(room) {
     return Math.min(declared, capacity);
 }
 function seats(source, memory = {}) {
-    const valid = require('utility').getValidSourceMiningSeats(memory, source.pos);
-    // A count-only legacy scan can be conservative; explicit positions are validated.
-    return !Array.isArray(memory.seats) && Number.isInteger(memory.seatCount) ?
-        valid.slice(0, Math.max(0, memory.seatCount)) : valid;
+    return require('utility').getValidSourceMiningSeats(memory, source.pos);
 }
 function body(room, work, energy = energyCapacity(room)) {
     return Bodies.build('Extractor', { energyCapacity: energy, desiredWork: work, maxWork: work });
@@ -44,9 +41,7 @@ function describe(room, source, assigned, queue = [], distance = 30) {
         }
     }
     const memory = (Memory.rooms[room.name].sources || {})[source.id] || {};
-    const required = Math.ceil((source.energyCapacity || 3000) /
-        (typeof ENERGY_REGEN_TIME === 'number' ? ENERGY_REGEN_TIME : 300) /
-        (typeof HARVEST_POWER === 'number' ? HARVEST_POWER : 2));
+    const required = require('utility').getSourceHarvestProfile(source).requiredWork;
     const positions = seats(source, memory), maximum = body(room, required);
     const atAvailable = body(room, required, Math.min(room.energyAvailable, energyCapacity(room)));
     const active = assigned.filter(activeMiner);

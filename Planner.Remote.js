@@ -398,7 +398,8 @@ function scoreRemoteSource(homeRoomName, sourceId) {
         return info.score;
     }
 
-    if (!reservationUsername) {
+    var roomType = planner.remotes[info.roomName] && planner.remotes[info.roomName].type || 'normal';
+    if (!reservationUsername && roomType === 'normal') {
         if (!Game.rooms[info.roomName]) Intel.request(info.roomName, 'VERIFY_RESERVATION', 60);
         effectiveEnergyPerTick *= 0.5;
     }
@@ -425,7 +426,6 @@ function scoreRemoteSource(homeRoomName, sourceId) {
     info.projectedReservedNetEPT = null;
     info.reservationBootstrap = false;
     var annexBody = BodyConfig.getAnnexBody(Game.rooms[homeRoomName]);
-    var roomType = planner.remotes[info.roomName] && planner.remotes[info.roomName].type || 'normal';
     if (!reservationUsername && roomType === 'normal' && controller && !controller.owner && annexBody && annexBody.length) {
         var reservedWork = Math.ceil(grossEnergyPerTick / harvestPower);
         var reservedMinerCost = reservedWork * BODYPART_COST[WORK] + Math.ceil(reservedWork / 2) * BODYPART_COST[MOVE] + BODYPART_COST[CARRY];
@@ -904,7 +904,8 @@ function getValidationSnapshot(room) {
     var blocked = {};
     var snapshot = { blocked: blocked, roads: {}, structures: [] };
     if (!room || typeof room.find !== 'function') return snapshot;
-    var structures = room.find(FIND_STRUCTURES) || [];
+    var byType = require('HiveMind.Index').get().structuresByRoom.get(room.name);
+    var structures = byType ? Array.from(byType.values()).flat() : [];
     snapshot.structures = structures;
     for (var i = 0; i < structures.length; i++) {
         var structure = structures[i];
@@ -1020,7 +1021,7 @@ function shouldUseRemoteSource(homeRoomName, sourceId, ignoreScore) {
         return false;
     }
 
-    if (!info.numOpen || info.numOpen < 1) {
+    if (getRemoteSeatCapacity(info) < 1) {
         info.rejectReason = 'no open seats';
         return false;
     }
@@ -1365,7 +1366,7 @@ function buildRemoteCostMatrix(homeRoomName, roomName, allowDanger) {
         return costs;
     }
 
-    var structures = room.find(FIND_STRUCTURES);
+    var structures = getValidationSnapshot(room).structures;
     for (var i = 0; i < structures.length; i++) {
         var structure = structures[i];
 
@@ -1629,6 +1630,7 @@ function getRoomRisk(room, roomType) {
 }
 
 function getSourceSeatCount(sourceMemory) {
+    if (sourceMemory && sourceMemory.pos) return utility.getValidSourceMiningSeats(sourceMemory).length;
     if (sourceMemory && sourceMemory.seatCount && sourceMemory.seatCount > 0) {
         return sourceMemory.seatCount;
     }
@@ -1690,6 +1692,7 @@ function refreshVisibleIntel(homeRoomName, planner) {
             var info = planner.sourceInfos[id];
             if (info.roomName === name) {
                 info.risk = getRoomRisk(Game.rooms[name], getRoomType(name, Game.rooms[name]));
+                info.numOpen = getRemoteSeatCapacity(info);
                 if (info.route && routeDestinationChanged(homeRoomName, info)) info.route.dirty = true;
             }
         }
@@ -2426,8 +2429,18 @@ function getRemoteSeatCapacity(info) {
     var memory = room && room.sources && room.sources[info.sourceId];
     var positions = utility.getValidSourceMiningSeats(memory);
     var savedCount = memory && typeof memory.seatCount === 'number' ? memory.seatCount : null;
-    if (memory && memory.pos) return Math.max(0, savedCount === null ? positions.length : Math.min(savedCount, positions.length));
-    return Math.max(0, savedCount === null ? (info.numOpen || 1) : savedCount);
+    if (memory && memory.pos) {
+        if (Game.rooms[info.roomName]) {
+            info.numOpen = positions.length;
+            return positions.length;
+        }
+        // Terrain alone cannot clear a structure obstruction last seen on site.
+        // Preserve the last observed ceiling until fresh vision proves access.
+        const capacity = Number.isFinite(info.numOpen) ? Math.min(positions.length, info.numOpen) : positions.length;
+        if (capacity === 0) Intel.request(info.roomName, 'SOURCE_ACCESS_BLOCKED', 60);
+        return Math.max(0, capacity);
+    }
+    return Math.max(0, savedCount === null ? (Number.isFinite(info.numOpen) ? info.numOpen : 0) : savedCount);
 }
 
 function isRemoteExtractorForSource(creep, homeRoomName, sourceInfo) {

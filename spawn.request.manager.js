@@ -3027,42 +3027,6 @@ function countBodyParts(body, bodyPartType) {
     return count;
 }
 
-function getSourceSeatCount(source, sourceMemory) {
-    if (sourceMemory) {
-        if (sourceMemory.seatCount && sourceMemory.seatCount > 0) {
-            return sourceMemory.seatCount;
-        }
-
-        if (sourceMemory.seats && sourceMemory.seats.length > 0) {
-            return sourceMemory.seats.length;
-        }
-    }
-
-    if (!source || !source.pos || !source.room) {
-        return 1;
-    }
-
-    var terrain = source.room.getTerrain();
-    var seats = 0;
-
-    for (var x = source.pos.x - 1; x <= source.pos.x + 1; x++) {
-        for (var y = source.pos.y - 1; y <= source.pos.y + 1; y++) {
-            if (x < 0 || x > 49 || y < 0 || y > 49) {
-                continue;
-            }
-
-            if (x === source.pos.x && y === source.pos.y) {
-                continue;
-            }
-
-            if (terrain.get(x, y) !== TERRAIN_MASK_WALL) {
-                seats++;
-            }
-        }
-    }
-
-    return Math.max(1, seats);
-}
 
 function getRememberedSourceMemory(roomName, sourceId) {
     var roomMemory = Memory.rooms && Memory.rooms[roomName];
@@ -3117,7 +3081,7 @@ function ensureVisibleLocalSourceMemories(room) {
         return [];
     }
 
-    var sources = room.find(FIND_SOURCES);
+    var sources = TickIndex.getSources(room);
 
     for (var i = 0; i < sources.length; i++) {
         ensureLocalSourceMemory(room.name, sources[i].id);
@@ -3139,10 +3103,7 @@ function getSourceMiningDemand(room) {
     for (var i = 0; i < localSources.length; i++) {
         var source = localSources[i];
         var sourceMemory = ensureLocalSourceMemory(room.name, source.id);
-        var sourceIncome = (source.energyCapacity || 3000) /
-            (typeof ENERGY_REGEN_TIME !== 'undefined' ? ENERGY_REGEN_TIME : 300);
-        var sourceWork = Math.max(1, Math.ceil(sourceIncome /
-            (typeof HARVEST_POWER !== 'undefined' ? HARVEST_POWER : 2)));
+        var sourceWork = require('utility').getSourceHarvestProfile(source).requiredWork;
 
 
         desiredWork += sourceWork;

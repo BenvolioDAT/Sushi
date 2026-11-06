@@ -121,6 +121,7 @@ test('preferred-body waiting ends promptly when the attainable full energy arriv
 test('replacement lead includes the preferred spawn duration and slow local travel', () => {
     const f = setup(700); f.core(); const old = f.miner('old', 5, 'A', 200); f.miner('b', 5, 'B');
     f.memory.cache = { economyDistances: { 'A:spawn': { version: 1, distance: 70 } } };
+    f.room.findPath = () => Array(70).fill({ x: 20, y: 20 });
     assert.strictEqual(f.describe().action, null, 'healthy incumbent must not be replaced unnecessarily early');
     old.ticksToLive = 170;
     const row = f.describe();

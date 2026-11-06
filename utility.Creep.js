@@ -690,15 +690,10 @@ function idleNearBase(creep) {
         travel.move(creep, anchor, {visualizePathStyle: {stroke: '#bbbbbb'}});
     }
 }
-var SOURCE_WORK_TARGET = 6;
 var EXTRACTOR_HANDOFF_TICKS = 100;
 
 function getSourceWorkTarget(source) {
-    if (!source) return SOURCE_WORK_TARGET;
-    var capacity = source.energyCapacity || 3000;
-    var regeneration = typeof ENERGY_REGEN_TIME !== 'undefined' ? ENERGY_REGEN_TIME : 300;
-    var harvestPower = typeof HARVEST_POWER !== 'undefined' ? HARVEST_POWER : 2;
-    return Math.max(1, Math.ceil((capacity / regeneration) / harvestPower));
+    return utility.getSourceHarvestProfile(source).requiredWork;
 }
 
 function getCreepWorkParts(creep) {
@@ -940,9 +935,8 @@ function summaryHasHealthyWorker(summary) {
 
 function sourceHasOpenWorkCapacity(sourceRecord, requestingCreep) {
     /*
-     * Container sources use one primary mining station plus an optional weak
-     * miner supplement or replacement handoff. Sources without containers keep
-     * the normal seat-count and total-WORK limits.
+     * Container sources retain a primary station, but any valid side seats may
+     * cover missing WORK. Named replacements retain their existing handoff path.
      */
     var sourceMemory = sourceRecord.sourceMemory;
     var maxSeats = sourceRecord.seatCount;
@@ -960,9 +954,8 @@ function sourceHasOpenWorkCapacity(sourceRecord, requestingCreep) {
         return assignedSummary.count < remoteSeats && assignedSummary.work < workTarget;
     }
 
-    if (!maxSeats || maxSeats < 1) {
-        maxSeats = getSafeSeatCount(sourceMemory);
-    }
+    maxSeats = utility.getValidSourceMiningSeats(sourceMemory, sourceRecord.source.pos).length;
+    if (!maxSeats) return false;
 
     if (sourceHasLiveContainer(sourceRecord)) {
         if (
@@ -976,8 +969,8 @@ function sourceHasOpenWorkCapacity(sourceRecord, requestingCreep) {
             return true;
         }
 
-        /* A container source has one primary miner and at most one handoff. */
-        if (assignedSummary.count >= 2) {
+        /* Physical seats and WORK, rather than a fixed two-miner cap. */
+        if (assignedSummary.count >= maxSeats) {
             return false;
         }
 
@@ -1000,8 +993,8 @@ function sourceHasOpenWorkCapacity(sourceRecord, requestingCreep) {
     }
 
     /*
-     * seatCount is the miner parking limit, while 6 total WORK parts is
-     * enough mining power for one source. Once either cap is reached, skip
+     * Valid seats limit parking, while workTarget follows source regeneration.
+     * Once either cap is reached, skip
      * this source instead of assigning another Extractor to it.
      */
     return (
@@ -1017,7 +1010,7 @@ function sourceHasOpenWorkCapacity(sourceRecord, requestingCreep) {
  * 2. Cleans dead creep IDs out of each source's assignedMiner list.
  * 3. Keeps this creep on its old source if the assignment is still valid.
  * 4. Otherwise picks the source with the fewest assigned miners.
- * 5. Uses single-station policy for containers and seatCount otherwise.
+     * 5. Uses validated seats and source WORK limits, preferring container stations.
  *
  * @param {Creep} creep
  * @returns {Source|null}
@@ -1075,6 +1068,12 @@ function getAssignedMiningSeat(creep, source) {
         return null;
     }
 
+    var validSeats = utility.getValidSourceMiningSeats(sourceMemory, source.pos);
+    if (!validSeats.length) {
+        clearMiningSeatMemory(creep);
+        return null;
+    }
+
     /*
      * First priority:
      * Use the live container tile if this source has one.
@@ -1082,6 +1081,7 @@ function getAssignedMiningSeat(creep, source) {
     var remote = creep.memory.remoteMining ||
         (creep.memory.homeRoom && creep.memory.homeRoom !== source.pos.roomName);
     var station = remote && utility.getPlannedSourceContainerPosition(sourceMemory, source.pos);
+    if (station && !validSeats.some(pos => sameRoomPosition(pos, station))) station = null;
     if (station) {
         if (!isMiningSeatTakenByOtherCreep(creep, station, source)) {
             rememberMiningSeat(creep, source.id, station, 'container');
@@ -1110,6 +1110,7 @@ function getAssignedMiningSeat(creep, source) {
         return null;
     }
     var containerPosition = getLiveSourceContainerPosition(source, sourceMemory);
+    if (containerPosition && !validSeats.some(pos => sameRoomPosition(pos, containerPosition))) containerPosition = null;
 
     if (containerPosition) {
         /*
@@ -1366,54 +1367,7 @@ function getLiveSourceContainerPosition(source, sourceMemory) {
 }
 
 function getMiningSeatPositions(room, source, sourceMemory) {
-    var positions = [];
-
-    /*
-     * Use sourceMemory.seats first because your scanner already mapped them.
-     */
-    if (sourceMemory && sourceMemory.seats) {
-        for (var i = 0; i < sourceMemory.seats.length; i++) {
-            var position = getRoomPositionFromMemory(sourceMemory.seats[i], room.name);
-
-            if (!position) {
-                continue;
-            }
-
-            if (position.getRangeTo(source.pos) <= 1) {
-                positions.push(position);
-            }
-        }
-
-        if (positions.length > 0) {
-            return positions;
-        }
-    }
-
-    /*
-     * Fallback:
-     * If memory seats are missing, scan the 8 tiles around the source.
-     */
-    var terrain = room.getTerrain();
-
-    for (var x = source.pos.x - 1; x <= source.pos.x + 1; x++) {
-        for (var y = source.pos.y - 1; y <= source.pos.y + 1; y++) {
-            if (x === source.pos.x && y === source.pos.y) {
-                continue;
-            }
-
-            if (x < 0 || x > 49 || y < 0 || y > 49) {
-                continue;
-            }
-
-            if (terrain.get(x, y) === TERRAIN_MASK_WALL) {
-                continue;
-            }
-
-            positions.push(new RoomPosition(x, y, room.name));
-        }
-    }
-
-    return positions;
+    return utility.getValidSourceMiningSeats(sourceMemory, source.pos);
 }
 
 function getRoomPositionFromMemory(memoryPosition, fallbackRoomName) {
@@ -1489,7 +1443,8 @@ function getRememberedMiningSeat(creep, source) {
     /*
      * The mining seat must still be beside the source.
      */
-    if (position.getRangeTo(source.pos) > 1) {
+    if (!utility.getValidSourceMiningSeats(getSourceMemoryForSource(source.pos.roomName, source.id), source.pos)
+        .some(seat => sameRoomPosition(seat, position))) {
         clearMiningSeatMemory(creep);
         return null;
     }
@@ -1657,7 +1612,7 @@ function getSourceRecordsFromRoomMemory(creep) {
             sourceId: realSourceId,
             source: source,
             sourceMemory: sourceMemory,
-            seatCount: getSafeSeatCount(sourceMemory)
+            seatCount: utility.getValidSourceMiningSeats(sourceMemory, source.pos).length
         });
     }
 
@@ -1842,7 +1797,7 @@ function summaryHasHealthyFullWorkerOtherThan(summary, creep) {
         }
 
         if (
-            getCreepWorkParts(worker) >= (summary.workTarget || SOURCE_WORK_TARGET) &&
+            getCreepWorkParts(worker) >= summary.workTarget &&
             (
                 worker.ticksToLive === undefined ||
                 worker.ticksToLive > EXTRACTOR_HANDOFF_TICKS
@@ -1853,26 +1808,6 @@ function summaryHasHealthyFullWorkerOtherThan(summary, creep) {
     }
 
     return false;
-}
-
-/**
- * Read seatCount safely.
- *
- * If the room scanner did not save seatCount yet, use 1 as the safe default.
- *
- * @param {*} sourceMemory
- * @returns {number}
- */
-function getSafeSeatCount(sourceMemory) {
-    if(sourceMemory && sourceMemory.seatCount && sourceMemory.seatCount > 0) {
-        return sourceMemory.seatCount;
-    }
-
-    if(sourceMemory && sourceMemory.seats && sourceMemory.seats.length > 0) {
-        return sourceMemory.seats.length;
-    }
-
-    return 1;
 }
 
 /**

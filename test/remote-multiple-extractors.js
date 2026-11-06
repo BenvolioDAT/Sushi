@@ -109,7 +109,7 @@ test('queued WORK and seats count toward coverage', () => {
     const request = { role: 'Extractor', memory: { ...f.creep.memory }, body: [WORK, WORK, CARRY, MOVE] };
     assert.deepStrictEqual(f.demand([request]), []);
     request.body = [WORK, CARRY, MOVE]; assert.strictEqual(f.demand([request])[0].missingWork, 1);
-    f.memory.seatCount = 2; assert.deepStrictEqual(f.demand([request]), []);
+    f.memory.seats.pop(); f.memory.seatCount = 2; assert.deepStrictEqual(f.demand([request]), []);
 });
 test('dying miner stops covering future WORK so replacement demand can overlap', () => {
     const f = fixture(); f.body(f.creep, 5); f.creep.ticksToLive = 40;

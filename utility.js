@@ -28,6 +28,10 @@
  * @param {Creep} creep - A creep inside the room you want to scan.
  * @returns {object|null} The saved room memory, or null if something is wrong.
  */
+const TickIndex = require('HiveMind.Index');
+const SOURCE_SEAT_VERSION = 1;
+
+// Terrain geometry is durable; structures, ownership and creep occupancy are not.
 function buildSourceSeats(room, source) {
     var seats = [];
     var terrain = room.getTerrain();
@@ -62,10 +66,18 @@ function buildSourceSeats(room, source) {
 
 function sourceNeedsSeatRepair(sourceMemory) {
     return !sourceMemory ||
+        sourceMemory.seatVersion !== SOURCE_SEAT_VERSION ||
         !Array.isArray(sourceMemory.seats) ||
-        sourceMemory.seats.length <= 0 ||
-        typeof sourceMemory.seatCount !== 'number' ||
-        sourceMemory.seatCount <= 0;
+        sourceMemory.seatCount !== sourceMemory.seats.length;
+}
+
+function getSourceHarvestProfile(source) {
+    const capacity = source && Number.isFinite(source.energyCapacity) ? Math.max(0, source.energyCapacity) :
+        (typeof SOURCE_ENERGY_CAPACITY === 'number' ? SOURCE_ENERGY_CAPACITY : 3000);
+    const regeneration = typeof ENERGY_REGEN_TIME === 'number' ? ENERGY_REGEN_TIME : 300;
+    const harvestPower = typeof HARVEST_POWER === 'number' ? HARVEST_POWER : 2;
+    const income = capacity / regeneration;
+    return { capacity, regeneration, harvestPower, income, requiredWork: Math.ceil(income / harvestPower) };
 }
 
 function scanRoom(creep) {
@@ -147,7 +159,7 @@ function scanRoom(creep) {
     /*
      * Scan energy sources.
      */
-    var sources = room.find(FIND_SOURCES);
+    var sources = TickIndex.getSources(room);
 
     /*
      * room.find(FIND_SOURCES) returns an array of Source objects. This loop
@@ -169,6 +181,7 @@ function scanRoom(creep) {
         if (needsSeatRepair) {
             existing.seats = buildSourceSeats(room, source);
             existing.seatCount = existing.seats.length;
+            existing.seatVersion = SOURCE_SEAT_VERSION;
         }
 
         if (existing.Flag === undefined) existing.Flag = false;
@@ -188,7 +201,7 @@ function scanRoom(creep) {
      * Most normal rooms have one mineral deposit.
      * We still loop because FIND_MINERALS returns an array.
      */
-    var minerals = room.find(FIND_MINERALS);
+    var minerals = TickIndex.getMinerals(room);
 
     for (var mineralIndex = 0; mineralIndex < minerals.length; mineralIndex++) {
         var mineral = minerals[mineralIndex];
@@ -395,20 +408,37 @@ function getPlannedSourceContainerPosition(sourceMemory, sourcePosition) {
     return new RoomPosition(pos.x, pos.y, pos.roomName);
 }
 
+let miningSeatCache = { tick: -1, index: null, entries: new Map() };
 function getValidSourceMiningSeats(sourceMemory, sourcePosition) {
     var origin = sourcePosition || (sourceMemory && sourceMemory.pos);
     if (!origin) return [];
     var saved = sourceMemory && sourceMemory.seats;
-    var candidates = saved && saved.length ? saved.slice() : [];
-    if (!candidates.length) {
+    var candidates = Array.isArray(saved) ? saved.slice() : [];
+    if (!Array.isArray(saved)) {
         for (var x = origin.x - 1; x <= origin.x + 1; x++) {
             for (var y = origin.y - 1; y <= origin.y + 1; y++) candidates.push({ x: x, y: y });
         }
     }
     var station = getPlannedSourceContainerPosition(sourceMemory, origin);
     if (station) candidates.push(station);
+    const index = TickIndex.get();
+    if (miningSeatCache.tick !== Game.time || miningSeatCache.index !== index) {
+        miningSeatCache = { tick: Game.time, index, entries: new Map() };
+    }
+    // Include coordinates/count so same-tick repairs and changed container plans
+    // cannot reuse the previous result. Only consumed sources occupy this cache.
+    const key = [origin.roomName, origin.x, origin.y, sourceMemory && sourceMemory.seatCount,
+        ...candidates.map(value => {
+            const pos = value && (value.pos || value);
+            return pos ? [pos.roomName || origin.roomName, pos.x, pos.y].join(':') : 'invalid';
+        })].join('|');
+    if (miningSeatCache.entries.has(key)) return miningSeatCache.entries.get(key).slice();
+    const room = Game.rooms[origin.roomName];
+    const natural = room ? [...TickIndex.getSources(room), ...TickIndex.getMinerals(room), room.controller]
+        .filter(object => object && object.pos).map(object => object.pos) : [];
     var seen = {};
-    return candidates.map(function(value) {
+    let positions = candidates.map(function(value) {
+        if (!value) return null;
         var pos = value.pos || value;
         return getPlannedSourceContainerPosition({ containerPlannedPos: {
             x: pos.x, y: pos.y, roomName: pos.roomName || origin.roomName
@@ -416,11 +446,19 @@ function getValidSourceMiningSeats(sourceMemory, sourcePosition) {
     }).filter(function(pos) {
         if (!pos || seen[pos.x + ':' + pos.y]) return false;
         seen[pos.x + ':' + pos.y] = true;
+        if (natural.some(p => p.x === pos.x && p.y === pos.y)) return false;
         return !Game.rooms[pos.roomName] || !pos.lookFor(LOOK_STRUCTURES).some(function(structure) {
             return OBSTACLE_OBJECT_TYPES.indexOf(structure.structureType) >= 0 ||
                 (structure.structureType === STRUCTURE_RAMPART && !structure.my && !structure.isPublic);
         });
     });
+    // Preserve conservative count-only legacy records, including a genuine zero.
+    // Explicit coordinate lists are authoritative once the scanner has repaired them.
+    if (!Array.isArray(saved) && Number.isInteger(sourceMemory && sourceMemory.seatCount)) {
+        positions = positions.slice(0, Math.max(0, sourceMemory.seatCount));
+    }
+    miningSeatCache.entries.set(key, positions);
+    return positions.slice();
 }
 
 /////////////////////////////////////////////////////////////////////////////////////////////////
@@ -831,135 +869,7 @@ function scoreContainerPositionForSource(room, position, sourceSeats, anchor) {
  * @returns {RoomPosition[]}
  */
 function getSourceSeatPositions(room, source, sourceMemory) {
-    var positions = [];
-
-    /*
-     * Preferred:
-     * Use your scanner's saved source seats.
-     *
-     * This supports memory shaped like:
-     * sourceMemory.seats = [
-     *     { x: 10, y: 20 },
-     *     { x: 11, y: 20 },
-     *     { pos: { x: 12, y: 20 } }
-     * ];
-     */
-    if (sourceMemory && sourceMemory.seats) {
-        /*
-         * Loop through saved seat entries. They are plain memory objects, so
-         * each one must be converted back into a RoomPosition before use.
-         */
-        for (var seatIndex in sourceMemory.seats) {
-            var memoryPosition = getRoomPositionFromSeatMemory(
-                sourceMemory.seats[seatIndex],
-                room.name
-            );
-
-            if (!memoryPosition) {
-                continue;
-            }
-
-            if (isPositionBesideSource(memoryPosition, source)) {
-                positions.push(memoryPosition);
-            }
-        }
-
-        if (positions.length > 0) {
-            return positions;
-        }
-    }
-
-    /*
-     * Fallback:
-     * If your scan did not save seat positions, scan the 8 tiles around source.
-     */
-    /*
-     * Fallback loop over the 3x3 square centered on the source. The source tile
-     * itself is skipped because creeps cannot stand on a Source.
-     */
-    for (var x = source.pos.x - 1; x <= source.pos.x + 1; x++) {
-        for (var y = source.pos.y - 1; y <= source.pos.y + 1; y++) {
-            if (x === source.pos.x && y === source.pos.y) {
-                continue;
-            }
-
-            if (x < 1 || x > 48 || y < 1 || y > 48) {
-                continue;
-            }
-
-            var position = new RoomPosition(x, y, room.name);
-            var terrain = room.getTerrain().get(x, y);
-
-            if (terrain !== TERRAIN_MASK_WALL) {
-                positions.push(position);
-            }
-        }
-    }
-
-    return positions;
-}
-
-/**
- * Convert one saved seat memory entry into a RoomPosition.
- *
- * Supports:
- * - { x: 10, y: 20 }
- * - { x: 10, y: 20, roomName: "W7N9" }
- * - { pos: { x: 10, y: 20 } }
- * - { pos: { x: 10, y: 20, roomName: "W7N9" } }
- *
- * @param {object} seatMemory
- * @param {string} roomName
- * @returns {RoomPosition|null}
- */
-function getRoomPositionFromSeatMemory(seatMemory, roomName) {
-    if (!seatMemory) {
-        return null;
-    }
-
-    if (
-        seatMemory.x !== undefined &&
-        seatMemory.y !== undefined
-    ) {
-        return new RoomPosition(
-            seatMemory.x,
-            seatMemory.y,
-            seatMemory.roomName || roomName
-        );
-    }
-
-    if (
-        seatMemory.pos &&
-        seatMemory.pos.x !== undefined &&
-        seatMemory.pos.y !== undefined
-    ) {
-        return new RoomPosition(
-            seatMemory.pos.x,
-            seatMemory.pos.y,
-            seatMemory.pos.roomName || roomName
-        );
-    }
-
-    return null;
-}
-
-/**
- * Make sure the remembered seat is actually beside this source.
- *
- * @param {RoomPosition} position
- * @param {Source} source
- * @returns {boolean}
- */
-function isPositionBesideSource(position, source) {
-    if (!position || !source) {
-        return false;
-    }
-
-    if (position.roomName !== source.pos.roomName) {
-        return false;
-    }
-
-    return position.getRangeTo(source.pos) <= 1;
+    return getValidSourceMiningSeats(sourceMemory, source.pos);
 }
 
 /**
@@ -1199,5 +1109,6 @@ module.exports = {
     planSourceContainers,
     getPlannedSourceContainerPosition,
     getValidSourceMiningSeats,
+    getSourceHarvestProfile,
     ensureSourceHaulMemory: ensureSourceHaulMemory,
 };

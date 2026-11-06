@@ -1,0 +1,679 @@
+
+> validate
+> node test/strategy-provider.js && node test/run.js && node test/phase2.js && node test/phase3.js && node test/phase4.js && node test/phase5.js && node test/phase6.js && node test/phase8.js && node test/phase9.js && node test/economy.js && node test/local-economy-recovery.js && node test/memory-schema.js && node test/lifecycle-spawn-gc.js && node test/controller-growth.js && node test/artificer-controller.js && node test/growth-corrections.js && node test/remote-economy.js && node test/remote-routing.js && node test/remote-integration.js && node test/remote-reliability.js && node test/scout-bootstrap.js && node test/remote-container-bootstrap.js && node test/remote-multiple-extractors.js && node test/module-graph.js && node test/movement-audit.js && node test/surplus-investment.js && node test/population-capacity.js && node test/body-scaling.js && node test/combat-diplomacy.js && node test/resource-policy.js && node test/spawn-pipeline.js && node test/spawn-memory.js && node test/audit-regressions.js && node test/power-pipeline.js && node test/diagnostics.js && node test/season-retirement.js && node test/dashboard-layout.js && node test/harvesting-capacity.js && node test/spawning-intelligence.js && node test/room-intelligence.js
+
+Permanent strategy provider no-season test passed
+PASS baseline: syntax (107), mocked loads, main smoke, exports, roles, CPU shapes, no ScoreRunner
+PASS TickIndex builds one creep pass and rebuilds after the tick
+PASS scheduler defers optional work under critical pressure but not emergencies
+PASS telemetry remains heap-first and periodically persists rolling values
+PASS traffic resolves a two-creep swap
+PASS traffic resolves a three-creep movement chain
+PASS higher-priority movement wins a contested tile deterministically
+PASS hostile and power-creep occupancy blocks movement
+PASS locked stationary creeps are not shoved
+PASS ordered fallback tiles are used when the intended tile is blocked
+PASS travel wrapper forwards traffic metadata without owning final movement
+PASS static traffic matrices are reused and invalidated by structure changes
+PASS mission priorities precede idle and only seated stationary Extractors are protected
+PASS loaded highway Freighter gets head-on right of way and records real push/sidestep events
+PASS canonical fallbacks reject source seats, walls, structures, exits and hostile reach
+PASS route rejoin and observed stuck events use transient intent metadata and reject stale revisions
+Phase 2 tests passed: 15
+PASS Memory migration is additive and versioned
+PASS diplomacy honors allies, manual hostiles, NPCs, and decaying incidents
+PASS boost-aware combat math covers damage, healing, TOUGH, movement, and TTK
+PASS allies and harmless neutral WORK creeps do not create defense operations
+PASS real combat creeps create independent room defense operations
+PASS tower target prediction favors a guaranteed important healer kill
+PASS towers heal a predicted casualty instead of wasting fire
+PASS dynamic defender demand is zero in peace and clears standing army requests
+PASS independent combat switch suppresses and cleans non-squad defense requests
+SAFE MODE ACTIVATED W1N1: critical breach: hostile power 600 exceeds local defense 0
+PASS safe mode ignores scouts and activates only for an overwhelming critical breach
+PASS fortification targets scale with RCL, economy, and threat
+Phase 3 tests passed: 11
+PASS utility scoring is normalized, explainable, and deterministic
+PASS operation registry supports every requested type and durable schema fields
+PASS operation transitions are guarded and timeouts abort safely
+PASS operation activation requires type-specific identity, origin, and spawn capability
+PASS offensive activation rejects stale approval and requires a current retreat assessment
+PASS unknown operation states cannot bypass the transition map
+PASS equivalent spawn demands merge instead of multiplying
+PASS living, spawning, and queued assignments are each counted once
+PASS the best capable spawn is deterministic and queues no duplicates
+PASS bootstrap survival gates optional demands but emergency defense may proceed
+PASS Expansion emits shared demands without pushing its queue directly
+PASS operation demand emission records stable demand IDs
+Phase 4 tests passed: 12
+PASS duo Memory has every required durable field and survives module reload
+PASS guarded transitions reject invalid reversals and timeout into recovery
+PASS forming waits for both members and rejects insufficient travel TTL
+PASS rallied adjacent members advance to marching while blocked leaders hold
+PASS melee pressure produces a deterministic kite tile without abandoning a safe rampart
+PASS independent Volley fallback also kites a nearby melee threat through travel
+PASS boosted and tower-supported burst forces retreat
+PASS predictive healing protects the member most likely to die
+PASS shared target lock focuses fire and mass attack is chosen only when superior
+PASS engaging duo executes one shared focus-fire and predictive-heal plan
+PASS border separation regroups instead of issuing conflicting march paths
+PASS healer loss triggers retreat and replacements remain deduplicated
+PASS squad assignment matching cannot borrow another squad member
+PASS squad-controlled creeps skip conflicting independent role execution
+Phase 5 tests passed: 14
+PASS resource Memory migration is additive and defaults market use off
+PASS mineral lifecycle waits for extractor, emits demand when active, and stops safely
+PASS MineralMiner harvests through the extractor lifecycle and deposits cargo
+PASS link routing moves source energy once and preserves emergency room energy
+PASS terminals send only to visible owned terminals and retain an energy reserve
+PASS active boost stock is reserved and missing compounds stage from an owned terminal
+PASS lab reactions progress through loading, reacting, and unloading states
+PASS lab contamination enters cleaning and missing reaction data fails gracefully
+PASS boost workflow stages compounds, exposes rally positions, and verifies body boosts
+PASS ResourceCourier executes a generated transfer job end to end
+PASS observer scanning staggers rooms and does not immediately rescan
+Phase 6 tests passed: 11
+PASS quad Memory stores stable formation, readiness, retreat, and replacement fields
+PASS offensive policy rejects implicit attacks and configured allies
+PASS manual offense persists explicit objective, composition, retreat, and target directives
+PASS safe mode pauses offense while impossible attrition aborts it
+PASS unbreakable siege math and overwhelming tower support abort feeding
+PASS offensive policy rejects a mission without a retreat route
+PASS approved operation creates exactly one quad and four shared demands
+PASS formation positions are a valid compact 2x2 and blocked orientation rotates
+PASS rallied quad enters marching only after a complete 2x2 formation
+PASS transport mode emits one deterministic snake intent per member and synchronizes fatigue with pull
+PASS border crossing switches to rally and never gives members independent target paths
+PASS leader replacement preserves surviving member slots
+PASS quad shares focus fire and predictive healing before coordinated movement
+PASS a casualty elects a new leader and withdraws the surviving formation
+PASS expired operations suppress replacements that cannot arrive in time
+PASS squad facade controls quad members so normal role movement cannot conflict
+Phase 8 tests passed: 16
+PASS release public APIs include combat operations, quads, resources, and diagnostics
+PASS Hive migrations are additive and emergency switches have safe defaults
+PASS durable operation and demand state remains JSON-safe plain data
+PASS CPU policy distinguishes 20 and 100 CPU capacity and preserves hysteresis thresholds
+PASS hot subsystems declare cadence, dirty scheduling, and heap caches
+PASS production graph contains no retired seasonal modules
+PASS the complete validation command includes every phase and structural audit
+PASS operator runbook covers architecture, CPU review, deployment, and emergency controls
+Phase 9 tests passed: 8
+PASS A healthy room remains stable
+PASS B predictive replacement risk holds a low-reserve room in recovery
+PASS C loss of all miners enters survival immediately
+PASS D 200 energy builds the minimum viable Extractor without waiting for room capacity
+PASS E source backlog with insufficient local CARRY diagnoses logistics
+PASS F excess CARRY cannot hide a harvesting deficit
+PASS G remote spending is suppressed during home recovery
+PASS H discretionary combat demand cannot consume recovery energy
+PASS I owned-room emergency defense bypasses recovery restrictions
+PASS J an expensive active spawn does not turn healthy income into survival
+PASS J hysteresis requires sustained improvement before leaving survival
+PASS K full-wipe policy admits the bootstrap miner and blocks optional work
+Spawning Extractor_001 as Extractor in W1N1 after downgrading body from 550 to 200 energy
+PASS K spawn consumer skips a higher-priority optional request for the bootstrap miner
+Spawning Freighter_001 as Freighter in W1N1 using affordable body cost 100
+PASS L affordable lower-priority recovery logistics bypasses an unaffordable miner
+PASS M an affordable discretionary request cannot bypass survival policy
+Spawning Extractor_001 as Extractor in W1N1 using affordable body cost 200
+PASS N the highest-priority miner wins again once its minimum body is affordable
+PASS O fatal spawn failure removes the selected index, not a blocked queue head
+PASS P healthy source Links satisfy local transport without Freighter CARRY
+PASS Q a saturated source Link with blocked destinations reports logistics pressure
+PASS R a source without a Link retains normal creep-hauling demand
+PASS S a hybrid Link source charges only spill flow to creep hauling
+PASS T an on-time full source replacement clears uncovered risk
+PASS U an undersized replacement leaves source WORK uncovered
+PASS V a replacement for another source cannot cover this source
+PASS W no source replacement leaves uncovered risk
+PASS X mobile mining capacity in transit diagnoses recovery, not immediate survival
+PASS Y a true sub-200 total wipe exposes the unreachable bootstrap floor
+PASS Z a source-specific creep already spawning counts as incoming replacement WORK
+PASS AA an incoming spawning miner avoids false survival during a funded handoff
+Economy recovery scenarios passed: A-AA
+Spawning Extractor_001 as Extractor in W5N8 using affordable body cost 700
+Spawning Extractor_002 as Extractor in W5N8 using affordable body cost 700
+PASS A-E real snapshot separates queue, spawning, active WORK and income
+Spawning Extractor_001 as Extractor in W5N8 using affordable body cost 700
+PASS F recovery revalidates above role and room caps, then drops redundant source demand
+Spawning Extractor_001 as Extractor in W5N8 using affordable body cost 700
+PASS per-source recovery cannot use 10 WORK on source A to hide empty source B
+PASS Economy and Colony agree at the per-source sustainable threshold
+PASS G diagnostics preserve API error, selected request, body cost and revalidation reason
+Spawning Extractor_001 as Extractor in W5N8 using affordable body cost 700
+PASS expired, malformed and unaffordable work cannot conceal the decision
+Spawning Extractor_001 as Extractor in W5N8 using affordable body cost 700
+PASS A funded RCL5 with 25 noncombat units generates and spawns a targeted local miner
+Spawning Extractor_001 as Extractor in W5N8 after downgrading body from 600 to 200 energy
+PASS only missing source WORK receives the temporary bypass, including replacement handoff
+PASS critical local hauling gets a bounded bypass and normal policy resumes once covered
+Spawning Extractor_101 as Extractor in W5N8 using affordable body cost 700
+PASS names extend beyond 100 and expiration retains explicit diagnostics
+PASS remoteDelivery Freighters cannot cover the capped RCL5 local recovery floor
+PASS remote jobs in queued or spawning Freighters cannot reserve local recovery CARRY
+PASS wealthy RCL7 queues assigned local CARRY before pressure-relief Tech spending
+PASS a baseline Tech still upgrades during downgrade danger while growth is paused
+PASS growth policy uses the finalized current economy state on a recovery transition
+PASS energy blocker reports the affordable recovery floor rather than the full-capacity body
+PASS spawn success survives console failure and drops stale waiting diagnostics
+PASS 1-13 representative schema-7 Memory migrates safely and idempotently
+PASS legacy roots are retained when migration cannot complete
+PASS 14 empty Memory initializes cleanly
+PASS Home registry and centralized room identities track current TickIndex truth
+PASS read-only console map handles the canonical schema without writes
+PASS 15 global-reset economy rebuild restores history but keeps current detail in heap
+PASS obsolete Sushi root paths are confined to the migration layer
+Memory schema representative size: before 6440 bytes, after 5172 bytes, saved 1268 bytes
+Memory schema tests passed.
+PASS DemandBoard uses the shared role, room, queue, and per-tick admission limits
+PASS living, spawning, and queued units are counted exactly once
+PASS owned-room squad defense remains admissible during RECOVERY
+PASS DemandBoard persistent hydration happens only once per tick
+PASS colony lifecycle separates maturity, economy, and alert overlays
+PASS colony lifecycle uses guarded adjacent progress and bounded milestone timeout state
+PASS strategy ranking enforces deterministic empire operation budgets
+PASS terminal squads are deleted after retention and skipped by execution
+PASS stale ordinary and terminal-operation queue requests reconcile away
+PASS Memory GC preserves protected rooms, manual diplomacy, active targets, and unknown fields
+PASS critical structures precede bulk roads in planner release priority
+PASS schema cache rebuilds after a simulated global reset without losing user fields
+Lifecycle/spawn/GC integration tests passed: 12
+PASS RCL1 RECOVERY admits exactly one bounded baseline-growth Tech at the ordinary cap
+PASS RECOVERY allows baseline growth but continues to reject surplus upgrading
+PASS a blocked optional Tech queue entry is promoted instead of hiding or duplicating the floor
+PASS baseline growth is blocked during a true mining collapse or unreachable miner floor
+PASS combat creeps do not consume the non-combat RCL1 governor cap
+PASS existing controller downgrade emergency remains admissible
+PASS minimum-growth Tech can collect the protected spawn pile and upgrade during RECOVERY
+PASS protected stockpile energy is measured from the shared tick index scan
+PASS minimum Freighter is the final core floor before baseline Tech growth
+PASS zero-miner collapse queues an affordable Extractor ahead of Foreman or Tech
+PASS funded zero-miner startup protects the income body when no refill reserve exists
+PASS zero-miner startup keeps Foreman first when stored energy can refill the spawn
+PASS siege alert pauses baseline growth while owned-room defense remains policy-exempt
+PASS RCL4 DEVELOPMENT remains a controller-growth phase
+PASS RCL4 baseline Tech keeps upgrading through moderate RECOVERY
+PASS RCL4 Tech WORK follows the economic budget instead of the old 25k storage tier
+PASS remote miner demand grows from unreserved to reserved source output
+Controller-growth regression tests passed: 17
+PASS idle powered Artificer upgrades when no repair or construction exists
+PASS critical repair preempts controller fallback
+PASS important local construction preempts fallback when construction is permitted
+PASS Artificer demand classifies important local construction as critical infrastructure
+PASS mixed critical repair and construction demand stays separated by economy category
+PASS critical construction cannot classify or unlock normal and remote demand
+PASS living, spawning, and queued Artificer WORK covers only its assigned category
+Spawning Artificer_001 as Artificer in W1N1 after downgrading body from 400 to 300 energy
+PASS started Artificer remains categorized after its request leaves the queue
+PASS inactive or invalid Artificer spawn metadata does not suppress replacement demand
+PASS an Artificer assigned to remote work does not cover critical local work
+PASS flexible Artificer WORK avoids overspawning while emergency work remains unavailable
+PASS RECOVERY permits important local construction but still blocks routine construction
+PASS routine repair does not preempt important local construction
+PASS empty Artificer collects energy for important RECOVERY construction
+PASS completed remembered build target is replaced
+PASS destroyed, wrong-room, and non-owned remembered targets are replaced
+PASS unreachable remembered target is cleared and a reachable replacement is selected
+PASS reachability results avoid repeated pathfinding for the same failed or valid target
+PASS rejected remembered target is not immediately reselected over a valid replacement
+PASS remembered target is preserved when valid and cleared when no longer permitted
+PASS blocked remote spending clears and does not select remembered remote work
+PASS RECOVERY permits at most one temporary Artificer controller helper
+PASS SURVIVAL with low spawn energy refills the base instead of upgrading
+PASS controller downgrade danger permits controller-safety behavior
+PASS Artificer returns to building when a valid site appears
+PASS idle Artificer WORK does not suppress the baseline Tech floor
+PASS repair claims, cleanup, movement ownership, and established Memory remain compatible
+PASS controller fallback collection ignores source-side drops but accepts protected spawn drops
+Artificer controller-fallback regression tests passed: 28
+PASS healthy RCL2 and RCL3 pre-storage reserves are attainable and can become aggressive
+PASS RCL2 remote capacity is planned but only observed production raises proven controller income
+PASS twenty-five road sites do not independently halve authoritative Tech WORK
+PASS critical construction is represented once in the Economy infrastructure budget
+PASS remote portfolio replaces a much worse incumbent but retains hysteresis
+PASS later healthy rooms can exceed four remotes only with proven logistics
+PASS remoteBootstrap Artificer queues ahead of ordinary Tech growth but below core logistics
+PASS RCL3 Annex replacement is queued using spawn plus route lead time
+PASS controller telemetry separates plan from EMA actuals and ignores RCL reset
+Growth correction regression tests passed.
+PASS 1 first remote can bootstrap during RECOVERY with healthy local mining
+PASS 2 low RCL remote cap follows affordable economics instead of an RCL2 lock
+PASS 3 established remote remains active across STABLE to healthy RECOVERY
+PASS 4 true SURVIVAL suspends but preserves remote portfolio and route data
+PASS 5 predictive dispatch leaves before a 1300/2000 container fills
+PASS 6 future energy at arrival makes a long trip worthwhile
+PASS 7 projected supply subtracts existing inbound reservations
+PASS 8 valid packed route is decoded once and reused from heap
+PASS 9 reverse route selects the previous canonical lane coordinate
+PASS 10 separate home portfolios retain authoritative parentHome
+PASS 11 memory migration preserves source, ownership and portfolio data
+Remote economy regression tests passed.
+PASS 1 permanent structure invalidates a canonical route
+PASS 2 temporary creep occupancy does not invalidate the route
+PASS 3 swamp route has a longer model ETA than equal road route
+PASS 4 poor MOVE balance increases modeled travel time
+PASS 5 empty outbound and loaded return estimates differ
+PASS 6 observed slow trips increase blended ETA
+PASS 7 completed roads decay stale observed timing weight
+PASS 8 safe profitable second-ring room can be planned
+PASS 9 hostile transit makes a second-ring source uneconomic
+PASS 10 configured range rejects farther remote rooms
+PASS 11 delivery honors destinationRoom without changing home ownership
+PASS 12 normal remote destination defaults to homeRoom
+PASS 13 cleanup removes transient logistics fields but preserves homeRoom
+PASS 14 exact multi-room route reverses into the prior transit segment
+PASS 15 long variable route dispatches earlier than a short stable route
+PASS 16 explicit FOB transport job retains ownership and assigns generic endpoints
+PASS 17 explicit FOB transport job is consumed from origin through destination cleanup
+PASS 18 canonical route rejects a misaligned east border
+PASS 19 canonical route accepts aligned north and south borders
+PASS 20 overlapping active routes expose one shared trunk
+Remote route and logistics regression tests passed.
+PASS 80 shared tiles form one cached trunk, rebuilt only on route/user changes
+PASS A/B established RECOVERY replan preserves lifecycle, ownership, history and calibration
+PASS C/D changed geometry invalidates heap and ignores old in-flight timing
+PASS E visible Freighter pickup still follows the canonical HOME lane
+PASS F visible source Extractor still follows the canonical HOME lane
+PASS G return continues inside HOME and timing ends only at anchor
+[RemotePlanner W1N1] active: W1N2/remote score=4.567 dist=4, W1N2/remote1 score=4.567 dist=4, W1N2/remote2 score=4.567 dist=4, W1N2/remote3 score=4.567 dist=4
+PASS H planner validates two due routes per tick and shares visible structure scans
+[RemotePlanner W1N1] blocked: DESTINATION_CHANGED
+PASS endpoint changes make a recently validated route due without a role path read
+PASS I hostile route removes demand and road eligibility while preserving portfolio/history
+PASS invalid remembered Artificer work is released without breaking another source in the room
+PASS danger retreat rejects hostile transit and keeps carried energy
+[RemotePlanner W1N1] active: W1N2/remote score=4.567 dist=4
+PASS permanent obstacle holds travel and planner rebuilds without losing establishment
+PASS J multi-load job counts ten resolved deliveries, including a failed intent retry
+PASS K/L zero amount and busy or loaded Freighters are rejected without mutation
+PASS claims build once per tick and same-tick updates change reservations immediately
+PASS long outbound travel renews its claim before the original reservation expires
+PASS economics use assigned remote bodies, then the planned body, independent of creep order
+PASS visible Annex and Artificer targets use the next highway tile before their final branch
+PASS canonical steps bypass Traveler and congestion never dirties route geometry
+PASS a one-tile sidestep rejoins forward locally and return movement stays exactly reversed
+PASS direct canonical border steps preserve both crossing directions without Traveler
+PASS actual hashed scheduler repeatedly plans, rescores and validates across 2100 ticks
+[RemotePlanner W1N1] active: W1N2/remote score=4.567 dist=4
+PASS safe live vision clears old threat and immediately restarts a suspended remote
+PASS invalid-only portfolio admits a new RECOVERY remote as bootstrap
+PASS economy distinguishes portfolio, selected and operational source counts
+PASS RECOVERY admits reservation replacement as remoteMaintenance
+PASS unseen reservation ages and expires while stale ownership is retained for scouting
+PASS Scout selects blocking intel before the normal rescan interval
+PASS cheap visible refresh rotates over three remotes without route searches
+PASS two local sources plus five operational remotes admit a seventh Extractor
+PASS affordable positive reservation ROI starts RESERVING and requests Annex
+PASS projected profit alone cannot bypass insufficient bootstrap liquidity
+PASS historical sources cannot subsidize projected Annex upkeep
+PASS Freighter cap covers approved carry demand and one replacement
+PASS diagnostics checks current spending instead of cached admission
+PASS unselected diagnostics identifies the current local harvest blocker
+Spawning Scout_001 as Scout in W1N1 using affordable body cost 50
+PASS RECOVERY with no remotes admits remoteIntel and revalidates its own one-Scout cap
+PASS RECOVERY and SURVIVAL without working miners block Scout demand
+PASS RCL1 BOOTSTRAP admits exactly one 50-energy Scout after the living floor
+PASS early BOOTSTRAP cannot substitute queued miners or controller work for a living floor
+PASS full optional queue and exhausted admission budget cannot starve economic intel
+PASS high priority intel refresh raises existing-portfolio Scout demand and diagnostics
+PASS Scout visibility scans sources and builds its HOME remote candidates
+PASS Annex waits on hostile reservation and resumes immediately after fresh safe intel
+PASS five active reservation rooms admit a fifth Annex through enabled policy
+PASS owned second HOME is excluded from generation and existing remote use
+PASS protected full queue remains intact when Scout admission is denied
+PASS CPU suppression and missing controller floor explain absent discovery
+PASS normal light planning admits Scout without waiting for optional full planning
+PASS 1 planned tile overrides stale generic seat before container completion
+PASS 2 real route endpoint and mining seat agree across repeated unfinished ticks
+PASS 3 full miner self-builds the exact station site
+PASS 4 physically present targeting Artificer receives dropped supply
+PASS 5 stale Artificer memory outside the room does not suppress self-build
+PASS 6 Artificer death immediately resumes self-build
+PASS 7 completed container repairs id and clears bootstrap memory without reseating
+PASS 8 missing site keeps station, drops buffer and retries planning with backoff
+PASS 9 resolved drop is advertised then naturally transitions to a completed container
+PASS 10 remote offload ignores unrelated nearby containers and sites
+PASS 11 local miner retains generic seat and offload movement
+PASS Artificer arrival preserves partial progress, departure and target changes resume building
+PASS invalid planned coordinates are rejected consistently
+PASS traffic preserves station but accepts explicit emergency movement
+PASS travel owns the tick before stationary bootstrap can issue another move or work intent
+PASS intentional station replan replaces remembered seat and invalidates the old route
+PASS missing station site is not replaced by another nearby site or container
+PASS 1 two remote Extractors receive unique station and side seats
+PASS 2 supplemental miner harvests across real routing ticks without chasing primary
+PASS 3 full supplement builds, supplies Artificer, and drops when site missing
+PASS 4 primary death promotes the existing supplement
+PASS 5 early replacement harvests while dying primary retains its station
+PASS 6 five active WORK cover the source
+PASS 7 three WORK request exactly two missing WORK
+PASS 8 two two-WORK miners permit a third one-WORK request
+PASS 9 physical seat cap rejects impossible third miner
+PASS 10 fresh Annex reservation increases desired coverage without waiting for death
+PASS 11 destroyed WORK does not count toward active coverage
+PASS 12 completion preserves both seats and adjacent supplemental transfers
+PASS distant side seat drops full cargo instead of walking to completed container
+PASS queued WORK and seats count toward coverage
+PASS dying miner stops covering future WORK so replacement demand can overlap
+PASS legacy duplicate station claims repair in favor of the physical primary
+PASS stale reassigned claims do not reserve station after the primary dies
+PASS no open side seat waits instead of double-claiming
+PASS graph: 107 modules resolve; 107 reachable; 0 cycles
+PASS movement: 14 movement/pathfinding call sites remain within the ownership contract
+PASS A rich RCL5 invests stockpile in Tech WORK without upgradeRush
+PASS B low CPU and E saturated Spawn close investment
+PASS C massive construction exceeds 24 WORK through Artificer demand
+PASS D no backlog creates no Artificer demand and leaves energy for Tech
+PASS F baseline thirty remains an admission baseline
+PASS G EXPAND receives support and completed operations do not
+PASS H drawdown hysteresis tapers and exits at protected band
+PASS I RCL8 stays at fifteen normal controller WORK
+PASS J recovery disables surplus; malformed settings remain finite
+PASS profitable routed remote receives investment; unsafe remote does not
+PASS role-cap diagnostics preserve config and allow explicit dynamic opt-out
+PASS E Artificer consolidation claims only matching expiring work and respects deadline
+PASS allocations share one budget including the existing controller income floor
+Surplus investment tests passed: 13
+PASS A rich RCL5 can exceed the old baseline only within useful resource capacity
+PASS B C D CPU, energy and spawn bottlenecks each close optional capacity
+PASS E V spawn time accounts for giants and doubles available throughput with two spawns
+PASS P Q sustained idle Artificers are denied while productive useful Techs are admitted through Arbiter
+PASS R S soft capacity falls without killing creeps and mandatory recovery remains admissible
+PASS U rooms share empire CPU; queued commitments cannot reuse the same room share
+PASS rolling completed tick CPU dominates early-tick readings and retains phase costs
+PASS surplus allocator rejects idle work, funds useful work, and respects the RCL8 upgrade limit
+PASS active, spawning and queued giant WORK stay distinct and missing work does not duplicate them
+PASS role profiling uses small EMAs and requires sustained utilization samples
+PASS rich RCL5 at thirty creeps emits useful Tech WORK through the real request manager
+PASS queued and unqueued strategic commitments reserve spawn time without counting the same demand twice
+PASS same-tick admissions share spawn and energy budgets and revalidate without self charging
+PASS CPU-neutral Tech replacement consolidates expiring work without authorizing extra growth
+Population capacity tests passed: 14
+PASS F large Tech supplies 18 missing WORK with one body under CPU pressure
+PASS G emergency Tech uses an immediately affordable useful minimum
+PASS H large local Artificer covers 20 WORK when the roads are proven
+PASS I J K Extractors never exceed local or remote missing WORK
+PASS L M proven roads carry 33 parts versus 25 on unknown routes; planned roads do not qualify
+PASS N O generated bodies stay affordable and within 50 parts across role, energy and demand ranges
+PASS replacement deadlines bound spawn bursts
+PASS Scout and claiming bodies stay mission-sized; combat preserves mobility and ordering
+Body scaling tests passed: 8
+PASS NPC remote defense, Keeper classification, unrelated intel, and clear confirmation
+PASS default observe preserves danger with no human operation, spawn demand, tower or WarRoom target
+PASS defend requires hostility or confirmed aggression and mode switches update permissions
+PASS confirmed creep aggression is recorded once per tick and learned during observe
+PASS tower fire and unrelated targets never create diplomacy incidents; tower damage remains
+PASS lost vision retains NPC danger briefly, expires defense, and honors player mode changes
+PASS cached targets and area attacks respect observation while explicit manual orders remain usable
+PASS NPC toggle and unseen human mode changes cancel automatic replacements
+Combat diplomacy tests passed: 8
+PASS below low starts mining and emits through DemandBoard
+PASS high stops replacement demand immediately; cargo is deposited
+PASS hysteresis ignores small movements and resumes below low
+PASS reaction demand raises raw target using actual missing compound
+PASS boost reservation and matching reaction goal are not counted twice
+PASS existing intermediate inventory reduces raw production requirements once
+PASS X defaults are larger and all stock targets are configurable
+PASS storage pressure blocks mining without deleting or dropping stock
+PASS terminals do not distribute raw minerals for symmetry
+PASS active reaction shortage stages owned terminal transfer from Storage
+PASS boost shortage triggers transfer and reverse sends observe cooldown
+PASS terminal capacity and transaction energy reserves are protected
+PASS hub prefers an owned healthy lab cluster with terminal and Storage
+PASS missing X receives bounded diversity bonus over duplicate U
+PASS Power has no raw inventory cap and deposits in working Power Spawn then Storage
+PASS nonseason operation is safe without RESOURCE_THORIUM
+PASS snapshot caches inventory and excludes creep cargo; diagnostics serialize
+PASS Ghodium demand stops at 10k and reports missing chemistry inputs
+PASS Ghodium uses existing labs to produce missing intermediates
+PASS Storage consolidation has a concrete pressure trigger
+PASS terminal pressure pauses extraction even with a healthy Storage
+PASS all meaningful inventory locations count once and creep cargo stays excluded
+PASS otherwise equal expansion candidates prefer missing mineral diversity
+PASS boost requested without local labs routes production inputs to a suitable hub
+PASS partial Power delivery does not cancel other recovered cargo
+Resource strategy tests passed: 25
+Spawning Volley_001 as Volley in W1N1 using affordable body cost 200
+PASS fixed high priority waits for refills instead of funding endless cheaper spawns
+Spawning Extractor_001 as Extractor in W1N1 using affordable body cost 200
+PASS mandatory local recovery may pass a waiting army; remote optional work may not
+Spawning Scout_001 as Scout in W1N1 using affordable body cost 50
+PASS impossible bodies and policy-rejected work do not reserve energy
+PASS DemandBoard falls through Capacity and Arbiter rejection to the next room
+PASS count demands allocate stable unique slots, retry partially admitted rooms, and do not duplicate
+PASS malformed scalable capabilities never crash emit, hydration, or flush
+Spawning Volley_001 as Volley in W1N1 using affordable body cost 200
+Spawning Volley_002 as Volley in W1N1 using affordable body cost 200
+PASS multiple idle spawns share energy, reserve names, and retain pending demand accounting
+Spawning Volley_001 as Volley in W1N1 using affordable body cost 200
+Spawning Volley_002 as Volley in W1N1 using affordable body cost 200
+Spawning Volley_003 as Volley in W1N1 using affordable body cost 200
+PASS all idle spawns can run when funded; failed API calls reserve neither energy nor names
+PASS fixed economy bodies survive Arbiter normalization unchanged
+PASS every combat role including CoreBreaker and Breacher shares economy and capacity classification
+PASS only a current actionable imminent owned defense may bypass the economy anchor
+PASS fallback IDs distinguish assignments, sources, producers, and delimiter boundaries
+PASS names extend past 100 and avoid spawning names absent from creep memory
+Spawning Foreman_001 as Foreman in W1N1 using affordable body cost 100
+PASS a missing local Foreman may restore spawn filling while an army waits
+Spawning Volley_001 as Volley in W1N1 using affordable body cost 200
+Spawning Volley_002 as Volley in W1N1 using affordable body cost 200
+Spawning Volley_003 as Volley in W1N1 using affordable body cost 200
+PASS all three funded idle spawns execute in one call and pending role caps still apply
+PASS StructureSpawn memory cannot mask a spawning creep assignment
+PASS combat queue share excludes its own request during revalidation
+Spawn pipeline regression tests passed: 17
+PASS upgrade preserves useful Memory and ignores old generic caps only for SPECIAL_STRATEGY
+PASS invalid persisted controls are repaired while zero limits, false, and custom fields survive
+PASS deliberate zero queue admission produces a persisted-config diagnosis
+PASS known old requests with missing/invalid expiry cannot reserve queue space forever
+PASS rollback rebases queue control ticks but retains body, assignment and finite lifetime
+PASS admission cleans stale queue entries before enforcing a configured queue limit
+PASS demand-cache schedules recover after restore, rollback and invalid values
+PASS valid demand-cache staggering is preserved and its wait is diagnosed
+PASS economy hysteresis remains conservative after rollback and reports its spawn block
+PASS expired requests stay expired even if another timestamp came from the future
+Persistent spawn Memory tests passed: 10
+PASS emergency miner completes a delivery across ticks before returning to its seat
+PASS queued hauling does not stop emergency self-delivery
+PASS spawning haulers are incoming capacity rather than active local hauling
+PASS a new tick replaces old demand maxima while same-tick emissions still merge
+PASS lower demand retires excess queued slots without touching living assignments
+PASS retained demand requests lose obsolete emergency priority and classification
+PASS bounded GC eventually reaches every domain behind retained squads
+PASS GC progress survives Memory deserialization and module reloads
+PASS immobile and spawning creeps cannot be displaced out of a reserved tile
+PASS traffic rejects permanently blocked primary steps and may use a legal fallback
+PASS traffic invalidates positional paths after a sidestep but keeps movement guards
+PASS private ramparts stay blocked when a road shares the tile
+PASS shared range-zero routes reach the exact target and preserve blocked overlays
+PASS traffic preserves an explicit room crossing but rejects a wall tile
+PASS Traveler refreshes each room independently during the same tick
+PASS courier delivers the final source batch after its heap job disappears
+PASS a full courier destination releases the job and uses owned fallback storage
+PASS an unreachable repair releases its claim and permits construction fallback
+PASS one throwing role does not skip other creeps, traffic or end-of-tick telemetry
+PASS spawning creeps are skipped before role execution
+PASS repair indexing reuses the tick structure scan and preserves an unchanged id list
+PASS an explicit zero strategy budget blocks discretionary operation activation
+PASS operations outside the tick budget cannot spawn from an old allow decision
+PASS bounded strategy rescoring eventually reaches candidates after the first id
+Audit regressions: 24 passed, 0 failed
+PASS Power Bank intel persists and expires as plain data
+PASS impossible Power Bank raid is rejected
+PASS viable Power Bank computes attack heal and haul capacity
+PASS Power Spawn processes when supplied and policy permits
+PASS Power Spawn obeys economy processing gate
+PASS Power Creep auto-create defaults off
+PASS configured Power Creep creation requires free GPL
+PASS unspawned configured Power Creep selects owned active Power Spawn
+PASS normal shards remain safe without seasonal and Power APIs
+Standard Power pipeline tests passed: 9
+PASS structured events retain only bounded primitives and never serialize game objects
+PASS duplicates aggregate with last tick and count instead of growing the ring
+PASS event count and strict serialized size evict oldest history
+PASS fallback remains bounded and survives a global reset
+PASS retention ages history out and cleans persisted fallback
+PASS segment activation is asynchronous and preserves currently active segment ids
+PASS registered segment ownership conflicts cause a safe bounded fallback
+PASS nonempty foreign, malformed, and oversize segments are never overwritten
+PASS ten occupied activation slots are preserved without claiming a segment
+PASS segment API failures cannot interrupt recorder calls
+PASS segment writes are periodic and include only bounded serialized history
+PASS write failures and last-moment foreign writes preserve the colony and foreign data
+PASS segment and fallback merge after reset without duplicate ids or lost recent events
+PASS clear survives reset before the asynchronous segment can be overwritten
+PASS OFF does not initialize storage, serialize data, record, or sample CPU
+PASS severity and DEBUG controls retain important events only in NORMAL
+PASS PROFILE automatically expires, is duration bounded, and accepts console controls
+PASS zero-count retrieval is empty and export chunks reassemble exact compact JSON
+PASS event bursts are bounded per tick and leave capacity for errors
+PASS a failed main phase still reaches traffic, diagnostics, and telemetry
+PASS bootstrap exception skips dependent work and still records the failure
+PASS throwing console logger does not break role isolation
+PASS movement emits only persistent failure, blockage, invalid destination and oscillation evidence
+PASS job warnings require sustained eligible idleness and distinguish death from repeated abandonment
+PASS economy transitions report recovery growth reserve and critical harvesting constraints
+PASS health snapshots honor the configured cadence and reuse registered room evidence
+PASS ordinary per-tick Memory deserialization preserves heap history and flush cadence
+PASS console export chunks remain a frozen snapshot while new ticks add events
+PASS a frozen console namespace and hostile error object cannot break diagnostics
+PASS dashboard summaries include global failures and exclude other rooms and old entries
+Diagnostic cases passed: 30
+PASS only confirmed seasonal records are removed; ordinary resources and unknown fields survive
+PASS queue cleanup preserves array identity and all standard requests
+PASS living and spawning former seasonal actors gain standard roles and lose invalid claims
+PASS retirement is idempotent across global resets and leaves standard expansion committed
+PASS old schema migration retires its season fields and preserves unrelated colony memory
+PASS retired courier returns home through normal travel before selecting jobs
+PASS permanent code cannot import a deleted season module even when seasonal APIs exist
+Retirement cases passed: 7
+PASS all display modes and RCL1 through RCL8 keep panels and text inside the room
+PASS dense population, alerts, resources and remotes are bounded with explicit overflow
+PASS long text is truncated using the available tile width and readable font sizes
+PASS empty or missing economy data renders safely without large empty remote panels
+PASS OFF and the legacy disable switch perform no dashboard drawing or CPU read
+PASS selected-room mode and no owned rooms are safe
+PASS stale spawn decisions are explicitly labelled and never displayed as current
+PASS compact view contains room RCL economy energy CPU and critical alerts
+PASS height exhaustion collapses low-priority panels without shrinking type
+PASS mock preview serializes the actual RoomVisual draw calls
+Dashboard geometry cases passed: 10
+PASS 1 one-seat source distinguishes required, achievable, active and planned WORK
+PASS 2 six-seat source counts mixed active parts and excludes destroyed WORK
+PASS 3 300 energy chooses two WORK, CARRY and MOVE; 200 permits emergency one WORK
+Spawning Extractor_001 as Extractor in W3S47 using affordable body cost 700
+PASS 4 extensions enable a five-WORK replacement for a full one-seat source
+PASS 5 full 300-energy idle spawn reports capacity constraint instead of redundant miners
+PASS 6 underpowered unique-seat miner upgrades once without double-counting planned WORK
+Spawning Extractor_001 as Extractor in W3S47 using affordable body cost 300
+PASS 7 spawning replacement reserves source even before Game.creeps exposes it
+PASS 8 blocked handoff times out without retiring incumbent; cooldown prevents loops
+PASS 9 recovery stays unhealthy when infrastructure limits harvesting
+PASS 10 infrastructure escape permits bounded construction and minimum sustainable growth
+Spawning Extractor_001 as Extractor in W3S47 after downgrading body from 700 to 200 energy
+PASS 11 emergency miner uses current energy immediately when no income exists
+Spawning Extractor_001 as Extractor in W3S47 after downgrading body from 700 to 300 energy
+PASS 12 preferred energy never arrives: bounded wait releases to a useful upgrade
+PASS 13 incumbent death preserves replacement and lets successor claim the unique seat
+Spawning Extractor_001 as Extractor in W3S47 after downgrading body from 700 to 300 energy
+PASS 14 economic deterioration cancels discretionary wait without spawning a weaker upgrade
+PASS 15 unavailable or destroyed extensions bound body capacity; partial damage stays usable
+PASS handoff keeps incumbent mining until arrival, uses a free exit and unique seat ownership
+Spawning Freighter_001 as Freighter in W3S47 using affordable body cost 100
+PASS urgent local hauling preempts a discretionary miner wait
+PASS logistics shortage and falling income cannot enable infrastructure escape
+PASS replacement pending does not conceal death risk or allow a duplicate admission
+PASS failed early upgrade is not retried repeatedly against an unchanged handoff
+PASS extension loss cancels an upgrade that cannot beat the incumbent at realistic capacity
+PASS dead predecessor and lost seat recycle the successor instead of leaving it stranded
+PASS full planning pipeline admits the construction needed to leave capacity recovery
+PASS Black Box records plan transitions without generating an event each unchanged tick
+Spawning Extractor_001 as Extractor in W3S47 using affordable body cost 700
+PASS unchanged available energy reuses body preview; changed energy reevaluates it
+PASS admission rejection remains visible when it leaves the spawn queue empty
+PASS an affordable partial upgrade does not immediately trigger another replacement wave
+Harvesting capacity scenarios passed: 27
+PASS constrained harvest recovery requests missing hauling despite an existing hauler
+Spawning Extractor_001 as Extractor in W3S47 after downgrading body from 700 to 200 energy
+PASS a queued upgrade becomes an affordable lifetime replacement as death approaches
+Spawning Extractor_001 as Extractor in W3S47 after downgrading body from 700 to 200 energy
+PASS predecessor death releases an upgrade minimum while preserving source targeting
+PASS a successor staging beside the source does not cover its incumbent twice
+Spawning Extractor_001 as Extractor in W3S47 using affordable body cost 700
+PASS retiring miners cannot make a fresh recovery request obsolete
+Spawning Extractor_001 as Extractor in W3S47 after downgrading body from 700 to 300 energy
+PASS final body selection respects active spawn capacity after extension loss
+Spawning Extractor_001 as Extractor in W3S47 after downgrading body from 300 to 200 energy
+PASS startup with no reserves spends its first energy on income
+PASS an early upgrade is discarded when another miner has already restored source coverage
+PASS stable mining avoids redundant miners and authorizes baseline controller growth
+PASS source allocation fills the uncovered source without duplicating a pending unique-seat upgrade
+PASS an occupied seat cannot spend energy on an equal or weaker discretionary replacement
+Spawning Extractor_001 as Extractor in W3S47 using affordable body cost 700
+PASS preferred-body waiting ends promptly when the attainable full energy arrives
+PASS replacement lead includes the preferred spawn duration and slow local travel
+Spawning Ronin_001 as Ronin in W3S47 using affordable body cost 130
+PASS imminent owned defense preempts a discretionary miner upgrade
+PASS impossible harvest demand permits bounded infrastructure while preserving the warning
+PASS the dashboard exposes staging work without claiming active or spawning work
+PASS generated local miner bodies satisfy energy, source demand, mobility and carry bounds
+Spawning Extractor_001 as Extractor in W3S47 using affordable body cost 700
+PASS total miner loss rebuilds source-targeted income ahead of optional development
+PASS zero usable source positions produce an explicit access constraint and no futile miner
+PASS staging plus an incumbent cannot falsely cover a partial replacement plan
+PASS recovery miners deliver to the spawn until a local hauler is actually active
+Spawning Tech_001 as Tech in W3S47 using affordable body cost 550
+Spawning Scout_001 as Scout in W3S47 using affordable body cost 50
+Spawning Extractor_001 as Extractor in W3S47 after downgrading body from 700 to 300 energy
+Spawning Freighter_001 as Freighter in W3S47 after downgrading body from 700 to 100 energy
+Spawning Freighter_002 as Freighter in W3S47 after downgrading body from 700 to 100 energy
+Spawning Freighter_003 as Freighter in W3S47 after downgrading body from 700 to 100 energy
+Spawning Freighter_004 as Freighter in W3S47 after downgrading body from 700 to 100 energy
+Spawning Freighter_005 as Freighter in W3S47 after downgrading body from 700 to 100 energy
+Spawning Freighter_006 as Freighter in W3S47 after downgrading body from 700 to 100 energy
+Spawning Freighter_007 as Freighter in W3S47 after downgrading body from 700 to 100 energy
+Spawning Freighter_008 as Freighter in W3S47 after downgrading body from 700 to 100 energy
+Spawning Freighter_009 as Freighter in W3S47 after downgrading body from 700 to 100 energy
+Spawning Freighter_010 as Freighter in W3S47 after downgrading body from 700 to 100 energy
+Spawning Freighter_011 as Freighter in W3S47 after downgrading body from 600 to 100 energy
+Spawning Freighter_012 as Freighter in W3S47 after downgrading body from 500 to 100 energy
+Spawning Freighter_013 as Freighter in W3S47 after downgrading body from 400 to 100 energy
+Spawning Freighter_014 as Freighter in W3S47 after downgrading body from 300 to 100 energy
+Spawning Freighter_015 as Freighter in W3S47 after downgrading body from 200 to 100 energy
+Spawning Freighter_016 as Freighter in W3S47 using affordable body cost 100
+Spawning Extractor_002 as Extractor in W3S47 after downgrading body from 700 to 200 energy
+Spawning Extractor_003 as Extractor in W3S47 after downgrading body from 550 to 200 energy
+Spawning Extractor_004 as Extractor in W3S47 after downgrading body from 450 to 200 energy
+Spawning Extractor_005 as Extractor in W3S47 after downgrading body from 300 to 200 energy
+Spawning Extractor_006 as Extractor in W3S47 using affordable body cost 200
+Spawning Extractor_007 as Extractor in W3S47 after downgrading body from 700 to 450 energy
+Spawning Extractor_008 as Extractor in W3S47 using affordable body cost 700
+Simulation: recovery at cycle 878, 26 spawns, max queue 4, 2 handoffs
+PASS 900 decision cycles recover from combined miner and hauler loss without queue growth
+Spawning intelligence scenarios: 22 passed, 0 failed
+PASS source demand follows actual capacities, including keeper, neutral and empty sources
+PASS economy sums zero, one, two and three sources without a fixed room income
+PASS scan repairs legacy geometry once, preserves assignments and accepts a durable zero
+PASS plain and swamp are seats; malformed, duplicate, source-center, wall and wrong-room entries are rejected
+PASS source geometry at room boundaries stays in bounds
+PASS natural obstacles and private hostile ramparts reduce seats; roads and containers remain usable
+PASS temporary creep occupancy and construction sites do not erase physical capacity
+PASS shared seat cache checks each tile once per tick and refreshes structure changes
+PASS same-tick coordinate repairs and container-station changes invalidate seat results
+PASS loss of vision retains terrain knowledge and reacquisition checks current blockers
+PASS zero physical seats never create Extractor demand
+PASS assignment releases a remembered seat when a structure blocks it
+PASS a container source admits a third small miner when seats and missing WORK allow it
+PASS covered container under a hostile rampart is not assigned as a mining station
+PASS distance cache expires, refreshes topology changes and removes replaced dropoff entries
+PASS one-source Scout floor admits one working miner; three-source floor requires all three assignments
+PASS Scout floor does not wait for an impossible miner at a sealed source
+PASS Extractor admission cap uses each source capacity and valid seats
+PASS remote demand rejects newly blocked seats and recovers after access returns
+PASS remote keeper income is not halved for an impossible reservation
+PASS one- and three-source recovery create one targeted request per uncovered source
+PASS global reset rebuilds volatile seat evidence without changing durable geometry
+PASS remote access blocked at last sight stays blocked without vision until observation clears it
+Room intelligence scenarios passed: 23

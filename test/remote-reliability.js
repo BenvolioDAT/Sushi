@@ -224,6 +224,12 @@ test('two local sources plus five operational remotes admit a seventh Extractor'
     const { home, info } = annexHome();
     const memory = Memory.rooms.W1N1;
     memory.sources = { local1: {}, local2: {} };
+    const find = home.find;
+    home.find = function(kind, options) {
+        return kind === FIND_SOURCES ? ['local1', 'local2'].map((id, i) => ({
+            id, energyCapacity: 3000, pos: new RoomPosition(10 + i * 20, 10, home.name)
+        })) : find.call(this, kind, options);
+    };
     memory.remotePlanner.activeSourceIds = [];
     for (let i = 0; i < 5; i++) {
         memory.remotePlanner.sourceInfos['r' + i] = Object.assign({}, info, { sourceId: 'r' + i, requiredWork: 3 });

@@ -65,6 +65,8 @@ function build() {
         ownedSpawnsByRoom: new Map(),
         ownedSpawnRooms: [],
         structuresByRoom: new Map(),
+        sourcesByRoom: new Map(),
+        mineralsByRoom: new Map(),
         constructionSitesByRoom: new Map(),
         droppedResourcesByRoom: new Map(),
         hostilesByRoom: new Map(),
@@ -151,9 +153,23 @@ function get() {
     return build();
 }
 
+// Lazy: unseen/unconsumed rooms incur no additional scans. Live objects never
+// escape the tick index into Memory.
+function getSources(room) {
+    const cache = get().sourcesByRoom;
+    if (!cache.has(room.name)) cache.set(room.name, safeFind(room, FIND_SOURCES));
+    return cache.get(room.name);
+}
+
+function getMinerals(room) {
+    const cache = get().mineralsByRoom;
+    if (!cache.has(room.name)) cache.set(room.name, safeFind(room, FIND_MINERALS));
+    return cache.get(room.name);
+}
+
 function resetForTests() {
     delete global.__sushiTickIndex;
     buildCount = 0;
 }
 
-module.exports = { build, get, resetForTests, isCombatCapable, activePartCount };
+module.exports = { build, get, getSources, getMinerals, resetForTests, isCombatCapable, activePartCount };

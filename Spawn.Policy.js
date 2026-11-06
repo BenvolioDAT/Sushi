@@ -81,11 +81,10 @@ function economyRoleCap(room, role, request, policy) {
     if (role === 'Extractor') {
         const body = request.body || Bodies.getExtractorBody(room) || [];
         const work = Math.max(1, body.filter(part => (part.type || part) === WORK).length);
-        const localSources = Object.values(memory.sources || {});
-        const local = localSources.length ? localSources.reduce((sum, source) => sum + Math.max(1,
-            Math.min(source.seatCount || source.seats && source.seats.length || Infinity,
-                Math.ceil((source.requiredWork || 5) / work))), 0) :
-            (typeof room.find === 'function' ? room.find(FIND_SOURCES) || [] : []).length;
+        const utility = require('utility');
+        const local = require('HiveMind.Index').getSources(room).reduce((sum, source) => sum +
+            Math.min(utility.getValidSourceMiningSeats((memory.sources || {})[source.id], source.pos).length,
+                Math.ceil(utility.getSourceHarvestProfile(source).requiredWork / work)), 0);
         required = local + active.reduce((sum, info) => sum + Math.max(1, Math.ceil((info.requiredWork || work) / work)), 0);
     } else {
         const body = request.body || Bodies.getFreighterBody(room) || [];
