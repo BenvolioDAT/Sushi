@@ -123,12 +123,14 @@ function selectAffordableQueuedBodyForSpawn(spawn, request) {
         );
     }
 
-    if (!bestBody || bestBody.length === 0 || request.minimumWorkParts > countBodyParts(bestBody, WORK)) {
+    if (!bestBody || bestBody.length === 0 || request.minimumWorkParts > countBodyParts(bestBody, WORK) ||
+        request.minimumCarryParts > countBodyParts(bestBody, CARRY)) {
         return {
             changed: false,
             affordable: false,
             energyAvailable: energyAvailable,
-            reason: request.minimumWorkParts > 1 ? 'insufficient current energy for productive replacement' : 'no affordable body for current energy'
+            reason: request.minimumCarryParts > 1 ? 'insufficient current energy for consolidated hauling body' :
+                request.minimumWorkParts > 1 ? 'insufficient current energy for productive replacement' : 'no affordable body for current energy'
         };
     }
 
@@ -156,6 +158,9 @@ function selectAffordableQueuedBodyForSpawn(spawn, request) {
  */
 function minimumQueuedBodyCost(room, request) {
     if (request.bodyRequirements && request.bodyRequirements.fixed) return getBodyCost(request.body);
+    if (request.role === 'Freighter' && request.minimumCarryParts > 1) {
+        return request.minimumCarryParts * 100; // Conservative one CARRY / one MOVE.
+    }
     if (request.role === 'Extractor' || request.bodyProfile) {
         const minimum = request.minimumWorkParts || 1;
         const profile = request.role === 'Extractor' ? { desiredWork: minimum, maxWork: minimum } : { ...request.bodyProfile };
@@ -170,6 +175,7 @@ function minimumQueuedBodyCost(room, request) {
 function previewAffordableQueuedBodyForSpawn(spawn, request) {
     const signature = JSON.stringify([spawn.room.energyAvailable, require('Harvest.Planning').energyCapacity(spawn.room),
         request.role, request.requestedWorkParts, request.maxWorkParts, request.minimumWorkParts,
+        request.minimumCarryParts,
         request.requestedCarryParts, request.maxCarryParts, request.bodyProfile,
         !!request.bodyRequirements?.fixed, request.body, spawn.room.controller?.ticksToDowngrade < 5000]);
     if (request.affordableBodyCache?.signature === signature) return request.affordableBodyCache.preview;
@@ -609,6 +615,7 @@ function runRoomInternal(roomName, decision, selectedSpawn) {
             const carry = Math.min(candidate.requestedCarryParts || candidate.maxCarryParts ||
                 countBodyParts(candidate.body, CARRY), finalAdmission.missingCarry);
             bodyCandidate = Object.assign({}, candidate, { requestedCarryParts: carry, maxCarryParts: carry });
+            bodyCandidate.minimumCarryParts = finalAdmission.minimumCarryParts || 0;
             if (candidate.bodyProfile) bodyCandidate.bodyProfile = { ...candidate.bodyProfile, desiredCarry: carry };
         }
         var preview = previewAffordableQueuedBodyForSpawn(previewSpawn, bodyCandidate);
@@ -714,6 +721,13 @@ function runRoomInternal(roomName, decision, selectedSpawn) {
         }
     }
     if (request.role === 'Extractor') request.memory.extractorSpawnWorkParts = countBodyParts(request.body, WORK);
+    if (request.role === 'Freighter' && request.freighterRenewal && !finalAdmission?.freighterRenewal) {
+        // A recovery fallback must not keep claiming the abandoned cohort.
+        delete request.memory.freighterPredecessors;
+        delete request.freighterRenewal;
+        delete request.replacementFor;
+    }
+    if (finalAdmission?.freighterRenewal) request.memory.freighterPredecessors = finalAdmission.freighterPredecessors;
     request.memory.spawnCapability = { work: countBodyParts(request.body, WORK), carry: countBodyParts(request.body, CARRY),
         claim: countBodyParts(request.body, CLAIM) };
     if (request.role === 'Freighter') request.memory.freighterSpawnCarryParts = countBodyParts(request.body, CARRY);

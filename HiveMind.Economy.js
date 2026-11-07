@@ -362,6 +362,8 @@ function remoteHaulingRequest(room, request, queue) {
         if (pending && !(pending.expiresAt < Game.time) && isRemoteFreighter(pending)) covered += bodyParts(pending.body, CARRY);
     }
     const missing = Math.max(0, required - covered);
+    const renewal = freighterRenewalRequest(room, request, queue);
+    if (renewal?.active) return { ...renewal, renewal: true, ordinaryMissing: missing };
     return { obsolete: missing === 0, missing,
         reason: missing > 0 ? 'operational remote hauling deficit' : 'remote hauling already covered or no operational remote sources' };
 }
@@ -605,8 +607,7 @@ function pendingFreighterParts(roomName, assignment, partType) {
 function freighterCoverage(roomName, assignment) {
     const matches = assignment === 'local' ? isLocalFreighter : isRemoteFreighter;
     const snapshot = get(roomName);
-    const distance = assignment === 'local' ? Math.max(15, ...((snapshot && snapshot.harvest && snapshot.harvest.sources) || [])
-        .map(source => source.distance || 0)) : 25;
+    const distance = freighterTravelTicks(roomName, assignment, snapshot);
     let living = 0, spawning = 0, queued = 0;
     const seen = new Set();
     for (const creep of TickIndex.get().creepsByHomeRoom.get(roomName) || []) {
@@ -626,6 +627,51 @@ function freighterCoverage(roomName, assignment) {
     const queue = Memory.rooms && Memory.rooms[roomName] && Memory.rooms[roomName].spawn && Memory.rooms[roomName].spawn.queue || [];
     for (const request of queue) if (request && !(request.expiresAt < Game.time) && matches(request)) queued += bodyParts(request.body, CARRY);
     return { living, spawning, queued };
+}
+
+function freighterTravelTicks(roomName, assignment, snapshot) {
+    if (assignment === 'local') return Math.max(34, ...(snapshot?.harvest?.sources || [])
+        .map(s => s.haulRoundTrip || (s.distance || 15) * 2 + 4));
+    const planner = Memory.rooms?.[roomName]?.remotePlanner || {};
+    return Math.max(25, ...(planner.activeSourceIds || []).map(id => planner.sourceInfos?.[id]).filter(info =>
+        info?.active && info.operational !== false && info.route?.valid !== false).map(info =>
+        info.roundTripTicks || info.route?.roundTripTicks || info.route?.estimatedRoundTripTicks || (info.distance || 0) * 2));
+}
+
+function freighterRenewalInput(room, assignment, queue) {
+    const snapshot = get(room.name) || {}, harvest = snapshot.harvest || {}, haul = snapshot.haul || {};
+    const local = assignment === 'local';
+    let required = haul.requiredCarry || 0;
+    let routeKnown = true;
+    const travel = freighterTravelTicks(room.name, assignment, snapshot);
+    if (!local) {
+        const planner = Memory.rooms?.[room.name]?.remotePlanner || {};
+        required = 0;
+        for (const id of planner.activeSourceIds || []) {
+            const info = planner.sourceInfos?.[id];
+            if (!info?.active || info.operational === false || info.route?.valid === false) continue;
+            if (!(info.roundTripTicks > 0 || info.route?.roundTripTicks > 0 ||
+                info.route?.estimatedRoundTripTicks > 0 || info.distance > 0)) routeKnown = false;
+            required += remoteHaulRequirement(info, Memory.rooms?.[info.roomName]?.sources?.[id]?.haul);
+        }
+    }
+    return { room, assignment, required, travel, queue: queue || Memory.rooms?.[room.name]?.spawn?.queue || [],
+        matches: local ? isLocalFreighter : isRemoteFreighter, capacity: Harvest.energyCapacity(room),
+        spendable: Number.isFinite(snapshot.growth?.energyAboveReserve) ? Math.max(0, snapshot.growth.energyAboveReserve) : Infinity,
+        healthy: routeKnown && snapshot.state !== STATES.SURVIVAL && harvest.actualOrEstimatedIncome > 0 &&
+            (harvest.workActive >= harvest.workRequired * 0.9 || harvest.infrastructureRecovery) &&
+            (local || haul.localCarry >= haul.requiredCarry && canSpend(room, 'remoteMaintenance')) };
+}
+
+function freighterRenewalPlan(room, assignment) {
+    return require('Freighter.Renewal').plan(freighterRenewalInput(room, assignment));
+}
+
+function freighterRenewalRequest(room, request, queue) {
+    if (!request.freighterRenewal) return null;
+    const assignment = isLocalFreighter(request) ? 'local' : isRemoteFreighter(request) ? 'remote' : null;
+    if (!assignment) return null;
+    return require('Freighter.Renewal').evaluate(freighterRenewalInput(room, assignment, queue), request);
 }
 
 function pendingLocalParts(roomName, role, partType) {
@@ -737,9 +783,10 @@ function buildSnapshot(room, previous) {
 
     const freighters = creeps.filter(creep => creep && creep.memory && creep.memory.role === 'Freighter' &&
         (!creep.memory.homeRoom || creep.memory.homeRoom === room.name));
-    const localHaulDistance = Math.max(15, ...sourceRows.map(source => source.distance || 0));
+    const localHaulDistance = freighterTravelTicks(room.name, 'local', { harvest: { sources: sourceRows } });
+    const remoteHaulDistance = freighterTravelTicks(room.name, 'remote');
     const healthyFreighters = freighters.filter(creep => !creep.spawning && activeParts(creep, MOVE) > 0 &&
-        (creep.ticksToLive === undefined || creep.ticksToLive > replacementLead(creep, isLocalFreighter(creep) ? localHaulDistance : 25)));
+        (creep.ticksToLive === undefined || creep.ticksToLive > replacementLead(creep, isLocalFreighter(creep) ? localHaulDistance : remoteHaulDistance)));
     const activeCarry = healthyFreighters.reduce((sum, creep) => sum + activeParts(creep, CARRY), 0);
     const remoteCarry = healthyFreighters.filter(isRemoteFreighter)
         .reduce((sum, creep) => sum + activeParts(creep, CARRY), 0);
@@ -1187,7 +1234,7 @@ function localRecoveryRequest(room, request, queue) {
         seen.add(creep.name);
         if (local && creep.memory.extractorRetiring) continue;
         if (localHauler && !creep.spawning && activeParts(creep, MOVE) === 0) continue;
-        const distance = local ? source.distance : Math.max(15, ...((snapshot.harvest && snapshot.harvest.sources) || []).map(s => s.distance || 0));
+        const distance = local ? source.distance : freighterTravelTicks(room.name, 'local', snapshot);
         if (creep.spawning || creep.ticksToLive === undefined || creep.ticksToLive > replacementLead(creep, distance)) {
             covered += creep.spawning ? bodyParts(creep.body, part) : activeParts(creep, part);
         }
@@ -1209,6 +1256,8 @@ function localRecoveryRequest(room, request, queue) {
     }
     const required = local ? source.workRequired : snapshot.haul.requiredCarry;
     const missing = Math.max(0, required - covered);
+    const renewal = localHauler && freighterRenewalRequest(room, request, queue);
+    if (renewal?.active) return { ...renewal, renewal: true, mandatory: missing > 0, ordinaryMissing: missing };
     if (local && source.seatCount !== undefined && source.availableSeats === 0 && source.workSpawning === 0 && !source.dyingWork && missing > 0) {
         return { mandatory: false, obsolete: true, reason: 'no available harvesting seat; targeted replacement required' };
     }
@@ -1247,6 +1296,8 @@ module.exports = {
     remoteHaulRequirement,
     remoteHaulingRequest,
     freighterCoverage,
+    freighterRenewalPlan,
+    freighterRenewalRequest,
     isLocalFreighter,
     isRemoteFreighter,
     canUseSurplus,

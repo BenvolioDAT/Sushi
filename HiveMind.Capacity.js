@@ -179,7 +179,7 @@ function get(force = false) {
             replacementLoad: Object.values(views).reduce((sum, r) => sum + r.spawn.replacementLoad, 0) }, rooms: views };
     return hive.capacity;
 }
-function evaluate(room, request, context, mandatory, revalidate) {
+function evaluate(room, request, context, mandatory, revalidate, renewal) {
     const view = get().rooms[room.name];
     if (!view) return { allowed: true, reason: 'capacity awaiting owned-room snapshot' };
     const role = request.role || request.memory && request.memory.role;
@@ -199,15 +199,20 @@ function evaluate(room, request, context, mandatory, revalidate) {
     const acceptedCpu = accepted.filter(s => !Game.creeps[s.spawning.name])
         .reduce((sum, s) => sum + roleCpu(s.memory.role), 0);
     const queuedCpu = acceptedCpu + queue.reduce((sum, q) => sum + roleCpu(q.role), 0) + committed.cpu;
-    const metrics = Bodies.metrics(request.body || [], request.memory || {});
+    const haulingReplacement = role === 'Freighter' && renewal?.renewal && !renewal.obsolete;
+    const metrics = Bodies.metrics(haulingReplacement ? renewal.body : request.body || [], request.memory || {});
     const claimed = new Set(queue.flatMap(q => q.replacementFor || []));
-    const replacing = ['Tech', 'Artificer'].includes(role) ? (request.replacementFor || []).map(name => Game.creeps[name]).filter(c =>
+    const replacing = haulingReplacement ? (renewal.predecessors || []).filter(entry =>
+        entry.deathAt === Game.time + Game.creeps[entry.name]?.ticksToLive && !claimed.has(entry.name))
+        .map(entry => Game.creeps[entry.name]) : ['Tech', 'Artificer'].includes(role) ? (request.replacementFor || []).map(name => Game.creeps[name]).filter(c =>
         c && c.memory.role === role && c.memory.homeRoom === room.name && !claimed.has(c.name) &&
         c.ticksToLive > 0 && c.ticksToLive <= 150 &&
         (role === 'Tech' || c.memory.artificerWorkCategory === request.economyCategory)) : [];
-    const replacementWork = replacing.reduce((sum, c) => sum + Bodies.metrics(c.body || []).WORK, 0);
-    const cpuReplacement = replacing.length > 0 && metrics.WORK <= replacementWork &&
-        metrics.spawnTime <= Math.min(...replacing.map(c => c.ticksToLive)) && cpu.mode !== 'critical' && cpu.bucket >= 1800;
+    const capability = haulingReplacement ? 'CARRY' : 'WORK';
+    const replacementWork = replacing.reduce((sum, c) => sum + Bodies.metrics(c.body || [])[capability], 0);
+    const cpuReplacement = replacing.length >= (haulingReplacement ? 2 : 1) && metrics[capability] <= replacementWork &&
+        metrics.spawnTime <= Math.min(...replacing.map(c => c.ticksToLive)) &&
+        (haulingReplacement || cpu.mode !== 'critical' && cpu.bucket >= 1800);
     const intelFloor = role === 'Scout' && require('HiveMind.Economy').categoryForRequest(request) === 'remoteIntel' &&
         (context.byRole.Scout || 0) - own < 1;
     let reason = total >= view.population.hardSafetyCap ? 'HARD_SAFETY_CAP' : null;

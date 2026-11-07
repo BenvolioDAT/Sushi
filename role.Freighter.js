@@ -36,6 +36,7 @@ var roleFreighter = {
         }
 
         normalizeFreighterMemory(creep);
+        require('Freighter.Renewal').prune(creep);
         updateWorkingState(creep);
 
         if(creep.memory.FreighterWorking) {

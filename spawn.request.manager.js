@@ -3416,10 +3416,15 @@ function requestDynamicFreightersForRoom(room, priorityOverride, demandOverride,
         requestedCarryParts: 0
     };
 
-    if (demand.missingCarryParts > 0) {
-        var localRequest = demand.localCarryMissing > 0;
+    // Look ahead across natural expiries before filling a tiny instantaneous
+    // deficit. Existing workers keep hauling throughout successor production.
+    var localRenewal = Economy.freighterRenewalPlan(room, 'local');
+    var remoteRenewal = !localRenewal && demand.localCarryMissing === 0 ? Economy.freighterRenewalPlan(room, 'remote') : null;
+    var renewal = localRenewal || remoteRenewal;
+    if (demand.missingCarryParts > 0 || renewal) {
+        var localRequest = demand.localCarryMissing > 0 || !!localRenewal;
         var missingForAssignment = localRequest ? demand.localCarryMissing : demand.remoteCarryMissing;
-        var body = creepBodyConfig.getFreighterBodyForCarry(
+        var body = renewal ? renewal.body : creepBodyConfig.getFreighterBodyForCarry(
             room,
             missingForAssignment
         );
@@ -3435,11 +3440,15 @@ function requestDynamicFreightersForRoom(room, priorityOverride, demandOverride,
                 body: body,
                 requestedCarryParts: requestedCarry,
                 maxCarryParts: requestedCarry,
+                replacementFor: renewal ? renewal.predecessors.map(entry => entry.name) : undefined,
+                freighterRenewal: renewal ? { assignment: renewal.assignment, plannedAt: renewal.plannedAt,
+                    predecessors: renewal.predecessors, needBy: renewal.needBy, through: renewal.through } : undefined,
                 priority: requestPriority,
                 memory: {
                     role: 'Freighter',
                     homeRoom: room.name,
-                    assignmentFunction: localRequest ? 'localLogistics' : 'remoteHauling'
+                    assignmentFunction: localRequest ? 'localLogistics' : 'remoteHauling',
+                    ...(renewal ? { freighterPredecessors: renewal.predecessors } : {})
                 },
                 requestedAt: Game.time
             }, options);
@@ -3452,6 +3461,8 @@ function requestDynamicFreightersForRoom(room, priorityOverride, demandOverride,
             }
 
             result.requested = addResult.requested || 0;
+            if (renewal && result.requested) result.renewal = { predecessors: renewal.predecessors,
+                carry: requestedCarry, needBy: renewal.needBy };
             result.reason = addResult.reason;
             result.requestedCarryParts = result.requested ? requestedCarry : 0;
             // Admission may deduplicate or normalize a request. Read the actual

@@ -111,6 +111,7 @@ function evaluate(room, request, context, options = {}) {
     if (recovery.obsolete) return { allowed: false, obsolete: true, reason: recovery.reason };
     const remoteHauling = Economy.remoteHaulingRequest(room, request, context.queue);
     if (remoteHauling.obsolete) return { allowed: false, obsolete: true, reason: remoteHauling.reason };
+    const renewal = recovery.renewal ? recovery : remoteHauling.renewal ? remoteHauling : null;
     const lifecycle = ColonyState.get(room.name);
     const category = Economy.categoryForRequest(request);
     const controllerGrowthFloor = category === 'controllerGrowth' && request.memory &&
@@ -132,9 +133,13 @@ function evaluate(room, request, context, options = {}) {
     if (lifecycle && ['OWNED_NO_SPAWN', 'BOOTSTRAP'].includes(lifecycle.phase) && !protectedWork && !isOwnedDefense(request) && !economicScout) {
         return { allowed: false, reason: `blocked during ${lifecycle.phase}` };
     }
-    const policy = HiveMemory.getConfig('spawn');
-    if (policy.enabled === false) return { allowed: true, reason: 'spawn policy disabled' };
     const role = request.role || request.memory && request.memory.role;
+    const hauling = role === 'Freighter' ? { missingCarry: Economy.isLocalFreighter(request) ? recovery.missing :
+        Economy.isRemoteFreighter(request) ? remoteHauling.missing : undefined,
+        minimumCarryParts: renewal?.minimumCarryParts, freighterRenewal: !!renewal,
+        freighterPredecessors: renewal?.predecessors } : {};
+    const policy = HiveMemory.getConfig('spawn');
+    if (policy.enabled === false) return { allowed: true, reason: 'spawn policy disabled', ...hauling };
     const ownedDefense = isOwnedDefense(request);
     if (ownedDefense) {
         const hasAnchor = (context.byRole.Extractor || 0) > 0 && (context.byRole.Freighter || 0) > 0;
@@ -158,14 +163,15 @@ function evaluate(room, request, context, options = {}) {
     const capacity = Capacity.evaluate(room, request, context, survivalBypass || defenseBypass ||
         request.strategyEmergency === true || request.strategyMandatory === true || request.memory &&
             (request.memory.strategyEmergency === true || request.memory.strategyMandatory === true),
-        options.revalidate);
+        options.revalidate, renewal);
     if (!capacity.allowed) return capacity;
     const roleCap = economyRoleCap(room, role, request, policy);
     const ownQueued = options.revalidate && context.queue.includes(request) ? 1 : 0;
     const mandatoryFloorBypass = controllerGrowthFloor && lifecycle && lifecycle.growthAllowed &&
         (context.byRole.Tech || 0) <= (options.revalidate ? 1 : 0) &&
         context.nonCombatTotal <= (policy.maxCreepsPerRoomByRcl['RCL' + room.controller.level] || 10) + (options.revalidate ? 1 : 0);
-    if (typeof roleCap === 'number' && (context.byRole[role] || 0) - ownQueued - (capacity.replacementCount || 0) >= roleCap && !survivalBypass && !mandatoryFloorBypass) {
+    if (typeof roleCap === 'number' && (context.byRole[role] || 0) - ownQueued - (capacity.replacementCount || 0) >= roleCap && !survivalBypass && !mandatoryFloorBypass &&
+        !(renewal && capacity.replacementCount > 1)) {
         return { allowed: false, reason: 'role cap reached', blockSource: 'persistedConfig',
             configPath: 'spawn.roleCaps.' + role, configured: policy.roleCaps[role], effectiveLimit: roleCap };
     }
@@ -179,10 +185,9 @@ function evaluate(room, request, context, options = {}) {
         return { allowed: false, reason: 'new request cap reached', blockSource: 'persistedConfig',
             configPath: 'spawn.maxNewRequestsPerRoomPerTick', configured: policy.maxNewRequestsPerRoomPerTick, admitted };
     }
-    return { allowed: true, reason: recovery.mandatory ? recovery.reason : options.revalidate ? 'revalidated' : 'admitted',
+    return { allowed: true, reason: renewal?.reason || (recovery.mandatory ? recovery.reason : options.revalidate ? 'revalidated' : 'admitted'),
         localMissingWork: (request.role || request.memory && request.memory.role) === 'Extractor' ? recovery.missing : undefined,
-        missingCarry: role === 'Freighter' ? (Economy.isLocalFreighter(request) ? recovery.missing :
-            Economy.isRemoteFreighter(request) ? remoteHauling.missing : undefined) : undefined,
+        ...hauling,
         lifetimeReplacement: recovery.lifetimeReplacement,
         minimumWorkParts: recovery.minimumWorkParts,
         mandatoryEconomy: recovery.mandatory, mandatoryFloorBypass: mandatoryFloorBypass || recovery.mandatory &&
