@@ -349,7 +349,7 @@ class Traveler {
             }
             return matrix;
         };
-        let ret = PathFinder.search(origin, { pos: destination, range: options.range }, {
+        let ret = require('Diagnostics').measureOperation('travelerPath', () => PathFinder.search(origin, { pos: destination, range: options.range }, {
             /*
              * plainCost and swampCost tell PathFinder how expensive terrain is.
              * Roads are handled through the room callback's CostMatrix.
@@ -359,7 +359,7 @@ class Traveler {
             plainCost: options.offRoad ? 1 : options.ignoreRoads ? 1 : 2,
             swampCost: options.offRoad ? 1 : options.ignoreRoads ? 5 : 10,
             roomCallback: callback,
-        });
+        }));
         if (ret.incomplete && options.ensurePath) {
             if (options.useFindRoute === undefined) {
                 // handle case where pathfinder failed at a short distance due to not using findRoute

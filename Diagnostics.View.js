@@ -5,10 +5,18 @@ function room(name) {
     const visible = Game.rooms && Game.rooms[name], memory = Memory.rooms && Memory.rooms[name] || {};
     if (!visible && !Memory.rooms?.[name]) return null;
     const economy = Economy.get(name) || {}, harvest = economy.harvest || {}, spawn = memory.spawn || {};
-    const index = TickIndex.get(), counts = {}, spawning = {};
+    const index = TickIndex.get(), counts = {}, spawning = {}, freighters = [];
     for (const creep of index.creepsByHomeRoom.get(name) || []) {
         const m = creep.memory || {}, role = m.role || 'Unknown';
         const target = creep.spawning ? spawning : counts; target[role] = (target[role] || 0) + 1;
+        if (role === 'Freighter' && !creep.spawning) freighters.push({ name: creep.name,
+            room: creep.pos && creep.pos.roomName, x: creep.pos && creep.pos.x, y: creep.pos && creep.pos.y,
+            assignment: m.assignmentFunction, job: m.freighterJob || 'idle', working: !!m.FreighterWorking,
+            pickup: m.pickupTargetId || null, delivery: m.freighterDeliveryTargetId || null,
+            cargo: creep.store && creep.store[RESOURCE_ENERGY] || 0,
+            carryParts: (creep.body || []).filter(p => (p.type || p) === CARRY && p.hits !== 0).length,
+            moveParts: (creep.body || []).filter(p => (p.type || p) === MOVE && p.hits !== 0).length,
+            ttl: creep.ticksToLive, fatigue: creep.fatigue || 0, flow: m.freighterFlow || null });
     }
     const queued = {};
     for (const q of spawn.queue || []) queued[q.role || 'Unknown'] = (queued[q.role || 'Unknown'] || 0) + 1;
@@ -16,6 +24,7 @@ function room(name) {
         stationedWork: s.stationedWork, requiredWork: s.workRequired, spawningWork: s.workSpawning || 0,
         queuedWork: s.workQueued || 0, stagingWork: s.workStaging || 0, income: s.estimatedIncome, expectedIncome: s.expectedIncome,
         assigned: s.assigned, backlog: s.backlog, seats: s.seatCount, availableSeats: s.availableSeats,
+        distance: s.distance, haulIncome: s.haulIncome, haulCarry: s.haulCarry, haulRoundTrip: s.haulRoundTrip,
         maximumWork: s.maxAchievableWork, plannedWork: s.plannedWork,
         miners: s.miners || [], replacement: s.replacementStatus,
         constraint: s.constraint, planningReason: s.planningReason, recommendedAction: s.recommendedAction,
@@ -60,6 +69,7 @@ function room(name) {
         energy: visible?.energyAvailable || 0, energyCapacity: visible?.energyCapacityAvailable || 0,
         stored: (economy.storageEnergy || 0) + (economy.terminalEnergy || 0), reserveTarget: growth.reserveTarget || 0,
         healthyTicks: economy.healthyTicks || 0, counts, spawning, queued, sources, remotes, resources, alerts,
+        hauling: economy.haul || null, freighters,
         spawn: decision ? { tick: decision.tick, current, status: decision.status, role: decision.selectedRole,
             reason: decision.blocked?.reason || decision.reason, available: decision.energyAvailable,
             required: decision.requiredEnergy || decision.bodyCost, capacity: decision.energyCapacity || visible?.energyCapacityAvailable,

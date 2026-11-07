@@ -1,6 +1,6 @@
 # Sushi — AI Architecture Handoff
 
-Implementation reference, reviewed **2026-11-06** against this checkout, including the harvesting, spawning-intelligence, and room-intelligence corrections. This document changes no runtime behavior.
+Implementation reference, reviewed **2026-11-06** against this checkout, including the harvesting, spawning-intelligence, room-intelligence, logistics, and CPU corrections. This document changes no runtime behavior.
 
 ## 1. Architecture and authority
 
@@ -94,7 +94,9 @@ Final bodies are bounded by current energy and active spawn/extension capacity. 
 
 `Economy.buildSnapshot()` caps useful active WORK **per source**; surplus miners at one source cannot cover another. Active, stationed, spawning, staging, queued, and replacement-aware planned WORK differ. Stationed WORK estimates income; it does not measure delivered energy.
 
-Local hauling estimates CARRY from source income, round-trip distance/load allowance, and a safety margin. Links can reduce creep-served income, while backlog/link backpressure expose transport deficits. Local and remote hauling capability are counted separately. Local distance estimates use bounded pathfinding with range fallback; persistent cache entries expire after 500 ticks and refresh sooner for dropoff/structure-count changes.
+Local hauling estimates CARRY from attainable source production (validated seats/current body budget), round-trip distance/load allowance, finite backlog recovery, and a safety margin. `haul.theoreticalCarry` preserves the full-source target. Links reduce creep-served income. `Economy.freighterCoverage()` reads live local/remote capability, unexpired queues, Game spawning bodies, and deduplicated same-tick spawn intents; cached demand never serves as the commitment ledger. Immobile workers provide no hauling capacity. Admission rejects covered local requests and remote requests whose operational portfolio is gone or already covered. Remote hauling uses `remoteMaintenance` spending; `remoteHaulRequirement()` shares production/travel/fresh-backlog math with spawn demand and remote economy. Old sightings alone never increase demand.
+
+Local distances use bounded pathfinding with range fallback; cache entries expire after 500 ticks and refresh sooner for dropoff/structure-count changes. CPU pressure defers refinement, which resumes when headroom returns without waiting for expiry.
 
 Economic states are **SURVIVAL → RECOVERY → STABLE → SURPLUS**. `rawState()` evaluates harvest/income ratios, hauling, backlog, spawn fill, reserves, trend, and replacement risk. Deterioration is immediate; improvements advance one state after confirmation: 12/40/100 healthy samples when leaving SURVIVAL/RECOVERY/STABLE.
 
@@ -123,13 +125,17 @@ Full tick-index and Economy snapshots are heap-only. Economy persists compact st
 
 Dead-creep cleanup runs each normal finalize pass. Scheduled `HiveMind.MemoryGC.run()` incrementally expires demands, queues, terminal operations/squads, and stale intel with a persistent cursor and record budget. HOME/bootstrap/remote rooms and active operation/expansion targets are protected. Runtime assignment helpers also reconcile claims; GC is not their sole correctness mechanism. Shared routes have TTL/count cleanup and obstruction invalidation.
 
-Diagnostics use bounded events, segment ownership checks (default segment 98), and a smaller Memory fallback. Segment activation is asynchronous; future segment users must coordinate `setActiveSegments`. Telemetry maintains heap rolling CPU estimates, periodically persists them, and samples role cost/utilization for Capacity.
+Diagnostics use bounded events, segment ownership checks (default segment 98), and a smaller Memory fallback. Segment activation is asynchronous; future segment users must coordinate `setActiveSegments`. Telemetry records total `getUsed()` including work before loop timing began. Role samples retain average CPU, aggregate `totalCpu`, count, and utilization. Every 25 ticks or in bounded PROFILE mode, nested movement, Traveler/shared searches, pickup, and delivery costs are recorded separately in `Memory.hive.telemetry.operations`; nested costs must not be added to phase totals. Freighter utilization requires observed movement/cargo progress rather than merely a job ID.
 
 ## 7. Movement and jobs
 
 Roles use `utility.Travel.Creep.move/moveToRoom/moveDirection`. The wrapper owns movement guards, shared routes, and submission; Traveler owns fallback pathfinding/routing/stuck handling. Registered one-step intents resolve through `traffic_manager` after role execution. Native movement is a degraded fallback when registration/Traveler is unavailable. Finalize caches structure/site-signature cost matrices and includes hostile/power-creep blockers. Avoid adding direct role-level movement paths.
 
 There is **no universal job scheduler**. Freighter local/remote pickup claims use creep Memory plus the mutable per-tick `Logistics.Index`; source haul advertisements are observations, not guaranteed available energy. `Logistics.Jobs` supports explicit transport assignments and reconciles delivered amounts from resolved store changes; automatic HOME balancing is not implemented there. `Resource.Manager` builds a separate per-tick courier board for labs/minerals/terminals with persistent assignment IDs. Artificer targets/repair claims and squad/operation assignments retain their own owners.
+
+`Logistics.Index` also owns tick-local delivery capacity reservations and idle-source occupancy. Local and remote deliveries use shared indexed destination tiers, retain useful targets, and temporarily release proven unreachable targets; Traveler/traffic still own movement. Local pickup scoring caps load by free carry and considers distance, with retarget hysteresis; depleted jobs release partial cargo for delivery. Creep Memory adds `freighterDeliveryTargetId`, bounded pickup/delivery retry fields, `freighterIdleSourceId`, and `freighterFlow` (last tick/cargo/position, observed picked/delivered totals, active/idle duration). Remote delivery timestamps reconcile on actual next-tick cargo decrease. Explicit transport temporarily sets `otherLogistics` and restores `logisticsPreviousAssignment` on completion. These optional fields need no schema migration. `Sushi.debug.room(name).current` exposes hauling/source estimates and individual Freighter flow.
+
+Optional shared-lane learning yields to sustainable CPU pressure (`Game.cpu.limit` and rolling totals), while essential Traveler fallback and traffic continue; fatigued creeps skip movement planning.
 
 ## 8. Constraints and unresolved limits
 

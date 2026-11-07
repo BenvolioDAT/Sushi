@@ -72,7 +72,7 @@ function productive(creep) {
     const m = creep.memory || {}, role = m.role;
     if (role === 'Artificer') return !!m.artificerTask && !['IDLE', 'UPGRADE_FALLBACK'].includes(m.artificerTask) &&
         !(m.artificerTask === 'COLLECT' && m.artificerNextTask === 'UPGRADE_FALLBACK');
-    if (role === 'Freighter') return !!(m.freighterJob || m.pickupTargetId || creep.store && creep.store.energy > 0);
+    if (role === 'Freighter') return !!(m.freighterFlow && m.freighterFlow.tick === Game.time && m.freighterFlow.active);
     if (role === 'Tech') return creep._capacityProductive === true;
     if (role === 'Extractor') return m.extractorState !== 'idleNoSource' && !!(m.sourceId || m.sourceTargetId || m.targetSourceId);
     if (role === 'Scout') return !!(m.targetRoom || m.scoutTarget || m.scoutTargetRoom);

@@ -109,6 +109,8 @@ function evaluate(room, request, context, options = {}) {
     if (!economy.allowed) return { ...economy, allowed: false };
     const recovery = Economy.localRecoveryRequest(room, request, context.queue);
     if (recovery.obsolete) return { allowed: false, obsolete: true, reason: recovery.reason };
+    const remoteHauling = Economy.remoteHaulingRequest(room, request, context.queue);
+    if (remoteHauling.obsolete) return { allowed: false, obsolete: true, reason: remoteHauling.reason };
     const lifecycle = ColonyState.get(room.name);
     const category = Economy.categoryForRequest(request);
     const controllerGrowthFloor = category === 'controllerGrowth' && request.memory &&

@@ -29,7 +29,6 @@ var HiveMemory = require('HiveMind.Memory');
 var ROUTE_CACHE_TTL = 10000;
 var ROUTE_CACHE_CLEANUP_INTERVAL = 750;
 var ROUTE_CACHE_LOW_BUCKET = 1000;
-var ROUTE_CACHE_MAX_CPU_BUFFER = 5;
 var ROUTE_CACHE_STUCK_THRESHOLD = 3;
 var ROUTE_CACHE_MAX_ROUTES_PER_ROOM = 75;
 
@@ -394,9 +393,12 @@ function canPlanSharedRoute() {
         return false;
     }
 
-    if (Game.cpu.tickLimit !== undefined && Game.cpu.getUsed() > Game.cpu.tickLimit - ROUTE_CACHE_MAX_CPU_BUFFER) {
+    // Learning an optional lane must leave room for essential roles/traffic.
+    // tickLimit is a burst ceiling, not a sustainable per-tick budget.
+    if (Game.cpu.limit !== undefined && Game.cpu.getUsed() > Math.max(1, Game.cpu.limit * 0.75 - 1)) {
         return false;
     }
+    if (global.__sushiCpuRolling && global.__sushiCpuRolling.total > Game.cpu.limit * 0.83) return false;
 
     return true;
 }
@@ -594,13 +596,13 @@ function planSharedRoute(creep, targetPosition, range, routeKey) {
         return null;
     }
 
-    var ret = PathFinder.search(creep.pos, { pos: targetPosition, range: range }, {
+    var ret = require('Diagnostics').measureOperation('sharedPath', function() { return PathFinder.search(creep.pos, { pos: targetPosition, range: range }, {
         maxRooms: 1,
         maxOps: 4000,
         plainCost: 2,
         swampCost: 10,
         roomCallback: buildRouteCostMatrix
-    });
+    }); });
 
     if (ret.incomplete || !ret.path || ret.path.length === 0) {
         return null;
@@ -1061,6 +1063,10 @@ function requestMove(creep, direction, options) {
  * @returns {number} Screeps result code.
  */
 function move(creep, target, options) {
+    return require('Diagnostics').measureOperation('movement', function() { return moveInternal(creep, target, options); });
+}
+
+function moveInternal(creep, target, options) {
     /*
      * Return Screeps error constants instead of throwing. That lets callers
      * inspect the result code if they need to debug movement behavior.
@@ -1089,6 +1095,11 @@ function move(creep, target, options) {
      */
     if (creep.memory._sushiMoveTick === Game.time) {
         return ERR_BUSY;
+    }
+    if (creep.fatigue > 0) {
+        creep.memory._sushiMoveTick = Game.time;
+        require('Diagnostics').movement(creep, ERR_TIRED, targetPosition);
+        return ERR_TIRED;
     }
 
     /*

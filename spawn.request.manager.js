@@ -2946,7 +2946,6 @@ function runStartupBootstrap(room, report) {
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 var SOURCE_WORK_TARGET = 6;
 var EXTRACTOR_HANDOFF_TICKS = 100;
-var FREIGHTER_MAX_DESIRED_CARRY = 50;
 
 function sourceHasLiveContainer(sourceId, sourceMemory) {
     if (!sourceId || !sourceMemory) {
@@ -3179,9 +3178,8 @@ function countIdleFreighters(roomName) {
 
 function getFreighterCarryDemand(room) {
     var energyCapacity = room ? (room.energyCapacityAvailable || 300) : 300;
-    var storageEnergy = room ? getStoredEnergy(room.storage) : 0;
     var economy = room && Economy.get(room.name);
-    var baseLocalCarry = economy ? economy.haul.requiredCarry :
+    var baseLocalCarry = economy && economy.haul && Number.isFinite(economy.haul.requiredCarry) ? economy.haul.requiredCarry :
         (energyCapacity >= 800 ? 8 : energyCapacity >= 550 ? 6 : 4);
 
     var remoteAllowed = room && Economy.canSpend(room, 'remoteMaintenance');
@@ -3216,20 +3214,13 @@ function getFreighterCarryDemand(room) {
     }
 
     var activeRemoteSources = activeSources.length;
-    var remoteBaseCarry = activeSources.reduce(function(total, sourceInfo) {
-        var production = Math.max(0, sourceInfo.effectiveEnergyPerTick || sourceInfo.grossEnergyPerTick || 0);
-        var roundTrip = Math.max(1, sourceInfo.roundTripTicks ||
-            sourceInfo.route && sourceInfo.route.roundTripTicks || (sourceInfo.distance || 1) * 2);
-        var carryCapacity = typeof CARRY_CAPACITY === 'number' ? CARRY_CAPACITY : 50;
-        var required = Math.ceil(production * roundTrip * 1.1 / carryCapacity);
+    var remoteCarryRequired = activeSources.reduce(function(total, sourceInfo) {
+        var source = getRememberedSourceMemory(sourceInfo.roomName, sourceInfo.sourceId);
+        var required = Economy.remoteHaulRequirement(sourceInfo, source && source.haul);
         sourceInfo.requiredCarry = required;
         return total + required;
     }, 0);
-    var unreservedBacklog = Math.max(0, remoteBacklog - remoteReservedCarry);
-    var backlogBonus = Math.min(12, Math.ceil(unreservedBacklog / 500) * 2);
-    var ageBonus = worstHaulAge > 100 ? 4 : worstHaulAge > 50 ? 2 : 0;
     var localCarryRequired = baseLocalCarry;
-    var remoteCarryRequired = remoteBaseCarry + backlogBonus + ageBonus;
     var desiredCarryParts = localCarryRequired + remoteCarryRequired;
 
     if (
@@ -3248,38 +3239,17 @@ function getFreighterCarryDemand(room) {
     }
 
     var idleFreighters = room ? countIdleFreighters(room.name) : 0;
-    var safeMinimum = localCarryRequired + remoteBaseCarry;
-    var lowStorageRemoteRecovery = room && room.storage &&
-        storageEnergy < 10000 && activeRemoteSources > 0;
-
-    if (
-        idleFreighters >= 2 &&
-        unreservedBacklog < 250 &&
-        worstHaulAge <= 50 &&
-        !lowStorageRemoteRecovery
-    ) {
-        desiredCarryParts -= Math.min(4, (idleFreighters - 1) * 2);
-    }
-
-    desiredCarryParts = Math.max(safeMinimum, desiredCarryParts);
-    desiredCarryParts = Math.min(FREIGHTER_MAX_DESIRED_CARRY, desiredCarryParts);
-    var haulInvestment = room && ensureRoomMemory(room.name).surplus;
-    if (haulInvestment && Game.time - haulInvestment.tick <= 10 && haulInvestment.remoteCarry > 0) {
-        // Allocate missing CARRY, never duplicate capability already living or committed.
-        var committedCarry = countLivingRoleBodyParts(room.name, 'Freighter', CARRY) +
-            countQueuedRoleBodyParts(room.name, 'Freighter', CARRY);
-        desiredCarryParts = Math.max(desiredCarryParts, Math.min(localCarryRequired + remoteBaseCarry,
-            committedCarry + haulInvestment.remoteCarry));
-    }
-
-    var livingCarryParts = economy ? economy.haul.activeCarry : (room ?
-        countLivingRoleBodyParts(room.name, 'Freighter', CARRY) : 0);
-    var queuedCarryParts = room ?
-        countQueuedRoleBodyParts(room.name, 'Freighter', CARRY) : 0;
-    var localCarryLiving = economy ? economy.haul.localCarryLiving : livingCarryParts;
-    var localCarryQueued = economy ? economy.haul.localCarryQueued + economy.haul.localCarrySpawning : queuedCarryParts;
-    var remoteCarryLiving = economy ? economy.haul.remoteCarryLiving : 0;
-    var remoteCarryQueued = economy ? economy.haul.remoteCarryQueued + economy.haul.remoteCarrySpawning : 0;
+    // Keep diagnostics and admission based on the same assignment totals. The
+    // previous idle adjustment/global cap changed only the displayed total.
+    desiredCarryParts = localCarryRequired + remoteCarryRequired;
+    var localCoverage = room ? Economy.freighterCoverage(room.name, 'local') : { living: 0, queued: 0, spawning: 0 };
+    var remoteCoverage = room ? Economy.freighterCoverage(room.name, 'remote') : { living: 0, queued: 0, spawning: 0 };
+    var localCarryLiving = localCoverage.living;
+    var localCarryQueued = localCoverage.queued + localCoverage.spawning;
+    var remoteCarryLiving = remoteCoverage.living;
+    var remoteCarryQueued = remoteCoverage.queued + remoteCoverage.spawning;
+    var livingCarryParts = localCarryLiving + remoteCarryLiving;
+    var queuedCarryParts = localCarryQueued + remoteCarryQueued;
     var localCarryMissing = Math.max(0, localCarryRequired - localCarryLiving - localCarryQueued);
     var remoteCarryMissing = Math.max(0, remoteCarryRequired - remoteCarryLiving - remoteCarryQueued);
 
@@ -3425,6 +3395,19 @@ function requestDynamicExtractorsForRoom(room, priorityOverride, demandOverride,
 
 function requestDynamicFreightersForRoom(room, priorityOverride, demandOverride, options) {
     var demand = demandOverride || getFreighterCarryDemand(room);
+    // A cached demand is a target, not a reservation ledger. Requests and spawn
+    // intents may have changed since the economy/full-planning snapshot.
+    var local = Economy.freighterCoverage(room.name, 'local');
+    var remote = Economy.freighterCoverage(room.name, 'remote');
+    demand.localCarryLiving = local.living;
+    demand.localCarryQueued = local.queued + local.spawning;
+    demand.remoteCarryLiving = remote.living;
+    demand.remoteCarryQueued = remote.queued + remote.spawning;
+    demand.livingCarryParts = local.living + remote.living;
+    demand.queuedCarryParts = demand.localCarryQueued + demand.remoteCarryQueued;
+    demand.localCarryMissing = Math.max(0, demand.localCarryRequired - local.living - demand.localCarryQueued);
+    demand.remoteCarryMissing = Math.max(0, demand.remoteCarryRequired - remote.living - demand.remoteCarryQueued);
+    demand.missingCarryParts = demand.localCarryMissing + demand.remoteCarryMissing;
     var requestPriority = priorityOverride;
 
     if (typeof requestPriority !== 'number') {

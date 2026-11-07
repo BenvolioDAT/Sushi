@@ -8,6 +8,8 @@ function assign(creep, job) {
     if (creep.store && Object.keys(creep.store).some(function(key) {
         return typeof creep.store[key] === 'number' && creep.store[key] > 0;
     })) return false;
+    creep.memory.logisticsPreviousAssignment = creep.memory.assignmentFunction || null;
+    creep.memory.assignmentFunction = 'otherLogistics';
     creep.memory.freighterJob = 'transport';
     creep.memory.originRoom = job.originRoom;
     creep.memory.pickupRoom = job.originRoom;
@@ -24,10 +26,12 @@ function assign(creep, job) {
 
 function clear(creep) {
     if (!creep || !creep.memory) return;
+    if (creep.memory.logisticsPreviousAssignment) creep.memory.assignmentFunction = creep.memory.logisticsPreviousAssignment;
+    else if (creep.memory.assignmentFunction === 'otherLogistics') delete creep.memory.assignmentFunction;
     var fields = ['freighterJob', 'originRoom', 'pickupRoom', 'pickupSourceId', 'pickupTargetId',
         'pickupTargetType', 'destinationRoom', 'resourceType', 'logisticsAmount', 'logisticsRemaining', 'logisticsDelivered', 'logisticsPendingDelivery',
         'logisticsPurpose', 'logisticsPriority', 'freighterReservedCarry',
-        'freighterReservedUntil', 'remoteTrip'];
+        'freighterReservedUntil', 'remoteTrip', 'logisticsPreviousAssignment', 'freighterDeliveryTargetId'];
     for (var i = 0; i < fields.length; i++) delete creep.memory[fields[i]];
 }
 

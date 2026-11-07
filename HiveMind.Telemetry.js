@@ -32,7 +32,10 @@ function measure(name, fn) {
 
 function finish() {
     const telemetry = startTick();
-    telemetry.total = Math.max(0, getUsed() - telemetry.start);
+    telemetry.total = Math.max(0, getUsed());
+    telemetry.preLoop = telemetry.start;
+    const operations = require('Diagnostics').operationProfile();
+    if (operations) HiveMemory.ensure().telemetry.operations = operations;
     telemetry.bucket = Game.cpu && Game.cpu.bucket;
     telemetry.mode = cpuStatus.persistCurrent().mode;
     // Heap EMA uses every completed tick; occasional Memory persistence survives resets.
@@ -145,6 +148,7 @@ function getView() {
         total: current.total,
         bucket: current.bucket,
         mode: current.mode,
+        operations: require('Diagnostics').operationProfile() || HiveMemory.ensure().telemetry.operations || null,
         growth
     };
 }
@@ -154,20 +158,22 @@ function samplePopulation(samples) {
     const roles = memory.populationRoles || (memory.populationRoles = {});
     const rooms = memory.populationRooms || (memory.populationRooms = {});
     const update = (previous, value) => ({ cpu: previous ? previous.cpu * 0.8 + value.cpu * 0.2 : value.cpu,
+        totalCpu: previous && Number.isFinite(previous.totalCpu) ? previous.totalCpu * 0.8 + value.totalCpu * 0.2 : value.totalCpu,
+        count: value.count,
         utilization: previous ? previous.utilization * 0.8 + value.utilization * 0.2 : value.utilization,
         samples: Math.min(1000, (previous && previous.samples || 0) + 1), tick: Game.time });
     const totals = {};
     for (const [roomName, byRole] of Object.entries(samples)) {
         if (!rooms[roomName]) rooms[roomName] = {};
         for (const [role, value] of Object.entries(byRole)) {
-            rooms[roomName][role] = update(rooms[roomName][role], { cpu: value.cpu / value.count,
+            rooms[roomName][role] = update(rooms[roomName][role], { cpu: value.cpu / value.count, totalCpu: value.cpu, count: value.count,
                 utilization: value.active / value.count });
             const total = totals[role] || (totals[role] = { cpu: 0, active: 0, count: 0 });
             total.cpu += value.cpu; total.active += value.active; total.count += value.count;
         }
     }
     for (const [role, value] of Object.entries(totals)) roles[role] = update(roles[role], {
-        cpu: value.cpu / value.count, utilization: value.active / value.count });
+        cpu: value.cpu / value.count, totalCpu: value.cpu, count: value.count, utilization: value.active / value.count });
     for (const roomName of Object.keys(rooms)) {
         if (!Game.rooms[roomName] || !Game.rooms[roomName].controller || !Game.rooms[roomName].controller.my) delete rooms[roomName];
         else for (const role of Object.keys(rooms[roomName])) if (Game.time - rooms[roomName][role].tick > 1500) delete rooms[roomName][role];

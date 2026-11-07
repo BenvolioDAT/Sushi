@@ -5,7 +5,7 @@ const DEFAULTS = Object.freeze({ mode: 'NORMAL', level: 'INFO', maxEvents: 1000,
     duplicateWindow: 50, retentionTicks: 50000, segment: 98, useSegments: true, profileTicks: 100 });
 const LEVEL = { DEBUG: 0, INFO: 1, WARN: 2, ERROR: 3 };
 const CATEGORIES = new Set(['ECONOMY', 'SPAWNING', 'MOVEMENT', 'JOBS', 'ERRORS']);
-let heap, configCache;
+let heap, configCache, operationSample;
 const tick = () => typeof Game === 'undefined' ? 0 : Game.time;
 const bounded = (v, d, lo, hi) => Number.isFinite(v) ? Math.max(lo, Math.min(hi, Math.floor(v))) : d;
 function config() {
@@ -325,6 +325,31 @@ function movement(creep, result, destination) {
     } catch (error) { /* No movement side effects. */ }
 }
 
+// Sample nested costs without changing phase totals. Keep this recorder free
+// of manager dependencies so movement and logistics can both use it.
+function measureOperation(name, fn) {
+    const enabled = Game.time % 25 === 0 || config().mode === 'PROFILE';
+    if (!enabled || !Game.cpu || typeof Game.cpu.getUsed !== 'function') return fn();
+    if (!operationSample || operationSample.tick !== Game.time || operationSample.game !== Game) {
+        operationSample = { tick: Game.time, game: Game, costs: {} };
+    }
+    const sample = operationSample;
+    const row = sample.costs[name] || (sample.costs[name] = { calls: 0, cpu: 0, ops: 0, incomplete: 0 });
+    const before = Game.cpu.getUsed();
+    row.calls++;
+    try {
+        const result = fn();
+        if (result && typeof result.ops === 'number') row.ops += result.ops;
+        if (result && result.incomplete) row.incomplete++;
+        return result;
+    } finally { row.cpu += Math.max(0, Game.cpu.getUsed() - before); }
+}
+
+function operationProfile() {
+    return operationSample && operationSample.tick === Game.time && operationSample.game === Game ?
+        { tick: operationSample.tick, costs: operationSample.costs } : null;
+}
+
 function observeJobs(rows) {
     try {
         if (config().mode === 'OFF') return;
@@ -371,7 +396,7 @@ function install(readRoom, readCpu) {
     if (!global.Sushi || typeof global.Sushi !== 'object') global.Sushi = {};
     global.Sushi.debug = { status, events, errors: (n = 20) => events(n, { severity: 'ERROR' }),
         room: name => ({ tick: tick(), current: roomReader(name), events: events(30, { room: name }) }), cpu: () => ({ ...cpuReader(), rolling: global.__sushiCpuRolling || Memory.hive?.telemetry?.cpu || null,
-            roles: Memory.hive?.telemetry?.populationRoles || {} }),
+            roles: Memory.hive?.telemetry?.populationRoles || {}, roleRooms: Memory.hive?.telemetry?.populationRooms || {} }),
         export: exportHistory, exportChunk: (i = 0, size = 3000) => (current().exportChunks || exportHistory(size))[i] || '', clear,
         mode: (mode, duration = 100) => {
             if (!['OFF', 'NORMAL', 'DEBUG', 'PROFILE'].includes(mode)) return 'Use OFF, NORMAL, DEBUG or PROFILE';
@@ -384,4 +409,4 @@ function install(readRoom, readCpu) {
     } catch (error) { /* A conflicting console global cannot affect colony work. */ }
 }
 module.exports = { DEFAULTS, config, record, begin, finish, events, status, exception, observeEconomy,
-    movement, observeJobs, summary, install, clear, exportHistory };
+    movement, observeJobs, summary, install, clear, exportHistory, measureOperation, operationProfile };

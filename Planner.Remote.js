@@ -2649,52 +2649,8 @@ function getLogisticsDestinationRoom(creep) {
 }
 
 function getHomeDeliveryTarget(creep, destinationRoomName) {
-    if (!creep || !creep.memory) {
-        return null;
-    }
-
-    var homeRoomName = destinationRoomName || getLogisticsDestinationRoom(creep) || creep.room.name;
-    var homeRoom = Game.rooms[homeRoomName];
-
-    if (!homeRoom) {
-        return null;
-    }
-
-    var spawnOrExtension = homeRoom.find(FIND_MY_STRUCTURES, {
-        filter: function(structure) {
-            return (
-                (structure.structureType === STRUCTURE_SPAWN || structure.structureType === STRUCTURE_EXTENSION) &&
-                structure.store &&
-                structure.store.getFreeCapacity(RESOURCE_ENERGY) > 0
-            );
-        }
-    })[0];
-
-    if (spawnOrExtension && homeRoom.energyAvailable < homeRoom.energyCapacityAvailable) {
-        return spawnOrExtension;
-    }
-
-    if (homeRoom.storage && homeRoom.storage.store && homeRoom.storage.store.getFreeCapacity(RESOURCE_ENERGY) > 0) {
-        return homeRoom.storage;
-    }
-
-    var tower = homeRoom.find(FIND_MY_STRUCTURES, {
-        filter: function(structure) {
-            return structure.structureType === STRUCTURE_TOWER &&
-                structure.store &&
-                structure.store.getFreeCapacity(RESOURCE_ENERGY) > 0;
-        }
-    })[0];
-
-    if (tower) {
-        return tower;
-    }
-
-    if (homeRoom.terminal && homeRoom.terminal.store && homeRoom.terminal.store.getFreeCapacity(RESOURCE_ENERGY) > 0) {
-        return homeRoom.terminal;
-    }
-
-    return null;
+    if (!creep || !creep.memory) return null;
+    return LogisticsIndex.deliveryTarget(creep, destinationRoomName || getLogisticsDestinationRoom(creep) || creep.room.name, true);
 }
 
 function getBestRemoteRoomForFreighter(creep) {

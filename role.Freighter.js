@@ -138,7 +138,7 @@ function collectEnergy(creep) {
         if(
             !selectedCandidate ||
             selectedCandidate.targetId === rememberedTarget.id ||
-            !isCandidateBetterThanRememberedTarget(selectedCandidate, rememberedTarget)
+            !isCandidateBetterThanRememberedTarget(selectedCandidate, rememberedTarget, creep)
         ) {
             collectFromTarget(creep, rememberedTarget);
             return;
@@ -161,6 +161,15 @@ function collectEnergy(creep) {
     }
 
     if(selectedCandidate && applySelectedPickupCandidate(creep, selectedCandidate)) {
+        return;
+    }
+
+    // A depleted pickup must not strand a partial load in collection mode.
+    if ((creep.store[RESOURCE_ENERGY] || 0) > 0) {
+        clearPickupMemory(creep);
+        creep.memory.FreighterWorking = true;
+        if (creep.room.name !== creep.memory.homeRoom) moveTowardHomeRoom(creep);
+        else deliverEnergy(creep);
         return;
     }
 
@@ -346,6 +355,10 @@ function recordRemoteDelivery(creep) {
 
 
 function getAllPickupCandidates(creep) {
+    return require('Diagnostics').measureOperation('pickupSelection', function() { return buildPickupCandidates(creep); });
+}
+
+function buildPickupCandidates(creep) {
     var localReservations = buildFreighterReservations(creep);
     var remoteReservations = buildRemoteFreighterReservations(creep);
     var candidates = [];
@@ -385,6 +398,7 @@ function getLocalDroppedEnergyCandidates(creep, reservations) {
 
     for(var i = 0; i < droppedEnergyList.length; i++) {
         var drop = droppedEnergyList[i];
+        if (pickupBlocked(creep, drop.id)) continue;
         var reservedEnergy = reservations.byTargetEnergy[drop.id] || 0;
         var remainingEnergy = drop.amount - reservedEnergy;
 
@@ -403,6 +417,7 @@ function getLocalDroppedEnergyCandidates(creep, reservations) {
             remainingEnergy: remainingEnergy,
             assignedCount: reservations.byTargetCount[drop.id] || 0,
             estimatedDistance: creep.pos.getRangeTo(drop),
+            score: Math.min(creep.store.getFreeCapacity(RESOURCE_ENERGY), remainingEnergy) / (creep.pos.getRangeTo(drop) + 2),
             homeRoomName: creep.memory.homeRoom || creep.room.name,
             remoteRoomName: null
         });
@@ -417,6 +432,7 @@ function getLocalSourceContainerCandidates(creep, reservations) {
 
     for(var i = 0; i < sourceContainers.length; i++) {
         var option = sourceContainers[i];
+        if (pickupBlocked(creep, option.target.id)) continue;
         var reservedEnergy = reservations.byTargetEnergy[option.target.id] || 0;
         var remainingEnergy = option.amount - reservedEnergy;
 
@@ -438,6 +454,7 @@ function getLocalSourceContainerCandidates(creep, reservations) {
                 reservations.bySourceCount[option.sourceId] || 0
             ),
             estimatedDistance: creep.pos.getRangeTo(option.target),
+            score: Math.min(creep.store.getFreeCapacity(RESOURCE_ENERGY), remainingEnergy) / (creep.pos.getRangeTo(option.target) + 2),
             homeRoomName: creep.memory.homeRoom || creep.room.name,
             remoteRoomName: null
         });
@@ -648,6 +665,7 @@ function chooseBestPickupCandidate(candidates) {
 }
 
 function isBetterOpenPickupCandidate(candidate, currentBest) {
+    if (candidate.jobType === 'local' && currentBest.jobType === 'local' && candidate.score !== currentBest.score) return candidate.score > currentBest.score;
     if(candidate.remainingEnergy > currentBest.remainingEnergy) {
         return true;
     }
@@ -668,6 +686,7 @@ function isBetterOpenPickupCandidate(candidate, currentBest) {
 }
 
 function isBetterSharedPickupCandidate(candidate, currentBest) {
+    if (candidate.jobType === 'local' && currentBest.jobType === 'local' && candidate.score !== currentBest.score) return candidate.score > currentBest.score;
     if(candidate.remainingEnergy > currentBest.remainingEnergy) {
         return true;
     }
@@ -720,14 +739,22 @@ function applySelectedPickupCandidate(creep, candidate) {
     return false;
 }
 
-function isCandidateBetterThanRememberedTarget(candidate, rememberedTarget) {
+function isCandidateBetterThanRememberedTarget(candidate, rememberedTarget, creep) {
     var rememberedAmount = getEnergyPickupAmount(rememberedTarget);
 
     if(rememberedAmount <= 0) {
         return true;
     }
 
-    return candidate.remainingEnergy > rememberedAmount;
+    if (candidate.jobType === 'local') {
+        var score = Math.min(creep.store.getFreeCapacity(RESOURCE_ENERGY), rememberedAmount) / (creep.pos.getRangeTo(rememberedTarget) + 2);
+        return candidate.score > score * 1.5;
+    }
+    return candidate.remainingEnergy > rememberedAmount * 1.5;
+}
+
+function pickupBlocked(creep, id) {
+    return creep.memory.freighterPickupBlockedId === id && creep.memory.freighterPickupBlockedUntil > Game.time;
 }
 
 
@@ -886,12 +913,17 @@ function collectFromTarget(creep, target) {
     }
 
     if(result === ERR_NOT_IN_RANGE) {
-        travel.move(creep, target, {
+        var moved = travel.move(creep, target, {
             range: 1,
             visualizePathStyle: {
                 stroke: '#ffaa00'
             }
         });
+        if (moved === ERR_NO_PATH || moved === ERR_INVALID_TARGET) {
+            creep.memory.freighterPickupBlockedId = target.id;
+            creep.memory.freighterPickupBlockedUntil = Game.time + 10;
+            clearPickupMemory(creep);
+        }
         return;
     }
 
@@ -951,6 +983,7 @@ function getSourceContainerOptions(creep) {
 }
 
 function rememberPickupTarget(creep, target, sourceId, pickupType) {
+    delete creep.memory.freighterIdleSourceId;
     if(creep.memory.freighterJob === 'remote' || creep.memory.freighterJob === 'remoteDelivery') {
         RemotePlanner.clearRemoteFreighterMemory(creep);
     }
@@ -1035,16 +1068,21 @@ function idleNearUsefulSource(creep) {
     var reservations = buildFreighterReservations(creep);
     var bestSource = null;
     var bestAssignedCount = 999999;
+    var index = LogisticsIndex.snapshot();
 
     for(var i = 0; i < sources.length; i++) {
         var source = sources[i];
-        var assignedCount = reservations.bySourceCount[source.id] || 0;
+        var key = creep.room.name + '|' + source.id;
+        var assignedCount = (reservations.bySourceCount[source.id] || 0) + (index.idleCounts[key] || 0) -
+            (index.idleRows[creep.name] === key ? 1 : 0);
 
-        if(assignedCount < bestAssignedCount) {
+        if(assignedCount < bestAssignedCount || assignedCount === bestAssignedCount && source.id === creep.memory.freighterIdleSourceId) {
             bestAssignedCount = assignedCount;
             bestSource = source;
         }
     }
+
+    if (bestSource) { creep.memory.freighterIdleSourceId = bestSource.id; LogisticsIndex.update(creep); }
 
     if(bestSource && creep.pos.getRangeTo(bestSource) > 3) {
         travel.move(creep, bestSource, {
@@ -1132,12 +1170,13 @@ function deliverRemoteEnergy(creep) {
     }
 
     if(result === ERR_NOT_IN_RANGE) {
-        travel.move(creep, target, {
+        var moved = travel.move(creep, target, {
             range: 1,
             visualizePathStyle: {
                 stroke: '#ffffff'
             }
         });
+        if (moved === ERR_NO_PATH || moved === ERR_INVALID_TARGET) LogisticsIndex.blockDelivery(creep);
         return;
     }
 
@@ -1467,37 +1506,7 @@ function deliverToSpawnStockpile(creep) {
 }
 
 function deliverEnergy(creep) {
-    var target = null;
-
-    /*
-     * Priority 1:
-     * Fill spawn and extensions first so the room can keep spawning creeps.
-     */
-    target = findSpawnOrExtensionToFill(creep);
-
-    /*
-     * Priority 2:
-     * Fill towers.
-     */
-    if(!target) {
-        target = findTowerToFill(creep);
-    }
-
-    /*
-     * Priority 3:
-     * Fill controller container.
-     */
-    if(!target) {
-        target = findControllerContainerToFill(creep);
-    }
-
-    /*
-     * Priority 4:
-     * Fill storage.
-     */
-    if(!target) {
-        target = findStorageToFill(creep);
-    }
+    var target = LogisticsIndex.deliveryTarget(creep, creep.memory.homeRoom || creep.room.name, false);
 
     if(!target) {
         deliverToSpawnStockpile(creep);
@@ -1505,69 +1514,14 @@ function deliverEnergy(creep) {
     }
 
     if(creep.transfer(target, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
-        travel.move(creep, target, {
+        var moved = travel.move(creep, target, {
             range: 1,
             visualizePathStyle: {
                 stroke: '#ffffff'
             }
         });
+        if (moved === ERR_NO_PATH || moved === ERR_INVALID_TARGET) LogisticsIndex.blockDelivery(creep);
     }
-}
-
-function findSpawnOrExtensionToFill(creep) {
-    return creep.pos.findClosestByPath(FIND_MY_STRUCTURES, {
-        filter: function(structure) {
-            return (
-                (
-                    structure.structureType === STRUCTURE_SPAWN ||
-                    structure.structureType === STRUCTURE_EXTENSION
-                ) &&
-                structure.store &&
-                structure.store.getFreeCapacity(RESOURCE_ENERGY) > 0
-            );
-        }
-    });
-}
-
-function findTowerToFill(creep) {
-    return creep.pos.findClosestByPath(FIND_MY_STRUCTURES, {
-        filter: function(structure) {
-            return (
-                structure.structureType === STRUCTURE_TOWER &&
-                structure.store &&
-                structure.store.getFreeCapacity(RESOURCE_ENERGY) > 0
-            );
-        }
-    });
-}
-
-function findControllerContainerToFill(creep) {
-    if(!creep.room.controller) {
-        return null;
-    }
-
-    return creep.pos.findClosestByPath(FIND_STRUCTURES, {
-        filter: function(structure) {
-            return (
-                structure.structureType === STRUCTURE_CONTAINER &&
-                structure.store &&
-                structure.store.getFreeCapacity(RESOURCE_ENERGY) > 0 &&
-                structure.pos.getRangeTo(creep.room.controller) <= 3
-            );
-        }
-    });
-}
-
-function findStorageToFill(creep) {
-    if(
-        creep.room.storage &&
-        creep.room.storage.store &&
-        creep.room.storage.store.getFreeCapacity(RESOURCE_ENERGY) > 0
-    ) {
-        return creep.room.storage;
-    }
-
-    return null;
 }
 
 roleFreighter._test = {
@@ -1583,6 +1537,17 @@ roleFreighter._test = {
 var runFreighter = roleFreighter.run;
 roleFreighter.run = function(creep) {
     if (!creep || creep.spawning) return;
+    var previous = creep.memory.freighterFlow;
+    var cargo = creep.store[RESOURCE_ENERGY] || 0;
+    var position = creep.pos.roomName + ':' + creep.pos.x + ':' + creep.pos.y;
+    var consecutive = previous && previous.tick === Game.time - 1;
+    var delta = consecutive ? cargo - previous.cargo : 0;
+    var active = delta !== 0 || !!(consecutive && position !== previous.position);
+    if (delta < 0 && creep.memory.remoteDeliverySourceId) recordRemoteDelivery(creep);
+    creep.memory.freighterFlow = { tick: Game.time, cargo: cargo, position: position, active: active,
+        picked: Math.min(1000000000, (previous && previous.picked || 0) + Math.max(0, delta)),
+        delivered: Math.min(1000000000, (previous && previous.delivered || 0) + Math.max(0, -delta)),
+        idleTicks: active ? 0 : Math.min(1000000, (previous && previous.idleTicks || 0) + 1) };
     LogisticsIndex.update(creep);
     try { return runFreighter(creep); }
     finally { LogisticsIndex.update(creep); }

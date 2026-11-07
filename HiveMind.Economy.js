@@ -140,10 +140,7 @@ function remoteEconomy(roomName) {
         backlog += haul && Math.max(0, haul.amount || 0) || 0;
         reservedCarry += haul && Math.max(0, haul.reservedCarry || 0) || 0;
         if (haul && haul.lastSeen > 0) oldestHaulAge = Math.max(oldestHaulAge, Game.time - haul.lastSeen);
-        const carryCapacity = typeof CARRY_CAPACITY === 'number' ? CARRY_CAPACITY : 50;
-        requiredCarry += Math.ceil(Math.max(0, info.effectiveEnergyPerTick || 0) *
-            Math.max(1, info.roundTripTicks || info.route && info.route.estimatedRoundTripTicks ||
-                (info.distance || 1) * 2) / carryCapacity);
+        requiredCarry += remoteHaulRequirement(info, haul);
         const reservation = RemoteIntel.getEffectiveReservation(info.roomName);
         if (reservation && reservation.username) reservedSources++;
         else unreservedSources++;
@@ -340,6 +337,33 @@ function sourceIdFor(memory) {
     return memory && (memory.sourceId || memory.targetSourceId || memory.assignedSource) || null;
 }
 
+function remoteHaulRequirement(info, haul) {
+    const production = Math.max(0, Number.isFinite(info.effectiveEnergyPerTick) ? info.effectiveEnergyPerTick : info.grossEnergyPerTick || 0);
+    const trip = Math.max(1, info.roundTripTicks || info.route && (info.route.roundTripTicks || info.route.estimatedRoundTripTicks) || (info.distance || 1) * 2);
+    const fresh = haul && Number.isFinite(haul.lastSeen) && haul.lastSeen <= Game.time && Game.time - haul.lastSeen <= 25;
+    const catchup = fresh ? Math.max(0, (haul.amount || 0) - (haul.reservedCarry || 0)) / Math.max(1500, trip * 3) : 0;
+    return Math.ceil(production * trip * 1.1 / 50) + Math.ceil(catchup * trip / 50);
+}
+
+function remoteHaulingRequest(room, request, queue) {
+    if (!isRemoteFreighter(request)) return { obsolete: false };
+    const planner = Memory.rooms && Memory.rooms[room.name] && Memory.rooms[room.name].remotePlanner || {};
+    let required = 0;
+    for (const id of planner.activeSourceIds || []) {
+        const info = (planner.sourceInfos || {})[id];
+        if (!info || !info.active || info.operational === false || info.route && info.route.valid === false) continue;
+        const source = Memory.rooms[info.roomName] && Memory.rooms[info.roomName].sources && Memory.rooms[info.roomName].sources[id];
+        required += remoteHaulRequirement(info, source && source.haul);
+    }
+    const coverage = freighterCoverage(room.name, 'remote');
+    let covered = coverage.living + coverage.spawning;
+    for (const pending of queue || []) {
+        if (pending === request || request.requestId && pending.requestId === request.requestId) break;
+        if (pending && !(pending.expiresAt < Game.time) && isRemoteFreighter(pending)) covered += bodyParts(pending.body, CARRY);
+    }
+    return { obsolete: required <= covered, reason: 'remote hauling already covered or no operational remote sources' };
+}
+
 function replacementLead(creep, distance) {
     return (creep && creep.body ? creep.body.length * 3 : 0) + Math.max(15, distance || 0) + 10;
 }
@@ -354,16 +378,19 @@ function getDistance(room, source, dropoff) {
     const targetPosition = dropoff && dropoff.pos ? dropoff.pos.x + ':' + dropoff.pos.y : 'center';
     const structures = TickIndex.get().structuresByRoom.get(room.name);
     const structureCount = structures ? Array.from(structures.values()).reduce((sum, list) => sum + list.length, 0) : 0;
-    if (cached && cached.version === 2 && cached.distance > 0 && cached.targetPosition === targetPosition &&
+    const canRefine = !Game.cpu || ((!Game.cpu.getUsed || Game.cpu.getUsed() < Game.cpu.limit * 0.6) &&
+        !(Game.cpu.bucket < 1000) && !(global.__sushiCpuRolling && global.__sushiCpuRolling.total > Game.cpu.limit * 0.83));
+    if (cached && (!cached.deferred || !canRefine) && cached.version === 2 && cached.distance > 0 && cached.targetPosition === targetPosition &&
         cached.structureCount === structureCount && cached.tick <= Game.time && Game.time - cached.tick < 500) return cached.distance;
     let distance = dropoff && source.pos && dropoff.pos && typeof source.pos.getRangeTo === 'function' ?
         Math.max(1, source.pos.getRangeTo(dropoff.pos)) : 25;
-    if (dropoff && source.pos && dropoff.pos && typeof room.findPath === 'function') {
+    let estimated = true;
+    if (canRefine && dropoff && source.pos && dropoff.pos && typeof room.findPath === 'function') {
         try {
             const route = room.findPath(source.pos, dropoff.pos, {
                 ignoreCreeps: true, range: 1, maxOps: 2000, serialize: false
             });
-            if (route && route.length > 0) distance = route.length;
+            if (route && route.length > 0) { distance = route.length; estimated = false; }
         }
         catch (error) {
             /* Range distance remains a safe low-CPU fallback for unusual mocks/shards. */
@@ -373,7 +400,7 @@ function getDistance(room, source, dropoff) {
     for (const oldKey of Object.keys(roomMemory.cache.economyDistances)) {
         if (oldKey.startsWith(source.id + ':') && oldKey !== key) delete roomMemory.cache.economyDistances[oldKey];
     }
-    roomMemory.cache.economyDistances[key] = { version: 2, distance, tick: Game.time, targetPosition, structureCount };
+    roomMemory.cache.economyDistances[key] = { version: 2, distance, estimated, deferred: !canRefine, tick: Game.time, targetPosition, structureCount };
     return distance;
 }
 
@@ -532,13 +559,14 @@ function sourceReplacementCoverage(source, required, distance, assigned, queue, 
 function isLocalFreighter(item) {
     const memory = item && item.memory || {};
     if (!item || (item.role || memory.role) !== 'Freighter') return false;
-    if (memory.assignmentFunction) return memory.assignmentFunction === 'localLogistics';
     if (['remote', 'remoteDelivery', 'transport', 'transportDelivery'].includes(memory.freighterJob)) return false;
+    if (memory.assignmentFunction) return memory.assignmentFunction === 'localLogistics';
     return !memory.homeRoom || !item.room || item.room.name === memory.homeRoom;
 }
 
 function isRemoteFreighter(item) {
     const memory = item && item.memory || {};
+    if (['transport', 'transportDelivery'].includes(memory.freighterJob)) return false;
     return !!item && (item.role || memory.role) === 'Freighter' &&
         (memory.assignmentFunction === 'remoteHauling' || memory.freighterJob === 'remote' ||
             memory.freighterJob === 'remoteDelivery');
@@ -557,7 +585,7 @@ function pendingFreighterParts(roomName, assignment, partType) {
     const queue = Memory.rooms && Memory.rooms[roomName] && Memory.rooms[roomName].spawn &&
         Memory.rooms[roomName].spawn.queue || [];
     let queued = 0;
-    for (const request of queue) if (matches(request)) queued += bodyParts(request.body, partType);
+    for (const request of queue) if (request && !(request.expiresAt < Game.time) && matches(request)) queued += bodyParts(request.body, partType);
     let spawning = 0;
     for (const spawn of TickIndex.get().ownedSpawnsByRoom.get(roomName) || []) {
         const name = spawn && spawn.spawning && spawn.spawning.name;
@@ -568,6 +596,34 @@ function pendingFreighterParts(roomName, assignment, partType) {
             bodyParts(memory.body || [], partType);
     }
     return { queued, spawning };
+}
+
+// Read current commitments, including accepted same-tick spawn intents. Economy
+// snapshots precede request generation and cannot be used as a live queue ledger.
+function freighterCoverage(roomName, assignment) {
+    const matches = assignment === 'local' ? isLocalFreighter : isRemoteFreighter;
+    const snapshot = get(roomName);
+    const distance = assignment === 'local' ? Math.max(15, ...((snapshot && snapshot.harvest && snapshot.harvest.sources) || [])
+        .map(source => source.distance || 0)) : 25;
+    let living = 0, spawning = 0, queued = 0;
+    const seen = new Set();
+    for (const creep of TickIndex.get().creepsByHomeRoom.get(roomName) || []) {
+        if (!matches(creep)) continue;
+        seen.add(creep.name);
+        if (creep.spawning) spawning += bodyParts(creep.body, CARRY);
+        else if (activeParts(creep, MOVE) > 0 && (creep.ticksToLive === undefined || creep.ticksToLive > replacementLead(creep, distance))) living += activeParts(creep, CARRY);
+    }
+    const intents = require('Spawn.Intents').get().spawns;
+    for (const spawn of (TickIndex.get().ownedSpawnsByRoom.get(roomName) || []).concat(intents.filter(s => s.room.name === roomName))) {
+        const name = spawn.spawning && spawn.spawning.name;
+        const memory = spawn.request && spawn.request.memory || name && Memory.creeps && Memory.creeps[name];
+        if (!name || seen.has(name) || !memory || !matches({ memory })) continue;
+        spawning += Math.max(0, Number(memory.freighterSpawnCarryParts) || bodyParts(spawn.request && spawn.request.body || memory.body, CARRY));
+        seen.add(name);
+    }
+    const queue = Memory.rooms && Memory.rooms[roomName] && Memory.rooms[roomName].spawn && Memory.rooms[roomName].spawn.queue || [];
+    for (const request of queue) if (request && !(request.expiresAt < Game.time) && matches(request)) queued += bodyParts(request.body, CARRY);
+    return { living, spawning, queued };
 }
 
 function pendingLocalParts(roomName, role, partType) {
@@ -679,15 +735,28 @@ function buildSnapshot(room, previous) {
 
     const freighters = creeps.filter(creep => creep && creep.memory && creep.memory.role === 'Freighter' &&
         (!creep.memory.homeRoom || creep.memory.homeRoom === room.name));
-    const healthyFreighters = freighters.filter(creep => !creep.spawning &&
-        (creep.ticksToLive === undefined || creep.ticksToLive > replacementLead(creep, 25)));
+    const localHaulDistance = Math.max(15, ...sourceRows.map(source => source.distance || 0));
+    const healthyFreighters = freighters.filter(creep => !creep.spawning && activeParts(creep, MOVE) > 0 &&
+        (creep.ticksToLive === undefined || creep.ticksToLive > replacementLead(creep, isLocalFreighter(creep) ? localHaulDistance : 25)));
     const activeCarry = healthyFreighters.reduce((sum, creep) => sum + activeParts(creep, CARRY), 0);
     const remoteCarry = healthyFreighters.filter(isRemoteFreighter)
         .reduce((sum, creep) => sum + activeParts(creep, CARRY), 0);
     const localCarry = healthyFreighters.filter(isLocalFreighter)
         .reduce((sum, creep) => sum + activeParts(creep, CARRY), 0);
-    const requiredCarry = Math.ceil(sourceRows.reduce((sum, source) =>
+    const theoreticalCarry = Math.ceil(sourceRows.reduce((sum, source) =>
         sum + source.transport.creepIncome * Math.max(2, source.distance * 2 + 4) / 50, 0) * 1.15);
+    // Size transport for production attainable with the current seats/body
+    // budget. Keep the full-source target visible rather than spawning haulers
+    // for WORK that the room cannot yet support. Backlog is a finite catch-up job.
+    const requiredCarry = Math.ceil(sourceRows.reduce((sum, source) => {
+        const harvestPower = require('utility').getSourceHarvestProfile(sources.find(s => s.id === source.id)).harvestPower;
+        const income = Math.min(source.expectedIncome, source.maxAchievableWork * harvestPower);
+        const residual = Math.min(source.transport.creepIncome, income);
+        source.haulIncome = residual;
+        source.haulRoundTrip = Math.max(2, source.distance * 2 + 4);
+        source.haulCarry = (residual + source.backlog / Math.max(1500, source.haulRoundTrip * 3)) * source.haulRoundTrip / 50;
+        return sum + source.haulCarry;
+    }, 0) * 1.15);
 
     const storageEnergy = energyIn(room.storage);
     const terminalEnergy = energyIn(room.terminal);
@@ -748,6 +817,7 @@ function buildSnapshot(room, previous) {
         },
         haul: {
             requiredCarry,
+            theoreticalCarry,
             localCarryRequired: requiredCarry,
             creepRequiredCarry: requiredCarry,
             activeCarry,
@@ -975,6 +1045,7 @@ function categoryForRequest(request) {
     const role = request && (request.role || memory.role);
     if (request && request.economyCategory) return request.economyCategory;
     if (memory.economyCategory) return memory.economyCategory;
+    if (isRemoteFreighter(request)) return 'remoteMaintenance';
     if (memory.remoteMining === true || memory.remoteWorkTargetId ||
         memory.sourceRoom && memory.homeRoom && memory.sourceRoom !== memory.homeRoom) {
         return memory.remoteLifecycle === 'BOOTSTRAPPING' ? 'remoteBootstrap' : 'remoteMaintenance';
@@ -1111,7 +1182,9 @@ function localRecoveryRequest(room, request, queue) {
         if (!matches(creep)) continue;
         seen.add(creep.name);
         if (local && creep.memory.extractorRetiring) continue;
-        if (creep.spawning || creep.ticksToLive === undefined || creep.ticksToLive > replacementLead(creep, source && source.distance || 25)) {
+        if (localHauler && !creep.spawning && activeParts(creep, MOVE) === 0) continue;
+        const distance = local ? source.distance : Math.max(15, ...((snapshot.harvest && snapshot.harvest.sources) || []).map(s => s.distance || 0));
+        if (creep.spawning || creep.ticksToLive === undefined || creep.ticksToLive > replacementLead(creep, distance)) {
             covered += creep.spawning ? bodyParts(creep.body, part) : activeParts(creep, part);
         }
     }
@@ -1135,7 +1208,7 @@ function localRecoveryRequest(room, request, queue) {
     if (local && source.seatCount !== undefined && source.availableSeats === 0 && source.workSpawning === 0 && !source.dyingWork && missing > 0) {
         return { mandatory: false, obsolete: true, reason: 'no available harvesting seat; targeted replacement required' };
     }
-    return { mandatory: missing > 0, missing, obsolete: local && missing === 0,
+    return { mandatory: missing > 0, missing, obsolete: missing === 0,
         reason: missing > 0 ? 'mandatory local economy recovery' : 'local source already covered' };
 }
 
@@ -1167,6 +1240,9 @@ function shouldBootstrapSelfDeliver(roomOrName) {
 }
 
 module.exports = {
+    remoteHaulRequirement,
+    remoteHaulingRequest,
+    freighterCoverage,
     isLocalFreighter,
     isRemoteFreighter,
     canUseSurplus,

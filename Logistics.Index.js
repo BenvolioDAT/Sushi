@@ -4,7 +4,7 @@ function key(room, source, target) { return room + '|' + source + '|' + target; 
 function snapshot() {
     var cache = global.__sushiLogisticsIndex;
     if (cache && cache.tick === Game.time && cache.game === Game) return cache;
-    cache = { tick: Game.time, game: Game, rows: {}, remote: {}, local: {}, freighters: [], remoteTotals: { byTargetCount: {}, byTargetEnergy: {}, bySourceCount: {} }, localTotals: {}, claimTotals: {}, groupCounts: {}, homeTotals: {} };
+    cache = { tick: Game.time, game: Game, rows: {}, idleRows: {}, idleCounts: {}, deliveries: {}, deliveryEnergy: {}, remote: {}, local: {}, freighters: [], remoteTotals: { byTargetCount: {}, byTargetEnergy: {}, bySourceCount: {} }, localTotals: {}, claimTotals: {}, groupCounts: {}, homeTotals: {} };
     global.__sushiLogisticsIndex = cache;
     for (var name in Game.creeps) {
         var creep = Game.creeps[name];
@@ -30,6 +30,16 @@ function remove(creep) {
 
 function update(creep) {
     var cache = snapshot();
+    updateDelivery(creep, cache);
+    var idle = cache.idleRows[creep.name];
+    if (idle) { cache.idleCounts[idle]--; delete cache.idleRows[creep.name]; }
+    var memory = creep.memory || {};
+    if (!memory.freighterJob && !memory.FreighterWorking && memory.freighterIdleSourceId &&
+        creep.store && !(creep.store[RESOURCE_ENERGY] > 0)) {
+        idle = creep.room.name + '|' + memory.freighterIdleSourceId;
+        cache.idleRows[creep.name] = idle;
+        cache.idleCounts[idle] = (cache.idleCounts[idle] || 0) + 1;
+    }
     remove(creep);
     var m = creep.memory || {};
     if (m.role !== 'Freighter' || m.FreighterWorking || !m.pickupTargetId) return;
@@ -50,6 +60,68 @@ function update(creep) {
     cache.groupCounts[groupKey] = (cache.groupCounts[groupKey] || 0) + 1;
     adjust(cache, row, 1);
     if (remote && !cache.claimTotals[row.key].name) cache.claimTotals[row.key].name = creep.name;
+}
+
+function updateDelivery(creep, cache) {
+    var old = cache.deliveries[creep.name];
+    if (old) {
+        cache.deliveryEnergy[old.target] -= old.amount;
+        delete cache.deliveries[creep.name];
+    }
+    var m = creep.memory || {};
+    var target = m.freighterDeliveryTargetId && Game.getObjectById(m.freighterDeliveryTargetId);
+    var amount = creep.store && creep.store[RESOURCE_ENERGY] || 0;
+    if (!m.FreighterWorking || !target || !target.store || typeof target.store.getFreeCapacity !== 'function' || amount <= 0) return;
+    amount = Math.min(amount, target.store.getFreeCapacity(RESOURCE_ENERGY));
+    cache.deliveries[creep.name] = { target: target.id, amount: amount };
+    cache.deliveryEnergy[target.id] = (cache.deliveryEnergy[target.id] || 0) + amount;
+}
+
+// Local and remote roles share delivery reservations. All values are heap-only
+// for this tick; deaths and failed engine intents naturally expire next tick.
+function deliveryTarget(creep, roomName, remote) {
+    if (!creep || !creep.memory) return null;
+    return require('Diagnostics').measureOperation('deliverySelection', function() { return selectDeliveryTarget(creep, roomName, remote); });
+}
+
+function selectDeliveryTarget(creep, roomName, remote) {
+    var room = Game.rooms[roomName];
+    if (!room) return null;
+    var cache = snapshot(), m = creep.memory;
+    var byType = require('HiveMind.Index').get().structuresByRoom.get(roomName) || new Map();
+    var structures = function(type) { return byType.get(type) || []; };
+    var supply = structures(STRUCTURE_SPAWN).concat(structures(STRUCTURE_EXTENSION)).filter(s => s.my !== false);
+    var towers = structures(STRUCTURE_TOWER).filter(s => s.my !== false);
+    var controller = structures(STRUCTURE_CONTAINER).filter(s => room.controller && s.pos.getRangeTo(room.controller) <= 3);
+    var storage = room.storage ? [room.storage] : [];
+    var tiers = remote ? [supply, storage, towers, room.terminal ? [room.terminal] : []] : [supply, towers, controller, storage];
+    var own = cache.deliveries[creep.name];
+    var selected = null;
+    for (var tier of tiers) {
+        var bestRange = Infinity;
+        for (var target of tier) {
+            if (!target.store || typeof target.store.getFreeCapacity !== 'function' ||
+                m.freighterDeliveryBlockedId === target.id && m.freighterDeliveryBlockedUntil > Game.time) continue;
+            var reserved = (cache.deliveryEnergy[target.id] || 0) - (own && own.target === target.id ? own.amount : 0);
+            if (target.store.getFreeCapacity(RESOURCE_ENERGY) <= reserved) continue;
+            var range = creep.pos ? creep.pos.getRangeTo(target) : 0;
+            if (target.id === m.freighterDeliveryTargetId) { selected = target; break; }
+            if (range < bestRange) { selected = target; bestRange = range; }
+        }
+        if (selected) break;
+    }
+    if (selected) m.freighterDeliveryTargetId = selected.id;
+    else delete m.freighterDeliveryTargetId;
+    updateDelivery(creep, cache);
+    return selected;
+}
+
+function blockDelivery(creep) {
+    var m = creep.memory;
+    m.freighterDeliveryBlockedId = m.freighterDeliveryTargetId;
+    m.freighterDeliveryBlockedUntil = Game.time + 10;
+    delete m.freighterDeliveryTargetId;
+    updateDelivery(creep, snapshot());
 }
 
 function remoteClaim(room, source, target, skip) {
@@ -97,4 +169,5 @@ function reservations(creep, remote) {
     return result;
 }
 
-module.exports = { snapshot: snapshot, update: update, remove: remove, remoteClaim: remoteClaim, reservations: reservations };
+module.exports = { snapshot: snapshot, update: update, remove: remove, remoteClaim: remoteClaim, reservations: reservations,
+    deliveryTarget: deliveryTarget, blockDelivery: blockDelivery };

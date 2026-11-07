@@ -1,0 +1,13 @@
+{
+  "baseline": {
+    "deliverySelectionPathCalls": 10,
+    "uniqueDeliveryTargets": 1,
+    "loadedHaulers": 10
+  },
+  "corrected": {
+    "deliverySelectionPathCalls": 0,
+    "uniqueDeliveryTargets": 10,
+    "loadedHaulers": 10
+  },
+  "scope": "Actual HEAD role versus working role in identical mocks; API counts, not engine CPU milliseconds"
+}
