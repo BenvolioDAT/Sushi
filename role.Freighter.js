@@ -15,8 +15,6 @@ var Economy = require('HiveMind.Economy');
 var LogisticsJobs = require('Logistics.Jobs');
 var LogisticsIndex = require('Logistics.Index');
 
-var MIN_DROPPED_ENERGY = 50;
-var MIN_CONTAINER_ENERGY = 50;
 var REMOTE_HAUL_MEMORY_STALE_TICKS = 25;
 var SPAWN_STOCKPILE_IGNORE_RANGE = 3;
 var SPAWN_STOCKPILE_MIN_RANGE = 1;
@@ -379,87 +377,23 @@ function getLocalPickupCandidates(creep, reservations) {
         return [];
     }
 
-    return getLocalDroppedEnergyCandidates(creep, reservations).concat(
-        getLocalSourceContainerCandidates(creep, reservations)
-    );
-}
-
-function getLocalDroppedEnergyCandidates(creep, reservations) {
-    var droppedEnergyList = creep.room.find(FIND_DROPPED_RESOURCES, {
-        filter: function(resource) {
-            return (
-                resource.resourceType === RESOURCE_ENERGY &&
-                resource.amount >= MIN_DROPPED_ENERGY &&
-                !isProtectedSpawnStockpileDrop(creep, resource)
-            );
-        }
-    });
     var candidates = [];
-
-    for(var i = 0; i < droppedEnergyList.length; i++) {
-        var drop = droppedEnergyList[i];
-        if (pickupBlocked(creep, drop.id)) continue;
-        var reservedEnergy = reservations.byTargetEnergy[drop.id] || 0;
-        var remainingEnergy = drop.amount - reservedEnergy;
-
-        if(remainingEnergy <= 0) {
-            continue;
-        }
-
-        candidates.push({
-            jobType: 'local',
-            targetId: drop.id,
-            target: drop,
-            pickupRoom: creep.room.name,
-            sourceId: getSourceIdNearTarget(drop, 3),
-            type: 'dropped',
-            amount: drop.amount,
-            remainingEnergy: remainingEnergy,
-            assignedCount: reservations.byTargetCount[drop.id] || 0,
-            estimatedDistance: creep.pos.getRangeTo(drop),
-            score: Math.min(creep.store.getFreeCapacity(RESOURCE_ENERGY), remainingEnergy) / (creep.pos.getRangeTo(drop) + 2),
-            homeRoomName: creep.memory.homeRoom || creep.room.name,
-            remoteRoomName: null
-        });
+    for (var option of LogisticsIndex.localPickupOptions(creep.room)) {
+        var target = option.target;
+        if (pickupBlocked(creep, target.id) ||
+            option.type === 'dropped' && isProtectedSpawnStockpileDrop(creep, target)) continue;
+        var remaining = option.amount - (reservations.byTargetEnergy[target.id] || 0);
+        if (remaining <= 0) continue;
+        var distance = creep.pos.getRangeTo(target);
+        candidates.push({ jobType: 'local', targetId: target.id, target: target,
+            pickupRoom: creep.room.name, sourceId: option.sourceId, type: option.type,
+            amount: option.amount, remainingEnergy: remaining,
+            assignedCount: Math.max(reservations.byTargetCount[target.id] || 0,
+                option.type === 'container' ? reservations.bySourceCount[option.sourceId] || 0 : 0),
+            estimatedDistance: distance,
+            score: Math.min(creep.store.getFreeCapacity(RESOURCE_ENERGY), remaining) / (distance + 2),
+            homeRoomName: homeRoomName, remoteRoomName: null });
     }
-
-    return candidates;
-}
-
-function getLocalSourceContainerCandidates(creep, reservations) {
-    var sourceContainers = getSourceContainerOptions(creep);
-    var candidates = [];
-
-    for(var i = 0; i < sourceContainers.length; i++) {
-        var option = sourceContainers[i];
-        if (pickupBlocked(creep, option.target.id)) continue;
-        var reservedEnergy = reservations.byTargetEnergy[option.target.id] || 0;
-        var remainingEnergy = option.amount - reservedEnergy;
-
-        if(remainingEnergy <= 0) {
-            continue;
-        }
-
-        candidates.push({
-            jobType: 'local',
-            targetId: option.target.id,
-            target: option.target,
-            pickupRoom: creep.room.name,
-            sourceId: option.sourceId,
-            type: 'container',
-            amount: option.amount,
-            remainingEnergy: remainingEnergy,
-            assignedCount: Math.max(
-                reservations.byTargetCount[option.target.id] || 0,
-                reservations.bySourceCount[option.sourceId] || 0
-            ),
-            estimatedDistance: creep.pos.getRangeTo(option.target),
-            score: Math.min(creep.store.getFreeCapacity(RESOURCE_ENERGY), remainingEnergy) / (creep.pos.getRangeTo(option.target) + 2),
-            homeRoomName: creep.memory.homeRoom || creep.room.name,
-            remoteRoomName: null
-        });
-    }
-
     return candidates;
 }
 
@@ -806,18 +740,12 @@ function homeRoomNeedsUrgentEnergy(creep) {
         return true;
     }
 
-    var lowTower = homeRoom.find(FIND_MY_STRUCTURES, {
-        filter: function(structure) {
-            if(structure.structureType !== STRUCTURE_TOWER || !structure.store) {
-                return false;
-            }
-
-            var capacity = structure.store.getCapacity(RESOURCE_ENERGY) || 0;
-            return capacity > 0 && structure.store.getUsedCapacity(RESOURCE_ENERGY) < capacity / 2;
-        }
+    var byType = require('HiveMind.Index').get().structuresByRoom.get(homeRoom.name);
+    return (byType && byType.get(STRUCTURE_TOWER) || []).some(function(structure) {
+        if (structure.my === false || !structure.store) return false;
+        var capacity = structure.store.getCapacity(RESOURCE_ENERGY) || 0;
+        return capacity > 0 && structure.store.getUsedCapacity(RESOURCE_ENERGY) < capacity / 2;
     });
-
-    return lowTower.length > 0;
 }
 
 function normalizeFreighterMemory(creep) {
@@ -950,38 +878,6 @@ function handleRemoteTargetGone(creep) {
     return false;
 }
 
-function getSourceContainerOptions(creep) {
-    var containers = creep.room.find(FIND_STRUCTURES, {
-        filter: function(structure) {
-            return (
-                structure.structureType === STRUCTURE_CONTAINER &&
-                structure.store &&
-                getStoredEnergy(structure) >= MIN_CONTAINER_ENERGY &&
-                getSourceNearPosition(structure.pos, 2) !== null
-            );
-        }
-    });
-
-    var options = [];
-
-    for(var i = 0; i < containers.length; i++) {
-        var container = containers[i];
-        var source = getSourceNearPosition(container.pos, 2);
-
-        if(!source) {
-            continue;
-        }
-
-        options.push({
-            target: container,
-            sourceId: source.id,
-            amount: getStoredEnergy(container)
-        });
-    }
-
-    return options;
-}
-
 function rememberPickupTarget(creep, target, sourceId, pickupType) {
     delete creep.memory.freighterIdleSourceId;
     if(creep.memory.freighterJob === 'remote' || creep.memory.freighterJob === 'remoteDelivery') {
@@ -1006,34 +902,6 @@ function buildFreighterReservations(creep) {
     return LogisticsIndex.reservations(creep, false);
 }
 
-function getSourceIdNearTarget(target, range) {
-    if(!target || !target.pos) {
-        return null;
-    }
-
-    var source = getSourceNearPosition(target.pos, range);
-
-    if(!source) {
-        return null;
-    }
-
-    return source.id;
-}
-
-function getSourceNearPosition(position, range) {
-    if(!position) {
-        return null;
-    }
-
-    var sources = position.findInRange(FIND_SOURCES, range);
-
-    if(!sources || sources.length === 0) {
-        return null;
-    }
-
-    return sources[0];
-}
-
 function getStoredEnergy(target) {
     /*
      * Screeps store objects can be read with getUsedCapacity in modern code,
@@ -1052,6 +920,12 @@ function getStoredEnergy(target) {
 }
 
 function idleNearUsefulSource(creep) {
+    // Dedicated remote workers cannot collect local energy. Parking them at
+    // mining lanes creates travel and congestion without a possible local job.
+    if (creep.memory.assignmentFunction === 'remoteHauling') {
+        delete creep.memory.freighterIdleSourceId;
+        return;
+    }
     /*
      * If no pickup target exists, move near the source that has the fewest
      * Freighters currently assigned.
@@ -1059,7 +933,7 @@ function idleNearUsefulSource(creep) {
      * This keeps idle Freighters spread out instead of all parking at
      * the closest source.
      */
-    var sources = creep.room.find(FIND_SOURCES);
+    var sources = require('HiveMind.Index').getSources(creep.room);
 
     if(!sources || sources.length === 0) {
         return;
@@ -1085,6 +959,8 @@ function idleNearUsefulSource(creep) {
     if (bestSource) { creep.memory.freighterIdleSourceId = bestSource.id; LogisticsIndex.update(creep); }
 
     if(bestSource && creep.pos.getRangeTo(bestSource) > 3) {
+        var cpu = require('CPU.Status').getCpuStatus();
+        if (cpu.mode === 'low' || cpu.mode === 'critical') return;
         travel.move(creep, bestSource, {
             range: 3,
             visualizePathStyle: {
@@ -1266,11 +1142,8 @@ function getMainSpawnInRoom(room) {
         return null;
     }
 
-    var spawns = room.find(FIND_MY_STRUCTURES, {
-        filter: function(structure) {
-            return structure.structureType === STRUCTURE_SPAWN;
-        }
-    });
+    var structures = require('HiveMind.Index').get().structuresByRoom.get(room.name);
+    var spawns = (structures && structures.get(STRUCTURE_SPAWN) || []).filter(spawn => spawn.my !== false);
 
     if(!spawns || spawns.length === 0) {
         return null;
@@ -1542,11 +1415,16 @@ roleFreighter.run = function(creep) {
     var position = creep.pos.roomName + ':' + creep.pos.x + ':' + creep.pos.y;
     var consecutive = previous && previous.tick === Game.time - 1;
     var delta = consecutive ? cargo - previous.cargo : 0;
-    var active = delta !== 0 || !!(consecutive && position !== previous.position);
+    var moved = !!(consecutive && position !== previous.position);
+    var jobMovement = moved && !!(creep.memory.freighterJob || creep.memory.FreighterWorking && cargo > 0);
+    var active = delta !== 0 || jobMovement;
     if (delta < 0 && creep.memory.remoteDeliverySourceId) recordRemoteDelivery(creep);
     creep.memory.freighterFlow = { tick: Game.time, cargo: cargo, position: position, active: active,
         picked: Math.min(1000000000, (previous && previous.picked || 0) + Math.max(0, delta)),
         delivered: Math.min(1000000000, (previous && previous.delivered || 0) + Math.max(0, -delta)),
+        observedTicks: Math.min(1000000, (previous && previous.observedTicks || 0) + (consecutive ? 1 : 0)),
+        workTicks: Math.min(1000000, (previous && previous.workTicks || 0) + (active ? 1 : 0)),
+        parkingTicks: Math.min(1000000, (previous && previous.parkingTicks || 0) + (moved && !jobMovement ? 1 : 0)),
         idleTicks: active ? 0 : Math.min(1000000, (previous && previous.idleTicks || 0) + 1) };
     LogisticsIndex.update(creep);
     try { return runFreighter(creep); }

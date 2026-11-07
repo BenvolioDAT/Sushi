@@ -1,6 +1,34 @@
 /* Heap-only claims. Build once per tick; role/planner mutations update one row. */
 function key(room, source, target) { return room + '|' + source + '|' + target; }
 
+// Candidate geometry and resource observations are shared for the tick; claims
+// remain mutable and are subtracted separately for each worker.
+function localPickupOptions(room) {
+    var index = require('HiveMind.Index').get();
+    if (!index.localPickupOptions) index.localPickupOptions = new Map();
+    if (index.localPickupOptions.has(room.name)) return index.localPickupOptions.get(room.name);
+    var sources = require('HiveMind.Index').getSources(room);
+    var nearbySource = function(target, range) {
+        return sources.find(source => target.pos && target.pos.getRangeTo(source) <= range);
+    };
+    var result = [];
+    for (var drop of index.droppedResourcesByRoom.get(room.name) || []) {
+        if (drop.resourceType !== RESOURCE_ENERGY || drop.amount < 50) continue;
+        var source = nearbySource(drop, 3);
+        result.push({ target: drop, sourceId: source && source.id || null, type: 'dropped', amount: drop.amount });
+    }
+    var structures = index.structuresByRoom.get(room.name);
+    for (var container of structures && structures.get(STRUCTURE_CONTAINER) || []) {
+        var amount = container.store && (typeof container.store.getUsedCapacity === 'function' ?
+            container.store.getUsedCapacity(RESOURCE_ENERGY) : container.store[RESOURCE_ENERGY]) || 0;
+        if (amount < 50) continue;
+        var source = nearbySource(container, 2);
+        if (source) result.push({ target: container, sourceId: source.id, type: 'container', amount: amount });
+    }
+    index.localPickupOptions.set(room.name, result);
+    return result;
+}
+
 function snapshot() {
     var cache = global.__sushiLogisticsIndex;
     if (cache && cache.tick === Game.time && cache.game === Game) return cache;
@@ -170,4 +198,5 @@ function reservations(creep, remote) {
 }
 
 module.exports = { snapshot: snapshot, update: update, remove: remove, remoteClaim: remoteClaim, reservations: reservations,
-    deliveryTarget: deliveryTarget, blockDelivery: blockDelivery };
+    deliveryTarget: deliveryTarget, blockDelivery: blockDelivery, localPickupOptions: localPickupOptions,
+    REVISION: 'logistics-2026-11-07' };

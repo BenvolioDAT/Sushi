@@ -361,7 +361,9 @@ function remoteHaulingRequest(room, request, queue) {
         if (pending === request || request.requestId && pending.requestId === request.requestId) break;
         if (pending && !(pending.expiresAt < Game.time) && isRemoteFreighter(pending)) covered += bodyParts(pending.body, CARRY);
     }
-    return { obsolete: required <= covered, reason: 'remote hauling already covered or no operational remote sources' };
+    const missing = Math.max(0, required - covered);
+    return { obsolete: missing === 0, missing,
+        reason: missing > 0 ? 'operational remote hauling deficit' : 'remote hauling already covered or no operational remote sources' };
 }
 
 function replacementLead(creep, distance) {
@@ -892,7 +894,9 @@ function rawState(snapshot) {
     }
     if (haulRatio < 0.85 || haul.backlog > Math.max(500, haul.activeCarry * 75) ||
         (haul.linkBackpressure || 0) > 500) {
-        return { state: STATES.RECOVERY, reason: 'harvest restored, logistics below demand', reasonCode: 'LOCAL_HAUL_SHORTAGE' };
+        return { state: STATES.RECOVERY, reason: haul.localCarry >= haul.requiredCarry ?
+            'hauling capacity covered; source backlog or link backpressure remains' :
+            'harvest restored, logistics below demand', reasonCode: 'LOCAL_HAUL_SHORTAGE' };
     }
     if (snapshot.spawnFill < 0.45 && reserves < 2000 &&
         !(snapshot.spawnPressure.busy > 0 && incomeRatio >= 0.9 && haulRatio >= 0.85)) {

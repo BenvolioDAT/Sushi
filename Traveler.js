@@ -110,10 +110,14 @@ class Traveler {
             // add some chance that you will find a new path randomly
             delete travelData.path;
         }
+        // Consume the step already resolved by the engine before testing whether
+        // another path is needed. A partial search can end outside goal range;
+        // consuming its final character after this check used to submit NaN.
+        if (state.stuckCount === 0 && travelData.path) {
+            travelData.path = travelData.path.substr(1);
+        }
         // pathfinding
-        let newPath = false;
         if (!travelData.path) {
-            newPath = true;
             if (creep.spawning) {
                 return ERR_BUSY;
             }
@@ -145,15 +149,6 @@ class Traveler {
         this.serializeState(creep, destination, state, travelData);
         if (!travelData.path || travelData.path.length === 0) {
             return ERR_NO_PATH;
-        }
-        // consume path
-        /*
-         * The cached path is a string of direction numbers. After a successful
-         * unstuck tick, Traveler removes the first direction so next tick uses
-         * the next step.
-         */
-        if (state.stuckCount === 0 && !newPath) {
-            travelData.path = travelData.path.substr(1);
         }
         let nextDirection = parseInt(travelData.path[0], 10);
         if (options.returnData) {

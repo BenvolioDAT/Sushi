@@ -1,0 +1,41 @@
+{
+  "baseCommit": "24a6e64",
+  "validation": {
+    "commands": 41,
+    "passChecks": 616,
+    "logisticsScenarios": 45,
+    "reachableModules": 107,
+    "cycles": 0
+  },
+  "mockComparisons": {
+    "idleRoomScans": {
+      "workers": 100,
+      "before": 400,
+      "after": 7
+    },
+    "shrinkingLocalDeficit": {
+      "queuedCarry": 7,
+      "currentDeficit": 1,
+      "beforeSpawnedCarry": 7,
+      "afterSpawnedCarry": 1
+    },
+    "remoteIdleMovementAttempts": {
+      "ticks": 100,
+      "before": 100,
+      "after": 0
+    }
+  },
+  "liveBaseline": {
+    "shard": "shard3",
+    "room": "W39S47",
+    "firstTick": 84129482,
+    "lastTick": 84129598,
+    "deliveredOver35Ticks": 750,
+    "pickedOver35Ticks": 800,
+    "initialBacklog": 6616,
+    "finalBacklog": 4624,
+    "initialBucket": 8338,
+    "finalBucket": 8696
+  },
+  "scope": "Live observations precede deployment; mock operation counts are not engine CPU milliseconds."
+}

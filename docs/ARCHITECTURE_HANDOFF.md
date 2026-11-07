@@ -1,6 +1,6 @@
 # Sushi — AI Architecture Handoff
 
-Implementation reference, reviewed **2026-11-06** against this checkout, including the harvesting, spawning-intelligence, room-intelligence, logistics, and CPU corrections. This document changes no runtime behavior.
+Implementation reference, reviewed **2026-11-07** against this checkout, including live W39S47 investigation and the harvesting, spawning-intelligence, room-intelligence, logistics, and CPU corrections. This document changes no runtime behavior.
 
 ## 1. Architecture and authority
 
@@ -62,6 +62,8 @@ Local demand and `Spawn.DemandBoard` producers converge on **`Spawn.Arbiter.admi
 
 The Arbiter normalizes bodies/metadata, deduplicates stable request IDs, refreshes expiry, and invokes `Spawn.Policy.evaluate()`. Admission combines Economy spending, current recovery need, colony floors, role/queue/request limits, and Capacity. Targeted local requests are rechecked for useful capability and valid sources; obsolete upgrades are rejected. Mandatory recovery and specified emergencies can bypass soft constraints, but the hard population safety cap remains. Disabling generic spawn policy does not disable spawning or all economic checks.
 
+Freighter fallback request identities include local/remote/other assignment so independent haul budgets cannot deduplicate each other. Explicit producer IDs and existing queued IDs remain valid. Dynamic planning reads the actual ledger after admission and reports a deduplicated request as zero new requests/CARRY. `upgradeRush` influences consumers, not source hauling requirements: Economy owns that target.
+
 ### Capability and bodies
 
 Local Extractor demand is source-specific. `Harvest.Planning.describe()` compares theoretical WORK, validated seats, healthy/active workers, incoming workers, maximum feasible bodies, and named replacements. A vacant seat can receive useful missing WORK. Occupied seats require a lifetime replacement or a stronger upgrade whose estimated gain repays early replacement. Pending source work suppresses duplicate requests; the local request path admits at most one source per pass.
@@ -75,6 +77,8 @@ Local Extractor demand is source-specific. `Harvest.Planning.describe()` compare
 `Spawn.Sizing.evaluate()` bounds efficient-miner waiting to **20 ticks**. Refills do not restart the deadline; capability/capacity changes invalidate sizing. Urgency, deteriorating economy, timeout, or impossibility release reservations. Eligible later work can proceed when reservation policy permits. Healthy-incumbent upgrades retain their stronger-WORK minimum; aging/dead predecessors reclassify the request as a lifetime replacement with a productive fallback.
 
 Final bodies are bounded by current energy and active spawn/extension capacity. On `spawnCreep(…) === OK`, `Spawn.Intents` reserves energy and the used spawn, accounts for production, and the queue entry is removed. Retryable energy/busy/name errors preserve requests; other failures remove them. `spawn.lastDecision`, admission blocks, and source planning records explain waiting, rejection, or an empty queue.
+
+For ordinary local and remote Freighters, final admission supplies `missingCarry`; execution caps requested CARRY and any body profile to that current deficit before previewing the affordable body. A request for seven CARRY can therefore execute with one if earlier workers or a changed transport plan covered the rest. Explicit fixed-body contracts remain fixed. Local/remote capability and spawning-intent accounting remain independent.
 
 ## 4. Room and source intelligence
 
@@ -99,6 +103,8 @@ Local hauling estimates CARRY from attainable source production (validated seats
 Local distances use bounded pathfinding with range fallback; cache entries expire after 500 ticks and refresh sooner for dropoff/structure-count changes. CPU pressure defers refinement, which resumes when headroom returns without waiting for expiry.
 
 Economic states are **SURVIVAL → RECOVERY → STABLE → SURPLUS**. `rawState()` evaluates harvest/income ratios, hauling, backlog, spawn fill, reserves, trend, and replacement risk. Deterioration is immediate; improvements advance one state after confirmation: 12/40/100 healthy samples when leaving SURVIVAL/RECOVERY/STABLE.
+
+Covered CARRY with excessive source backlog/link backpressure remains RECOVERY with the compatible `LOCAL_HAUL_SHORTAGE` reason code, but its explanation explicitly identifies covered capacity and remaining flow pressure. Backlog can be draining normally; this condition does not itself prove congestion or justify an additional worker.
 
 `checkSpend()` always permits core harvest/logistics/spawn fill, with specific controller/defense/maintenance exceptions. Recovery restricts discretionary growth and remote spending. Existing Tech/Artificer roles also consult policy, so admission alone does not permanently authorize spending.
 
@@ -125,7 +131,7 @@ Full tick-index and Economy snapshots are heap-only. Economy persists compact st
 
 Dead-creep cleanup runs each normal finalize pass. Scheduled `HiveMind.MemoryGC.run()` incrementally expires demands, queues, terminal operations/squads, and stale intel with a persistent cursor and record budget. HOME/bootstrap/remote rooms and active operation/expansion targets are protected. Runtime assignment helpers also reconcile claims; GC is not their sole correctness mechanism. Shared routes have TTL/count cleanup and obstruction invalidation.
 
-Diagnostics use bounded events, segment ownership checks (default segment 98), and a smaller Memory fallback. Segment activation is asynchronous; future segment users must coordinate `setActiveSegments`. Telemetry records total `getUsed()` including work before loop timing began. Role samples retain average CPU, aggregate `totalCpu`, count, and utilization. Every 25 ticks or in bounded PROFILE mode, nested movement, Traveler/shared searches, pickup, and delivery costs are recorded separately in `Memory.hive.telemetry.operations`; nested costs must not be added to phase totals. Freighter utilization requires observed movement/cargo progress rather than merely a job ID.
+Diagnostics use bounded events, segment ownership checks (default segment 98), and a smaller Memory fallback. Segment activation is asynchronous; future segment users must coordinate `setActiveSegments`. Telemetry records total `getUsed()` including work before loop timing began. Role samples retain average CPU, aggregate `totalCpu`, count, and utilization. Every 25 ticks or in bounded PROFILE mode, nested movement, Traveler/shared searches, pickup, and delivery costs are recorded separately in `Memory.hive.telemetry.operations`; nested costs must not be added to phase totals. Freighter utilization requires observed cargo changes or movement with a haul/delivery job. Idle parking movement is tracked separately and is not productive utilization.
 
 ## 7. Movement and jobs
 
@@ -135,7 +141,13 @@ There is **no universal job scheduler**. Freighter local/remote pickup claims us
 
 `Logistics.Index` also owns tick-local delivery capacity reservations and idle-source occupancy. Local and remote deliveries use shared indexed destination tiers, retain useful targets, and temporarily release proven unreachable targets; Traveler/traffic still own movement. Local pickup scoring caps load by free carry and considers distance, with retarget hysteresis; depleted jobs release partial cargo for delivery. Creep Memory adds `freighterDeliveryTargetId`, bounded pickup/delivery retry fields, `freighterIdleSourceId`, and `freighterFlow` (last tick/cargo/position, observed picked/delivered totals, active/idle duration). Remote delivery timestamps reconcile on actual next-tick cargo decrease. Explicit transport temporarily sets `otherLogistics` and restores `logisticsPreviousAssignment` on completion. These optional fields need no schema migration. `Sushi.debug.room(name).current` exposes hauling/source estimates and individual Freighter flow.
 
+`Logistics.Index.localPickupOptions(room)` lazily derives source-side container/drop observations from `HiveMind.Index` once per room/tick. Geometry/amounts are immutable observations; each worker still subtracts mutable reservations independently. The cache lives only in heap (`tickIndex.localPickupOptions`) and expires with the tick index. Role urgency, main-spawn selection, and idle source enumeration also reuse the index. Remote-only idle workers never park near local sources. Local parking yields in low/critical CPU modes, while pickup/delivery and traffic displacement remain reachable.
+
+`freighterFlow` additionally retains bounded `observedTicks`, `workTicks`, and `parkingTicks` counters, lazily initialized without migration. `Diagnostics.View` builds `current.logistics` only on demand: runtime logistics revision, independent live local/remote ledgers, idle/no-progress/fatigue counts, surviving-worker flow totals, and timestamped sampled CPU. Assessments distinguish covered capacity with idle/stalled workers from a modeled deficit; they are evidence summaries, not new spawn gates. Missing current Economy observations are explicit. Cargo deltas are energy-flow proxies (including overflow deposits), not proof of useful downstream consumption; counters vanish when workers die. Compare matched workers across full trips and inspect destination pressure before treating movement as economic return.
+
 Optional shared-lane learning yields to sustainable CPU pressure (`Game.cpu.limit` and rolling totals), while essential Traveler fallback and traffic continue; fatigued creeps skip movement planning.
+
+A successful shared-lane step invalidates origin-relative `_trav`/`_move` caches, retaining the shared pointer. Traveler cannot resume directions saved at an earlier trip's origin after shared movement returns the worker to the same old destination. Traveler consumes a resolved cached step before checking for path exhaustion, so partial paths replan when exhausted rather than issuing an invalid `NaN` direction. Neither change adds persistent Memory fields.
 
 ## 8. Constraints and unresolved limits
 

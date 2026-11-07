@@ -1,0 +1,89 @@
+
+> test:logistics
+> node test/logistics-audit.js
+
+PASS attainable mining capacity bounds local hauling while retaining full-source target
+PASS multiple local sources contribute independent production times travel distance
+PASS same-tick requests cannot reuse cached capacity after a queue mutation
+PASS redundant queued local hauler is obsolete once earlier commitments cover demand
+PASS coverage deduplicates Game spawning and records invisible same-tick spawn intents
+PASS expired queues, remote workers and dying workers do not cover local capacity
+PASS explicit transport borrows a local worker without counting it as local capacity
+PASS stale remote haul observations never add age/backlog spawn bonuses
+PASS depleted local pickup releases a partial load for delivery
+PASS empty local worker with no pickup stays idle without path searches
+PASS delivery reservations spread local and remote cargo over useful destinations
+PASS dead workers and destroyed delivery targets release reservations next tick
+PASS full destinations are skipped without discarding cargo
+PASS unreachable delivery is temporarily released and an alternate is selected
+PASS nearby useful pickup beats a distant large pile and reservations stay exclusive
+PASS accepted failed intents do not count as delivered energy; resolved deliveries do
+PASS stationary stale assignments are not reported as productive logistics
+MEASURE delivery target path searches: baseline 10 per tick; corrected 0 for 10 loaded haulers
+PASS delivery selection replaces per-creep per-tick path searches with shared indexed choices
+PASS 20 CPU sustained pressure skips optional shared paths while essential travel continues
+PASS fatigued creeps skip shared path planning before Traveler
+PASS CPU pressure defers economy path refinement and recovers without a 500-tick wait
+PASS sampled operation costs preserve results and do not double-count phase CPU
+PASS idle haulers spread across sources and keep stable parking choices
+PASS destroyed MOVE parts cannot provide usable hauling capacity
+PASS remote requests become obsolete when routes close and cannot bypass recovery as local logistics
+PASS explicit zero remote production does not fall back to historical gross income
+PASS remote delivery evidence is recorded only after cargo decreases on the next tick
+PASS traffic moves a loaded hauler around a movable blocker without moving a stationary miner
+Spawning Freighter_001 as Freighter in W3S47 after downgrading body from 700 to 100 energy
+PASS execution shrinks a queued local Freighter to the remaining CARRY deficit
+Spawning Freighter_001 as Freighter in W3S47 after downgrading body from 700 to 100 energy
+PASS remote admission reports its current deficit and execution sizes to it
+PASS local and remote hauling commitments have distinct stable request identities
+PASS remote-only idle haulers never travel to local sources, including under CPU pressure
+PASS 100 idle local haulers reuse the room index instead of rescanning targets and sources
+PASS deduplicated dynamic requests report no invented queued CARRY
+PASS idle or congested living capacity is counted rather than replaced
+FAIL upgradeRush does not invent hauling demand above the production transport model AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+
+19 !== 16
+
+    at C:\Users\xbenv\AppData\Local\Screeps\scripts\192_168_0_217___21025\Sushi\test\logistics-audit.js:360:12
+    at test (C:\Users\xbenv\AppData\Local\Screeps\scripts\192_168_0_217___21025\Sushi\test\logistics-audit.js:6:11)
+    at Object.<anonymous> (C:\Users\xbenv\AppData\Local\Screeps\scripts\192_168_0_217___21025\Sushi\test\logistics-audit.js:356:1)
+    at Module._compile (node:internal/modules/cjs/loader:1781:14)
+    at Object..js (node:internal/modules/cjs/loader:1913:10)
+    at Module.load (node:internal/modules/cjs/loader:1505:32)
+    at Function._load (node:internal/modules/cjs/loader:1309:12)
+    at wrapModuleLoad (node:internal/modules/cjs/loader:254:19)
+    at Function.executeUserEntryPoint [as runMain] (node:internal/modules/run_main:171:5)
+    at node:internal/main/run_main_module:36:49 {
+  generatedMessage: true,
+  code: 'ERR_ASSERTION',
+  actual: 19,
+  expected: 16,
+  operator: 'strictEqual',
+  diff: 'simple'
+}
+Spawning Freighter_001 as Freighter in W3S47 after downgrading body from 700 to 100 energy
+Spawning Freighter_001 as Freighter in W3S47 using affordable body cost 700
+PASS body profiles shrink to current hauling demand while fixed bodies retain their contract
+FAIL CPU pressure defers idle local parking but pickup and recovery continue immediately AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+
+1 !== 0
+
+    at C:\Users\xbenv\AppData\Local\Screeps\scripts\192_168_0_217___21025\Sushi\test\logistics-audit.js:378:27
+    at test (C:\Users\xbenv\AppData\Local\Screeps\scripts\192_168_0_217___21025\Sushi\test\logistics-audit.js:6:11)
+    at Object.<anonymous> (C:\Users\xbenv\AppData\Local\Screeps\scripts\192_168_0_217___21025\Sushi\test\logistics-audit.js:374:1)
+    at Module._compile (node:internal/modules/cjs/loader:1781:14)
+    at Object..js (node:internal/modules/cjs/loader:1913:10)
+    at Module.load (node:internal/modules/cjs/loader:1505:32)
+    at Function._load (node:internal/modules/cjs/loader:1309:12)
+    at wrapModuleLoad (node:internal/modules/cjs/loader:254:19)
+    at Function.executeUserEntryPoint [as runMain] (node:internal/modules/run_main:171:5)
+    at node:internal/main/run_main_module:36:49 {
+  generatedMessage: true,
+  code: 'ERR_ASSERTION',
+  actual: 1,
+  expected: 0,
+  operator: 'strictEqual',
+  diff: 'simple'
+}
+PASS indexed pickup observations refresh each tick and preserve source-container filtering
+Logistics audit scenarios passed: 37

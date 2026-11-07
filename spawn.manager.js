@@ -605,6 +605,12 @@ function runRoomInternal(roomName, decision, selectedSpawn) {
                 candidate.requestedWorkParts || candidate.maxWorkParts || countBodyParts(candidate.body, WORK),
                 finalAdmission.localMissingWork) });
         }
+        if (finalAdmission.missingCarry > 0 && !candidate.bodyRequirements?.fixed) {
+            const carry = Math.min(candidate.requestedCarryParts || candidate.maxCarryParts ||
+                countBodyParts(candidate.body, CARRY), finalAdmission.missingCarry);
+            bodyCandidate = Object.assign({}, candidate, { requestedCarryParts: carry, maxCarryParts: carry });
+            if (candidate.bodyProfile) bodyCandidate.bodyProfile = { ...candidate.bodyProfile, desiredCarry: carry };
+        }
         var preview = previewAffordableQueuedBodyForSpawn(previewSpawn, bodyCandidate);
         candidate.affordableBodyCache = bodyCandidate.affordableBodyCache;
         const sizing = require('Spawn.Sizing').evaluate(spawn.room, candidate, preview, survival);

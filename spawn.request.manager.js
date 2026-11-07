@@ -3223,20 +3223,8 @@ function getFreighterCarryDemand(room) {
     var localCarryRequired = baseLocalCarry;
     var desiredCarryParts = localCarryRequired + remoteCarryRequired;
 
-    if (
-        HiveMemory.getConfig('upgrade').upgradeRush === true &&
-        getControllerContainerEnergy(room) < 1000
-    ) {
-        var desiredTechWork = getDesiredTechWork(room);
-
-        if (desiredTechWork >= 8) {
-            localCarryRequired += Math.min(
-                6,
-                Math.ceil((desiredTechWork - 4) / 3)
-            );
-            desiredCarryParts = localCarryRequired + remoteCarryRequired;
-        }
-    }
+    // Consumers spend existing production. Upgrade policy cannot invent extra
+    // source transport demand that Economy/admission do not recognize.
 
     var idleFreighters = room ? countIdleFreighters(room.name) : 0;
     // Keep diagnostics and admission based on the same assignment totals. The
@@ -3463,22 +3451,19 @@ function requestDynamicFreightersForRoom(room, priorityOverride, demandOverride,
                 return result;
             }
 
-            result.requested = 1;
-            result.requestedCarryParts = requestedCarry;
-            demand.queuedCarryParts += requestedCarry;
-            if (localRequest) {
-                demand.localCarryQueued += requestedCarry;
-                demand.localCarryMissing = Math.max(0, demand.localCarryRequired -
-                    demand.localCarryLiving - demand.localCarryQueued);
-            }
-            else {
-                demand.remoteCarryQueued += requestedCarry;
-                demand.remoteCarryMissing = Math.max(0, demand.remoteCarryRequired -
-                    demand.remoteCarryLiving - demand.remoteCarryQueued);
-            }
-            demand.missingCarryParts = Math.max(
-                0, demand.localCarryMissing + demand.remoteCarryMissing
-            );
+            result.requested = addResult.requested || 0;
+            result.reason = addResult.reason;
+            result.requestedCarryParts = result.requested ? requestedCarry : 0;
+            // Admission may deduplicate or normalize a request. Read the actual
+            // ledger rather than inventing CARRY for an unchanged queue.
+            local = Economy.freighterCoverage(room.name, 'local');
+            remote = Economy.freighterCoverage(room.name, 'remote');
+            demand.localCarryQueued = local.queued + local.spawning;
+            demand.remoteCarryQueued = remote.queued + remote.spawning;
+            demand.queuedCarryParts = demand.localCarryQueued + demand.remoteCarryQueued;
+            demand.localCarryMissing = Math.max(0, demand.localCarryRequired - local.living - demand.localCarryQueued);
+            demand.remoteCarryMissing = Math.max(0, demand.remoteCarryRequired - remote.living - demand.remoteCarryQueued);
+            demand.missingCarryParts = demand.localCarryMissing + demand.remoteCarryMissing;
             result.queuedCarryParts = demand.queuedCarryParts;
             result.missingCarryParts = demand.missingCarryParts;
         }

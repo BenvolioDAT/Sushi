@@ -4,11 +4,15 @@ const Policy = require('Spawn.Policy');
 
 function fingerprint(roomName, request, producer) {
     const memory = request.memory || {};
+    const freighter = (request.role || memory.role) === 'Freighter';
+    const assignment = freighter ? require('HiveMind.Economy').isRemoteFreighter(request) ? 'remoteHauling' :
+        require('HiveMind.Economy').isLocalFreighter(request) ? 'localLogistics' : memory.assignmentFunction || 'otherLogistics' : '';
     return request.requestId || [
         producer || request.producer || 'legacy', roomName,
         request.demandId || memory.demandId || request.role || memory.role || 'unknown',
         memory.sourceId || memory.sourceTargetId || memory.remoteSourceId || '',
-        memory.targetRoom || request.targetRoom || '', memory.squadId || '', memory.operationId || ''
+        memory.targetRoom || request.targetRoom || '', memory.squadId || '', memory.operationId || '',
+        ...(freighter ? [assignment] : [])
     ].join(':');
 }
 

@@ -1,6 +1,40 @@
 const Economy = require('HiveMind.Economy');
 const TickIndex = require('HiveMind.Index');
 const Colony = require('HiveMind.ColonyState');
+
+// Read on demand, using the same commitment ledger as spawn planning. Flow
+// totals describe surviving workers; compare snapshots over complete haul trips.
+function logistics(name, economy, freighters) {
+    const totals = { observedCreepTicks: 0, workCreepTicks: 0, parkingCreepTicks: 0, picked: 0, delivered: 0 };
+    for (const creep of freighters) {
+        const flow = creep.flow || {};
+        totals.observedCreepTicks += flow.observedTicks || 0;
+        totals.workCreepTicks += flow.workTicks || 0;
+        totals.parkingCreepTicks += flow.parkingTicks || 0;
+        totals.picked += flow.picked || 0;
+        totals.delivered += flow.delivered || 0;
+    }
+    const sample = Memory.hive?.telemetry?.populationRooms?.[name]?.Freighter;
+    const view = { revision: require('Logistics.Index').REVISION, flow: totals,
+        cpu: sample ? { tick: sample.tick, total: sample.totalCpu, perCreep: sample.cpu, utilization: sample.utilization } : null };
+    for (const assignment of ['local', 'remote']) {
+        const coverage = Economy.freighterCoverage(name, assignment);
+        const required = economy.sampleTick === Game.time && economy.haul ?
+            assignment === 'local' ? economy.haul.requiredCarry : economy.haul.remoteCarryRequired : null;
+        const workers = freighters.filter(c => c.assignmentClass === assignment);
+        const idle = workers.filter(c => c.job === 'idle' && !c.working && c.cargo === 0).length;
+        const noProgress = workers.filter(c => c.job !== 'idle' && (c.flow?.idleTicks || 0) >= 10).length;
+        const missing = Number.isFinite(required) ? Math.max(0, required - coverage.living - coverage.queued - coverage.spawning) : null;
+        view[assignment] = { required, ...coverage, missing, workers: workers.length, idleWorkers: idle,
+            noProgressWorkers: noProgress, fatiguedWorkers: workers.filter(c => c.fatigue > 0).length,
+            assessment: missing === null ? 'CURRENT_ECONOMY_UNAVAILABLE' : missing > 0 ?
+                idle || noProgress ? 'DEFICIT_WITH_UNDERUSED_WORKERS' : 'CARRY_DEFICIT' :
+                assignment === 'local' && economy.haul && (economy.haul.backlog > Math.max(500, economy.haul.activeCarry * 75) ||
+                    economy.haul.linkBackpressure > 500) ? 'CAPACITY_COVERED_BACKLOG' :
+                noProgress ? 'CAPACITY_COVERED_CHECK_FLOW' : idle ? 'CAPACITY_COVERED_IDLE_WORKERS' : 'CAPACITY_COVERED' };
+    }
+    return view;
+}
 function room(name) {
     const visible = Game.rooms && Game.rooms[name], memory = Memory.rooms && Memory.rooms[name] || {};
     if (!visible && !Memory.rooms?.[name]) return null;
@@ -12,6 +46,7 @@ function room(name) {
         if (role === 'Freighter' && !creep.spawning) freighters.push({ name: creep.name,
             room: creep.pos && creep.pos.roomName, x: creep.pos && creep.pos.x, y: creep.pos && creep.pos.y,
             assignment: m.assignmentFunction, job: m.freighterJob || 'idle', working: !!m.FreighterWorking,
+            assignmentClass: Economy.isLocalFreighter(creep) ? 'local' : Economy.isRemoteFreighter(creep) ? 'remote' : 'other',
             pickup: m.pickupTargetId || null, delivery: m.freighterDeliveryTargetId || null,
             cargo: creep.store && creep.store[RESOURCE_ENERGY] || 0,
             carryParts: (creep.body || []).filter(p => (p.type || p) === CARRY && p.hits !== 0).length,
@@ -69,7 +104,7 @@ function room(name) {
         energy: visible?.energyAvailable || 0, energyCapacity: visible?.energyCapacityAvailable || 0,
         stored: (economy.storageEnergy || 0) + (economy.terminalEnergy || 0), reserveTarget: growth.reserveTarget || 0,
         healthyTicks: economy.healthyTicks || 0, counts, spawning, queued, sources, remotes, resources, alerts,
-        hauling: economy.haul || null, freighters,
+        hauling: economy.haul || null, freighters, logistics: logistics(name, economy, freighters),
         spawn: decision ? { tick: decision.tick, current, status: decision.status, role: decision.selectedRole,
             reason: decision.blocked?.reason || decision.reason, available: decision.energyAvailable,
             required: decision.requiredEnergy || decision.bodyCost, capacity: decision.energyCapacity || visible?.energyCapacityAvailable,

@@ -801,6 +801,12 @@ function applyRouteFollowResult(creep, cache, routeKey, followResult, moveOption
         return null;
     }
 
+    if (followResult.code === OK) {
+        // Shared lanes move independently of Traveler's origin-relative path.
+        // Do not resume an old path when a later trip returns to its old target.
+        delete creep.memory._trav;
+        delete creep.memory._move;
+    }
     return followResult.code;
 }
 

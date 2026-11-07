@@ -181,6 +181,8 @@ function evaluate(room, request, context, options = {}) {
     }
     return { allowed: true, reason: recovery.mandatory ? recovery.reason : options.revalidate ? 'revalidated' : 'admitted',
         localMissingWork: (request.role || request.memory && request.memory.role) === 'Extractor' ? recovery.missing : undefined,
+        missingCarry: role === 'Freighter' ? (Economy.isLocalFreighter(request) ? recovery.missing :
+            Economy.isRemoteFreighter(request) ? remoteHauling.missing : undefined) : undefined,
         lifetimeReplacement: recovery.lifetimeReplacement,
         minimumWorkParts: recovery.minimumWorkParts,
         mandatoryEconomy: recovery.mandatory, mandatoryFloorBypass: mandatoryFloorBypass || recovery.mandatory &&

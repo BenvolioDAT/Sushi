@@ -2,7 +2,10 @@ const assert = require('assert');
 const mocks = require('./mock-screeps');
 const { setup } = require('./harvesting-capacity');
 let passed = 0;
-function test(name, fn) { fn(); passed++; console.log('PASS ' + name); }
+function test(name, fn) {
+    try { fn(); passed++; console.log('PASS ' + name); }
+    catch (error) { console.error('FAIL ' + name, error); process.exitCode = 1; }
+}
 function store(energy = 0, capacity = 100) {
     return { energy, getFreeCapacity() { return capacity - this.energy; },
         getCapacity: () => capacity, getUsedCapacity() { return this.energy; } };
@@ -266,5 +269,203 @@ test('traffic moves a loaded hauler around a movable blocker without moving a st
     Game.time++; hauler.registerMove({ x: 6, y: 10 });
     const locked = traffic.run(w.room, new PathFinder.CostMatrix(), 20, { creeps: [hauler, blocker] });
     assert.strictEqual(locked.moved, 0);
+});
+test('execution shrinks a queued local Freighter to the remaining CARRY deficit', () => {
+    const f = setup(700); f.miner('a', 5, 'A'); f.miner('b', 5, 'B'); const s = f.sample();
+    const manager = require('spawn.request.manager');
+    assert.strictEqual(manager.requestDynamicFreightersForRoom(f.room, 112).requested, 1);
+    assert.ok(f.queue[0].requestedCarryParts > 1);
+    s.haul.requiredCarry = 1; // E.g. production/transport changed while waiting for energy.
+    assert.strictEqual(require('spawn.manager').runRoom(f.room.name).result, OK);
+    assert.strictEqual(f.calls[0].body.filter(p => p === CARRY).length, 1);
+});
+test('remote admission reports its current deficit and execution sizes to it', () => {
+    const f = setup(700); f.core(); f.miner('a', 5, 'A'); f.miner('b', 5, 'B'); f.sample();
+    const E = require('HiveMind.Economy');
+    // Isolate logistics admission/body selection from the independent remote spending gate.
+    E.canSpawnRequest = () => ({ allowed: true });
+    require('HiveMind.Capacity').evaluate = () => ({ allowed: true });
+    const info = { active: true, roomName: 'W1N2', effectiveEnergyPerTick: 0.1, roundTripTicks: 50 };
+    f.memory.remotePlanner = { activeSourceIds: ['r'], sourceInfos: { r: info } };
+    const q = { role: 'Freighter', body: Array(7).fill(CARRY).concat(Array(7).fill(MOVE)),
+        requestedCarryParts: 7, memory: { role: 'Freighter', homeRoom: f.room.name, assignmentFunction: 'remoteHauling' } };
+    assert.strictEqual(E.remoteHaulingRequest(f.room, q, []).missing, 1);
+    assert.strictEqual(require('Spawn.Arbiter').admit(f.room.name, q).requested, 1);
+    assert.strictEqual(require('spawn.manager').runRoom(f.room.name).result, OK);
+    assert.strictEqual(f.calls[0].body.filter(p => p === CARRY).length, 1);
+});
+test('local and remote hauling commitments have distinct stable request identities', () => {
+    const f = setup(700); f.miner('a', 5, 'A'); f.miner('b', 5, 'B'); f.sample();
+    const E = require('HiveMind.Economy'); E.canSpawnRequest = () => ({ allowed: true });
+    require('HiveMind.Capacity').evaluate = () => ({ allowed: true });
+    f.memory.remotePlanner = { activeSourceIds: ['r'], sourceInfos: {
+        r: { active: true, sourceId: 'r', roomName: 'W1N2', effectiveEnergyPerTick: 2, roundTripTicks: 50 } } };
+    const manager = require('spawn.request.manager');
+    const demand = { localCarryRequired: 1, remoteCarryRequired: 3, desiredCarryParts: 4 };
+    assert.strictEqual(manager.requestDynamicFreightersForRoom(f.room, 112, { ...demand }).requested, 1);
+    assert.strictEqual(manager.requestDynamicFreightersForRoom(f.room, 112, { ...demand }).requested, 1);
+    assert.strictEqual(f.queue.length, 2);
+    assert.notStrictEqual(f.queue[0].requestId, f.queue[1].requestId);
+    assert.strictEqual(E.freighterCoverage(f.room.name, 'remote').queued, 3);
+    assert.strictEqual(manager.requestDynamicFreightersForRoom(f.room, 112, { ...demand }).requested, 0);
+});
+test('remote-only idle haulers never travel to local sources, including under CPU pressure', () => {
+    const w = roleWorld(), c = w.hauler('remote-idle', 0);
+    c.memory.assignmentFunction = 'remoteHauling';
+    w.room.sources = [{ id: 'local', pos: new RoomPosition(40, 10, w.room.name) }];
+    Game.cpu.getUsed = () => 19; Game.cpu.limit = 20;
+    for (let i = 0; i < 100; i++) { w.role.run(c); Game.time++; }
+    assert.strictEqual(w.moves.length, 0);
+    assert.strictEqual(c.memory.freighterIdleSourceId, undefined);
+});
+test('100 idle local haulers reuse the room index instead of rescanning targets and sources', () => {
+    const w = roleWorld();
+    w.room.sources = [{ id: 'local', pos: new RoomPosition(7, 10, w.room.name) }];
+    for (let i = 0; i < 100; i++) w.hauler('idle' + i, 0);
+    let scans = 0; const find = w.room.find;
+    w.room.find = function(...args) { scans++; return find.apply(this, args); };
+    for (const c of Object.values(Game.creeps)) w.role.run(c);
+    assert.ok(scans <= 10, 'room scans grew with population: ' + scans);
+    assert.strictEqual(w.moves.length, 0);
+    console.log('MEASURE idle room scans: baseline 400; corrected ' + scans + ' for 100 idle haulers');
+});
+test('deduplicated dynamic requests report no invented queued CARRY', () => {
+    const f = setup(700); f.miner('a', 5, 'A'); f.miner('b', 5, 'B'); f.sample();
+    const manager = require('spawn.request.manager'), demand = manager.getFreighterCarryDemand(f.room);
+    const first = manager.requestDynamicFreightersForRoom(f.room, 112, demand);
+    assert.strictEqual(first.requested, 1);
+    assert.ok(demand.localCarryMissing > 0);
+    const before = demand.localCarryQueued;
+    const second = manager.requestDynamicFreightersForRoom(f.room, 112, demand);
+    assert.strictEqual(second.requested, 0);
+    assert.strictEqual(second.requestedCarryParts, 0);
+    assert.strictEqual(demand.localCarryQueued, before);
+    assert.strictEqual(demand.localCarryMissing, demand.localCarryRequired - before);
+});
+test('idle or congested living capacity is counted rather than replaced', () => {
+    const f = setup(700);
+    for (let i = 0; i < 30; i++) {
+        const c = f.miner('idle' + i, 0);
+        c.memory = { role: 'Freighter', homeRoom: f.room.name, assignmentFunction: 'localLogistics',
+            freighterFlow: { idleTicks: 200, active: false } };
+    }
+    const s = f.sample(); const manager = require('spawn.request.manager');
+    assert.ok(s.haul.localCarry > s.haul.requiredCarry);
+    assert.strictEqual(manager.requestDynamicFreightersForRoom(f.room, 112).requested, 0);
+    assert.strictEqual(f.queue.length, 0);
+});
+test('upgradeRush does not invent hauling demand above the production transport model', () => {
+    const f = setup(700); f.core(); f.miner('a', 5, 'A'); f.miner('b', 5, 'B'); const s = f.sample();
+    require('HiveMind.Memory').getConfig('upgrade').upgradeRush = true;
+    s.growth.affordableWork = 12; s.growth.mode = 'GROWTH_NORMAL';
+    assert.strictEqual(require('spawn.request.manager').getFreighterCarryDemand(f.room).localCarryRequired, s.haul.requiredCarry);
+});
+test('body profiles shrink to current hauling demand while fixed bodies retain their contract', () => {
+    for (const fixed of [false, true]) {
+        const f = setup(700); f.miner('a', 5, 'A'); f.miner('b', 5, 'B'); const s = f.sample();
+        const q = { role: 'Freighter', body: Array(7).fill(CARRY).concat(Array(7).fill(MOVE)),
+            requestedCarryParts: 7, bodyProfile: { desiredCarry: 7 }, bodyRequirements: { fixed },
+            memory: { role: 'Freighter', homeRoom: f.room.name, assignmentFunction: 'localLogistics' } };
+        assert.strictEqual(require('Spawn.Arbiter').admit(f.room.name, q).requested, 1);
+        s.haul.requiredCarry = 1;
+        assert.strictEqual(require('spawn.manager').runRoom(f.room.name).result, OK);
+        assert.strictEqual(f.calls[0].body.filter(p => p === CARRY).length, fixed ? 7 : 1);
+    }
+});
+test('CPU pressure defers idle local parking but pickup and recovery continue immediately', () => {
+    const w = roleWorld(), c = w.hauler('idle', 0);
+    w.room.sources = [{ id: 'local', pos: new RoomPosition(40, 10, w.room.name) }];
+    Game.cpu.getUsed = () => 19; Game.cpu.limit = 20;
+    w.role.run(c); assert.strictEqual(w.moves.length, 0);
+    const d = { id: 'new', resourceType: RESOURCE_ENERGY, amount: 100, pos: new RoomPosition(20, 10, w.room.name) };
+    w.room.drops.push(d); w.objects[d.id] = d; Game.time++;
+    w.role.run(c); assert.strictEqual(c.memory.pickupTargetId, 'new');
+    assert.strictEqual(w.moves[0], 'new');
+});
+test('indexed pickup observations refresh each tick and preserve source-container filtering', () => {
+    const w = roleWorld(), c = w.hauler('idle', 0);
+    w.room.sources = [{ id: 'local', pos: new RoomPosition(20, 10, w.room.name) }];
+    const t = w.target('source-container', 21, STRUCTURE_CONTAINER, 100); t.store.energy = 100;
+    const controller = w.target('controller-container', 40, STRUCTURE_CONTAINER, 100); controller.store.energy = 100;
+    w.role.run(c); assert.strictEqual(c.memory.pickupTargetId, t.id);
+    Game.time++; t.store.energy = 0; w.role.run(c);
+    assert.strictEqual(c.memory.pickupTargetId, undefined);
+    assert.strictEqual(w.index.localPickupOptions(w.room).length, 0);
+});
+test('parking motion is visible but cannot inflate productive Freighter utilization', () => {
+    const w = roleWorld(), c = w.hauler('parking', 0); w.role.run(c);
+    c.pos.x++; Game.time++; w.role.run(c);
+    assert.strictEqual(require('Tick.Creeps').productive(c), false);
+    assert.strictEqual(c.memory.freighterFlow.parkingTicks, 1);
+    assert.strictEqual(c.memory.freighterFlow.workTicks, 0);
+    assert.strictEqual(c.memory.freighterFlow.observedTicks, 1);
+    c.memory.freighterJob = 'local'; c.pos.x++; Game.time++; w.role.run(c);
+    assert.strictEqual(require('Tick.Creeps').productive(c), true);
+    assert.strictEqual(c.memory.freighterFlow.workTicks, 1);
+});
+test('room diagnostics distinguish covered idle capacity and incomplete observations', () => {
+    const f = setup(700);
+    for (let i = 0; i < 30; i++) {
+        const c = f.miner('idle' + i, 0);
+        c.memory = { role: 'Freighter', homeRoom: f.room.name, assignmentFunction: 'localLogistics' };
+    }
+    f.sample(); const read = require('Diagnostics.View').room;
+    let view = read(f.room.name).logistics;
+    assert.strictEqual(view.revision, 'logistics-2026-11-07');
+    assert.strictEqual(view.local.assessment, 'CAPACITY_COVERED_IDLE_WORKERS');
+    assert.strictEqual(view.local.missing, 0); assert.strictEqual(view.local.idleWorkers, 30);
+    Game.time++; view = read(f.room.name).logistics;
+    assert.strictEqual(view.local.assessment, 'CURRENT_ECONOMY_UNAVAILABLE');
+    assert.strictEqual(view.local.required, null);
+});
+test('Traveler replans an exhausted partial path without submitting an invalid direction', () => {
+    const w = roleWorld(), c = w.hauler('partial-path', 100);
+    const Traveler = require('Traveler').Traveler;
+    _.round = Math.round;
+    const destination = new RoomPosition(40, 10, w.room.name);
+    let searches = 0; const directions = [];
+    Traveler.findTravelPath = () => { searches++; return { path: [new RoomPosition(c.pos.x + 1, 10, w.room.name)], incomplete: true }; };
+    const options = { range: 1, sushiMoveHandler(creep, direction) {
+        directions.push(direction); return Number.isInteger(direction) && direction >= 1 && direction <= 8 ? OK : ERR_INVALID_ARGS;
+    } };
+    assert.strictEqual(Traveler.travelTo(c, destination, options), OK);
+    Game.time++; c.pos.x++;
+    assert.strictEqual(Traveler.travelTo(c, destination, options), OK);
+    assert.strictEqual(searches, 2);
+    assert.ok(directions.every(Number.isInteger));
+});
+test('covered CARRY with backlog preserves recovery but diagnoses flow instead of capacity', () => {
+    const f = setup(700); f.core(); f.miner('a', 5, 'A'); f.miner('b', 5, 'B');
+    const s = f.sample(); s.haul.backlog = 6500;
+    const state = require('HiveMind.Economy').rawState(s);
+    assert.strictEqual(state.state, 'RECOVERY');
+    assert.strictEqual(state.reasonCode, 'LOCAL_HAUL_SHORTAGE'); // Existing spending/recovery contract.
+    assert.match(state.reason, /capacity covered.*backlog|backlog.*capacity covered/);
+    assert.strictEqual(require('Diagnostics.View').room(f.room.name).logistics.local.assessment, 'CAPACITY_COVERED_BACKLOG');
+});
+test('shared-lane travel invalidates Traveler paths from an earlier trip', () => {
+    const w = roleWorld(), c = w.hauler('shared', 100), target = w.target('container', 10, STRUCTURE_CONTAINER, 2000);
+    delete require.cache[require.resolve('utility.Travel.Creep')]; const travel = require('utility.Travel.Creep');
+    c.memory._trav = { state: [9, 6, 0, 0, 9, 4, w.room.name], path: '2' };
+    c.memory._move = { path: 'old' };
+    c.memory._sushiRoute = { routeKey: 'lane', range: 1, destination: { x: 10, y: 10, roomName: w.room.name },
+        lastX: 4, lastY: 10, lastRoom: w.room.name };
+    Memory.rooms[w.room.name].routeCache = { routes: { lane: {
+        from: { x: 5, y: 10, roomName: w.room.name }, path: '3333', complete: true, created: Game.time, lastUsed: Game.time } } };
+    c.registerMove = () => OK;
+    assert.strictEqual(travel.move(c, target), OK);
+    assert.strictEqual(c.memory._trav, undefined); assert.strictEqual(c.memory._move, undefined);
+    assert.strictEqual(c.memory._sushiRoute.routeKey, 'lane');
+});
+test('Traveler retains useful cached steps while a path remains', () => {
+    const w = roleWorld(), c = w.hauler('cached-path', 100); _.round = Math.round;
+    const Traveler = require('Traveler').Traveler; let searches = 0;
+    Traveler.findTravelPath = () => { searches++; return { incomplete: false,
+        path: [6, 7, 8, 9].map(x => new RoomPosition(x, 10, w.room.name)) }; };
+    for (let i = 0; i < 3; i++) {
+        assert.strictEqual(Traveler.travelTo(c, new RoomPosition(40, 10, w.room.name), { range: 1, sushiMoveHandler: () => OK }), OK);
+        c.pos.x++; Game.time++;
+    }
+    assert.strictEqual(searches, 1);
 });
 console.log('Logistics audit scenarios passed: ' + passed);
