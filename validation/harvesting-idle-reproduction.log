@@ -1,7 +1,0 @@
-warning: in the working copy of 'package.json', LF will be replaced by CRLF the next time Git touches it
-warning: in the working copy of 'role.Extractor.js', LF will be replaced by CRLF the next time Git touches it
-warning: in the working copy of 'spawn.request.manager.js', LF will be replaced by CRLF the next time Git touches it
-warning: in the working copy of 'utility.Creep.js', LF will be replaced by CRLF the next time Git touches it
-{"baseline":true,"liveContainer":false,"energy":300,"activeMiners":6,"activeWork":7,"sourceRequired":[5,5],"requested":0,"queue":0,"spawnResult":"Queue empty"}
-Spawning Extractor_001 as Extractor in W3S47 using affordable body cost 300
-{"baseline":true,"liveContainer":true,"energy":300,"activeMiners":6,"activeWork":7,"sourceRequired":[5,5],"requested":1,"queue":0,"spawnResult":0,"spawnedWork":2}
