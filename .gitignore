@@ -1,0 +1,2 @@
+# Recoverable deployment backups stay local and outside the runtime target.
+validation/deployments/

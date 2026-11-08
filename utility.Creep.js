@@ -847,6 +847,7 @@ function getAssignedExtractorSummary(sourceRecord) {
         hasDyingWorker: false,
         oldestTicksToLive: null,
         workTarget: getSourceWorkTarget(sourceRecord && sourceRecord.source),
+        sourcePos: sourceRecord && sourceRecord.source && sourceRecord.source.pos,
         workers: []
     };
 
@@ -907,10 +908,7 @@ function getAssignedExtractorSummary(sourceRecord) {
             }
         }
 
-        if (
-            workParts >= summary.workTarget &&
-            (ticksToLive === undefined || ticksToLive > EXTRACTOR_HANDOFF_TICKS)
-        ) {
+        if (isHealthyStationedFullWorker(assignedCreep, summary)) {
             summary.hasHealthyFullWorker = true;
         }
     }
@@ -1143,6 +1141,26 @@ function getAssignedMiningSeat(creep, source) {
             clearMiningSeatMemory(creep);
             creep.memory.extractorState = 'waitingForContainerSeat';
             return null;
+        }
+    }
+
+    // Local supplementation may have more than one built source container.
+    // Keep the incumbent's canonical station, but use an unclaimed alternative
+    // before an ordinary seat. The healthy-full-worker guard above still wins.
+    if (!remote && containerPosition) {
+        var structures = require('HiveMind.Index').get().structuresByRoom.get(source.pos.roomName);
+        var alternatives = (structures && structures.get(STRUCTURE_CONTAINER) || []).filter(function(container) {
+            return container.pos.getRangeTo(source.pos) <= 1 &&
+                !sameRoomPosition(container.pos, containerPosition) &&
+                validSeats.some(function(seat) { return sameRoomPosition(seat, container.pos); });
+        }).sort(function(a, b) {
+            return creep.pos.getRangeTo(a.pos) - creep.pos.getRangeTo(b.pos) || a.pos.y - b.pos.y || a.pos.x - b.pos.x;
+        });
+        for (var alternative of alternatives) {
+            if (!isMiningSeatTakenByOtherCreep(creep, alternative.pos)) {
+                rememberMiningSeat(creep, source.id, alternative.pos, 'container');
+                return alternative.pos;
+            }
         }
     }
 
@@ -1788,6 +1806,13 @@ function cleanDeadAssignedMiners(sourceMemory, sourceId, roomName) {
     sourceMemory.assignedMiner = cleanList;
 }
 
+function isHealthyStationedFullWorker(worker, summary) {
+    return !worker.spawning && !worker.memory.extractorReplacementFor && !worker.memory.extractorRetiring &&
+        summary.sourcePos && worker.pos && worker.pos.getRangeTo(summary.sourcePos) <= 1 &&
+        getCreepWorkParts(worker) >= summary.workTarget &&
+        (worker.ticksToLive === undefined || worker.ticksToLive > EXTRACTOR_HANDOFF_TICKS);
+}
+
 function summaryHasHealthyFullWorkerOtherThan(summary, creep) {
     for (var i = 0; i < summary.workers.length; i++) {
         var worker = summary.workers[i];
@@ -1796,13 +1821,7 @@ function summaryHasHealthyFullWorkerOtherThan(summary, creep) {
             continue;
         }
 
-        if (
-            getCreepWorkParts(worker) >= summary.workTarget &&
-            (
-                worker.ticksToLive === undefined ||
-                worker.ticksToLive > EXTRACTOR_HANDOFF_TICKS
-            )
-        ) {
+        if (isHealthyStationedFullWorker(worker, summary)) {
             return true;
         }
     }

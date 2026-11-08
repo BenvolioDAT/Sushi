@@ -190,6 +190,7 @@ function evaluate(room, request, context, options = {}) {
         ...hauling,
         lifetimeReplacement: recovery.lifetimeReplacement,
         minimumWorkParts: recovery.minimumWorkParts,
+        minerConsolidation: recovery.minerConsolidation,
         mandatoryEconomy: recovery.mandatory, mandatoryFloorBypass: mandatoryFloorBypass || recovery.mandatory &&
             context.nonCombatTotal - ownQueued >= maxCreeps(room, policy) };
 }

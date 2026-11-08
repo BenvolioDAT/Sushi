@@ -474,16 +474,16 @@ function offloadEnergy(creep, source) {
          * transfer moves energy from the creep into the structure store.
          * Returning true tells run() that offloading was handled this tick.
          */
-        var transferTarget = nearbyStores[0];
+        // Offloading must not pull a stationary miner away from its reserved
+        // harvesting tile. Source-relative range does not imply creep reach.
+        var transferTarget = nearbyStores.find(function(target) { return creep.pos.getRangeTo(target.pos) <= 1; });
+        if (!transferTarget) return false;
         var transferResult = creep.transfer(transferTarget, RESOURCE_ENERGY);
 
-        if(transferResult === ERR_NOT_IN_RANGE) {
-            utilityTravelCreep.move(creep, nearbyStores[0], {visualizePathStyle: {stroke: '#ffffff'}});
-        }
-        else if(transferResult === OK) {
+        if(transferResult === OK) {
             recordSourceContainerHaul(creep, source, transferTarget);
         }
-        return true;
+        return transferResult === OK;
     }
 
     return false;

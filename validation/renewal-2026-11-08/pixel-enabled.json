@@ -1,0 +1,14 @@
+{
+  "tick": 84149775,
+  "config": {
+    "enabled": true,
+    "bucketThreshold": 10000,
+    "tickModulo": 1
+  },
+  "status": {
+    "current": null,
+    "last": null
+  },
+  "resource": 119,
+  "bucket": 8273
+}

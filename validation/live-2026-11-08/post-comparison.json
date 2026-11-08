@@ -1,0 +1,80 @@
+{
+  "build": {
+    "id": "8f5cd5abbb6d1f0bf8d90dcec24074b02281b865375864103e63fe72be0a2c5e",
+    "modules": 109
+  },
+  "from": 84143551,
+  "to": 84143704,
+  "ticks": 153,
+  "matchedWorkers": 10,
+  "pickedCounterDelta": 1358,
+  "deliveredCounterDelta": 1552,
+  "controllerProgressDelta": 1143,
+  "bucketChange": 299,
+  "finalCpu": 16.127295551493084,
+  "finalBucket": 9423,
+  "finalLocalCoverage": {
+    "required": 18,
+    "living": 18,
+    "spawning": 0,
+    "queued": 0,
+    "missing": 0,
+    "workers": 10,
+    "idleWorkers": 1,
+    "noProgressWorkers": 0,
+    "fatiguedWorkers": 0,
+    "assessment": "CAPACITY_COVERED_IDLE_WORKERS"
+  },
+  "finalSourceWork": 10,
+  "errors": [],
+  "samples": [
+    {
+      "tick": 84143551,
+      "cpu": 24.191497506643707,
+      "bucket": 9124,
+      "backlog": 50,
+      "freighters": 10,
+      "stalled": 0
+    },
+    {
+      "tick": 84143569,
+      "cpu": 16.928231312951,
+      "bucket": 9164,
+      "backlog": 202,
+      "freighters": 10,
+      "stalled": 0
+    },
+    {
+      "tick": 84143597,
+      "cpu": 16.538004950403923,
+      "bucket": 9210,
+      "backlog": 152,
+      "freighters": 10,
+      "stalled": 0
+    },
+    {
+      "tick": 84143624,
+      "cpu": 15.396677510498302,
+      "bucket": 9280,
+      "backlog": 52,
+      "freighters": 10,
+      "stalled": 0
+    },
+    {
+      "tick": 84143653,
+      "cpu": 15.956365456782185,
+      "bucket": 9330,
+      "backlog": 302,
+      "freighters": 10,
+      "stalled": 0
+    },
+    {
+      "tick": 84143704,
+      "cpu": 16.127295551493084,
+      "bucket": 9423,
+      "backlog": 202,
+      "freighters": 10,
+      "stalled": 0
+    }
+  ]
+}

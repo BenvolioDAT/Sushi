@@ -388,13 +388,16 @@ function clear() {
         return { cleared: true, segmentClearsOnNextFlush: h.storage === 'SEGMENT' };
     } catch (error) { return { cleared: false }; }
 }
-let roomReader = () => null, cpuReader = () => ({});
-function install(readRoom, readCpu) {
+let roomReader = () => null, cpuReader = () => ({}), pixelReader = () => null;
+function install(readRoom, readCpu, readPixels) {
     try {
     if (readRoom) roomReader = readRoom;
     if (readCpu) cpuReader = readCpu;
+    if (readPixels) pixelReader = readPixels;
     if (!global.Sushi || typeof global.Sushi !== 'object') global.Sushi = {};
-    global.Sushi.debug = { status, events, errors: (n = 20) => events(n, { severity: 'ERROR' }),
+    global.Sushi.debug = { status, build: () => require('Runtime.Build'),
+        pixels: () => ({ current: pixelReader(), last: Memory.hive?.telemetry?.pixels || null }),
+        events, errors: (n = 20) => events(n, { severity: 'ERROR' }),
         room: name => ({ tick: tick(), current: roomReader(name), events: events(30, { room: name }) }), cpu: () => ({ ...cpuReader(), rolling: global.__sushiCpuRolling || Memory.hive?.telemetry?.cpu || null,
             roles: Memory.hive?.telemetry?.populationRoles || {}, roleRooms: Memory.hive?.telemetry?.populationRooms || {} }),
         export: exportHistory, exportChunk: (i = 0, size = 3000) => (current().exportChunks || exportHistory(size))[i] || '', clear,

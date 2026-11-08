@@ -1,0 +1,52 @@
+# Sushi engineering and official-server verification — November 8, 2026
+
+## Source and deployment
+
+The private-server directory is the authoritative Git checkout, initially clean at `bad8053` (Freighter cohort renewal). The official-server Sushi folder has no independent repository metadata. Every differing runtime file matched the pre-renewal ancestor `54c453a` after line-ending normalization; `Freighter.Renewal.js` was absent. Its newer filesystem timestamps reflected copying, not newer source changes. The private server was not contacted.
+
+The official deployment was backed up, validated, and synchronized with the authoritative checkout. All **109 runtime modules** match byte for byte; **11 files** were copied: `Diagnostics.View.js`, `Diagnostics.js`, `Freighter.Renewal.js`, `HiveMind.Capacity.js`, `HiveMind.Economy.js`, `Planner.Remote.js`, `Spawn.Policy.js`, `role.Freighter.js`, `spawn.manager.js`, `spawn.request.manager.js`, and `Runtime.Build.js`. Development files and existing target documents/settings were preserved.
+
+Build ID: `8f5cd5abbb6d1f0bf8d90dcec24074b02281b865375864103e63fe72be0a2c5e`.
+
+Release records: `validation/deployments/2026-11-08T07-33-17-337Z/` (plan, full previous 107-module runtime backup, validation log, and copy result). The client Script panel showed branch Sushi with its save/undo controls disabled after copying. On **official shard3 at tick 84143551**, `Sushi.debug.build()` returned the matching full build ID and 109 modules. New renewal diagnostic fields were also present, and no missing-module or runtime errors were recorded. This establishes server receipt beyond the local copy check; the build marker itself does not hash uploaded server module contents.
+
+The repeatable process, drift refusal, backup, verification, and rollback commands are documented in [DEPLOYMENT.md](DEPLOYMENT.md). Source and target remain one development checkout plus one deployment copy. No live Memory reset, manual creep removal, settings change, Git history change, or push was performed.
+
+## Root cause and corrections
+
+The live Freighter fleet was useful and capability-covered, rather than an uncontrolled spawn loop. At tick 84143426, W39S47 was STABLE with 10 Freighters, 18 local CARRY against demand 18, no queued haulers, and 10/10 stationed harvesting WORK. Source backlog was 250 energy. Seven of those workers had one CARRY, so cohort consolidation was relevant, but the already-written renewal implementation had not reached the official folder.
+
+Between ticks 84143426 and 84143487, the same ten worker generations picked up 700 and delivered 450 energy, while controller progress rose by 511. Rolling CPU increased from 19.16 to 20.38 and bucket fell from 9478 to 9376. Timestamped Scout role CPU was 2.75–4.28, compared with roughly 1.50–1.64 for the whole Freighter role. These role EMAs overlap phase totals and must not be added to them. Idle workers and expensive CPU are related through execution overhead, but headcount alone did not explain this room's CPU pressure.
+
+The confirmed new defect was **Scout observations repeatedly invoking full remote route planning outside the scheduler's CPU pressure guard**. `onScoutRoom()` called `scanVisibleRoom()` → `generateRemotePlan()` on every tick; each source could invoke `PathFinder.search()` with up to 12,000 operations. Its old guard used the bucket and burst tick limit, permitting repeated optional planning even when sustainable CPU was exhausted. The distinction between baseline CPU and accumulated burst capacity is described in the [official CPU documentation](https://docs.screeps.com/cpu-limit.html). A reproduction made 100 searches in 100 observations and retried an incomplete route 50 times in 50 observations.
+
+`generateRemotePlan()` now shares the existing 75-tick heavy-planning cadence across scheduled and Scout callers, including failed attempts. The existing Scheduler gates optional generation on live and rolling CPU. Controller ownership and danger checks precede the cooldown; movement, remote harvesting, route validation/rebuild owners, and economic admission remain in place. Attempts are keyed by home and remote room, persist across module resets, and ignore future timestamps after rollback. The same reproduction now makes **two searches in 100 observations**, and one incomplete search in 50. These are call-count measurements, not engine CPU promises.
+
+The validated pre-existing Freighter renewal code was deployed as part of this synchronization. It forecasts natural expiries and capacity-matched successors, preserves predecessor cargo and jobs, and falls back to ordinary recovery when funding, deadlines, damage, or routes invalidate consolidation. No arbitrary population ceiling or manual retirement was added.
+
+The deployment workflow also repairs package scripts that pointed to removed legacy tests. Build identification is on demand, with no runtime hashing or additional live Memory fields. The planning change adds one timestamp to each already-stored remote room record; it adds no growing history or second scheduler.
+
+## Validation
+
+Deployment validation passed: **29 renewal scenarios, 7 remote-planning scenarios, 8 deployment scenarios**, 109 resolved/reachable modules with zero dependency cycles, and 14 movement/pathfinding call sites within the existing ownership contract. Two additional deployment safeguards were verified afterward (46 scenarios total): reject target-only modules before copying, and recognize a previous verified release. Final `npm run validate` passed with the same runtime fingerprint; see `validation/live-2026-11-08/final-validation.log`. All 109 runtime modules also passed JavaScript syntax compilation. New regressions first reproduced the route-planning defect, then passed after correction. Coverage includes incomplete routes, current ownership/danger updates, CPU pressure, module resets, tick rollback, independent homes, and shared callers. The deployment suite checks byte equality, drift refusal, backups, rollback, settings preservation, and partial-write recovery.
+
+The current repository's legacy test collection was removed before this task. Historical reports with hundreds of checks are not evidence of current test coverage. Tests model decisions and API calls; they do not simulate engine traffic, attacks, or lifetime profitability.
+
+## Live verification
+
+Evidence is saved in `validation/live-2026-11-08/`. The first post-deployment sample was affected by the reload: tick 84143544 recorded 94.12 CPU and the rolling average at 84143551 was 24.19 with bucket 9124. No runtime error accompanied the reload. By tick 84143569, rolling CPU had fallen to 16.93 and bucket recovered to 9164. The same ten haulers delivered 350 energy over those 18 ticks; local CARRY remained covered and backlog was 202. Further samples at ticks 84143597, 84143624, and 84143653 showed rolling CPU 16.54, 15.40, and 15.96. Bucket recovered to 9330. Across 102 ticks from the first post-reload sample, the same ten worker generations picked up 750 and delivered 1,152 energy; controller progress rose by 756. Every sample retained 10/10 stationed WORK and 18/18 local CARRY, with no recorded transport workers lacking progress and no runtime errors. Backlog ranged from 50 to 302, rather than continuously declining. Four or five empty workers were idle in these snapshots. The queue stayed empty at the last sample; no new Freighter was needed.
+
+A separate build/CPU confirmation at tick 84143694 again returned the correct 109-module build, a 20 CPU baseline, rolling CPU 16.58, and bucket 9410. A supplementary require-based module-inspection query returned no visible result; it is not treated as successful evidence. Subsequent plain diagnostic queries succeeded. New remote planning timestamps at 84143585 (W39S48) and 84143634 (W39S49), together with a Scout still moving between rooms, show discovery continuing under the new pressure guard.
+
+These are observed short-term CPU and continuity improvements compared with the pre-deployment samples, not a controlled estimate of causal savings. Post-reload population composition and Scout locations vary; do not infer an exact percentage improvement or a proven increase in net income. Natural cohort expiry had not occurred, so reduced Freighter headcount and lifetime economics remain unverified.
+
+Console queries were spaced across ticks instead of run continuously. They execute after `main` under the [normal tick rules](https://docs.screeps.com/game-loop.html), and consume CPU too. Role counters and per-phase totals are different samples; stale role records are identified by their tick. Observed post-reload trends support the change but cannot isolate its causal savings from changing rooms, creep activity, and natural simulation variation.
+
+
+Final complete gameplay sample: **tick 84143704**, STABLE, rolling CPU **16.13 / 20**, bucket **9423**, 10/10 stationed harvesting WORK, 18/18 local CARRY, source backlog 202, one idle worker, zero transport workers flagged without progress, empty spawn queue, and no runtime errors. Over **153 ticks** from the first post-reload sample, the same ten worker generations increased pickup counters by 1,358 and delivery counters by **1,552**; controller progress rose by 1,143 and the bucket gained 299. Scout role CPU EMA was 1.21 at tick 84143700. See `post-comparison.json` for the matched-generation calculation.
+
+Flow counters measure observed energy-cargo increases/decreases. Decreases can include controlled overflow drops, and increases can include pickups/withdrawals; these counters demonstrate transport activity, not downstream consumption or profit. No new delivery instrumentation or artificial work was introduced. Natural expiry and a complete creep lifetime remain outside this observation window.
+
+## Limits and follow-up
+
+A creep lifetime and natural cohort expiry take substantially longer than the immediate upload check on the official shard. Long-run fleet consolidation, CPU savings, remote profitability, and lifetime economics require continued observations. Some idle capacity is expected during source regeneration and changing sink demand; no universal movement deadlock was established. Planned remote CARRY requirements are not proof of delivered remote income. Diagnose routes, sink pressure, fresh production/delivery evidence, and CPU admission before changing role limits.

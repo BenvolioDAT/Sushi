@@ -1,0 +1,34 @@
+{
+  "tick": 84143694,
+  "build": {
+    "id": "8f5cd5abbb6d1f0bf8d90dcec24074b02281b865375864103e63fe72be0a2c5e",
+    "modules": 109
+  },
+  "limit": 20,
+  "cpu": {
+    "tick": 84143694,
+    "samples": 1000,
+    "total": 16.575610593252254,
+    "phases": {
+      "diagnostics": 1.4825208027980226,
+      "bootstrapIndex": 0.4205985783395943,
+      "combat": 0.27115841766344023,
+      "economy": 2.109853457065771,
+      "colonyState": 0.20055757250724315,
+      "capacity": 0.0638399910607875,
+      "remotePlanning": 0.0635201638847225,
+      "roomPlanning": 0.02528347573272628,
+      "roadPlanning": 0.13495225027681587,
+      "hiveMindStrategy": 0.04907655509103335,
+      "planning": 2.662121897005944,
+      "spawnPlanning": 2.2908117295033286,
+      "roomStructures": 0.18755579397259955,
+      "creepExecution": 5.684572308915074,
+      "traffic": 2.923087425118126,
+      "visuals": 0.5611920657485149
+    },
+    "bucket": 9410,
+    "mode": "critical"
+  },
+  "bucket": 9410
+}

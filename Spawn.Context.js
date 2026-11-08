@@ -93,4 +93,37 @@ function capability(roomName, role, partType) {
     }
     return result;
 }
-module.exports = { snapshot, capability, roleOf, healthy, isCombatRole };
+function replacementClaims(roomName, role, excludeRequest) {
+    const claimed = new Set(), seen = new Set(), index = TickIndex.get();
+    if (!['Tech', 'Artificer'].includes(role)) return claimed;
+    const predecessor = name => {
+        const c = Game.creeps[name];
+        return c && roleOf(c) === role && c.memory.homeRoom === roomName &&
+            c.ticksToLive > 0 && c.ticksToLive <= 150 ? c : null;
+    };
+    const add = (memory, work) => {
+        if (!memory || memory.role !== role || memory.homeRoom !== roomName ||
+            !(memory.workerReplacementWork > 0) || work < memory.workerReplacementWork) return;
+        for (const entry of (Array.isArray(memory.workerPredecessors) ? memory.workerPredecessors : []).slice(0,50)) {
+            const old = predecessor(entry?.name);
+            if (old && entry.deathAt === Game.time + old.ticksToLive &&
+                (role !== 'Artificer' || old.memory.artificerWorkCategory === memory.artificerWorkCategory)) claimed.add(old.name);
+        }
+    };
+    for (const c of index.creepsByHomeRoom.get(roomName) || []) {
+        seen.add(c.name);
+        add(c.memory, (c.body || []).filter(p => (p.type || p) === WORK && p.hits !== 0).length);
+    }
+    for (const spawn of (index.ownedSpawnsByRoom.get(roomName) || []).concat(require('Spawn.Intents').get().spawns)) {
+        const name = spawn.spawning?.name;
+        if (spawn.room.name !== roomName || !name || seen.has(name)) continue;
+        const memory = spawn.request?.memory || Memory.creeps?.[name];
+        add(memory, memory?.spawnCapability?.work || 0); seen.add(name);
+    }
+    for (const q of HiveMemory.getRoomSpawnMemory(roomName).queue) {
+        if (q === excludeRequest || q.expiresAt < Game.time || roleOf(q) !== role) continue;
+        for (const name of (Array.isArray(q.replacementFor) ? q.replacementFor : []).slice(0,50)) if (predecessor(name)) claimed.add(name);
+    }
+    return claimed;
+}
+module.exports = { snapshot, capability, replacementClaims, roleOf, healthy, isCombatRole };

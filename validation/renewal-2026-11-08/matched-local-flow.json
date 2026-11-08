@@ -1,0 +1,44 @@
+[
+  {
+    "from": 84150120,
+    "to": 84150430,
+    "ticks": 310,
+    "matchedWorkers": 6,
+    "picked": 4680,
+    "delivered": 4360,
+    "controllerProgress": 298,
+    "backlog": [
+      452,
+      362
+    ],
+    "cpu": [
+      20.25783474201655,
+      16.470910257483236
+    ],
+    "bucket": [
+      7508,
+      6195
+    ]
+  },
+  {
+    "from": 84150430,
+    "to": 84150494,
+    "ticks": 64,
+    "matchedWorkers": 6,
+    "picked": 1087,
+    "delivered": 1200,
+    "controllerProgress": 20,
+    "backlog": [
+      362,
+      474
+    ],
+    "cpu": [
+      16.470910257483236,
+      32.29632795789888
+    ],
+    "bucket": [
+      6195,
+      6403
+    ]
+  }
+]

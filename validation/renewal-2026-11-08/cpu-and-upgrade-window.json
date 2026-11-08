@@ -1,0 +1,580 @@
+{
+  "tick": 84150463,
+  "cpu": {
+    "tick": 84150463,
+    "phases": {
+      "diagnostics": 1.3890084000001934,
+      "bootstrapIndex": 0.34176350000007005,
+      "combat": 0.26729169999998703,
+      "economy": 1.9315321999999924,
+      "colonyState": 0.11330409999982294,
+      "capacity": 0.007045999999945707,
+      "remotePlanning": 0.007737599999927625,
+      "roomPlanning": 0.002137199999879158,
+      "roadPlanning": 0.001557399999910558,
+      "hiveMindStrategy": 0.08039720000010675,
+      "planning": 2.1538230999997268,
+      "spawnPlanning": 0.83973240000023,
+      "roomStructures": 0.1705587000003561,
+      "creepExecution": 3.4902008999999907,
+      "traffic": 1.802416299999777,
+      "visuals": 0.5968586000001324,
+      "pixels": 0.0030472000000827393,
+      "telemetry": 0.03607630000010431
+    },
+    "total": 11.137119499999926,
+    "bucket": 6291,
+    "mode": "normal",
+    "operations": {
+      "tick": 84150450,
+      "costs": {
+        "movement": {
+          "calls": 8,
+          "cpu": 0.5836623000000145,
+          "ops": 0,
+          "incomplete": 0
+        },
+        "pickupSelection": {
+          "calls": 3,
+          "cpu": 0.31652790000021014,
+          "ops": 0,
+          "incomplete": 0
+        },
+        "deliverySelection": {
+          "calls": 3,
+          "cpu": 0.07795839999994314,
+          "ops": 0,
+          "incomplete": 0
+        },
+        "travelerPath": {
+          "calls": 1,
+          "cpu": 0.042568500000015774,
+          "ops": 1,
+          "incomplete": 0
+        }
+      }
+    },
+    "growth": {
+      "W39S47": {
+        "rcl": 3,
+        "controllerProgress": 50475,
+        "controllerProgressTotal": 135000,
+        "estimatedUpgradePerTick": 7.26,
+        "plannedUpgradePerTick": 7.26,
+        "actualControllerProgressPerTick": 0.16,
+        "rollingUpgradeRate": 0.16,
+        "controllerUtilization": 2,
+        "estimatedTicksToNextRcl": 528282,
+        "livingTechWork": 1,
+        "queuedTechWork": 0,
+        "desiredTechWork": 8,
+        "localGrossIncome": 16,
+        "remoteGrossIncome": 0,
+        "plannedRemoteIncome": 20,
+        "provenRemoteIncome": 0,
+        "provenRemoteSources": 0,
+        "estimatedNetIncome": 10.91,
+        "safeReserveTarget": 300,
+        "storedEnergy": 10600,
+        "energyAboveReserve": 10300,
+        "activeRemoteSources": 4,
+        "candidateRemoteSources": 5,
+        "reservedRemoteSources": 0,
+        "unreservedActiveRemoteSources": 4,
+        "remoteBacklog": 406,
+        "remoteReservedCarry": 0,
+        "remoteRequiredCarry": 1,
+        "remoteAvailableCarry": 0,
+        "oldestRemoteHaulAge": 5234,
+        "mode": "GROWTH_AGGRESSIVE",
+        "blockedReason": "CONTROLLER_GROWTH_ACTIVE"
+      }
+    },
+    "rolling": {
+      "tick": 84150463,
+      "samples": 1000,
+      "total": 14.979635712034112,
+      "phases": {
+        "diagnostics": 1.511707541064576,
+        "bootstrapIndex": 0.3858697090567973,
+        "combat": 0.30382860479284346,
+        "economy": 2.0500648845699074,
+        "colonyState": 0.15455505334468145,
+        "capacity": 0.04668062863745998,
+        "remotePlanning": 0.7222080666503388,
+        "roomPlanning": 0.06942410574843616,
+        "roadPlanning": 0.12109357955369171,
+        "hiveMindStrategy": 0.07724300317996309,
+        "planning": 3.257195078337046,
+        "spawnPlanning": 2.338857842540352,
+        "roomStructures": 0.18957876484576458,
+        "creepExecution": 4.113957308446244,
+        "traffic": 2.1192277548423766,
+        "visuals": 0.6471017995973584,
+        "pixels": 0.0032182517712484593
+      },
+      "bucket": 6291,
+      "mode": "normal"
+    },
+    "roles": {
+      "Extractor": {
+        "cpu": 0.6063568588883017,
+        "totalCpu": 2.4474556723220746,
+        "count": 4,
+        "utilization": 1,
+        "samples": 818,
+        "tick": 84150450
+      },
+      "Tech": {
+        "cpu": 0.3120679273303259,
+        "totalCpu": 0.3121276220422439,
+        "count": 1,
+        "utilization": 0.7965800711254583,
+        "samples": 818,
+        "tick": 84150450
+      },
+      "Freighter": {
+        "cpu": 0.38373846902407627,
+        "totalCpu": 2.7697607752204054,
+        "count": 6,
+        "utilization": 0.8601488046726686,
+        "samples": 818,
+        "tick": 84150450
+      },
+      "Foreman": {
+        "cpu": 0.37434024060401916,
+        "totalCpu": 0.37434024060401916,
+        "count": 1,
+        "utilization": 1,
+        "samples": 817,
+        "tick": 84150450
+      },
+      "Artificer": {
+        "cpu": 0.423475930748524,
+        "totalCpu": 2.0035385610265073,
+        "count": 4,
+        "utilization": 0.9463128485397434,
+        "samples": 818,
+        "tick": 84150450
+      },
+      "Scout": {
+        "cpu": 1.0724798749070974,
+        "totalCpu": 1.0724798749070974,
+        "count": 1,
+        "utilization": 1,
+        "samples": 232,
+        "tick": 84149575
+      },
+      "Volley": {
+        "cpu": 0.022127457111956347,
+        "totalCpu": 0.022127457111956347,
+        "count": 1,
+        "utilization": 1,
+        "samples": 60,
+        "tick": 84149075
+      }
+    },
+    "roleRooms": {
+      "W39S47": {
+        "Extractor": {
+          "cpu": 0.6063568588883017,
+          "totalCpu": 2.4474556723220746,
+          "count": 4,
+          "utilization": 1,
+          "samples": 818,
+          "tick": 84150450
+        },
+        "Tech": {
+          "cpu": 0.3120679273303259,
+          "totalCpu": 0.3121276220422439,
+          "count": 1,
+          "utilization": 0.7965800711254583,
+          "samples": 818,
+          "tick": 84150450
+        },
+        "Freighter": {
+          "cpu": 0.38373846902407627,
+          "totalCpu": 2.7697607752204054,
+          "count": 6,
+          "utilization": 0.8601488046726686,
+          "samples": 818,
+          "tick": 84150450
+        },
+        "Foreman": {
+          "cpu": 0.37434024060401916,
+          "totalCpu": 0.37434024060401916,
+          "count": 1,
+          "utilization": 1,
+          "samples": 817,
+          "tick": 84150450
+        },
+        "Artificer": {
+          "cpu": 0.423475930748524,
+          "totalCpu": 2.0035385610265073,
+          "count": 4,
+          "utilization": 0.9463128485397434,
+          "samples": 818,
+          "tick": 84150450
+        },
+        "Scout": {
+          "cpu": 1.0724798749070974,
+          "totalCpu": 1.0724798749070974,
+          "count": 1,
+          "utilization": 1,
+          "samples": 232,
+          "tick": 84149575
+        },
+        "Volley": {
+          "cpu": 0.022127457111956347,
+          "totalCpu": 0.022127457111956347,
+          "count": 1,
+          "utilization": 1,
+          "samples": 60,
+          "tick": 84149075
+        }
+      }
+    }
+  },
+  "capacity": {
+    "tick": 84150459,
+    "mode": "NORMAL",
+    "cpu": {
+      "limit": 20,
+      "rollingUsed": 14.852707019426413,
+      "targetCeiling": 15.600000000000001,
+      "bucket": 6285,
+      "headroom": 0.7472929805735884,
+      "mode": "normal",
+      "phases": {
+        "diagnostics": 1.4600501271919977,
+        "bootstrapIndex": 0.4143969753269472,
+        "combat": 0.3076427203032435,
+        "economy": 2.1234000726344315,
+        "colonyState": 0.16979972187963413,
+        "capacity": 0.05189764926664506,
+        "remotePlanning": 0.06677151799408826,
+        "roomPlanning": 0.1061341029712062,
+        "roadPlanning": 0.2009037682699196,
+        "hiveMindStrategy": 0.08582139081939827,
+        "planning": 2.8228748620164525,
+        "spawnPlanning": 2.3702391946745713,
+        "roomStructures": 0.19870280773388685,
+        "creepExecution": 4.443586474701079,
+        "traffic": 2.0722885147122585,
+        "visuals": 0.6380578979125326,
+        "pixels": 0.0033057282024164525
+      },
+      "sampled": true
+    },
+    "spawn": {
+      "count": 1,
+      "replacementLoad": 0.192
+    },
+    "rooms": {
+      "W39S47": {
+        "mode": "RECOVERY",
+        "reason": "ECONOMY_RECOVERY",
+        "cpu": {
+          "limit": 20,
+          "rollingUsed": 14.852707019426413,
+          "targetCeiling": 15.600000000000001,
+          "bucket": 6285,
+          "headroom": 0.7472929805735884,
+          "mode": "normal",
+          "phases": {
+            "diagnostics": 1.4600501271919977,
+            "bootstrapIndex": 0.4143969753269472,
+            "combat": 0.3076427203032435,
+            "economy": 2.1234000726344315,
+            "colonyState": 0.16979972187963413,
+            "capacity": 0.05189764926664506,
+            "remotePlanning": 0.06677151799408826,
+            "roomPlanning": 0.1061341029712062,
+            "roadPlanning": 0.2009037682699196,
+            "hiveMindStrategy": 0.08582139081939827,
+            "planning": 2.8228748620164525,
+            "spawnPlanning": 2.3702391946745713,
+            "roomStructures": 0.19870280773388685,
+            "creepExecution": 4.443586474701079,
+            "traffic": 2.0722885147122585,
+            "visuals": 0.6380578979125326,
+            "pixels": 0.0033057282024164525
+          },
+          "sampled": true,
+          "share": 0.7472929805735884
+        },
+        "spawn": {
+          "count": 1,
+          "replacementLoad": 0.192,
+          "plannedLoad": 0,
+          "burstLoad": 0.04,
+          "emergencyReserve": 0.25,
+          "headroom": 0.518,
+          "currentUtilization": 1,
+          "utilization": 0.232,
+          "commitmentLoad": 0
+        },
+        "energy": {
+          "known": true,
+          "stored": 10627,
+          "reserve": 300,
+          "aboveReserve": 10327,
+          "grossIncome": 16,
+          "sustainableNetIncome": 10.91,
+          "trend": 20.9,
+          "drawdownSpend": 0,
+          "healthy": false,
+          "productiveRecovery": false
+        },
+        "population": {
+          "current": 16,
+          "mandatory": 15,
+          "economic": 1,
+          "discretionary": 1,
+          "baseline": 20,
+          "classes": {
+            "ECONOMIC": 1,
+            "MANDATORY": 15
+          },
+          "softCap": 15,
+          "hardSafetyCap": 56,
+          "headroom": 0,
+          "discretionarySlots": 0
+        }
+      }
+    }
+  },
+  "spawn": {
+    "tick": 84150463,
+    "spawnName": null,
+    "idle": false,
+    "queueLength": 0,
+    "energyAvailable": 723,
+    "stage": "queue",
+    "harvestConstraint": "WORKFORCE",
+    "recommendedAction": "complete miner handoff",
+    "attempts": [
+      {
+        "tick": 84150463,
+        "stage": "queue",
+        "queueLength": 0,
+        "harvestConstraint": "WORKFORCE",
+        "recommendedAction": "complete miner handoff",
+        "result": null,
+        "reason": "replacement or source worker pending; complete miner handoff"
+      }
+    ],
+    "result": null,
+    "reason": "replacement or source worker pending; complete miner handoff",
+    "queueRemaining": 0,
+    "status": "BUSY"
+  },
+  "block": {
+    "tick": 84150463,
+    "role": "Scout",
+    "requestId": "legacy:W39S47:Scout::::",
+    "allowed": false,
+    "reason": "CPU_CAPACITY_EXHAUSTED",
+    "replacementCount": 0,
+    "populationClass": "ECONOMIC",
+    "softPopulation": 15,
+    "hardPopulation": 56,
+    "spawnLoad": 0.21866666666666668
+  },
+  "ops": {
+    "tick": 84150450,
+    "costs": {
+      "movement": {
+        "calls": 8,
+        "cpu": 0.5836623000000145,
+        "ops": 0,
+        "incomplete": 0
+      },
+      "pickupSelection": {
+        "calls": 3,
+        "cpu": 0.31652790000021014,
+        "ops": 0,
+        "incomplete": 0
+      },
+      "deliverySelection": {
+        "calls": 3,
+        "cpu": 0.07795839999994314,
+        "ops": 0,
+        "incomplete": 0
+      },
+      "travelerPath": {
+        "calls": 1,
+        "cpu": 0.042568500000015774,
+        "ops": 1,
+        "incomplete": 0
+      }
+    }
+  },
+  "sources": [
+    {
+      "id": "5bbcaadf9099fc012e63255e",
+      "activeWork": 5,
+      "stationedWork": 5,
+      "requiredWork": 5,
+      "spawningWork": 0,
+      "queuedWork": 0,
+      "stagingWork": 0,
+      "income": 10,
+      "expectedIncome": 10,
+      "assigned": 1,
+      "backlog": 224,
+      "seats": 1,
+      "availableSeats": 0,
+      "distance": 25,
+      "haulIncome": 10,
+      "haulCarry": 10.961279999999999,
+      "haulRoundTrip": 54,
+      "maximumWork": 5,
+      "plannedWork": 5,
+      "miners": [
+        {
+          "name": "Extractor_003",
+          "activeWork": 5,
+          "body": {
+            "bodyParts": 9,
+            "cost": 700,
+            "spawnTime": 27,
+            "WORK": 5,
+            "CARRY": 1,
+            "MOVE": 3,
+            "expectedLifetime": 1500,
+            "estimatedReplacementLoad": 0.018,
+            "usefulWorkPerCpuEstimate": 25,
+            "usefulWorkPerSpawnTick": 0.18518518518518517
+          },
+          "ttl": 1213,
+          "spawning": false,
+          "retiring": false,
+          "replaces": null,
+          "state": "miningLocalSource"
+        }
+      ],
+      "replacement": "NONE",
+      "constraint": "COVERED",
+      "planningReason": "existing workers already cover source",
+      "recommendedAction": "maintain harvesting and logistics",
+      "preferredBody": [
+        "work",
+        "work",
+        "work",
+        "work",
+        "work",
+        "move",
+        "move",
+        "move",
+        "carry"
+      ],
+      "preferredCost": 700
+    },
+    {
+      "id": "5bbcaadf9099fc012e63255f",
+      "activeWork": 5,
+      "stationedWork": 3,
+      "requiredWork": 5,
+      "spawningWork": 5,
+      "queuedWork": 0,
+      "stagingWork": 0,
+      "income": 6,
+      "expectedIncome": 10,
+      "assigned": 3,
+      "backlog": 80,
+      "seats": 6,
+      "availableSeats": 3,
+      "distance": 9,
+      "haulIncome": 10,
+      "haulCarry": 4.423466666666666,
+      "haulRoundTrip": 22,
+      "maximumWork": 5,
+      "plannedWork": 5,
+      "miners": [
+        {
+          "name": "Extractor_005",
+          "activeWork": 3,
+          "body": {
+            "bodyParts": 6,
+            "cost": 450,
+            "spawnTime": 18,
+            "WORK": 3,
+            "CARRY": 1,
+            "MOVE": 2,
+            "expectedLifetime": 1500,
+            "estimatedReplacementLoad": 0.012,
+            "usefulWorkPerCpuEstimate": 15,
+            "usefulWorkPerSpawnTick": 0.16666666666666666
+          },
+          "ttl": 79,
+          "spawning": false,
+          "retiring": false,
+          "replaces": null,
+          "state": "miningLocalSource"
+        },
+        {
+          "name": "Extractor_001",
+          "activeWork": 2,
+          "body": {
+            "bodyParts": 4,
+            "cost": 300,
+            "spawnTime": 12,
+            "WORK": 2,
+            "CARRY": 1,
+            "MOVE": 1,
+            "expectedLifetime": 1500,
+            "estimatedReplacementLoad": 0.008,
+            "usefulWorkPerCpuEstimate": 10,
+            "usefulWorkPerSpawnTick": 0.16666666666666666
+          },
+          "ttl": 1111,
+          "spawning": false,
+          "retiring": false,
+          "replaces": null,
+          "state": "waitingForContainerSeat"
+        },
+        {
+          "name": "Extractor_002",
+          "activeWork": 0,
+          "body": {
+            "bodyParts": 9,
+            "cost": 700,
+            "spawnTime": 27,
+            "WORK": 5,
+            "CARRY": 1,
+            "MOVE": 3,
+            "expectedLifetime": 1500,
+            "estimatedReplacementLoad": 0.018,
+            "usefulWorkPerCpuEstimate": 25,
+            "usefulWorkPerSpawnTick": 0.18518518518518517
+          },
+          "spawning": true,
+          "retiring": false,
+          "replaces": "Extractor_005",
+          "state": null
+        }
+      ],
+      "replacement": "PENDING",
+      "constraint": "WORKFORCE",
+      "planningReason": "replacement or source worker pending",
+      "recommendedAction": "complete miner handoff",
+      "preferredBody": [
+        "work",
+        "work",
+        "work",
+        "work",
+        "work",
+        "move",
+        "move",
+        "move",
+        "carry"
+      ],
+      "preferredCost": 700
+    }
+  ],
+  "pixels": {
+    "current": null,
+    "last": null
+  }
+}

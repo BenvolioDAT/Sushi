@@ -42,7 +42,9 @@ function roster(input, own) {
     let pending = 0, queueWait = 0, queueCost = 0;
     for (const q of input.queue || []) {
         if (!q || q.expiresAt < Game.time || sameRequest(q, own)) continue;
-        queueWait += (q.body || []).length * 3; // Conservative: all other work executes first.
+        // Follow actual spawn ordering. Without a supplied priority retain the
+        // conservative estimate; equal/earlier requests and busy spawns count.
+        if (!Number.isFinite(input.priority) || (q.priority || 0) >= input.priority) queueWait += (q.body || []).length * 3;
         queueCost += Bodies.cost(q.body);
         if (matches(q)) { incoming += parts(q, CARRY); pending++; claim(q); }
     }
@@ -82,9 +84,17 @@ function plan(input) {
     const ideal = body(input, input.required, input.capacity);
     if (!ideal) return null;
     const horizon = ideal.spawnTime + input.travel * 2 + REFILL_WAIT;
-    const candidates = fleet.workers.filter(c => !fleet.claims.has(c.name) && c.ticksToLive > 0 &&
-        c.ticksToLive <= horizon).sort((a, b) => a.ticksToLive - b.ticksToLive || a.name.localeCompare(b.name));
     const needBy = shortfallAt(input, fleet);
+    // Only start when an actual shortfall is approaching. Younger peers may
+    // join that already-needed replacement if the existing cost/lifetime
+    // payback checks justify it; a narrow peer-age cutoff strands fragments.
+    if (needBy - Game.time > horizon) return null;
+    // Excess capacity may already cover early expiries, for example after an
+    // ordinary successor is born. Those workers cannot count as another saving
+    // or claim a later peer away from its real consolidation cohort.
+    const candidates = fleet.workers.filter(c => !fleet.claims.has(c.name) && c.ticksToLive > 0 &&
+        Game.time + c.ticksToLive >= needBy)
+        .sort((a, b) => a.ticksToLive - b.ticksToLive || a.name.localeCompare(b.name));
     let selected = null;
     for (let i = 1; i < Math.min(50, candidates.length); i++) {
         const predecessors = candidates.slice(0, i + 1);
@@ -98,7 +108,8 @@ function plan(input) {
         // lifetime in an overlapping fleet on exceptionally long routes.
         const saved = predecessors.length - 1;
         const usefulAfter = 1500 - Math.max(0, through - Game.time - profile.spawnTime);
-        if (usefulAfter * saved <= Math.max(0, needBy - Game.time - profile.spawnTime) ||
+        const replacementLead = Math.max(100, profile.spawnTime + input.travel + ARRIVAL_MARGIN);
+        if (usefulAfter <= replacementLead || usefulAfter * saved <= Math.max(0, needBy - Game.time - profile.spawnTime) ||
             profile.cost > predecessors.reduce((sum, c) => sum + Bodies.cost(c.body), 0)) continue;
         selected = { body: profile.body, carry: profile.CARRY,
             predecessors: predecessors.map(c => ({ name: c.name, deathAt: Game.time + c.ticksToLive })),
@@ -115,15 +126,15 @@ function evaluate(input, request) {
         !Number.isSafeInteger(renewal.plannedAt) || renewal.plannedAt > Game.time || !input.healthy ||
         !Array.isArray(renewal.predecessors) || renewal.predecessors.length > 50) return fallback('renewal no longer applicable');
     const fleet = roster(input, request);
+    const needBy = shortfallAt(input, fleet);
     const entries = renewal.predecessors.filter(e => validPredecessor(e, Game.creeps[e?.name]) &&
-        input.matches(Game.creeps[e.name]) && !fleet.claims.has(e.name));
+        input.matches(Game.creeps[e.name]) && !fleet.claims.has(e.name) && e.deathAt >= needBy);
     if (entries.length < 2) return fallback('renewal cohort expired or changed assignment');
     const through = Math.max(...entries.map(e => e.deathAt));
     const missing = futureMissing(input, fleet, through);
     if (missing === 0 || fleet.incoming > 0) return { active: true, obsolete: true, missing: 0, reason: 'future hauling already covered' };
     const carry = Math.min(missing, request.requestedCarryParts || parts(request, CARRY));
     const profile = body(input, carry, input.capacity);
-    const needBy = shortfallAt(input, fleet);
     if (!profile || profile.CARRY !== carry || carry < 2 || !Number.isFinite(fleet.wait)) return fallback('efficient renewal body no longer viable');
     const ready = fleet.wait + profile.spawnTime + input.travel + ARRIVAL_MARGIN;
     const funded = profile.cost <= fleet.budget;

@@ -2,6 +2,7 @@ const assert = require('assert');
 const mocks = require('./mock-screeps');
 let passed = 0;
 function test(name, fn) {
+    if (require.main !== module) return;
     try { fn(); passed++; console.log('PASS ' + name); }
     catch (error) { process.exitCode = 1; console.error('FAIL ' + name, error); }
 }
@@ -100,7 +101,10 @@ test('young workers and isolated expiries do not trigger speculative extra haule
 test('cohort body accounts for excess capacity instead of replacing every old CARRY', () => {
     const f = world(4); for (let i = 0; i < 6; i++) f.unit('old' + i, 1, 90 + i * 5);
     const result = f.plan(); assert.strictEqual(result.requested, 1, result.reason);
-    assert.ok(f.queue[0].requestedCarryParts < f.queue[0].replacementFor.length);
+    assert.ok(f.queue[0].requestedCarryParts >= 2 && f.queue[0].requestedCarryParts <= 4);
+    assert.strictEqual(f.queue[0].replacementFor.length, f.queue[0].requestedCarryParts);
+    assert.ok(f.queue[0].replacementFor.every(name => !['old0','old1'].includes(name)),
+        'expiries already covered by excess are not a claimed worker saving');
 });
 
 test('an imminent expiry or blocked spawn cannot delay hauling behind a large body', () => {
@@ -224,6 +228,9 @@ test('remote cohorts use remote travel and never include local workers', () => {
     for (let i = 0; i < 4; i++) f.unit('remote' + i, 1, 180 + i, 'remoteHauling');
     f.memory.remotePlanner = { activeSourceIds: ['r'], sourceInfos: {
         r: { sourceId: 'r', roomName: 'W38S47', active: true, effectiveEnergyPerTick: 1.6, roundTripTicks: 100 } } };
+    const miner = f.unit('remoteMiner', 1, 1000);
+    miner.memory = { role: 'Extractor', homeRoom: f.room.name, remoteMining: true, sourceId: 'r' };
+    miner.body = [WORK, MOVE].map(type => ({ type, hits: 100 })); f.refresh();
     const p = f.E.freighterRenewalPlan(f.room, 'remote');
     assert.ok(p); assert.ok(p.predecessors.every(e => e.name.startsWith('remote')));
     assert.strictEqual(p.carry, 4);
@@ -240,6 +247,9 @@ test('closed remote routes invalidate future hauling renewals', () => {
     for (let i = 0; i < 4; i++) f.unit('remote' + i, 1, 180 + i, 'remoteHauling');
     f.memory.remotePlanner = { activeSourceIds: ['r'], sourceInfos: {
         r: { sourceId: 'r', roomName: 'W38S47', active: true, effectiveEnergyPerTick: 1.6, roundTripTicks: 100 } } };
+    const miner = f.unit('remoteMiner', 1, 1000);
+    miner.memory = { role: 'Extractor', homeRoom: f.room.name, remoteMining: true, sourceId: 'r' };
+    miner.body = [WORK, MOVE].map(type => ({ type, hits: 100 })); f.refresh();
     f.manager.requestDynamicFreightersForRoom(f.room, 112, { localCarryRequired: 2, remoteCarryRequired: 4, desiredCarryParts: 6 });
     assert.strictEqual(f.queue.length, 1);
     f.memory.remotePlanner.sourceInfos.r.route = { valid: false };
@@ -397,5 +407,105 @@ test('a protected emergency queue is considered before committing to a cohort de
     assert.strictEqual(f.plan().requested, 0);
 });
 
-console.log('Freighter renewal scenarios passed: ' + passed);
+test('the real light planning path can request a renewal while normal planning is CPU-skipped', () => {
+    const f = world(); for (let i = 0; i < 6; i++) f.unit('old' + i, 1, 110 + i * 5);
+    const report = f.manager.runForRoom(f.room, { skipNormalPlanning: true });
+    assert.strictEqual(report.skippedForCpu, true);
+    assert.ok(f.queue.some(q => q.freighterRenewal), 'CPU-skipped producer must still submit a valid worker-saving forecast');
+    assert.strictEqual(f.queue.filter(q => q.freighterRenewal).length, 1);
+});
+
+test('critical CPU through the top-level planner admits local renewal without remote expansion or duplication', () => {
+    const f = world(); for (let i = 0; i < 6; i++) f.unit('old' + i, 1, 110 + i * 5);
+    Game.time += 5; f.refresh(); Game.cpu.getUsed = () => 19;
+    global.__sushiCpuRolling = { total: 21 };
+    const report = f.manager.run();
+    assert.strictEqual(report.cpuMode, 'critical');
+    assert.ok(f.queue.some(q => q.freighterRenewal));
+    f.manager.run();
+    assert.strictEqual(f.queue.filter(q => q.role === 'Freighter').length, 1);
+    assert.ok(f.queue.filter(q => q.role === 'Freighter').every(q => q.memory.assignmentFunction === 'localLogistics'));
+});
+
+test('capacity admission uses the validated hauling shortfall deadline when excess covers an earlier expiry', () => {
+    const f = world(18, 800, 52);
+    f.unit('early', 6, 9); f.unit('pairA', 3, 101); f.unit('pairB', 3, 120);
+    f.unit('youngA', 1, 400); f.unit('youngB', 1, 1200); f.unit('youngC', 4, 1250); f.unit('youngD', 6, 1300);
+    f.unit('remoteA', 8, 500, 'remoteHauling'); f.unit('remoteB', 8, 600, 'remoteHauling');
+    const forecast = f.E.freighterRenewalPlan(f.room, 'local');
+    assert.strictEqual(forecast.carry, 6); assert.strictEqual(forecast.needBy, Game.time + 101);
+    const report = f.manager.runForRoom(f.room, { skipNormalPlanning: true });
+    assert.ok(f.queue.some(q => q.freighterRenewal), JSON.stringify(report.requests));
+    assert.strictEqual(require('spawn.manager').runRoom(f.room.name).result, OK);
+    assert.strictEqual(f.calls[0].body.filter(p => p === CARRY).length, 6);
+});
+
+test('the observed mixed local fleet consolidates through light planning with no modeled delivery gap', () => {
+    const f = world(18, 800, 54);
+    [[1,200],[4,224],[6,260],[3,353],[3,419],[1,662]].forEach(([carry,ttl],i) => f.unit('old'+i,carry,ttl));
+    const readiness = new Map(); let maxQueue = 0;
+    for (let elapsed = 0; elapsed < 800; elapsed++) {
+        f.room.energyAvailable = 800; f.refresh();
+        f.manager.runForRoom(f.room, { skipNormalPlanning: true });
+        maxQueue = Math.max(maxQueue, f.queue.length);
+        if (!f.spawn.spawning) require('spawn.manager').runRoom(f.room.name);
+        const carry = Object.values(Game.creeps).filter(c => c.memory.role === 'Freighter' &&
+            (readiness.get(c.name) || 0) <= Game.time).reduce((n,c) => n+c.getActiveBodyparts(CARRY),0);
+        assert.ok(carry >= 18, 'delivery capacity gap after '+elapsed+' ticks: '+carry);
+        Game.time++;
+        for (const c of Object.values(Game.creeps)) if (--c.ticksToLive <= 0) { delete Game.creeps[c.name]; delete Memory.creeps[c.name]; }
+        if (f.spawn.spawning && --f.spawn.spawning.remainingTime <= 0) {
+            const call = f.calls.find(c => c.name === f.spawn.spawning.name);
+            const c = f.unit(call.name,call.body.filter(p=>p===CARRY).length,1500);
+            c.memory = call.memory; Memory.creeps[c.name] = c.memory;
+            readiness.set(c.name,Game.time+54); f.spawn.spawning = null;
+        }
+    }
+    const living = Object.values(Game.creeps).filter(c=>c.memory.role==='Freighter');
+    assert.strictEqual(living.length,3);
+    assert.strictEqual(living.reduce((n,c)=>n+c.getActiveBodyparts(CARRY),0),18);
+    assert.ok(maxQueue <= 1);
+    console.log('MEASURE observed mixed fleet after 800 ticks: six -> three haulers; 18 CARRY; zero modeled delivery gaps');
+});
+test('a CPU-blocked optional remote queue cannot starve a higher-priority local consolidation', () => {
+    for (const light of [true,false]) {
+    const f=world(18,800,54);
+    f.unit('pairA',3,105);f.unit('pairB',3,171);f.unit('youngA',6,1000);f.unit('youngB',4,1100);f.unit('youngC',2,1200);
+    const miner=f.unit('remoteMiner',1,1000);miner.memory={role:'Extractor',remoteMining:true,homeRoom:f.room.name,sourceId:'remote'};
+    miner.body=[WORK,WORK,WORK,MOVE].map(type=>({type,hits:100}));Memory.creeps[miner.name]=miner.memory;
+    f.memory.remotePlanner={activeSourceIds:['remote'],sourceInfos:{remote:{sourceId:'remote',roomName:'W38S47',active:true,effectiveEnergyPerTick:5,roundTripTicks:300}}};
+    const remote={role:'Freighter',body:[...Array(8).fill(CARRY),...Array(8).fill(MOVE)],priority:112,
+        requestedCarryParts:8,requestedAt:Game.time-20,expiresAt:Game.time+500,
+        memory:{role:'Freighter',homeRoom:f.room.name,assignmentFunction:'remoteHauling'}};
+    f.queue.push(remote);global.__sushiCpuRolling={total:18,samples:100};f.refresh();
+    const report=light ? f.manager.runForRoom(f.room,{skipNormalPlanning:true}) : {requests:[
+        f.manager.requestDynamicFreightersForRoom(f.room,84,{localCarryRequired:18,remoteCarryRequired:33,desiredCarryParts:51})]};
+    const local=f.queue.find(q=>q.freighterRenewal?.assignment==='local');
+    assert.ok(local,JSON.stringify(report.requests));assert.strictEqual(local.requestedCarryParts,6);
+    assert.ok(local.priority>remote.priority);assert.ok(f.queue.includes(remote));
+    assert.strictEqual(require('spawn.manager').runRoom(f.room.name).result,OK);
+    assert.strictEqual(f.calls[0].memory.assignmentFunction,'localLogistics');
+    assert.ok(f.queue.includes(remote),'the optional request is delayed, not deleted');
+    }
+});
+test('an expiring hauler can absorb younger fragments when the full successor repays its overlap', () => {
+    const f=world(18,800,54);
+    f.unit('old',3,130);f.unit('peer',1,373);f.unit('younger',1,892);
+    f.unit('largeA',4,1300);f.unit('largeB',6,1400);f.unit('largeC',3,1480);
+    const result=f.plan();assert.strictEqual(result.requested,1,result.reason);
+    assert.strictEqual(f.queue[0].requestedCarryParts,5);
+    assert.deepStrictEqual(f.queue[0].replacementFor,['old','peer','younger']);
+    assert.ok(!Game.creeps.peer.memory.freighterRetiring);assert.strictEqual(Game.creeps.younger.ticksToLive,892);
+});
+test('an almost newborn peer cannot be absorbed without a useful healthy successor lifetime', () => {
+    const f=world(18,800,54);
+    f.unit('old',3,130);f.unit('peer',1,373);f.unit('tooYoung',1,1490);
+    f.unit('largeA',4,1300);f.unit('largeB',6,1400);f.unit('largeC',3,1480);
+    const result=f.plan();assert.strictEqual(result.requested,1,result.reason);
+    assert.ok(!f.queue[0].replacementFor.includes('tooYoung'));
+    const q=f.queue[0],profile=require('BodyProfiles').metrics(q.body);
+    const latest=Math.max(...q.replacementFor.map(name=>Game.creeps[name].ticksToLive));
+    assert.ok(1500-Math.max(0,latest-profile.spawnTime)>Math.max(100,profile.spawnTime+54+10));
+});
+if (require.main === module) console.log('Freighter renewal scenarios passed: ' + passed);
 module.exports = { world };

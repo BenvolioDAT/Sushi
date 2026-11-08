@@ -575,6 +575,12 @@ function runRoomInternal(roomName, decision, selectedSpawn) {
             candidate.minerUpgrade = false;
             candidate.minimumWorkParts = finalAdmission.minimumWorkParts;
         }
+        if (candidate.minerConsolidation && !finalAdmission.minerConsolidation) {
+            delete candidate.minerConsolidation;
+            candidate.requestedWorkParts = Math.max(1, finalAdmission.localMissingWork || 1);
+            candidate.maxWorkParts = candidate.requestedWorkParts;
+            if (candidate.bodyProfile) candidate.bodyProfile.desiredWork = candidate.bodyProfile.maxWork = candidate.requestedWorkParts;
+        }
         var policy = Economy.canSpawnRequest(spawn.room, candidate);
         details.economyAllowed = policy.allowed;
         details.economyReason = policy.reason;
@@ -730,6 +736,17 @@ function runRoomInternal(roomName, decision, selectedSpawn) {
     if (finalAdmission?.freighterRenewal) request.memory.freighterPredecessors = finalAdmission.freighterPredecessors;
     request.memory.spawnCapability = { work: countBodyParts(request.body, WORK), carry: countBodyParts(request.body, CARRY),
         claim: countBodyParts(request.body, CLAIM) };
+    if (['Tech','Artificer'].includes(request.role)) {
+        const predecessors = (Array.isArray(request.replacementFor) ? request.replacementFor : []).slice(0,50).map(name => Game.creeps[name]).filter(c =>
+            c && c.memory.role === request.role && c.memory.homeRoom === roomName && c.ticksToLive > 0 && c.ticksToLive <= 150);
+        const work = request.memory.spawnCapability.work;
+        delete request.memory.workerPredecessors; delete request.memory.workerReplacementWork;
+        if (predecessors.length && work > 0) {
+            request.memory.workerPredecessors = predecessors.map(c => ({name:c.name,deathAt:Game.time+c.ticksToLive}));
+            request.memory.workerReplacementWork = Math.min(work,predecessors.reduce((sum,c) => sum +
+                (c.body || []).filter(p => (p.type || p) === WORK && p.hits !== 0).length,0));
+        }
+    }
     if (request.role === 'Freighter') request.memory.freighterSpawnCarryParts = countBodyParts(request.body, CARRY);
 
     /*
@@ -871,6 +888,14 @@ function runRoom(roomName) {
                 available: decision.energyAvailable, required: decision.requiredEnergy || decision.bodyCost });
         else if (decision.idle && memory.queue.length) Diagnostics.record('SPAWNING', 'WARN', 'SPAWN_IDLE_WITH_DEMAND',
             roomName, { queue: memory.queue.length, reason: decision.reason });
+        for (const unit of spawned) {
+            const claims = Memory.creeps?.[unit.name]?.freighterPredecessors;
+            if (unit.role === 'Freighter' && Array.isArray(claims) && claims.length > 1) {
+                Diagnostics.record('SPAWNING', 'INFO', 'FREIGHTER_RENEWAL_STARTED', roomName,
+                    { creep: unit.name, cost: unit.cost, workers: claims.length,
+                        through: Math.max(...claims.map(p => p.deathAt)), predecessors: claims.map(p => p.name).join(',') });
+            }
+        }
         return result;
     } catch (error) {
         decision.status = 'ERROR';

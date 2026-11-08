@@ -124,6 +124,7 @@ var PRIORITY = {
     ResourceCourier: 48
 };
 var ANNEX_INITIAL_PRIORITY = 64;
+var LOCAL_RENEWAL_PRIORITY = 113; // Same maintenance tier in full and light planning.
 var ANNEX_MAINTENANCE_PRIORITY = 18;
 var ANNEX_CONTINUITY_PRIORITY = 45;
 var ARTIFICER_PRIORITY_BY_CATEGORY = {
@@ -2723,6 +2724,7 @@ function requestRoleForRoom(room, role, desiredCount, priorityOverride, options)
                 role: 'Extractor', body: selected.body,
                 requestedWorkParts: action.work, maxWorkParts: action.work,
                 minimumWorkParts: action.minWork || 1, minerUpgrade: !!action.upgrade,
+                minerConsolidation: action.consolidation ? { predecessors: action.predecessors } : undefined,
                 replacementFor: action.replacementFor ? [action.replacementFor] : undefined,
                 priority: priority,
                 memory: { role: 'Extractor', homeRoom: roomName, sourceRoom: roomName,
@@ -2742,7 +2744,7 @@ function requestRoleForRoom(room, role, desiredCount, priorityOverride, options)
                 room,
                 body,
                 priority - 1,
-                sourceRequestsAdded > 0 ? 0 : 1,
+                sourceRequestsAdded > 0 || options?.localOnly ? 0 : 1,
                 options
             );
 
@@ -3216,7 +3218,7 @@ function getFreighterCarryDemand(room) {
     var activeRemoteSources = activeSources.length;
     var remoteCarryRequired = activeSources.reduce(function(total, sourceInfo) {
         var source = getRememberedSourceMemory(sourceInfo.roomName, sourceInfo.sourceId);
-        var required = Economy.remoteHaulRequirement(sourceInfo, source && source.haul);
+        var required = Economy.remoteHaulRequirement(sourceInfo, source && source.haul, room.name);
         sourceInfo.requiredCarry = required;
         return total + required;
     }, 0);
@@ -3418,8 +3420,9 @@ function requestDynamicFreightersForRoom(room, priorityOverride, demandOverride,
 
     // Look ahead across natural expiries before filling a tiny instantaneous
     // deficit. Existing workers keep hauling throughout successor production.
-    var localRenewal = Economy.freighterRenewalPlan(room, 'local');
-    var remoteRenewal = !localRenewal && demand.localCarryMissing === 0 ? Economy.freighterRenewalPlan(room, 'remote') : null;
+    var localRenewalPriority = Math.max(LOCAL_RENEWAL_PRIORITY, requestPriority + 1);
+    var localRenewal = Economy.freighterRenewalPlan(room, 'local', localRenewalPriority);
+    var remoteRenewal = !options?.localOnly && !localRenewal && demand.localCarryMissing === 0 ? Economy.freighterRenewalPlan(room, 'remote', requestPriority) : null;
     var renewal = localRenewal || remoteRenewal;
     if (demand.missingCarryParts > 0 || renewal) {
         var localRequest = demand.localCarryMissing > 0 || !!localRenewal;
@@ -3443,7 +3446,7 @@ function requestDynamicFreightersForRoom(room, priorityOverride, demandOverride,
                 replacementFor: renewal ? renewal.predecessors.map(entry => entry.name) : undefined,
                 freighterRenewal: renewal ? { assignment: renewal.assignment, plannedAt: renewal.plannedAt,
                     predecessors: renewal.predecessors, needBy: renewal.needBy, through: renewal.through } : undefined,
-                priority: requestPriority,
+                priority: localRenewal ? localRenewalPriority : requestPriority,
                 memory: {
                     role: 'Freighter',
                     homeRoom: room.name,
@@ -3461,8 +3464,12 @@ function requestDynamicFreightersForRoom(room, priorityOverride, demandOverride,
             }
 
             result.requested = addResult.requested || 0;
-            if (renewal && result.requested) result.renewal = { predecessors: renewal.predecessors,
-                carry: requestedCarry, needBy: renewal.needBy };
+            if (renewal && result.requested) {
+                result.renewal = { predecessors: renewal.predecessors, carry: requestedCarry, needBy: renewal.needBy };
+                require('Diagnostics').record('SPAWNING', 'INFO', 'FREIGHTER_RENEWAL_PLANNED', room.name,
+                    { carry: requestedCarry, workers: renewal.predecessors.length, needBy: renewal.needBy,
+                        through: renewal.through, predecessors: renewal.predecessors.map(p => p.name).join(',') });
+            }
             result.reason = addResult.reason;
             result.requestedCarryParts = result.requested ? requestedCarry : 0;
             // Admission may deduplicate or normalize a request. Read the actual
@@ -3600,6 +3607,25 @@ function runEmergencyPlanning(room, report, context) {
         ));
     }
 
+    // A CPU-skipped full pass must not starve the worker-saving renewal that
+    // reduces future CPU. Reuse current local capability data every five ticks.
+    // A remote cohort may also renew through the same bounded forecast, whose
+    // production is capped by committed miners. The current Economy target also
+    // preserves ordinary maintenance when a forecast can no longer meet its
+    // deadline; selecting an unstaffed remote source creates no demand here.
+    if ((context.skippedForCpu || !context.fullPlan) && Game.time % 5 === 0 && economy?.haul?.requiredCarry > 0) {
+        report.requests.push(requestDynamicFreightersForRoom(room, 112, {
+            localCarryRequired: economy.haul.requiredCarry, remoteCarryRequired: economy.haul.remoteCarryRequired || 0,
+            desiredCarryParts: economy.haul.requiredCarry + (economy.haul.remoteCarryRequired || 0)
+        }));
+        if (economy.harvest?.sources?.some(row => row.healthyWork < row.workRequired &&
+            !(row.workSpawning > 0 || row.workQueued > 0 || row.workStaging > 0))) {
+            report.requests.push(requestDynamicExtractorsForRoom(room, 116, {
+                desiredWork: economy.harvest.workRequired, livingWork: economy.harvest.workActive, queuedWork: 0
+            }, { localOnly: true }));
+        }
+    }
+
     if (
         room.controller &&
         room.controller.ticksToDowngrade < TECH_DOWNGRADE_DANGER_TICKS
@@ -3625,10 +3651,11 @@ function requestConsolidatingTech(room) {
     var units = (TickIndex.get().creepsByHomeRoom.get(room.name) || []).filter(function(c) {
         return c.memory.role === 'Tech' && !c.spawning;
     });
+    var claimed = SpawnContext.replacementClaims(room.name, 'Tech');
     var expiring = 0, lasting = 0;
     units.forEach(function(c) {
         var work = getCreepActiveBodyParts(c, WORK);
-        if (c.ticksToLive <= 150) expiring += work; else lasting += work;
+        if (c.ticksToLive <= 150) { if (!claimed.has(c.name)) expiring += work; } else lasting += work;
     });
     var desired = Math.min(room.controller.level === 8 ? 15 : require('HiveMind.Surplus').config().techMaxWork,
         ensureRoomMemory(room.name).techDesiredWork || 0);

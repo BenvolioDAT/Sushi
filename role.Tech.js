@@ -34,6 +34,7 @@ function isBaselineRepresentative(creep, homeRoomName) {
 var roleTech = {
     run: function(creep) {
         creep._capacityProductive = false;
+        if (typeof creep.setTrafficLock === 'function') creep.setTrafficLock(false);
         var homeRoomName = creep.memory.homeRoom || creep.room.name;
         var controllerEmergency = creep.memory.controllerEmergency === true ||
             creep.room.controller && creep.room.controller.ticksToDowngrade < 5000;
@@ -64,7 +65,8 @@ var roleTech = {
             creep.memory.upgrading = false;
         }
 
-        if (!creep.memory.upgrading && creepUtility.isFull(creep)) {
+        if (!creep.memory.upgrading && (creepUtility.isFull(creep) ||
+            creep.store[RESOURCE_ENERGY] > 0 && creep.room.controller && creep.pos.getRangeTo(creep.room.controller) <= 3)) {
             creep.memory.upgrading = true;
         }
 
@@ -98,7 +100,10 @@ function upgradeRoomController(creep) {
      * Upgrading works from range 3.
      * So we move to range 3 instead of standing directly on top of the controller.
      */
-    if (creep.upgradeController(creep.room.controller) === ERR_NOT_IN_RANGE) {
+    var result = creep.upgradeController(creep.room.controller);
+    if (result === OK) {
+        preserveControllerStation(creep);
+    } else if (result === ERR_NOT_IN_RANGE) {
         travel.move(creep, creep.room.controller, {
             range: 3
         });
@@ -195,7 +200,60 @@ function withdrawFromControllerContainer(creep) {
         return false;
     }
 
-    return creepUtility.withdrawEnergy(creep, container);
+    var handled = creepUtility.withdrawEnergy(creep, container);
+    if (handled && creep.pos.getRangeTo(container) <= 1 && creep.pos.getRangeTo(creep.room.controller) <= 3) {
+        preserveControllerStation(creep, container);
+    }
+    return handled;
+}
+
+function preserveControllerStation(creep, container) {
+    if (typeof creep.setWorkingArea === 'function') creep.setWorkingArea(creep.room.controller.pos, 3);
+    container = container || findControllerContainerWithEnergy(creep);
+    // A sustainable work/refill tile is a station, just like a miner's tile.
+    // Traffic routes around it instead of pushing the Tech out of upgrade range.
+    if (container && creep.pos.getRangeTo(container) <= 1 && typeof creep.setTrafficLock === 'function') {
+        var station = offRoadControllerStation(creep, container);
+        if (station) {
+            travel.move(creep, station, { range: 0 });
+            return;
+        }
+        creep.setTrafficLock(true);
+    }
+}
+
+function offRoadControllerStation(creep, container) {
+    if (typeof creep.getActiveBodyparts === 'function' && creep.getActiveBodyparts(MOVE) <= 0) return null;
+    var index = TickIndex.get(), byType = index.structuresByRoom.get(creep.room.name) || new Map();
+    var roads = byType.get(STRUCTURE_ROAD) || [];
+    if (!roads.some(s => s.pos.isEqualTo(creep.pos))) return null;
+    // A locked road tile can trap the haulers refilling this very container.
+    // Only leave it for a free adjacent work/refill tile; once off-road the fast
+    // return above preserves the station without repeated movement or searches.
+    var occupied = new Set((index.creepsByCurrentRoom.get(creep.room.name) || [])
+        .filter(c => c.name !== creep.name).map(c => c.pos.x + ':' + c.pos.y));
+    for (var c of index.powerCreepsByRoom.get(creep.room.name) || []) occupied.add(c.pos.x + ':' + c.pos.y);
+    var reserved = index.techStationReservations || (index.techStationReservations = new Set());
+    var structures = Array.from(byType.values()).flat();
+    var sites = index.constructionSitesByRoom.get(creep.room.name) || [];
+    var resources = (index.sourcesByRoom.get(creep.room.name) || []).concat(index.mineralsByRoom.get(creep.room.name) || []);
+    var terrain = Game.map.getRoomTerrain(creep.room.name);
+    for (var y = creep.pos.y - 1; y <= creep.pos.y + 1; y++) {
+        for (var x = creep.pos.x - 1; x <= creep.pos.x + 1; x++) {
+            var key = x + ':' + y, reservation = creep.room.name + ':' + key;
+            if (x < 1 || x > 48 || y < 1 || y > 48 || occupied.has(key) || reserved.has(reservation) ||
+                terrain.get(x,y) === TERRAIN_MASK_WALL) continue;
+            var pos = new RoomPosition(x,y,creep.room.name);
+            if (pos.getRangeTo(container) > 1 || pos.getRangeTo(creep.room.controller) > 3 ||
+                structures.some(s => s.pos.isEqualTo(pos) &&
+                    s.structureType !== STRUCTURE_CONTAINER &&
+                    !(s.structureType === STRUCTURE_RAMPART && (s.my || s.isPublic))) ||
+                sites.some(s => s.pos.isEqualTo(pos)) || resources.some(s => s.pos.isEqualTo(pos))) continue;
+            reserved.add(reservation);
+            return pos;
+        }
+    }
+    return null;
 }
 
 function findControllerContainerWithEnergy(creep) {
@@ -210,16 +268,16 @@ function findControllerContainerWithEnergy(creep) {
      * enough to upgrade the controller. This catches both truly adjacent
      * containers and good upgrader containers placed a couple tiles away.
      */
-    return creep.pos.findClosestByPath(FIND_STRUCTURES, {
-        filter: function(structure) {
-            return (
-                structure.structureType === STRUCTURE_CONTAINER &&
-                structure.store &&
-                structure.store.getUsedCapacity(RESOURCE_ENERGY) > 0 &&
-                structure.pos.getRangeTo(creep.room.controller) <= 3
-            );
-        }
-    });
+    var structures = TickIndex.get().structuresByRoom.get(creep.room.name);
+    var containers = structures && structures.get(STRUCTURE_CONTAINER) || [];
+    var best = null, distance = Infinity;
+    for (var container of containers) {
+        if (!container.store || container.store.getUsedCapacity(RESOURCE_ENERGY) <= 0 ||
+            container.pos.getRangeTo(creep.room.controller) > 3) continue;
+        var range = creep.pos.getRangeTo(container);
+        if (range < distance) { best = container; distance = range; }
+    }
+    return best;
 }
 
 function pickupDroppedEnergyForTech(creep) {

@@ -20,6 +20,7 @@ var BodyConfig = require('role.creepBodyConfig');
 var utility = require('utility');
 var Economy = require('HiveMind.Economy');
 var HiveMemory = require('HiveMind.Memory');
+var Scheduler = require('HiveMind.Scheduler');
 
 var PATH_VERSION = 1;
 var HEAVY_PLAN_INTERVAL = 75;
@@ -263,10 +264,6 @@ function generateRemotePlan(homeRoomName, remoteRoom) {
         return false;
     }
 
-    if (!canSpendPlanningCpu()) {
-        return false;
-    }
-
     updateVisibleControllerMemory(remoteRoom);
 
     var remoteMemory = Memory.rooms && Memory.rooms[remoteRoom.name];
@@ -282,6 +279,17 @@ function generateRemotePlan(homeRoomName, remoteRoom) {
         planner.remotes[remoteRoom.name] = remoteInfo;
         return false;
     }
+
+    // Scouts observe every tick; route generation is optional heavy planning.
+    // Share the existing planning cadence across callers, including failed
+    // searches, while refreshing volatile safety intel before this cooldown.
+    var previous = planner.remotes[remoteRoom.name];
+    var lastAttempt = previous && previous.lastPlanAttemptAt;
+    if (Number.isFinite(lastAttempt) && lastAttempt <= Game.time && Game.time - lastAttempt < HEAVY_PLAN_INTERVAL) {
+        return (previous.sourceIds || []).length > 0;
+    }
+    if (!canSpendPlanningCpu() || !Scheduler.shouldRun('remoteDiscovery:' + homeRoomName + ':' + remoteRoom.name)) return false;
+    remoteInfo.lastPlanAttemptAt = Game.time;
 
     var sourceIds = [];
     for (var sourceId in remoteMemory.sources) {

@@ -201,7 +201,8 @@ function evaluate(room, request, context, mandatory, revalidate, renewal) {
     const queuedCpu = acceptedCpu + queue.reduce((sum, q) => sum + roleCpu(q.role), 0) + committed.cpu;
     const haulingReplacement = role === 'Freighter' && renewal?.renewal && !renewal.obsolete;
     const metrics = Bodies.metrics(haulingReplacement ? renewal.body : request.body || [], request.memory || {});
-    const claimed = new Set(queue.flatMap(q => q.replacementFor || []));
+    const claimed = ['Tech','Artificer'].includes(role) ?
+        require('Spawn.Context').replacementClaims(room.name, role, request) : new Set(queue.flatMap(q => q.replacementFor || []));
     const replacing = haulingReplacement ? (renewal.predecessors || []).filter(entry =>
         entry.deathAt === Game.time + Game.creeps[entry.name]?.ticksToLive && !claimed.has(entry.name))
         .map(entry => Game.creeps[entry.name]) : ['Tech', 'Artificer'].includes(role) ? (request.replacementFor || []).map(name => Game.creeps[name]).filter(c =>
@@ -210,8 +211,12 @@ function evaluate(room, request, context, mandatory, revalidate, renewal) {
         (role === 'Tech' || c.memory.artificerWorkCategory === request.economyCategory)) : [];
     const capability = haulingReplacement ? 'CARRY' : 'WORK';
     const replacementWork = replacing.reduce((sum, c) => sum + Bodies.metrics(c.body || [])[capability], 0);
+    // Economy has validated hauling continuity through the physical shortfall,
+    // including travel and queue time. Excess capacity may safely cover an
+    // earlier named predecessor's expiry before this body finishes spawning.
+    const replacementDeadline = haulingReplacement ? renewal.needBy - Game.time : Math.min(...replacing.map(c => c.ticksToLive));
     const cpuReplacement = replacing.length >= (haulingReplacement ? 2 : 1) && metrics[capability] <= replacementWork &&
-        metrics.spawnTime <= Math.min(...replacing.map(c => c.ticksToLive)) &&
+        metrics.spawnTime <= replacementDeadline &&
         (haulingReplacement || cpu.mode !== 'critical' && cpu.bucket >= 1800);
     const intelFloor = role === 'Scout' && require('HiveMind.Economy').categoryForRequest(request) === 'remoteIntel' &&
         (context.byRole.Scout || 0) - own < 1;

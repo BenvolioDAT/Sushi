@@ -11,7 +11,7 @@ const ResourceManager = require('Resource.Manager');
 /* Phase order remains fixed. An independent phase failure leaves traffic and
  * final telemetry reachable. Bootstrap failure stops dependent work this tick. */
 module.exports.loop = function loop() {
-    Diagnostics.install(DiagnosticView.room, Telemetry.getView);
+    Diagnostics.install(DiagnosticView.room, Telemetry.getView, Bootstrap.getPixelStatus);
     Telemetry.startTick();
     Telemetry.measure('diagnostics', () => Diagnostics.begin());
     function phase(name, fn) {
@@ -36,6 +36,8 @@ module.exports.loop = function loop() {
             phase('diagnostics', () => Diagnostics.observeJobs(ResourceManager.jobDiagnostics()));
         }
         phase('diagnostics', () => Diagnostics.finish({ total: Game.cpu?.getUsed ? Game.cpu.getUsed() : 0 }));
+        // Spend accumulated CPU only after colony actions and diagnostics.
+        phase('pixels', () => Bootstrap.maybeGeneratePixel());
         phase('telemetry', () => Telemetry.finish());
     }
 };

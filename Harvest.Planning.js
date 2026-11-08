@@ -30,6 +30,31 @@ function activeMiner(creep) {
 function replacementLead(room, work, distance = 30, preferred = body(room, work)) {
     return Math.max(100, (preferred?.spawnTime || 12) + distance * 2 + 10);
 }
+function agingConsolidation(room, source, assigned, distance = 30) {
+    const required = require('utility').getSourceHarvestProfile(source).requiredWork;
+    const full = body(room, required), lead = replacementLead(room, required, distance, full);
+    const workers = assigned.filter(c => activeMiner(c) && parts(c, MOVE) > 0 && parts(c, WORK) > 0 &&
+        Number.isFinite(c.ticksToLive) && c.ticksToLive > 0 && sourceId(c.memory) === source.id &&
+        !c.memory.remoteMining && c.pos?.roomName === room.name && c.pos.getRangeTo(source.pos) <= 1);
+    if (!full || full.WORK < required || workers.length < 2 || workers.length > 50 ||
+        workers.length !== assigned.filter(activeMiner).length) return null;
+    const oldest = workers.slice().sort((a, b) => a.ticksToLive - b.ticksToLive || a.name.localeCompare(b.name))[0];
+    if (oldest.ticksToLive > lead || oldest.ticksToLive < full.spawnTime + distance + 10 ||
+        workers.reduce((sum, c) => sum + parts(c, WORK), 0) < required ||
+        workers.filter(c => c !== oldest && c.ticksToLive > lead).reduce((sum, c) => sum + parts(c, WORK), 0) >= required) return null;
+    const surplus = Memory.rooms?.[room.name]?.economy?.growth?.energyAboveReserve;
+    if (room.energyAvailable < full.cost || !Number.isFinite(surplus) || surplus < full.cost ||
+        full.cost > workers.reduce((sum, c) => sum + Bodies.cost(c.body), 0)) return null;
+    const latest = Math.max(...workers.map(c => c.ticksToLive));
+    const usefulAfter = Math.max(0, 1500 - Math.max(0, latest - full.spawnTime));
+    // This successor replaces an already-required aging worker, so the young
+    // peers do not add overlap headcount compared with an ordinary small body.
+    // Require the full body to remain healthy after the last peer expires;
+    // charging its whole overlap again would perpetuate staggered small miners.
+    if (usefulAfter <= lead) return null;
+    return { work: required, replacementFor: oldest.name, minWork: required, upgrade: false,
+        consolidation: true, predecessors: workers.map(c => ({ name: c.name, deathAt: Game.time + c.ticksToLive })) };
+}
 function describe(room, source, assigned, queue = [], distance = 30) {
     assigned = assigned.slice();
     for (const spawn of [...Object.values(Game.spawns), ...require('Spawn.Intents').get().spawns]) {
@@ -65,6 +90,7 @@ function describe(room, source, assigned, queue = [], distance = 30) {
     else if (!positions.length) reason = 'no available harvesting seat';
     else if (!maximum) reason = 'no valid body within maximum spawning capacity';
     else if (healthyWork >= required) reason = 'existing workers already cover source';
+    else if ((action = agingConsolidation(room, source, active, distance))) reason = 'consolidate aging source miners';
     else if (active.length < positions.length) {
         action = { work: Math.min(required - healthyWork, maximum.WORK), replacementFor: null };
         reason = 'uncovered source WORK and available seat';
@@ -106,4 +132,4 @@ function describe(room, source, assigned, queue = [], distance = 30) {
             action ? reason : replacement ? 'complete miner handoff' : constraint === 'SPAWN_CAPACITY' ?
                 'build and fill active extensions' : 'maintain harvesting and logistics', action };
 }
-module.exports = { energyCapacity, seats, body, describe, parts, sourceId, activeMiner, replacementLead };
+module.exports = { energyCapacity, seats, body, describe, parts, sourceId, activeMiner, replacementLead, agingConsolidation };

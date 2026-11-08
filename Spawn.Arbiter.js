@@ -44,7 +44,7 @@ function normalize(roomName, request, options = {}) {
     const profiles = require('BodyProfiles');
     const room = Game.rooms[roomName];
     if (room && ['Tech', 'Artificer'].includes(normalized.role) && !normalized.memory.controllerEmergency) {
-        const claimed = new Set(HiveMemory.getRoomSpawnMemory(roomName).queue.flatMap(q => q.replacementFor || []));
+        const claimed = Context.replacementClaims(roomName, normalized.role);
         const expiring = (require('HiveMind.Index').get().creepsByHomeRoom.get(roomName) || []).filter(c =>
             c.memory.role === normalized.role && !c.spawning && c.ticksToLive <= 150 && c.ticksToLive > 0 && !claimed.has(c.name) &&
             (normalized.role === 'Tech' || c.memory.artificerWorkCategory === normalized.economyCategory));

@@ -140,7 +140,7 @@ function remoteEconomy(roomName) {
         backlog += haul && Math.max(0, haul.amount || 0) || 0;
         reservedCarry += haul && Math.max(0, haul.reservedCarry || 0) || 0;
         if (haul && haul.lastSeen > 0) oldestHaulAge = Math.max(oldestHaulAge, Game.time - haul.lastSeen);
-        requiredCarry += remoteHaulRequirement(info, haul);
+        requiredCarry += remoteHaulRequirement(info, haul, roomName);
         const reservation = RemoteIntel.getEffectiveReservation(info.roomName);
         if (reservation && reservation.username) reservedSources++;
         else unreservedSources++;
@@ -337,8 +337,45 @@ function sourceIdFor(memory) {
     return memory && (memory.sourceId || memory.targetSourceId || memory.assignedSource) || null;
 }
 
-function remoteHaulRequirement(info, haul) {
-    const production = Math.max(0, Number.isFinite(info.effectiveEnergyPerTick) ? info.effectiveEnergyPerTick : info.grossEnergyPerTick || 0);
+function remoteCommittedWork(homeRoomName, sourceId) {
+    if (!homeRoomName || !sourceId) return 0;
+    const index = TickIndex.get();
+    if (!index.remoteHarvestCommitments) index.remoteHarvestCommitments = new Map();
+    let physical = index.remoteHarvestCommitments.get(homeRoomName);
+    const matches = memory => memory?.role === 'Extractor' && memory.remoteMining === true &&
+        memory.homeRoom === homeRoomName;
+    if (!physical) {
+        physical = { work: new Map(), names: new Set() };
+        for (const creep of index.creepsByHomeRoom.get(homeRoomName) || []) {
+            if (!matches(creep.memory) || activeParts(creep, MOVE) <= 0) continue;
+            const id = sourceIdFor(creep.memory), work = creep.spawning ? bodyParts(creep.body, WORK) : activeParts(creep, WORK);
+            if (id) physical.work.set(id, (physical.work.get(id) || 0) + work);
+            physical.names.add(creep.name);
+        }
+        index.remoteHarvestCommitments.set(homeRoomName, physical);
+    }
+    let work = physical.work.get(sourceId) || 0;
+    const seen = new Set(physical.names);
+    // Queues and accepted intents remain mutable within this tick.
+    for (const spawn of [...(index.ownedSpawnsByRoom.get(homeRoomName) || []), ...require('Spawn.Intents').get().spawns]) {
+        if (spawn.room.name !== homeRoomName) continue;
+        const name = spawn.spawning?.name, memory = spawn.request?.memory || Memory.creeps?.[name];
+        if (!name || seen.has(name) || !matches(memory)) continue;
+        if (sourceIdFor(memory) === sourceId) work += Number(memory.extractorSpawnWorkParts) || bodyParts(spawn.request?.body || memory.body, WORK);
+        seen.add(name);
+    }
+    for (const request of Memory.rooms?.[homeRoomName]?.spawn?.queue || []) {
+        if (request.expiresAt < Game.time || !matches({ ...request.memory, role: request.role || request.memory?.role }) ||
+            sourceIdFor(request.memory) !== sourceId) continue;
+        work += bodyParts(request.body, WORK);
+    }
+    return work;
+}
+
+function remoteHaulRequirement(info, haul, homeRoomName = info.parentHome || info.parentRoomName) {
+    const planned = Math.max(0, Number.isFinite(info.effectiveEnergyPerTick) ? info.effectiveEnergyPerTick : info.grossEnergyPerTick || 0);
+    const production = Math.min(planned, remoteCommittedWork(homeRoomName, info.sourceId) *
+        (typeof HARVEST_POWER === 'number' ? HARVEST_POWER : 2));
     const trip = Math.max(1, info.roundTripTicks || info.route && (info.route.roundTripTicks || info.route.estimatedRoundTripTicks) || (info.distance || 1) * 2);
     const fresh = haul && Number.isFinite(haul.lastSeen) && haul.lastSeen <= Game.time && Game.time - haul.lastSeen <= 25;
     const catchup = fresh ? Math.max(0, (haul.amount || 0) - (haul.reservedCarry || 0)) / Math.max(1500, trip * 3) : 0;
@@ -353,7 +390,7 @@ function remoteHaulingRequest(room, request, queue) {
         const info = (planner.sourceInfos || {})[id];
         if (!info || !info.active || info.operational === false || info.route && info.route.valid === false) continue;
         const source = Memory.rooms[info.roomName] && Memory.rooms[info.roomName].sources && Memory.rooms[info.roomName].sources[id];
-        required += remoteHaulRequirement(info, source && source.haul);
+        required += remoteHaulRequirement(info, source && source.haul, room.name);
     }
     const coverage = freighterCoverage(room.name, 'remote');
     let covered = coverage.living + coverage.spawning;
@@ -634,11 +671,12 @@ function freighterTravelTicks(roomName, assignment, snapshot) {
         .map(s => s.haulRoundTrip || (s.distance || 15) * 2 + 4));
     const planner = Memory.rooms?.[roomName]?.remotePlanner || {};
     return Math.max(25, ...(planner.activeSourceIds || []).map(id => planner.sourceInfos?.[id]).filter(info =>
-        info?.active && info.operational !== false && info.route?.valid !== false).map(info =>
+        info?.active && info.operational !== false && info.route?.valid !== false &&
+        remoteHaulRequirement(info, Memory.rooms?.[info.roomName]?.sources?.[info.sourceId]?.haul, roomName) > 0).map(info =>
         info.roundTripTicks || info.route?.roundTripTicks || info.route?.estimatedRoundTripTicks || (info.distance || 0) * 2));
 }
 
-function freighterRenewalInput(room, assignment, queue) {
+function freighterRenewalInput(room, assignment, queue, priority) {
     const snapshot = get(room.name) || {}, harvest = snapshot.harvest || {}, haul = snapshot.haul || {};
     const local = assignment === 'local';
     let required = haul.requiredCarry || 0;
@@ -650,12 +688,14 @@ function freighterRenewalInput(room, assignment, queue) {
         for (const id of planner.activeSourceIds || []) {
             const info = planner.sourceInfos?.[id];
             if (!info?.active || info.operational === false || info.route?.valid === false) continue;
+            const sourceRequired = remoteHaulRequirement(info, Memory.rooms?.[info.roomName]?.sources?.[id]?.haul, room.name);
+            if (!(sourceRequired > 0)) continue;
             if (!(info.roundTripTicks > 0 || info.route?.roundTripTicks > 0 ||
                 info.route?.estimatedRoundTripTicks > 0 || info.distance > 0)) routeKnown = false;
-            required += remoteHaulRequirement(info, Memory.rooms?.[info.roomName]?.sources?.[id]?.haul);
+            required += sourceRequired;
         }
     }
-    return { room, assignment, required, travel, queue: queue || Memory.rooms?.[room.name]?.spawn?.queue || [],
+    return { room, assignment, required, travel, priority, queue: queue || Memory.rooms?.[room.name]?.spawn?.queue || [],
         matches: local ? isLocalFreighter : isRemoteFreighter, capacity: Harvest.energyCapacity(room),
         spendable: Number.isFinite(snapshot.growth?.energyAboveReserve) ? Math.max(0, snapshot.growth.energyAboveReserve) : Infinity,
         healthy: routeKnown && snapshot.state !== STATES.SURVIVAL && harvest.actualOrEstimatedIncome > 0 &&
@@ -663,15 +703,15 @@ function freighterRenewalInput(room, assignment, queue) {
             (local || haul.localCarry >= haul.requiredCarry && canSpend(room, 'remoteMaintenance')) };
 }
 
-function freighterRenewalPlan(room, assignment) {
-    return require('Freighter.Renewal').plan(freighterRenewalInput(room, assignment));
+function freighterRenewalPlan(room, assignment, priority) {
+    return require('Freighter.Renewal').plan(freighterRenewalInput(room, assignment, undefined, priority));
 }
 
 function freighterRenewalRequest(room, request, queue) {
     if (!request.freighterRenewal) return null;
     const assignment = isLocalFreighter(request) ? 'local' : isRemoteFreighter(request) ? 'remote' : null;
     if (!assignment) return null;
-    return require('Freighter.Renewal').evaluate(freighterRenewalInput(room, assignment, queue), request);
+    return require('Freighter.Renewal').evaluate(freighterRenewalInput(room, assignment, queue, request.priority), request);
 }
 
 function pendingLocalParts(roomName, role, partType) {
@@ -1208,7 +1248,11 @@ function localRecoveryRequest(room, request, queue) {
         const maxBody = sourceObject && Harvest.body(room, request.requestedWorkParts || source.workRequired);
         const oldWork = predecessor && activeParts(predecessor, WORK) || 0;
         const lifetimeReplacement = !predecessor || predecessor.ticksToLive <= Harvest.replacementLead(room, source.workRequired, source.distance);
-        const minimumWorkParts = lifetimeReplacement ? 1 : request.minimumWorkParts;
+        const peers = request.minerConsolidation && (TickIndex.get().creepsByHomeRoom.get(room.name) || [])
+            .filter(c => isLocalExtractor(c, room.name) && sourceIdFor(c.memory) === sourceId);
+        const consolidation = peers && sourceObject && Harvest.agingConsolidation(room, sourceObject, peers, source.distance);
+        const validConsolidation = consolidation?.replacementFor === memory.extractorReplacementFor;
+        const minimumWorkParts = validConsolidation ? consolidation.minWork : lifetimeReplacement ? 1 : request.minimumWorkParts;
         if (source.healthyWork >= source.workRequired) {
             return { mandatory: false, obsolete: true, reason: 'healthy local workers already cover source; replacement no longer needed' };
         }
@@ -1217,8 +1261,11 @@ function localRecoveryRequest(room, request, queue) {
             request.minerUpgrade && !lifetimeReplacement && oldWork >= maxBody.WORK) {
             return { mandatory: false, obsolete: true, reason: 'replacement has no productive body or harvesting seat' };
         }
-        return { mandatory: true, missing: request.requestedWorkParts, lifetimeReplacement, minimumWorkParts,
-            reason: lifetimeReplacement ? 'local miner lifetime replacement' : 'productive local miner replacement' };
+        return { mandatory: true, missing: request.minerConsolidation && !validConsolidation ?
+                Math.max(1, source.workRequired - source.healthyWork) : request.requestedWorkParts,
+            lifetimeReplacement, minimumWorkParts, minerConsolidation: !!validConsolidation,
+            reason: validConsolidation ? 'consolidate aging source miners' : lifetimeReplacement ?
+                'local miner lifetime replacement' : 'productive local miner replacement' };
     }
     const part = local ? WORK : CARRY;
     const matches = item => {

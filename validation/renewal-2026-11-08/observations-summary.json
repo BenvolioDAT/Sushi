@@ -1,0 +1,724 @@
+{
+  "build": "8c02678081b3e371337bf683b1bc45467967946349454a476f370c387e978f27",
+  "note": "Survivor delivery deltas are conservative: expired generations are omitted. CPU is a rolling EMA, not a causal estimate. Samples do not prove every intervening engine tick.",
+  "samples": [
+    {
+      "file": "SUSHI_M008.json",
+      "tick": 84151498,
+      "state": "STABLE",
+      "local": 6,
+      "remote": 1,
+      "physicalLocalCarry": 18,
+      "healthyLocalCarry": 18,
+      "requiredLocalCarry": 18,
+      "backlog": 406,
+      "sourceWork": [
+        5,
+        7
+      ],
+      "income": 20,
+      "cpuEma": 17.016266819750577,
+      "bucket": 5103,
+      "pixels": 119,
+      "progress": 51877,
+      "claims": [],
+      "tech": [
+        {
+          "name": "Tech_002",
+          "x": 4,
+          "y": 32,
+          "energy": 34,
+          "moveTick": 84151430,
+          "upgrading": true,
+          "locked": true
+        },
+        {
+          "name": "Tech_003",
+          "x": 10,
+          "y": 31,
+          "energy": 0,
+          "moveTick": 84151498,
+          "upgrading": false,
+          "locked": false
+        },
+        {
+          "name": "Tech_004",
+          "x": 4,
+          "y": 33,
+          "energy": 0,
+          "moveTick": 84151443,
+          "upgrading": false,
+          "locked": true
+        }
+      ],
+      "haulCpu": null,
+      "interval": null
+    },
+    {
+      "file": "SUSHI_M009.json",
+      "tick": 84151546,
+      "state": "STABLE",
+      "local": 6,
+      "remote": 1,
+      "physicalLocalCarry": 18,
+      "healthyLocalCarry": 18,
+      "requiredLocalCarry": 18,
+      "backlog": 208,
+      "sourceWork": [
+        5,
+        7
+      ],
+      "income": 20,
+      "cpuEma": 16.72782653291283,
+      "bucket": 5148,
+      "pixels": 119,
+      "progress": 52012,
+      "claims": [],
+      "tech": [
+        {
+          "name": "Tech_002",
+          "x": 4,
+          "y": 32,
+          "energy": 37,
+          "moveTick": 84151430,
+          "upgrading": true,
+          "locked": true
+        },
+        {
+          "name": "Tech_003",
+          "x": 5,
+          "y": 33,
+          "energy": 9,
+          "moveTick": 84151504,
+          "upgrading": true,
+          "locked": true
+        },
+        {
+          "name": "Tech_004",
+          "x": 4,
+          "y": 33,
+          "energy": 3,
+          "moveTick": 84151443,
+          "upgrading": true,
+          "locked": true
+        }
+      ],
+      "haulCpu": null,
+      "interval": {
+        "ticks": 48,
+        "survivingLocalGenerations": 6,
+        "deliveredByThoseSurvivors": 954,
+        "controllerProgress": 135,
+        "bucketChange": 45
+      }
+    },
+    {
+      "file": "SUSHI_M010.json",
+      "tick": 84151610,
+      "state": "STABLE",
+      "local": 7,
+      "remote": 1,
+      "physicalLocalCarry": 24,
+      "healthyLocalCarry": 24,
+      "requiredLocalCarry": 18,
+      "backlog": 200,
+      "sourceWork": [
+        5,
+        5
+      ],
+      "income": 20,
+      "cpuEma": 17.580014444690207,
+      "bucket": 5193,
+      "pixels": 119,
+      "progress": 52199,
+      "claims": [
+        {
+          "name": "Freighter_005",
+          "predecessors": [
+            {
+              "name": "Freighter_007",
+              "deathAt": 84151691
+            },
+            {
+              "name": "Freighter_002",
+              "deathAt": 84152210
+            },
+            {
+              "name": "Freighter_003",
+              "deathAt": 84152690
+            }
+          ]
+        }
+      ],
+      "tech": [
+        {
+          "name": "Tech_002",
+          "x": 4,
+          "y": 32,
+          "energy": 24,
+          "moveTick": 84151430,
+          "upgrading": true,
+          "locked": true
+        },
+        {
+          "name": "Tech_003",
+          "x": 5,
+          "y": 33,
+          "energy": 47,
+          "moveTick": 84151504,
+          "upgrading": true,
+          "locked": true
+        },
+        {
+          "name": "Tech_004",
+          "x": 4,
+          "y": 33,
+          "energy": 41,
+          "moveTick": 84151443,
+          "upgrading": true,
+          "locked": true
+        }
+      ],
+      "haulCpu": null,
+      "interval": {
+        "ticks": 64,
+        "survivingLocalGenerations": 6,
+        "deliveredByThoseSurvivors": 1240,
+        "controllerProgress": 187,
+        "bucketChange": 45
+      }
+    },
+    {
+      "file": "SUSHI_M011.json",
+      "tick": 84151633,
+      "state": "STABLE",
+      "local": 7,
+      "remote": 1,
+      "physicalLocalCarry": 24,
+      "healthyLocalCarry": 23,
+      "requiredLocalCarry": 18,
+      "backlog": 50,
+      "sourceWork": [
+        5,
+        5
+      ],
+      "income": 20,
+      "cpuEma": 17.202504427344408,
+      "bucket": 5204,
+      "pixels": 119,
+      "progress": 52268,
+      "claims": [
+        {
+          "name": "Freighter_005",
+          "predecessors": [
+            {
+              "name": "Freighter_007",
+              "deathAt": 84151691
+            },
+            {
+              "name": "Freighter_002",
+              "deathAt": 84152210
+            },
+            {
+              "name": "Freighter_003",
+              "deathAt": 84152690
+            }
+          ]
+        }
+      ],
+      "tech": [
+        {
+          "name": "Tech_002",
+          "x": 4,
+          "y": 32,
+          "energy": 1,
+          "moveTick": 84151430,
+          "upgrading": true,
+          "locked": true
+        },
+        {
+          "name": "Tech_003",
+          "x": 5,
+          "y": 33,
+          "energy": 24,
+          "moveTick": 84151504,
+          "upgrading": true,
+          "locked": true
+        },
+        {
+          "name": "Tech_004",
+          "x": 4,
+          "y": 33,
+          "energy": 18,
+          "moveTick": 84151443,
+          "upgrading": true,
+          "locked": true
+        }
+      ],
+      "haulCpu": null,
+      "interval": {
+        "ticks": 23,
+        "survivingLocalGenerations": 7,
+        "deliveredByThoseSurvivors": 300,
+        "controllerProgress": 69,
+        "bucketChange": 11
+      }
+    },
+    {
+      "file": "SUSHI_M012.json",
+      "tick": 84151674,
+      "state": "RECOVERY",
+      "local": 7,
+      "remote": 1,
+      "physicalLocalCarry": 24,
+      "healthyLocalCarry": 23,
+      "requiredLocalCarry": 18,
+      "backlog": 100,
+      "sourceWork": [
+        5,
+        5
+      ],
+      "income": 20,
+      "cpuEma": 17.055506731068697,
+      "bucket": 5246,
+      "pixels": 119,
+      "progress": 52320,
+      "claims": [
+        {
+          "name": "Freighter_005",
+          "predecessors": [
+            {
+              "name": "Freighter_007",
+              "deathAt": 84151691
+            },
+            {
+              "name": "Freighter_002",
+              "deathAt": 84152210
+            },
+            {
+              "name": "Freighter_003",
+              "deathAt": 84152690
+            }
+          ]
+        }
+      ],
+      "tech": [
+        {
+          "name": "Tech_002",
+          "x": 4,
+          "y": 32,
+          "energy": 15,
+          "moveTick": 84151645,
+          "upgrading": true,
+          "locked": true
+        },
+        {
+          "name": "Tech_003",
+          "x": 20,
+          "y": 26,
+          "energy": 16,
+          "moveTick": 84151661,
+          "upgrading": false,
+          "locked": false
+        },
+        {
+          "name": "Tech_004",
+          "x": 20,
+          "y": 25,
+          "energy": 10,
+          "moveTick": 84151659,
+          "upgrading": false,
+          "locked": false
+        }
+      ],
+      "haulCpu": null,
+      "interval": {
+        "ticks": 41,
+        "survivingLocalGenerations": 7,
+        "deliveredByThoseSurvivors": 200,
+        "controllerProgress": 52,
+        "bucketChange": 42
+      }
+    },
+    {
+      "file": "SUSHI_M013.json",
+      "tick": 84151699,
+      "state": "STABLE",
+      "local": 6,
+      "remote": 1,
+      "physicalLocalCarry": 23,
+      "healthyLocalCarry": 23,
+      "requiredLocalCarry": 18,
+      "backlog": 0,
+      "sourceWork": [
+        5,
+        5
+      ],
+      "income": 20,
+      "cpuEma": 16.890968895436394,
+      "bucket": 5276,
+      "pixels": 119,
+      "progress": 52344,
+      "claims": [
+        {
+          "name": "Freighter_005",
+          "predecessors": [
+            {
+              "name": "Freighter_002",
+              "deathAt": 84152210
+            },
+            {
+              "name": "Freighter_003",
+              "deathAt": 84152690
+            }
+          ]
+        }
+      ],
+      "tech": [
+        {
+          "name": "Tech_002",
+          "x": 4,
+          "y": 32,
+          "energy": 41,
+          "moveTick": 84151645,
+          "upgrading": true,
+          "locked": true
+        },
+        {
+          "name": "Tech_003",
+          "x": 5,
+          "y": 32,
+          "energy": 16,
+          "moveTick": 84151699,
+          "upgrading": true,
+          "locked": false
+        },
+        {
+          "name": "Tech_004",
+          "x": 6,
+          "y": 30,
+          "energy": 10,
+          "moveTick": 84151699,
+          "upgrading": false,
+          "locked": false
+        }
+      ],
+      "haulCpu": null,
+      "interval": {
+        "ticks": 25,
+        "survivingLocalGenerations": 6,
+        "deliveredByThoseSurvivors": 700,
+        "controllerProgress": 24,
+        "bucketChange": 30
+      }
+    },
+    {
+      "file": "SUSHI_M014.json",
+      "tick": 84151747,
+      "state": "STABLE",
+      "local": 6,
+      "remote": 1,
+      "physicalLocalCarry": 23,
+      "healthyLocalCarry": 23,
+      "requiredLocalCarry": 18,
+      "backlog": 300,
+      "sourceWork": [
+        5,
+        5
+      ],
+      "income": 20,
+      "cpuEma": 16.641522446141586,
+      "bucket": 5352,
+      "pixels": 119,
+      "progress": 52483,
+      "claims": [
+        {
+          "name": "Freighter_005",
+          "predecessors": [
+            {
+              "name": "Freighter_002",
+              "deathAt": 84152210
+            },
+            {
+              "name": "Freighter_003",
+              "deathAt": 84152690
+            }
+          ]
+        }
+      ],
+      "tech": [
+        {
+          "name": "Tech_002",
+          "x": 4,
+          "y": 32,
+          "energy": 44,
+          "moveTick": 84151645,
+          "upgrading": true,
+          "locked": true
+        },
+        {
+          "name": "Tech_003",
+          "x": 4,
+          "y": 33,
+          "energy": 19,
+          "moveTick": 84151699,
+          "upgrading": true,
+          "locked": true
+        },
+        {
+          "name": "Tech_004",
+          "x": 5,
+          "y": 33,
+          "energy": 15,
+          "moveTick": 84151701,
+          "upgrading": true,
+          "locked": true
+        }
+      ],
+      "haulCpu": {
+        "tick": 84151725,
+        "total": 1.6893391037159051,
+        "perCreep": 0.22617266288599,
+        "utilization": 0.7538295341529416
+      },
+      "interval": {
+        "ticks": 48,
+        "survivingLocalGenerations": 6,
+        "deliveredByThoseSurvivors": 750,
+        "controllerProgress": 139,
+        "bucketChange": 76
+      }
+    },
+    {
+      "file": "SUSHI_M015.json",
+      "tick": 84151804,
+      "state": "STABLE",
+      "local": 6,
+      "remote": 1,
+      "physicalLocalCarry": 23,
+      "healthyLocalCarry": 23,
+      "requiredLocalCarry": 18,
+      "backlog": 300,
+      "sourceWork": [
+        5,
+        5
+      ],
+      "income": 20,
+      "cpuEma": 16.404813826716577,
+      "bucket": 5437,
+      "pixels": 119,
+      "progress": 52651,
+      "claims": [
+        {
+          "name": "Freighter_005",
+          "predecessors": [
+            {
+              "name": "Freighter_002",
+              "deathAt": 84152210
+            },
+            {
+              "name": "Freighter_003",
+              "deathAt": 84152690
+            }
+          ]
+        }
+      ],
+      "tech": [
+        {
+          "name": "Tech_002",
+          "x": 4,
+          "y": 32,
+          "energy": 38,
+          "moveTick": 84151645,
+          "upgrading": true,
+          "locked": true
+        },
+        {
+          "name": "Tech_003",
+          "x": 4,
+          "y": 33,
+          "energy": 13,
+          "moveTick": 84151699,
+          "upgrading": true,
+          "locked": true
+        },
+        {
+          "name": "Tech_004",
+          "x": 5,
+          "y": 33,
+          "energy": 9,
+          "moveTick": 84151701,
+          "upgrading": true,
+          "locked": true
+        }
+      ],
+      "haulCpu": {
+        "tick": 84151800,
+        "total": 1.5221068483026958,
+        "perCreep": 0.20968115014050576,
+        "utilization": 0.7345321500577349
+      },
+      "interval": {
+        "ticks": 57,
+        "survivingLocalGenerations": 6,
+        "deliveredByThoseSurvivors": 750,
+        "controllerProgress": 168,
+        "bucketChange": 85
+      }
+    },
+    {
+      "file": "SUSHI_M016.json",
+      "tick": 84151870,
+      "state": "STABLE",
+      "local": 6,
+      "remote": 1,
+      "physicalLocalCarry": 23,
+      "healthyLocalCarry": 23,
+      "requiredLocalCarry": 18,
+      "backlog": 150,
+      "sourceWork": [
+        5,
+        5
+      ],
+      "income": 20,
+      "cpuEma": 16.614648569410175,
+      "bucket": 5534,
+      "pixels": 119,
+      "progress": 52844,
+      "claims": [
+        {
+          "name": "Freighter_005",
+          "predecessors": [
+            {
+              "name": "Freighter_002",
+              "deathAt": 84152210
+            },
+            {
+              "name": "Freighter_003",
+              "deathAt": 84152690
+            }
+          ]
+        }
+      ],
+      "tech": [
+        {
+          "name": "Tech_002",
+          "x": 4,
+          "y": 32,
+          "energy": 23,
+          "moveTick": 84151645,
+          "upgrading": true,
+          "locked": true
+        },
+        {
+          "name": "Tech_003",
+          "x": 4,
+          "y": 33,
+          "energy": 49,
+          "moveTick": 84151699,
+          "upgrading": true,
+          "locked": true
+        },
+        {
+          "name": "Tech_004",
+          "x": 5,
+          "y": 33,
+          "energy": 45,
+          "moveTick": 84151701,
+          "upgrading": true,
+          "locked": true
+        }
+      ],
+      "haulCpu": {
+        "tick": 84151850,
+        "total": 1.5113207709140517,
+        "perCreep": 0.21093484866139892,
+        "utilization": 0.7729577188940934
+      },
+      "interval": {
+        "ticks": 66,
+        "survivingLocalGenerations": 6,
+        "deliveredByThoseSurvivors": 1200,
+        "controllerProgress": 193,
+        "bucketChange": 97
+      }
+    },
+    {
+      "file": "SUSHI_M017.json",
+      "tick": 84151928,
+      "state": "RECOVERY",
+      "local": 6,
+      "remote": 1,
+      "physicalLocalCarry": 23,
+      "healthyLocalCarry": 23,
+      "requiredLocalCarry": 18,
+      "backlog": 150,
+      "sourceWork": [
+        5,
+        5
+      ],
+      "income": 20,
+      "cpuEma": 24.67045234600006,
+      "bucket": 5518,
+      "pixels": 119,
+      "progress": 52996,
+      "claims": [
+        {
+          "name": "Freighter_005",
+          "predecessors": [
+            {
+              "name": "Freighter_002",
+              "deathAt": 84152210
+            },
+            {
+              "name": "Freighter_003",
+              "deathAt": 84152690
+            }
+          ]
+        }
+      ],
+      "tech": [
+        {
+          "name": "Tech_002",
+          "x": 4,
+          "y": 32,
+          "energy": 16,
+          "moveTick": 84151645,
+          "upgrading": true,
+          "locked": true
+        },
+        {
+          "name": "Tech_003",
+          "x": 13,
+          "y": 28,
+          "energy": 1,
+          "moveTick": 84151928,
+          "upgrading": false,
+          "locked": false
+        },
+        {
+          "name": "Tech_004",
+          "x": 12,
+          "y": 29,
+          "energy": 48,
+          "moveTick": 84151928,
+          "upgrading": false,
+          "locked": false
+        }
+      ],
+      "haulCpu": {
+        "tick": 84151925,
+        "total": 2.6081204651082066,
+        "perCreep": 0.37004496114323804,
+        "utilization": 0.8471829235023474
+      },
+      "interval": {
+        "ticks": 58,
+        "survivingLocalGenerations": 6,
+        "deliveredByThoseSurvivors": 900,
+        "controllerProgress": 152,
+        "bucketChange": -16
+      }
+    }
+  ]
+}
