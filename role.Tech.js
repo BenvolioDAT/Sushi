@@ -50,7 +50,9 @@ var roleTech = {
             floorPolicyActive ? 'controllerGrowth' : 'upgradeSurplus';
         if (!growthStillAllowed || !Economy.canSpend(homeRoomName, spendCategory)) {
             creep.memory.upgrading = false;
-            if (creep.store[RESOURCE_ENERGY] > 0) creepUtility.fillRoomEnergy(creep);
+            // Help actual core shortages without the Foreman's idle-at-spawn
+            // fallback pulling a loaded upgrader away from its work station.
+            if (creep.store[RESOURCE_ENERGY] > 0) creepUtility.fillBaseEnergy(creep);
             else creepUtility.collectEnergy(creep);
             return;
         }

@@ -1,10 +1,14 @@
 {
-  "build": "8c02678081b3e371337bf683b1bc45467967946349454a476f370c387e978f27",
-  "note": "Survivor delivery deltas are conservative: expired generations are omitted. CPU is a rolling EMA, not a causal estimate. Samples do not prove every intervening engine tick.",
+  "builds": [
+    "8c02678081b3e371337bf683b1bc45467967946349454a476f370c387e978f27",
+    "c40df0d0b2d595cae1557eced18318bfe2f17bebbdf978943d45c47b590663aa"
+  ],
+  "note": "Survivor delivery deltas are conservative: expired generations are omitted. CPU is a rolling EMA, not a causal estimate; cross-build comparisons are not controlled. Samples do not prove every intervening engine tick.",
   "samples": [
     {
       "file": "SUSHI_M008.json",
       "tick": 84151498,
+      "build": "8c02678081b3e371337bf683b1bc45467967946349454a476f370c387e978f27",
       "state": "STABLE",
       "local": 6,
       "remote": 1,
@@ -57,6 +61,7 @@
     {
       "file": "SUSHI_M009.json",
       "tick": 84151546,
+      "build": "8c02678081b3e371337bf683b1bc45467967946349454a476f370c387e978f27",
       "state": "STABLE",
       "local": 6,
       "remote": 1,
@@ -108,6 +113,7 @@
         "ticks": 48,
         "survivingLocalGenerations": 6,
         "deliveredByThoseSurvivors": 954,
+        "allLocalGenerationsMatched": true,
         "controllerProgress": 135,
         "bucketChange": 45
       }
@@ -115,6 +121,7 @@
     {
       "file": "SUSHI_M010.json",
       "tick": 84151610,
+      "build": "8c02678081b3e371337bf683b1bc45467967946349454a476f370c387e978f27",
       "state": "STABLE",
       "local": 7,
       "remote": 1,
@@ -184,6 +191,7 @@
         "ticks": 64,
         "survivingLocalGenerations": 6,
         "deliveredByThoseSurvivors": 1240,
+        "allLocalGenerationsMatched": false,
         "controllerProgress": 187,
         "bucketChange": 45
       }
@@ -191,6 +199,7 @@
     {
       "file": "SUSHI_M011.json",
       "tick": 84151633,
+      "build": "8c02678081b3e371337bf683b1bc45467967946349454a476f370c387e978f27",
       "state": "STABLE",
       "local": 7,
       "remote": 1,
@@ -260,6 +269,7 @@
         "ticks": 23,
         "survivingLocalGenerations": 7,
         "deliveredByThoseSurvivors": 300,
+        "allLocalGenerationsMatched": true,
         "controllerProgress": 69,
         "bucketChange": 11
       }
@@ -267,6 +277,7 @@
     {
       "file": "SUSHI_M012.json",
       "tick": 84151674,
+      "build": "8c02678081b3e371337bf683b1bc45467967946349454a476f370c387e978f27",
       "state": "RECOVERY",
       "local": 7,
       "remote": 1,
@@ -336,6 +347,7 @@
         "ticks": 41,
         "survivingLocalGenerations": 7,
         "deliveredByThoseSurvivors": 200,
+        "allLocalGenerationsMatched": true,
         "controllerProgress": 52,
         "bucketChange": 42
       }
@@ -343,6 +355,7 @@
     {
       "file": "SUSHI_M013.json",
       "tick": 84151699,
+      "build": "8c02678081b3e371337bf683b1bc45467967946349454a476f370c387e978f27",
       "state": "STABLE",
       "local": 6,
       "remote": 1,
@@ -408,6 +421,7 @@
         "ticks": 25,
         "survivingLocalGenerations": 6,
         "deliveredByThoseSurvivors": 700,
+        "allLocalGenerationsMatched": false,
         "controllerProgress": 24,
         "bucketChange": 30
       }
@@ -415,6 +429,7 @@
     {
       "file": "SUSHI_M014.json",
       "tick": 84151747,
+      "build": "8c02678081b3e371337bf683b1bc45467967946349454a476f370c387e978f27",
       "state": "STABLE",
       "local": 6,
       "remote": 1,
@@ -485,6 +500,7 @@
         "ticks": 48,
         "survivingLocalGenerations": 6,
         "deliveredByThoseSurvivors": 750,
+        "allLocalGenerationsMatched": true,
         "controllerProgress": 139,
         "bucketChange": 76
       }
@@ -492,6 +508,7 @@
     {
       "file": "SUSHI_M015.json",
       "tick": 84151804,
+      "build": "8c02678081b3e371337bf683b1bc45467967946349454a476f370c387e978f27",
       "state": "STABLE",
       "local": 6,
       "remote": 1,
@@ -562,6 +579,7 @@
         "ticks": 57,
         "survivingLocalGenerations": 6,
         "deliveredByThoseSurvivors": 750,
+        "allLocalGenerationsMatched": true,
         "controllerProgress": 168,
         "bucketChange": 85
       }
@@ -569,6 +587,7 @@
     {
       "file": "SUSHI_M016.json",
       "tick": 84151870,
+      "build": "8c02678081b3e371337bf683b1bc45467967946349454a476f370c387e978f27",
       "state": "STABLE",
       "local": 6,
       "remote": 1,
@@ -639,6 +658,7 @@
         "ticks": 66,
         "survivingLocalGenerations": 6,
         "deliveredByThoseSurvivors": 1200,
+        "allLocalGenerationsMatched": true,
         "controllerProgress": 193,
         "bucketChange": 97
       }
@@ -646,6 +666,7 @@
     {
       "file": "SUSHI_M017.json",
       "tick": 84151928,
+      "build": "8c02678081b3e371337bf683b1bc45467967946349454a476f370c387e978f27",
       "state": "RECOVERY",
       "local": 6,
       "remote": 1,
@@ -716,8 +737,249 @@
         "ticks": 58,
         "survivingLocalGenerations": 6,
         "deliveredByThoseSurvivors": 900,
+        "allLocalGenerationsMatched": true,
         "controllerProgress": 152,
         "bucketChange": -16
+      }
+    },
+    {
+      "file": "SUSHI_R001.json",
+      "tick": 84157323,
+      "build": "8c02678081b3e371337bf683b1bc45467967946349454a476f370c387e978f27",
+      "state": "STABLE",
+      "local": 5,
+      "remote": 2,
+      "physicalLocalCarry": 18,
+      "healthyLocalCarry": 18,
+      "requiredLocalCarry": 18,
+      "backlog": 300,
+      "sourceWork": [
+        5,
+        5
+      ],
+      "income": 20,
+      "cpuEma": 16.368321507569544,
+      "bucket": 8498,
+      "pixels": 120,
+      "progress": 68398,
+      "claims": [],
+      "tech": [
+        {
+          "name": "Tech_002",
+          "x": 4,
+          "y": 32,
+          "energy": 8,
+          "ttl": 679,
+          "moveTick": 84157160,
+          "upgrading": true,
+          "locked": true
+        }
+      ],
+      "haulCpu": {
+        "tick": 84157300,
+        "total": 1.4466282801616608,
+        "perCreep": 0.18839497511132713,
+        "utilization": 0.9380094759681181
+      },
+      "interval": {
+        "ticks": 5395,
+        "survivingLocalGenerations": 0,
+        "deliveredByThoseSurvivors": null,
+        "allLocalGenerationsMatched": false,
+        "controllerProgress": 15402,
+        "bucketChange": 2980
+      }
+    },
+    {
+      "file": "SUSHI_R002.json",
+      "tick": 84157374,
+      "build": "8c02678081b3e371337bf683b1bc45467967946349454a476f370c387e978f27",
+      "state": "STABLE",
+      "local": 5,
+      "remote": 2,
+      "physicalLocalCarry": 18,
+      "healthyLocalCarry": 18,
+      "requiredLocalCarry": 18,
+      "backlog": 300,
+      "sourceWork": [
+        5,
+        5
+      ],
+      "income": 20,
+      "cpuEma": 17.05429752133158,
+      "bucket": 8580,
+      "pixels": 120,
+      "progress": 68539,
+      "claims": [],
+      "tech": [
+        {
+          "name": "Tech_002",
+          "x": 4,
+          "y": 32,
+          "energy": 17,
+          "ttl": 628,
+          "moveTick": 84157160,
+          "upgrading": true,
+          "locked": true
+        }
+      ],
+      "haulCpu": {
+        "tick": 84157350,
+        "total": 1.38941055530644,
+        "perCreep": 0.1867968492145318,
+        "utilization": 0.8803260646195957
+      },
+      "interval": {
+        "ticks": 51,
+        "survivingLocalGenerations": 5,
+        "deliveredByThoseSurvivors": 849,
+        "allLocalGenerationsMatched": true,
+        "controllerProgress": 141,
+        "bucketChange": 82
+      }
+    },
+    {
+      "file": "SUSHI_R004.json",
+      "tick": 84157425,
+      "build": "8c02678081b3e371337bf683b1bc45467967946349454a476f370c387e978f27",
+      "state": "RECOVERY",
+      "local": 5,
+      "remote": 1,
+      "physicalLocalCarry": 18,
+      "healthyLocalCarry": 18,
+      "requiredLocalCarry": 18,
+      "backlog": 100,
+      "sourceWork": [
+        5,
+        5
+      ],
+      "income": 20,
+      "cpuEma": 22.0373365676431,
+      "bucket": 7681,
+      "pixels": 120,
+      "progress": 68651,
+      "claims": [],
+      "tech": [
+        {
+          "name": "Tech_002",
+          "x": 15,
+          "y": 26,
+          "energy": 5,
+          "ttl": 577,
+          "moveTick": 84157425,
+          "upgrading": false,
+          "locked": false
+        }
+      ],
+      "haulCpu": {
+        "tick": 84157425,
+        "total": 2.886598794715769,
+        "perCreep": 0.4522971425691075,
+        "utilization": 0.8853936117518999
+      },
+      "interval": {
+        "ticks": 51,
+        "survivingLocalGenerations": 5,
+        "deliveredByThoseSurvivors": 451,
+        "allLocalGenerationsMatched": true,
+        "controllerProgress": 112,
+        "bucketChange": -899
+      }
+    },
+    {
+      "file": "SUSHI_R005.json",
+      "tick": 84157481,
+      "build": "c40df0d0b2d595cae1557eced18318bfe2f17bebbdf978943d45c47b590663aa",
+      "state": "STABLE",
+      "local": 5,
+      "remote": 1,
+      "physicalLocalCarry": 18,
+      "healthyLocalCarry": 18,
+      "requiredLocalCarry": 18,
+      "backlog": 250,
+      "sourceWork": [
+        5,
+        5
+      ],
+      "income": 20,
+      "cpuEma": 20.92972691530726,
+      "bucket": 7653,
+      "pixels": 120,
+      "progress": 68742,
+      "claims": [],
+      "tech": [
+        {
+          "name": "Tech_002",
+          "x": 4,
+          "y": 32,
+          "energy": 14,
+          "ttl": 521,
+          "moveTick": 84157448,
+          "upgrading": true,
+          "locked": true
+        }
+      ],
+      "haulCpu": {
+        "tick": 84157475,
+        "total": 2.430064520618154,
+        "perCreep": 0.3865770532442392,
+        "utilization": 0.8933185781878827
+      },
+      "interval": {
+        "ticks": 56,
+        "survivingLocalGenerations": 5,
+        "deliveredByThoseSurvivors": 850,
+        "allLocalGenerationsMatched": true,
+        "controllerProgress": 91,
+        "bucketChange": -28
+      }
+    },
+    {
+      "file": "SUSHI_R006.json",
+      "tick": 84157515,
+      "build": "c40df0d0b2d595cae1557eced18318bfe2f17bebbdf978943d45c47b590663aa",
+      "state": "STABLE",
+      "local": 5,
+      "remote": 1,
+      "physicalLocalCarry": 18,
+      "healthyLocalCarry": 18,
+      "requiredLocalCarry": 18,
+      "backlog": 100,
+      "sourceWork": [
+        5,
+        5
+      ],
+      "income": 20,
+      "cpuEma": 16.555567218296382,
+      "bucket": 7725,
+      "pixels": 120,
+      "progress": 68836,
+      "claims": [],
+      "tech": [
+        {
+          "name": "Tech_002",
+          "x": 4,
+          "y": 32,
+          "energy": 20,
+          "ttl": 487,
+          "moveTick": 84157448,
+          "upgrading": true,
+          "locked": true
+        }
+      ],
+      "haulCpu": {
+        "tick": 84157500,
+        "total": 2.2011944764945905,
+        "perCreep": 0.3521187859287359,
+        "utilization": 0.9146548625503061
+      },
+      "interval": {
+        "ticks": 34,
+        "survivingLocalGenerations": 5,
+        "deliveredByThoseSurvivors": 200,
+        "allLocalGenerationsMatched": true,
+        "controllerProgress": 94,
+        "bucketChange": 72
       }
     }
   ]

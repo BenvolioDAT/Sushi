@@ -48,6 +48,33 @@ test('station optimization does not bypass economic policy', () => {
     require('utility.Creep').fillRoomEnergy = () => {};
     f.role.run(f.c); assert.strictEqual(f.upgrades(), 0); assert.strictEqual(f.c._trafficLocked, false);
 });
+
+test('a policy-paused loaded Tech does not leave its station merely to park near a full base', () => {
+    for (const energy of [1, 49]) {
+        const f = fixture(); f.E.canSpend = () => false; f.c.store.energy = energy;
+        const spawn = { structureType: STRUCTURE_SPAWN, pos: new RoomPosition(22,27,'W39S47'),
+            store: { getFreeCapacity: () => 0 } };
+        const tower = { structureType: STRUCTURE_TOWER, pos: new RoomPosition(21,27,'W39S47'),
+            store: { getFreeCapacity: () => 0 } };
+        f.c.pos.findClosestByPath = (type, options) => type === FIND_MY_SPAWNS ? spawn :
+            [spawn,tower].find(s => !options?.filter || options.filter(s)) || null;
+        f.c.transfer = () => { throw new Error('full stores cannot be transfer targets'); };
+        for (let i=0;i<120;i++) { f.role.run(f.c); Game.time++; }
+        assert.strictEqual(f.moves(),0,'policy refusal must not invoke Foreman parking');
+        assert.strictEqual(f.upgrades(),0); assert.strictEqual(f.c._trafficLocked,false);
+        assert.strictEqual(f.c.store.energy,energy);
+    }
+});
+
+test('a policy-paused loaded Tech still delivers to a real core energy shortage', () => {
+    const f=fixture(); f.E.canSpend=()=>false;
+    const spawn={structureType:STRUCTURE_SPAWN,pos:new RoomPosition(22,27,'W39S47'),
+        store:{getFreeCapacity:()=>100}};
+    f.c.pos.findClosestByPath=(type,options)=>!options?.filter||options.filter(spawn)?spawn:null;
+    f.c.transfer=target=>{assert.strictEqual(target,spawn);return ERR_NOT_IN_RANGE;};
+    f.role.run(f.c);assert.strictEqual(f.moves(),1);assert.strictEqual(f.moveTarget(),spawn.pos);
+    assert.strictEqual(f.upgrades(),0);assert.strictEqual(f.c._trafficLocked,false);
+});
 test('a Tech leaves a delivery road once, then upgrades and refills without further movement', () => {
     const f = fixture(); f.c.pos = new RoomPosition(5,32,'W39S47');
     f.structures.push({ structureType: STRUCTURE_ROAD, pos: f.c.pos });

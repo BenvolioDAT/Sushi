@@ -1,0 +1,506 @@
+{
+  "tick": 84157353,
+  "first": 84152955,
+  "events": [
+    {
+      "id": 7606,
+      "tick": 84152955,
+      "room": "W39S47",
+      "category": "SPAWNING",
+      "severity": "INFO",
+      "event": "SPAWN_EMERGENCY_REPLACEMENT",
+      "data": {
+        "role": "Freighter",
+        "creep": "Freighter_004",
+        "spawn": "Spawn1",
+        "cost": 600
+      },
+      "count": 1,
+      "lastTick": 84152955
+    },
+    {
+      "id": 7642,
+      "tick": 84153381,
+      "room": "W39S47",
+      "category": "SPAWNING",
+      "severity": "INFO",
+      "event": "SPAWN_EMERGENCY_REPLACEMENT",
+      "data": {
+        "role": "Freighter",
+        "creep": "Freighter_005",
+        "spawn": "Spawn1",
+        "cost": 100
+      },
+      "count": 1,
+      "lastTick": 84153381
+    },
+    {
+      "id": 7677,
+      "tick": 84154029,
+      "room": "W39S47",
+      "category": "SPAWNING",
+      "severity": "INFO",
+      "event": "SPAWN_STARTED",
+      "data": {
+        "role": "Freighter",
+        "creep": "Freighter_001",
+        "spawn": "Spawn1",
+        "cost": 800
+      },
+      "count": 1,
+      "lastTick": 84154029
+    },
+    {
+      "id": 7682,
+      "tick": 84154077,
+      "room": "W39S47",
+      "category": "SPAWNING",
+      "severity": "INFO",
+      "event": "SPAWN_EMERGENCY_REPLACEMENT",
+      "data": {
+        "role": "Freighter",
+        "creep": "Freighter_006",
+        "spawn": "Spawn1",
+        "cost": 500
+      },
+      "count": 1,
+      "lastTick": 84154077
+    },
+    {
+      "id": 7687,
+      "tick": 84154140,
+      "room": "W39S47",
+      "category": "SPAWNING",
+      "severity": "INFO",
+      "event": "SPAWN_EMERGENCY_REPLACEMENT",
+      "data": {
+        "role": "Freighter",
+        "creep": "Freighter_007",
+        "spawn": "Spawn1",
+        "cost": 600
+      },
+      "count": 1,
+      "lastTick": 84154140
+    },
+    {
+      "id": 7691,
+      "tick": 84154224,
+      "room": "W39S47",
+      "category": "SPAWNING",
+      "severity": "INFO",
+      "event": "SPAWN_STARTED",
+      "data": {
+        "role": "Freighter",
+        "creep": "Freighter_002",
+        "spawn": "Spawn1",
+        "cost": 800
+      },
+      "count": 1,
+      "lastTick": 84154224
+    },
+    {
+      "id": 7696,
+      "tick": 84154272,
+      "room": "W39S47",
+      "category": "SPAWNING",
+      "severity": "INFO",
+      "event": "SPAWN_STARTED",
+      "data": {
+        "role": "Freighter",
+        "creep": "Freighter_003",
+        "spawn": "Spawn1",
+        "cost": 800
+      },
+      "count": 1,
+      "lastTick": 84154272
+    },
+    {
+      "id": 7699,
+      "tick": 84154314,
+      "room": "W39S47",
+      "category": "SPAWNING",
+      "severity": "INFO",
+      "event": "FREIGHTER_RENEWAL_PLANNED",
+      "data": {
+        "carry": 7,
+        "workers": 2,
+        "needBy": 84154490,
+        "through": 84154886,
+        "predecessors": "Freighter_004,Freighter_005"
+      },
+      "count": 1,
+      "lastTick": 84154314
+    },
+    {
+      "id": 7700,
+      "tick": 84154320,
+      "room": "W39S47",
+      "category": "SPAWNING",
+      "severity": "INFO",
+      "event": "SPAWN_STARTED",
+      "data": {
+        "role": "Freighter",
+        "creep": "Freighter_008",
+        "spawn": "Spawn1",
+        "cost": 700
+      },
+      "count": 1,
+      "lastTick": 84154320
+    },
+    {
+      "id": 7701,
+      "tick": 84154320,
+      "room": "W39S47",
+      "category": "SPAWNING",
+      "severity": "INFO",
+      "event": "FREIGHTER_RENEWAL_STARTED",
+      "data": {
+        "creep": "Freighter_008",
+        "cost": 700,
+        "workers": 2,
+        "through": 84154886,
+        "predecessors": "Freighter_004,Freighter_005"
+      },
+      "count": 1,
+      "lastTick": 84154320
+    },
+    {
+      "id": 7750,
+      "tick": 84154896,
+      "room": "W39S47",
+      "category": "SPAWNING",
+      "severity": "WARN",
+      "event": "SPAWN_REJECTED",
+      "data": {
+        "role": "Freighter",
+        "reason": "local source already covered",
+        "available": 800,
+        "required": 100
+      },
+      "count": 1,
+      "lastTick": 84154896
+    },
+    {
+      "id": 7753,
+      "tick": 84154923,
+      "room": "W39S47",
+      "category": "SPAWNING",
+      "severity": "INFO",
+      "event": "SPAWN_EMERGENCY_REPLACEMENT",
+      "data": {
+        "role": "Freighter",
+        "creep": "Freighter_004",
+        "spawn": "Spawn1",
+        "cost": 100
+      },
+      "count": 1,
+      "lastTick": 84154923
+    },
+    {
+      "id": 7784,
+      "tick": 84155523,
+      "room": "W39S47",
+      "category": "SPAWNING",
+      "severity": "INFO",
+      "event": "SPAWN_EMERGENCY_REPLACEMENT",
+      "data": {
+        "role": "Freighter",
+        "creep": "Freighter_005",
+        "spawn": "Spawn1",
+        "cost": 400
+      },
+      "count": 1,
+      "lastTick": 84155523
+    },
+    {
+      "id": 7789,
+      "tick": 84155575,
+      "room": "W39S47",
+      "category": "SPAWNING",
+      "severity": "INFO",
+      "event": "SPAWN_EMERGENCY_REPLACEMENT",
+      "data": {
+        "role": "Freighter",
+        "creep": "Freighter_009",
+        "spawn": "Spawn1",
+        "cost": 600
+      },
+      "count": 1,
+      "lastTick": 84155575
+    },
+    {
+      "id": 7795,
+      "tick": 84155675,
+      "room": "W39S47",
+      "category": "SPAWNING",
+      "severity": "INFO",
+      "event": "SPAWN_STARTED",
+      "data": {
+        "role": "Freighter",
+        "creep": "Freighter_001",
+        "spawn": "Spawn1",
+        "cost": 800
+      },
+      "count": 1,
+      "lastTick": 84155675
+    },
+    {
+      "id": 7798,
+      "tick": 84155697,
+      "room": "W39S47",
+      "category": "SPAWNING",
+      "severity": "INFO",
+      "event": "FREIGHTER_RENEWAL_PLANNED",
+      "data": {
+        "carry": 8,
+        "workers": 2,
+        "needBy": 84155861,
+        "through": 84156428,
+        "predecessors": "Freighter_008,Freighter_004"
+      },
+      "count": 1,
+      "lastTick": 84155697
+    },
+    {
+      "id": 7800,
+      "tick": 84155723,
+      "room": "W39S47",
+      "category": "SPAWNING",
+      "severity": "INFO",
+      "event": "SPAWN_STARTED",
+      "data": {
+        "role": "Freighter",
+        "creep": "Freighter_006",
+        "spawn": "Spawn1",
+        "cost": 800
+      },
+      "count": 1,
+      "lastTick": 84155723
+    },
+    {
+      "id": 7801,
+      "tick": 84155723,
+      "room": "W39S47",
+      "category": "SPAWNING",
+      "severity": "INFO",
+      "event": "FREIGHTER_RENEWAL_STARTED",
+      "data": {
+        "creep": "Freighter_006",
+        "cost": 800,
+        "workers": 2,
+        "through": 84156428,
+        "predecessors": "Freighter_008,Freighter_004"
+      },
+      "count": 1,
+      "lastTick": 84155723
+    },
+    {
+      "id": 7815,
+      "tick": 84155840,
+      "room": "W39S47",
+      "category": "SPAWNING",
+      "severity": "INFO",
+      "event": "SPAWN_STARTED",
+      "data": {
+        "role": "Freighter",
+        "creep": "Freighter_002",
+        "spawn": "Spawn1",
+        "cost": 800
+      },
+      "count": 1,
+      "lastTick": 84155840
+    },
+    {
+      "id": 7871,
+      "tick": 84156372,
+      "room": "W39S47",
+      "category": "SPAWNING",
+      "severity": "INFO",
+      "event": "SPAWN_EMERGENCY_REPLACEMENT",
+      "data": {
+        "role": "Freighter",
+        "creep": "Freighter_003",
+        "spawn": "Spawn1",
+        "cost": 100
+      },
+      "count": 1,
+      "lastTick": 84156372
+    },
+    {
+      "id": 7888,
+      "tick": 84156894,
+      "room": "W39S47",
+      "category": "SPAWNING",
+      "severity": "INFO",
+      "event": "SPAWN_STARTED",
+      "data": {
+        "role": "Freighter",
+        "creep": "Freighter_004",
+        "spawn": "Spawn1",
+        "cost": 800
+      },
+      "count": 1,
+      "lastTick": 84156894
+    },
+    {
+      "id": 7896,
+      "tick": 84156960,
+      "room": "W39S47",
+      "category": "SPAWNING",
+      "severity": "INFO",
+      "event": "SPAWN_EMERGENCY_REPLACEMENT",
+      "data": {
+        "role": "Freighter",
+        "creep": "Freighter_007",
+        "spawn": "Spawn1",
+        "cost": 300
+      },
+      "count": 1,
+      "lastTick": 84156960
+    },
+    {
+      "id": 7898,
+      "tick": 84156978,
+      "room": "W39S47",
+      "category": "SPAWNING",
+      "severity": "INFO",
+      "event": "SPAWN_EMERGENCY_REPLACEMENT",
+      "data": {
+        "role": "Freighter",
+        "creep": "Freighter_008",
+        "spawn": "Spawn1",
+        "cost": 100
+      },
+      "count": 1,
+      "lastTick": 84156978
+    },
+    {
+      "id": 7904,
+      "tick": 84157010,
+      "room": "W39S47",
+      "category": "SPAWNING",
+      "severity": "INFO",
+      "event": "SPAWN_EMERGENCY_REPLACEMENT",
+      "data": {
+        "role": "Freighter",
+        "creep": "Freighter_010",
+        "spawn": "Spawn1",
+        "cost": 500
+      },
+      "count": 1,
+      "lastTick": 84157010
+    },
+    {
+      "id": 7913,
+      "tick": 84157158,
+      "room": "W39S47",
+      "category": "SPAWNING",
+      "severity": "INFO",
+      "event": "SPAWN_EMERGENCY_REPLACEMENT",
+      "data": {
+        "role": "Freighter",
+        "creep": "Freighter_005",
+        "spawn": "Spawn1",
+        "cost": 800
+      },
+      "count": 1,
+      "lastTick": 84157158
+    },
+    {
+      "id": 7925,
+      "tick": 84157338,
+      "room": "W39S47",
+      "category": "SPAWNING",
+      "severity": "WARN",
+      "event": "SPAWN_REJECTED",
+      "data": {
+        "role": "Freighter",
+        "reason": "CPU_CAPACITY_EXHAUSTED",
+        "available": 800,
+        "required": 800
+      },
+      "count": 16,
+      "lastTick": 84157353
+    }
+  ],
+  "queue": [
+    {
+      "role": "Freighter",
+      "priority": 87,
+      "carry": 8,
+      "assignment": "remoteHauling"
+    }
+  ],
+  "capacity": {
+    "mode": "CONSERVE",
+    "reason": "CPU_CAPACITY_EXHAUSTED",
+    "cpu": {
+      "limit": 20,
+      "rollingUsed": 16.37127334108247,
+      "targetCeiling": 15.600000000000001,
+      "bucket": 8541,
+      "headroom": 0,
+      "mode": "normal",
+      "phases": {
+        "diagnostics": 1.6559473199587433,
+        "bootstrapIndex": 0.7240872115825513,
+        "combat": 0.34282284156385573,
+        "economy": 2.0923421484357796,
+        "colonyState": 0.18366770441327088,
+        "capacity": 0.04411572406773517,
+        "remotePlanning": 0.1145348978477662,
+        "roomPlanning": 0.008377979426387813,
+        "roadPlanning": 0.11626011375329691,
+        "hiveMindStrategy": 0.060441092461884754,
+        "planning": 2.6332029526312195,
+        "spawnPlanning": 2.8178170041598976,
+        "roomStructures": 0.24403157099517897,
+        "creepExecution": 4.961907510832288,
+        "traffic": 2.634535234933643,
+        "visuals": 0.2612321894451185,
+        "pixels": 0.0010509148199804425
+      },
+      "sampled": true,
+      "share": 0
+    },
+    "spawn": {
+      "count": 1,
+      "replacementLoad": 0.29600000000000004,
+      "plannedLoad": 0.032,
+      "burstLoad": 0.16,
+      "emergencyReserve": 0.25,
+      "headroom": 0.2619999999999999,
+      "currentUtilization": 0,
+      "utilization": 0.4880000000000001,
+      "commitmentLoad": 0
+    },
+    "energy": {
+      "known": true,
+      "stored": 12771,
+      "reserve": 900,
+      "aboveReserve": 11871,
+      "grossIncome": 23.25,
+      "sustainableNetIncome": 16.13,
+      "trend": 6.64,
+      "drawdownSpend": 0,
+      "healthy": true,
+      "productiveRecovery": false
+    },
+    "population": {
+      "current": 18,
+      "mandatory": 12,
+      "economic": 5,
+      "discretionary": 6,
+      "baseline": 20,
+      "classes": {
+        "ECONOMIC": 5,
+        "MANDATORY": 12,
+        "GROWTH": 1
+      },
+      "softCap": 16,
+      "hardSafetyCap": 56,
+      "headroom": 0,
+      "discretionarySlots": 0
+    }
+  }
+}
