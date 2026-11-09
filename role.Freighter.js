@@ -1362,7 +1362,10 @@ function deliverToSpawnStockpile(creep) {
          * Artificer, and Tech can consume the spawn-side stockpile later.
          * Dropping within range 1 prevents exact-tile traffic jams.
          */
-        if(creep.drop(RESOURCE_ENERGY) === OK) {
+        // A successful drop is an intent: retain remote source provenance until
+        // next tick's cargo delta records the actual delivery before cleanup.
+        if(creep.drop(RESOURCE_ENERGY) === OK &&
+            creep.memory.freighterJob !== 'remote' && creep.memory.freighterJob !== 'remoteDelivery') {
             clearPickupMemory(creep);
         }
 

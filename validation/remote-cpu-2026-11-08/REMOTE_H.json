@@ -1,0 +1,1118 @@
+{
+  "tick": 84158174,
+  "build": {
+    "id": "dff731a4256ce6659284a638b935e8a1071fdf7af1140bcff0cf1ed9536271b4",
+    "modules": 109
+  },
+  "room": {
+    "room": "W39S47",
+    "visible": true,
+    "tick": 84158174,
+    "economyTick": 84158174,
+    "rcl": 3,
+    "progress": 70945,
+    "progressTotal": 135000,
+    "state": "STABLE",
+    "reason": "local income and logistics sustainable",
+    "priority": "BUILD_CORE_INFRASTRUCTURE",
+    "growthAllowed": true,
+    "blockedReason": "CONTROLLER_GROWTH_ACTIVE",
+    "activeWork": 10,
+    "requiredWork": 10,
+    "spawningWork": 0,
+    "queuedWork": 0,
+    "stagingWork": 0,
+    "income": 20,
+    "expectedIncome": 20,
+    "energy": 650,
+    "energyCapacity": 800,
+    "stored": 0,
+    "reserveTarget": 300,
+    "healthyTicks": 0,
+    "counts": {
+      "Artificer": 3,
+      "Freighter": 7,
+      "Annex": 2,
+      "Extractor": 3,
+      "Foreman": 1,
+      "Volley": 1,
+      "Tech": 1
+    },
+    "spawning": {
+      "Freighter": 1
+    },
+    "queued": {
+      "Artificer": 1
+    },
+    "sources": [
+      {
+        "id": "5bbcaadf9099fc012e63255e",
+        "activeWork": 5,
+        "stationedWork": 5,
+        "requiredWork": 5,
+        "spawningWork": 0,
+        "queuedWork": 0,
+        "stagingWork": 0,
+        "income": 10,
+        "expectedIncome": 10,
+        "assigned": 1,
+        "backlog": 50,
+        "seats": 1,
+        "availableSeats": 0,
+        "distance": 25,
+        "haulIncome": 10,
+        "haulCarry": 10.835999999999999,
+        "haulRoundTrip": 54,
+        "maximumWork": 5,
+        "plannedWork": 5,
+        "miners": [
+          {
+            "name": "Extractor_001",
+            "activeWork": 5,
+            "body": {
+              "bodyParts": 9,
+              "cost": 700,
+              "spawnTime": 27,
+              "WORK": 5,
+              "CARRY": 1,
+              "MOVE": 3,
+              "expectedLifetime": 1500,
+              "estimatedReplacementLoad": 0.018,
+              "usefulWorkPerCpuEstimate": 25,
+              "usefulWorkPerSpawnTick": 0.18518518518518517
+            },
+            "ttl": 714,
+            "spawning": false,
+            "retiring": false,
+            "replaces": null,
+            "state": "miningLocalSource"
+          }
+        ],
+        "replacement": "NONE",
+        "constraint": "COVERED",
+        "planningReason": "existing workers already cover source",
+        "recommendedAction": "maintain harvesting and logistics",
+        "preferredBody": [
+          "work",
+          "work",
+          "work",
+          "work",
+          "work",
+          "move",
+          "move",
+          "move",
+          "carry"
+        ],
+        "preferredCost": 700
+      },
+      {
+        "id": "5bbcaadf9099fc012e63255f",
+        "activeWork": 5,
+        "stationedWork": 5,
+        "requiredWork": 5,
+        "spawningWork": 0,
+        "queuedWork": 0,
+        "stagingWork": 0,
+        "income": 10,
+        "expectedIncome": 10,
+        "assigned": 1,
+        "backlog": 100,
+        "seats": 6,
+        "availableSeats": 5,
+        "distance": 9,
+        "haulIncome": 10,
+        "haulCarry": 4.429333333333333,
+        "haulRoundTrip": 22,
+        "maximumWork": 5,
+        "plannedWork": 5,
+        "miners": [
+          {
+            "name": "Extractor_002",
+            "activeWork": 5,
+            "body": {
+              "bodyParts": 9,
+              "cost": 700,
+              "spawnTime": 27,
+              "WORK": 5,
+              "CARRY": 1,
+              "MOVE": 3,
+              "expectedLifetime": 1500,
+              "estimatedReplacementLoad": 0.018,
+              "usefulWorkPerCpuEstimate": 25,
+              "usefulWorkPerSpawnTick": 0.18518518518518517
+            },
+            "ttl": 1172,
+            "spawning": false,
+            "retiring": false,
+            "replaces": null,
+            "state": "miningLocalSource"
+          }
+        ],
+        "replacement": "NONE",
+        "constraint": "COVERED",
+        "planningReason": "existing workers already cover source",
+        "recommendedAction": "maintain harvesting and logistics",
+        "preferredBody": [
+          "work",
+          "work",
+          "work",
+          "work",
+          "work",
+          "move",
+          "move",
+          "move",
+          "carry"
+        ],
+        "preferredCost": 700
+      }
+    ],
+    "remotes": [
+      {
+        "room": "W38S47",
+        "status": "active",
+        "sources": 2
+      },
+      {
+        "room": "W38S48",
+        "status": "active",
+        "sources": 2
+      },
+      {
+        "room": "W39S48",
+        "status": "active",
+        "sources": 1
+      }
+    ],
+    "resources": {},
+    "alerts": [],
+    "hauling": {
+      "requiredCarry": 18,
+      "theoreticalCarry": 18,
+      "localCarryRequired": 18,
+      "creepRequiredCarry": 18,
+      "activeCarry": 36,
+      "localCarry": 22,
+      "localCarryLiving": 22,
+      "localCarryQueued": 0,
+      "localCarrySpawning": 0,
+      "localCarryMissing": 0,
+      "queuedCarry": 0,
+      "remoteCarry": 14,
+      "remoteCarryLiving": 14,
+      "remoteCarryQueued": 0,
+      "remoteCarrySpawning": 8,
+      "backlog": 150,
+      "creepHaulIncome": 20,
+      "linkServedIncome": 0,
+      "linkBackpressure": 0,
+      "remoteCarryRequired": 9,
+      "remoteCarryMissing": 0
+    },
+    "freighters": [
+      {
+        "name": "Freighter_001",
+        "room": "W38S47",
+        "x": 46,
+        "y": 15,
+        "assignment": "remoteHauling",
+        "job": "remote",
+        "working": false,
+        "assignmentClass": "remote",
+        "predecessors": [],
+        "pickup": "6af0e0d5c668bbe1689bbba2",
+        "delivery": "6ada96f8c1952000136f4fd8",
+        "cargo": 0,
+        "carryParts": 6,
+        "moveParts": 6,
+        "ttl": 935,
+        "fatigue": 0,
+        "flow": {
+          "tick": 84158174,
+          "cargo": 0,
+          "position": "W38S47:46:15",
+          "active": true,
+          "picked": 900,
+          "delivered": 900,
+          "observedTicks": 564,
+          "workTicks": 509,
+          "parkingTicks": 2,
+          "idleTicks": 0
+        }
+      },
+      {
+        "name": "Freighter_004",
+        "room": "W39S47",
+        "x": 30,
+        "y": 23,
+        "assignment": "remoteHauling",
+        "job": "remoteDelivery",
+        "working": true,
+        "assignmentClass": "remote",
+        "predecessors": [],
+        "pickup": null,
+        "delivery": null,
+        "cargo": 400,
+        "carryParts": 8,
+        "moveParts": 8,
+        "ttl": 267,
+        "fatigue": 0,
+        "flow": {
+          "tick": 84158174,
+          "cargo": 400,
+          "position": "W39S47:30:23",
+          "active": true,
+          "picked": 4000,
+          "delivered": 3600,
+          "observedTicks": 1232,
+          "workTicks": 1197,
+          "parkingTicks": 0,
+          "idleTicks": 0
+        }
+      },
+      {
+        "name": "Freighter_007",
+        "room": "W39S47",
+        "x": 24,
+        "y": 25,
+        "assignment": "localLogistics",
+        "job": "local",
+        "working": false,
+        "assignmentClass": "local",
+        "predecessors": [],
+        "pickup": "6aeeeacd5c1e223bcdd49a30",
+        "delivery": "6aeefde3fed6543d5ec4e19d",
+        "cargo": 0,
+        "carryParts": 3,
+        "moveParts": 3,
+        "ttl": 303,
+        "fatigue": 0,
+        "flow": {
+          "tick": 84158174,
+          "cargo": 0,
+          "position": "W39S47:24:25",
+          "active": true,
+          "picked": 2891,
+          "delivered": 2891,
+          "observedTicks": 1196,
+          "workTicks": 1105,
+          "parkingTicks": 54,
+          "idleTicks": 0
+        }
+      },
+      {
+        "name": "Freighter_008",
+        "room": "W39S47",
+        "x": 14,
+        "y": 21,
+        "assignment": "localLogistics",
+        "job": "local",
+        "working": false,
+        "assignmentClass": "local",
+        "predecessors": [],
+        "pickup": "6aeee00615f4666cde0c0e56",
+        "delivery": "6aee743d79a6d312f412f064",
+        "cargo": 0,
+        "carryParts": 1,
+        "moveParts": 1,
+        "ttl": 309,
+        "fatigue": 0,
+        "flow": {
+          "tick": 84158174,
+          "cargo": 0,
+          "position": "W39S47:14:21",
+          "active": true,
+          "picked": 1190,
+          "delivered": 1190,
+          "observedTicks": 1190,
+          "workTicks": 931,
+          "parkingTicks": 130,
+          "idleTicks": 0
+        }
+      },
+      {
+        "name": "Freighter_010",
+        "room": "W39S47",
+        "x": 22,
+        "y": 23,
+        "assignment": "localLogistics",
+        "job": "idle",
+        "working": true,
+        "assignmentClass": "local",
+        "predecessors": [],
+        "pickup": null,
+        "delivery": "6aee90df0590453a1edff021",
+        "cargo": 3,
+        "carryParts": 5,
+        "moveParts": 5,
+        "ttl": 365,
+        "fatigue": 0,
+        "flow": {
+          "tick": 84158174,
+          "cargo": 3,
+          "position": "W39S47:22:23",
+          "active": true,
+          "picked": 4400,
+          "delivered": 4397,
+          "observedTicks": 1134,
+          "workTicks": 1004,
+          "parkingTicks": 93,
+          "idleTicks": 0
+        }
+      },
+      {
+        "name": "Freighter_005",
+        "room": "W39S47",
+        "x": 7,
+        "y": 8,
+        "assignment": "localLogistics",
+        "job": "idle",
+        "working": true,
+        "assignmentClass": "local",
+        "predecessors": [],
+        "pickup": null,
+        "delivery": "6aeea2bc95190002fe6baf57",
+        "cargo": 250,
+        "carryParts": 8,
+        "moveParts": 8,
+        "ttl": 531,
+        "fatigue": 0,
+        "flow": {
+          "tick": 84158174,
+          "cargo": 250,
+          "position": "W39S47:7:8",
+          "active": true,
+          "picked": 4300,
+          "delivered": 4050,
+          "observedTicks": 968,
+          "workTicks": 871,
+          "parkingTicks": 72,
+          "idleTicks": 0
+        }
+      },
+      {
+        "name": "Freighter_002",
+        "room": "W39S47",
+        "x": 23,
+        "y": 24,
+        "assignment": "localLogistics",
+        "job": "idle",
+        "working": false,
+        "assignmentClass": "local",
+        "predecessors": [
+          {
+            "name": "Freighter_007",
+            "deathAt": 84158477
+          },
+          {
+            "name": "Freighter_008",
+            "deathAt": 84158483
+          }
+        ],
+        "pickup": null,
+        "delivery": "6aeeaae70219fd3af894f064",
+        "cargo": 0,
+        "carryParts": 5,
+        "moveParts": 5,
+        "ttl": 1100,
+        "fatigue": 0,
+        "flow": {
+          "tick": 84158174,
+          "cargo": 0,
+          "position": "W39S47:23:24",
+          "active": false,
+          "picked": 1500,
+          "delivered": 1500,
+          "observedTicks": 399,
+          "workTicks": 302,
+          "parkingTicks": 69,
+          "idleTicks": 9
+        }
+      }
+    ],
+    "logistics": {
+      "revision": "logistics-2026-11-07",
+      "flow": {
+        "observedCreepTicks": 6683,
+        "workCreepTicks": 5919,
+        "parkingCreepTicks": 420,
+        "picked": 19181,
+        "delivered": 18528
+      },
+      "cpu": {
+        "tick": 84158150,
+        "total": 1.9558947582113868,
+        "perCreep": 0.2775300215630252,
+        "utilization": 0.8998997165484721
+      },
+      "local": {
+        "required": 18,
+        "living": 22,
+        "spawning": 0,
+        "queued": 0,
+        "missing": 0,
+        "workers": 5,
+        "idleWorkers": 1,
+        "noProgressWorkers": 0,
+        "fatiguedWorkers": 0,
+        "assessment": "CAPACITY_COVERED_IDLE_WORKERS"
+      },
+      "remote": {
+        "required": 9,
+        "living": 14,
+        "spawning": 8,
+        "queued": 0,
+        "missing": 0,
+        "workers": 2,
+        "idleWorkers": 0,
+        "noProgressWorkers": 0,
+        "fatiguedWorkers": 0,
+        "assessment": "CAPACITY_COVERED"
+      },
+      "renewals": []
+    },
+    "spawn": {
+      "tick": 84158174,
+      "current": true,
+      "status": "BUSY",
+      "reason": "No idle spawn found",
+      "available": 650,
+      "capacity": 800,
+      "stage": "queue",
+      "queue": 1
+    }
+  },
+  "cpu": {
+    "tick": 84158174,
+    "samples": 1000,
+    "total": 17.067300716790434,
+    "phases": {
+      "diagnostics": 1.6855535848380674,
+      "bootstrapIndex": 0.4342575775406325,
+      "combat": 0.3330808047467587,
+      "economy": 2.3695121451232977,
+      "colonyState": 0.2073721708499316,
+      "capacity": 0.07464505000401954,
+      "remotePlanning": 0.9345370727902114,
+      "roomPlanning": 0.06103078308434952,
+      "roadPlanning": 0.06565184564896075,
+      "hiveMindStrategy": 0.05456960637414503,
+      "planning": 3.781753294804586,
+      "spawnPlanning": 2.6906725282107944,
+      "roomStructures": 0.24768621925494874,
+      "creepExecution": 5.069903664308233,
+      "traffic": 2.559626640223879,
+      "visuals": 0.16276906638672137,
+      "pixels": 0.0028346053225161826
+    },
+    "bucket": 7956,
+    "mode": "critical"
+  },
+  "capacity": {
+    "mode": "CONSERVE",
+    "reason": "CPU_CAPACITY_EXHAUSTED",
+    "cpu": {
+      "limit": 20,
+      "rollingUsed": 16.445831563100498,
+      "targetCeiling": 15.600000000000001,
+      "bucket": 7956,
+      "headroom": 0,
+      "mode": "normal",
+      "phases": {
+        "diagnostics": 1.670531027597842,
+        "bootstrapIndex": 0.437869886156238,
+        "combat": 0.3331294830519343,
+        "economy": 2.3690410612480957,
+        "colonyState": 0.20636670094437456,
+        "capacity": 0.05451040000453904,
+        "remotePlanning": 0.05695873643357872,
+        "roomPlanning": 0.008205825649299999,
+        "roadPlanning": 0.07232928405441424,
+        "hiveMindStrategy": 0.05650351819347612,
+        "planning": 2.837925127560631,
+        "spawnPlanning": 2.8793740424564382,
+        "roomStructures": 0.2540912991721516,
+        "creepExecution": 5.196731204786932,
+        "traffic": 2.556651811359816,
+        "visuals": 0.1780553293185866,
+        "pixels": 0.002866883691707377
+      },
+      "sampled": true,
+      "share": 0
+    },
+    "spawn": {
+      "count": 1,
+      "replacementLoad": 0.3420000000000001,
+      "plannedLoad": 0.008,
+      "burstLoad": 0.13666666666666666,
+      "emergencyReserve": 0.25,
+      "headroom": 0.26333333333333325,
+      "currentUtilization": 1,
+      "utilization": 0.48666666666666675,
+      "commitmentLoad": 0
+    },
+    "energy": {
+      "known": true,
+      "stored": 9783,
+      "reserve": 300,
+      "aboveReserve": 9483,
+      "grossIncome": 22,
+      "sustainableNetIncome": 12.56,
+      "trend": 6.89,
+      "drawdownSpend": 0,
+      "healthy": true,
+      "productiveRecovery": false
+    },
+    "population": {
+      "current": 19,
+      "mandatory": 10,
+      "economic": 6,
+      "discretionary": 9,
+      "baseline": 20,
+      "classes": {
+        "ECONOMIC": 6,
+        "STRATEGIC": 2,
+        "MANDATORY": 10,
+        "GROWTH": 1
+      },
+      "softCap": 16,
+      "hardSafetyCap": 56,
+      "headroom": 0,
+      "discretionarySlots": 0
+    }
+  },
+  "admission": {
+    "tick": 84158174,
+    "role": "Scout",
+    "requestId": "legacy:W39S47:Scout::::",
+    "allowed": false,
+    "reason": "CPU_CAPACITY_EXHAUSTED",
+    "replacementCount": 0,
+    "populationClass": "ECONOMIC",
+    "softPopulation": 16,
+    "hardPopulation": 56,
+    "spawnLoad": 0.48666666666666675
+  },
+  "workers": [
+    {
+      "name": "Artificer_001",
+      "role": "Artificer",
+      "ttl": 438,
+      "room": "W38S47",
+      "work": 2,
+      "carry": 2,
+      "x": 26,
+      "y": 40,
+      "category": "remoteBootstrap"
+    },
+    {
+      "name": "Artificer_003",
+      "role": "Artificer",
+      "ttl": 663,
+      "room": "W38S47",
+      "work": 2,
+      "carry": 2,
+      "x": 27,
+      "y": 41,
+      "category": "remoteBootstrap"
+    },
+    {
+      "name": "Freighter_001",
+      "role": "Freighter",
+      "ttl": 935,
+      "room": "W38S47",
+      "work": 0,
+      "carry": 6,
+      "x": 46,
+      "y": 15
+    },
+    {
+      "name": "Annex_002",
+      "role": "Annex",
+      "ttl": 126,
+      "room": "W38S47",
+      "work": 0,
+      "carry": 0,
+      "x": 18,
+      "y": 22
+    },
+    {
+      "name": "Annex_001",
+      "role": "Annex",
+      "ttl": 42,
+      "room": "W38S48",
+      "work": 0,
+      "carry": 0,
+      "x": 12,
+      "y": 16
+    },
+    {
+      "name": "Freighter_004",
+      "role": "Freighter",
+      "ttl": 267,
+      "room": "W39S47",
+      "work": 0,
+      "carry": 8,
+      "x": 30,
+      "y": 23
+    },
+    {
+      "name": "Freighter_007",
+      "role": "Freighter",
+      "ttl": 303,
+      "room": "W39S47",
+      "work": 0,
+      "carry": 3,
+      "x": 24,
+      "y": 25
+    },
+    {
+      "name": "Freighter_008",
+      "role": "Freighter",
+      "ttl": 309,
+      "room": "W39S47",
+      "work": 0,
+      "carry": 1,
+      "x": 14,
+      "y": 21
+    },
+    {
+      "name": "Freighter_010",
+      "role": "Freighter",
+      "ttl": 365,
+      "room": "W39S47",
+      "work": 0,
+      "carry": 5,
+      "x": 22,
+      "y": 23
+    },
+    {
+      "name": "Freighter_005",
+      "role": "Freighter",
+      "ttl": 531,
+      "room": "W39S47",
+      "work": 0,
+      "carry": 8,
+      "x": 7,
+      "y": 8
+    },
+    {
+      "name": "Extractor_001",
+      "role": "Extractor",
+      "ttl": 714,
+      "room": "W39S47",
+      "work": 5,
+      "carry": 1,
+      "source": "5bbcaadf9099fc012e63255e",
+      "x": 9,
+      "y": 4,
+      "state": "miningLocalSource"
+    },
+    {
+      "name": "Foreman_002",
+      "role": "Foreman",
+      "ttl": 756,
+      "room": "W39S47",
+      "work": 0,
+      "carry": 7,
+      "x": 9,
+      "y": 29
+    },
+    {
+      "name": "Volley_001",
+      "role": "Volley",
+      "ttl": 1064,
+      "room": "W39S47",
+      "work": 0,
+      "carry": 0,
+      "x": 24,
+      "y": 28
+    },
+    {
+      "name": "Freighter_002",
+      "role": "Freighter",
+      "ttl": 1100,
+      "room": "W39S47",
+      "work": 0,
+      "carry": 5,
+      "x": 23,
+      "y": 24,
+      "predecessors": [
+        {
+          "name": "Freighter_007",
+          "deathAt": 84158477
+        },
+        {
+          "name": "Freighter_008",
+          "deathAt": 84158483
+        }
+      ]
+    },
+    {
+      "name": "Extractor_002",
+      "role": "Extractor",
+      "ttl": 1172,
+      "room": "W39S47",
+      "work": 5,
+      "carry": 1,
+      "source": "5bbcaadf9099fc012e63255f",
+      "x": 33,
+      "y": 24,
+      "state": "miningLocalSource"
+    },
+    {
+      "name": "Tech_001",
+      "role": "Tech",
+      "ttl": 1208,
+      "room": "W39S47",
+      "work": 3,
+      "carry": 1,
+      "x": 4,
+      "y": 33
+    },
+    {
+      "name": "Artificer_002",
+      "role": "Artificer",
+      "ttl": 1338,
+      "room": "W39S47",
+      "work": 2,
+      "carry": 2,
+      "x": 27,
+      "y": 23,
+      "category": "criticalMaintenance"
+    },
+    {
+      "name": "Freighter_003",
+      "role": "Freighter",
+      "room": "W39S47",
+      "work": 0,
+      "carry": 8,
+      "x": 22,
+      "y": 27,
+      "predecessors": [
+        {
+          "name": "Freighter_004",
+          "deathAt": 84158441
+        },
+        {
+          "name": "Freighter_001",
+          "deathAt": 84159109
+        }
+      ]
+    },
+    {
+      "name": "Extractor_003",
+      "role": "Extractor",
+      "ttl": 1395,
+      "room": "W39S48",
+      "work": 3,
+      "carry": 1,
+      "remote": true,
+      "source": "5bbcaadf9099fc012e632562",
+      "x": 34,
+      "y": 7,
+      "state": "remoteContainerDropBuffer",
+      "restart": {
+        "spawnedAt": 84158052,
+        "projectedCpu": 17.460336273635995,
+        "ceiling": 18
+      }
+    }
+  ],
+  "economy": {
+    "gross": 2,
+    "net": 1.6336,
+    "plannedIncome": 35,
+    "provenIncome": 2,
+    "provenSources": 0,
+    "backlog": 1203,
+    "reservedCarry": 300,
+    "activeSources": 4,
+    "operationalSources": 4,
+    "selectedSources": 4,
+    "portfolioSources": 10,
+    "candidateSources": 10,
+    "reservedSources": 3,
+    "unreservedSources": 1,
+    "requiredCarry": 9,
+    "oldestHaulAge": 20,
+    "availableCarry": 14
+  },
+  "events": [
+    {
+      "id": 8112,
+      "tick": 84158028,
+      "room": null,
+      "category": "ERRORS",
+      "severity": "INFO",
+      "event": "HEALTH_SNAPSHOT",
+      "data": {
+        "cpu": 100.0005259,
+        "bucket": 7957,
+        "creeps": 19,
+        "rooms": 3
+      },
+      "count": 1,
+      "lastTick": 84158028
+    },
+    {
+      "id": 8113,
+      "tick": 84158028,
+      "room": "W39S47",
+      "category": "ECONOMY",
+      "severity": "INFO",
+      "event": "ROOM_HEALTH_SNAPSHOT",
+      "data": {
+        "state": "STABLE",
+        "activeWork": 10,
+        "requiredWork": 10,
+        "spawningWork": 0,
+        "queuedWork": 0,
+        "energy": 800,
+        "stored": 0,
+        "spawn": "IDLE",
+        "spawnReason": "Queue empty",
+        "sampleTick": 84158028
+      },
+      "count": 1,
+      "lastTick": 84158028
+    },
+    {
+      "id": 8114,
+      "tick": 84158052,
+      "room": "W39S47",
+      "category": "SPAWNING",
+      "severity": "INFO",
+      "event": "SPAWN_STARTED",
+      "data": {
+        "role": "Extractor",
+        "creep": "Extractor_003",
+        "spawn": "Spawn1",
+        "cost": 450
+      },
+      "count": 1,
+      "lastTick": 84158052
+    },
+    {
+      "id": 8115,
+      "tick": 84158056,
+      "room": "W39S47",
+      "category": "ECONOMY",
+      "severity": "INFO",
+      "event": "ECONOMY_OBSERVED",
+      "data": {
+        "from": null,
+        "to": "STABLE",
+        "reason": "local income and logistics sustainable",
+        "growth": "GROWTH_AGGRESSIVE",
+        "blocked": "CONTROLLER_GROWTH_ACTIVE",
+        "stored": 0,
+        "workActive": 10,
+        "workRequired": 10,
+        "workSpawning": 0,
+        "workQueued": 0
+      },
+      "count": 1,
+      "lastTick": 84158056
+    },
+    {
+      "id": 8116,
+      "tick": 84158056,
+      "room": "W39S47",
+      "category": "SPAWNING",
+      "severity": "INFO",
+      "event": "HARVEST_PLAN_CHANGED",
+      "data": {
+        "source": "5bbcaadf9099fc012e63255e",
+        "required": 5,
+        "active": 5,
+        "stationed": 5,
+        "maximum": 5,
+        "seats": 1,
+        "replacement": "NONE",
+        "constraint": "COVERED",
+        "reason": "existing workers already cover source",
+        "next": "maintain harvesting and logistics"
+      },
+      "count": 1,
+      "lastTick": 84158056
+    },
+    {
+      "id": 8117,
+      "tick": 84158056,
+      "room": "W39S47",
+      "category": "SPAWNING",
+      "severity": "INFO",
+      "event": "HARVEST_PLAN_CHANGED",
+      "data": {
+        "source": "5bbcaadf9099fc012e63255f",
+        "required": 5,
+        "active": 5,
+        "stationed": 5,
+        "maximum": 5,
+        "seats": 6,
+        "replacement": "NONE",
+        "constraint": "COVERED",
+        "reason": "existing workers already cover source",
+        "next": "maintain harvesting and logistics"
+      },
+      "count": 1,
+      "lastTick": 84158056
+    },
+    {
+      "id": 8118,
+      "tick": 84158056,
+      "room": null,
+      "category": "ERRORS",
+      "severity": "INFO",
+      "event": "HEALTH_SNAPSHOT",
+      "data": {
+        "cpu": 96.29899429999999,
+        "bucket": 7893,
+        "creeps": 20,
+        "rooms": 3
+      },
+      "count": 1,
+      "lastTick": 84158056
+    },
+    {
+      "id": 8119,
+      "tick": 84158056,
+      "room": "W39S47",
+      "category": "ECONOMY",
+      "severity": "INFO",
+      "event": "ROOM_HEALTH_SNAPSHOT",
+      "data": {
+        "state": "STABLE",
+        "activeWork": 10,
+        "requiredWork": 10,
+        "spawningWork": 0,
+        "queuedWork": 0,
+        "energy": 350,
+        "stored": 0,
+        "spawn": "BUSY",
+        "spawnReason": "Queue empty",
+        "sampleTick": 84158056
+      },
+      "count": 1,
+      "lastTick": 84158056
+    },
+    {
+      "id": 8120,
+      "tick": 84158155,
+      "room": "W39S47",
+      "category": "SPAWNING",
+      "severity": "INFO",
+      "event": "FREIGHTER_RENEWAL_PLANNED",
+      "data": {
+        "carry": 8,
+        "workers": 2,
+        "needBy": 84158441,
+        "through": 84159109,
+        "predecessors": "Freighter_004,Freighter_001"
+      },
+      "count": 1,
+      "lastTick": 84158155
+    },
+    {
+      "id": 8121,
+      "tick": 84158155,
+      "room": "W39S47",
+      "category": "SPAWNING",
+      "severity": "INFO",
+      "event": "SPAWN_STARTED",
+      "data": {
+        "role": "Freighter",
+        "creep": "Freighter_003",
+        "spawn": "Spawn1",
+        "cost": 800
+      },
+      "count": 1,
+      "lastTick": 84158155
+    },
+    {
+      "id": 8122,
+      "tick": 84158155,
+      "room": "W39S47",
+      "category": "SPAWNING",
+      "severity": "INFO",
+      "event": "FREIGHTER_RENEWAL_STARTED",
+      "data": {
+        "creep": "Freighter_003",
+        "cost": 800,
+        "workers": 2,
+        "through": 84159109,
+        "predecessors": "Freighter_004,Freighter_001"
+      },
+      "count": 1,
+      "lastTick": 84158155
+    },
+    {
+      "id": 8123,
+      "tick": 84158156,
+      "room": "W39S47",
+      "category": "ECONOMY",
+      "severity": "WARN",
+      "event": "SPAWN_ENERGY_STARVATION",
+      "data": {
+        "reason": "CONTROLLER_GROWTH_ACTIVE",
+        "available": 1,
+        "stored": 9314
+      },
+      "count": 1,
+      "lastTick": 84158156
+    },
+    {
+      "id": 8124,
+      "tick": 84158156,
+      "room": null,
+      "category": "ERRORS",
+      "severity": "INFO",
+      "event": "HEALTH_SNAPSHOT",
+      "data": {
+        "cpu": 15.409087100000761,
+        "bucket": 7926,
+        "creeps": 20,
+        "rooms": 4
+      },
+      "count": 1,
+      "lastTick": 84158156
+    },
+    {
+      "id": 8125,
+      "tick": 84158156,
+      "room": "W39S47",
+      "category": "ECONOMY",
+      "severity": "INFO",
+      "event": "ROOM_HEALTH_SNAPSHOT",
+      "data": {
+        "state": "STABLE",
+        "activeWork": 10,
+        "requiredWork": 10,
+        "spawningWork": 0,
+        "queuedWork": 0,
+        "energy": 1,
+        "stored": 0,
+        "spawn": "BUSY",
+        "spawnReason": "Queue empty",
+        "sampleTick": 84158156
+      },
+      "count": 1,
+      "lastTick": 84158156
+    },
+    {
+      "id": 8126,
+      "tick": 84158157,
+      "room": "W39S47",
+      "category": "ECONOMY",
+      "severity": "INFO",
+      "event": "SPAWN_ENERGY_RESTORED",
+      "data": {
+        "reason": "CONTROLLER_GROWTH_ACTIVE",
+        "available": 252,
+        "stored": 9555
+      },
+      "count": 1,
+      "lastTick": 84158157
+    }
+  ]
+}

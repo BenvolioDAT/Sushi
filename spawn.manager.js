@@ -734,6 +734,15 @@ function runRoomInternal(roomName, decision, selectedSpawn) {
         delete request.replacementFor;
     }
     if (finalAdmission?.freighterRenewal) request.memory.freighterPredecessors = finalAdmission.freighterPredecessors;
+    if (finalAdmission?.remoteHaulRelief) request.memory.remoteHaulRelief = {
+        spawnedAt: Game.time, projectedCpu: finalAdmission.remoteHaulRelief.projectedCpu,
+        ceiling: finalAdmission.remoteHaulRelief.ceiling
+    };
+    else delete request.memory.remoteHaulRelief;
+    if (finalAdmission?.remoteRestart) request.memory.remoteRestart = {
+        spawnedAt: Game.time, projectedCpu: finalAdmission.remoteRestart.projectedCpu, ceiling: finalAdmission.remoteRestart.ceiling
+    };
+    else delete request.memory.remoteRestart;
     request.memory.spawnCapability = { work: countBodyParts(request.body, WORK), carry: countBodyParts(request.body, CARRY),
         claim: countBodyParts(request.body, CLAIM) };
     if (['Tech','Artificer'].includes(request.role)) {

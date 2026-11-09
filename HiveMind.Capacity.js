@@ -3,19 +3,30 @@ const Index = require('HiveMind.Index');
 const CPU = require('CPU.Status');
 const Bodies = require('BodyProfiles');
 const DEFAULTS = { interval: 5, absoluteMaximum: 150, spawnTarget: 0.75, queueHorizon: 300,
-    cpuCritical: 0.55, cpuLow: 0.65, cpuHealthy: 0.78, cpuFull: 0.83 };
+    cpuCritical: 0.55, cpuLow: 0.65, cpuHealthy: 0.78, cpuFull: 0.83,
+    remoteHaulRelief: true, remoteHaulReliefCeiling: 0.90 };
+const loadedAt = typeof Game !== 'undefined' ? Game.time : 0;
 const safe = (v, fallback = 0) => Number.isFinite(v) ? Math.max(0, v) : fallback;
 function config() { return Object.assign({}, DEFAULTS, HiveMemory.getConfig('capacity')); }
 function roleCpu(role) {
     const hive = HiveMemory.ensure(), sample = hive.telemetry.populationRoles;
+    const row = sample && sample[role];
+    const measured = row && (!Number.isFinite(row.tick) || row.tick <= Game.time && Game.time - row.tick <= 500) ? row.cpu : undefined;
     const rolling = global.__sushiCpuRolling || hive.telemetry.cpu || {};
     const population = hive.capacity && Object.values(hive.capacity.rooms).reduce((sum, room) => sum + room.population.current, 0) || 0;
     const overhead = population ? ((rolling.phases || {}).traffic || 0) / population : 0;
-    return Math.max(0.05, sample && sample[role] && sample[role].cpu || 0.2) + overhead;
+    return Math.max(0.05, measured || 0.2) + overhead;
 }
 function classify(request) {
     const m = request.memory || {}, role = request.role || m.role;
-    const category = require('HiveMind.Economy').categoryForRequest(request);
+    let category = require('HiveMind.Economy').categoryForRequest(request);
+    // A builder's birth category is not a permanent emergency exemption once
+    // its role has selected different work. Incoming requests keep their category.
+    if (role === 'Artificer' && request.pos && !request.spawning && m.artificerTask) {
+        category = m.artificerTask === 'EMERGENCY_FILL' ? 'spawnFill' : m.artificerWorkCategory ||
+            (m.artificerTask === 'CRITICAL_REPAIR' ? 'criticalMaintenance' :
+                m.artificerTask === 'BUILD_REMOTE' ? 'remote' : 'construction');
+    }
     if (['controllerSafety', 'criticalController', 'criticalMaintenance', 'criticalInfrastructure', 'emergencyDefense', 'spawnFill'].includes(category) ||
         m.controllerGrowthFloor || role === 'Foreman') return 'MANDATORY';
     if (request.strategyCategory === 'SPECIAL_STRATEGY' || m.strategyCategory === 'SPECIAL_STRATEGY' ||
@@ -74,6 +85,27 @@ function currentSpawn(roomName, queue, settings) {
     return { ...base, plannedLoad: pending.plannedLoad, burstLoad: base.burstLoad + pending.burstLoad,
         headroom: Math.max(0, base.headroom - pending.plannedLoad - pending.burstLoad),
         utilization: base.utilization + (pending.plannedLoad + pending.burstLoad) / Math.max(1, base.count) };
+}
+function pendingCpu(roomName) {
+    const creeps = Index.get().creepsByHomeRoom.get(roomName) || [], seen = new Set();
+    let cpu = 0;
+    for (const creep of creeps) {
+        seen.add(creep.name);
+        const age = Bodies.lifetime(creep.body || [], creep.memory) - creep.ticksToLive;
+        // Spawning bodies execute no role yet; newborn CPU has not settled into
+        // the EMA. Reserve their full estimate for the first 30 active ticks.
+        if (creep.spawning || Number.isFinite(age) && age >= 0 && age < 30) cpu += roleCpu(creep.memory.role);
+    }
+    for (const spawn of Index.get().ownedSpawnsByRoom.get(roomName) || []) {
+        const name = spawn.spawning?.name, memory = name && Memory.creeps?.[name];
+        if (name && !seen.has(name) && memory?.role) { cpu += roleCpu(memory.role); seen.add(name); }
+    }
+    for (const spawn of require('Spawn.Intents').get().spawns) {
+        if (spawn.room.name === roomName && !seen.has(spawn.spawning.name)) {
+            cpu += roleCpu(spawn.memory.role); seen.add(spawn.spawning.name);
+        }
+    }
+    return cpu;
 }
 function commitments(roomName, queue, settings, excludeId) {
     const hive = HiveMemory.ensure(), index = Index.get(), assigned = {}, seen = new Set();
@@ -196,9 +228,7 @@ function evaluate(room, request, context, mandatory, revalidate, renewal) {
     const roleSamples = HiveMemory.ensure().telemetry.populationRooms || {};
     const utilization = roleSamples[room.name] && roleSamples[room.name][role];
     const accepted = require('Spawn.Intents').get().spawns.filter(s => s.room.name === room.name);
-    const acceptedCpu = accepted.filter(s => !Game.creeps[s.spawning.name])
-        .reduce((sum, s) => sum + roleCpu(s.memory.role), 0);
-    const queuedCpu = acceptedCpu + queue.reduce((sum, q) => sum + roleCpu(q.role), 0) + committed.cpu;
+    const queuedCpu = pendingCpu(room.name) + queue.reduce((sum, q) => sum + roleCpu(q.role), 0) + committed.cpu;
     const haulingReplacement = role === 'Freighter' && renewal?.renewal && !renewal.obsolete;
     const metrics = Bodies.metrics(haulingReplacement ? renewal.body : request.body || [], request.memory || {});
     const claimed = ['Tech','Artificer'].includes(role) ?
@@ -218,11 +248,21 @@ function evaluate(room, request, context, mandatory, revalidate, renewal) {
     const cpuReplacement = replacing.length >= (haulingReplacement ? 2 : 1) && metrics[capability] <= replacementWork &&
         metrics.spawnTime <= replacementDeadline &&
         (haulingReplacement || cpu.mode !== 'critical' && cpu.bucket >= 1800);
+    const rolling = global.__sushiCpuRolling;
+    const projectedCpu = Math.max(cpu.rollingUsed, status.used) + queuedCpu + Math.max(0.5, roleCpu(role));
+    const reliefCeiling = cpu.limit * Math.min(0.90, Math.max(0.5, safe(settings.remoteHaulReliefCeiling, 0.90)));
+    const needsMargin = Math.min(view.cpu.share, cpu.headroom / Math.max(1, Object.keys(get().rooms).length)) < queuedCpu + roleCpu(role) ||
+        total >= view.population.softCap;
+    const relief = needsMargin && !mandatory && ['Freighter','Extractor'].includes(role) && settings.remoteHaulRelief !== false &&
+        Game.time - loadedAt >= 20 && rolling?.tick === Game.time - 1 && rolling.samples >= 20 &&
+        cpu.bucket >= 6000 && cpu.mode !== 'critical' && projectedCpu <= reliefCeiling ?
+        (role === 'Freighter' ? require('HiveMind.Economy').productiveRemoteHauling(room, request, queue) :
+            require('HiveMind.Economy').supportedRemoteRestart(room, request, queue)) : null;
     const intelFloor = role === 'Scout' && require('HiveMind.Economy').categoryForRequest(request) === 'remoteIntel' &&
         (context.byRole.Scout || 0) - own < 1;
     let reason = total >= view.population.hardSafetyCap ? 'HARD_SAFETY_CAP' : null;
     if (!reason && !mandatory && kind !== 'MANDATORY') {
-        if (!cpuReplacement && (cpu.bucket < 4000 || cpu.mode === 'critical' || Math.min(view.cpu.share,
+        if (!cpuReplacement && !relief && (cpu.bucket < 4000 || cpu.mode === 'critical' || Math.min(view.cpu.share,
             cpu.headroom / Math.max(1, Object.keys(get().rooms).length)) < queuedCpu + roleCpu(role))) reason = 'CPU_CAPACITY_EXHAUSTED';
         else if (spawns.headroom < metrics.estimatedReplacementLoad + metrics.spawnTime / settings.queueHorizon) reason = 'SPAWN_LOAD_HIGH';
         else if (!intelFloor && view.energy.known !== false && (!view.energy.healthy || view.energy.aboveReserve < metrics.cost +
@@ -230,9 +270,12 @@ function evaluate(room, request, context, mandatory, revalidate, renewal) {
             accepted.reduce((sum, s) => sum + Bodies.cost(s.request.body), 0) || view.energy.trend < -1 && !view.energy.drawdownSpend)) reason = 'ENERGY_BELOW_RESERVE';
         else if (utilization && utilization.samples >= 8 && utilization.utilization < 0.5 &&
             Game.time - utilization.tick < 200 && ['GROWTH', 'INFRASTRUCTURE'].includes(kind)) reason = 'ROLE_UNDERUTILIZED';
-        else if (!intelFloor && !cpuReplacement && total >= view.population.softCap) reason = 'SOFT_CAPACITY_EXHAUSTED';
+        else if (!intelFloor && !cpuReplacement && !relief && total >= view.population.softCap) reason = 'SOFT_CAPACITY_EXHAUSTED';
     }
-    const decision = { allowed: !reason, reason: reason || (mandatory ? 'MANDATORY_CAPACITY' : cpuReplacement ? 'CPU_NEUTRAL_REPLACEMENT' : 'CAPACITY_AVAILABLE'),
+    const decision = { allowed: !reason, reason: reason || (mandatory ? 'MANDATORY_CAPACITY' : cpuReplacement ? 'CPU_NEUTRAL_REPLACEMENT' : relief ?
+            role === 'Freighter' ? 'PRODUCTIVE_REMOTE_HAUL_RELIEF' : 'SUPPORTED_REMOTE_RESTART' : 'CAPACITY_AVAILABLE'),
+        remoteHaulRelief: !reason && relief && role === 'Freighter' ? { ...relief, projectedCpu, ceiling: reliefCeiling } : undefined,
+        remoteRestart: !reason && relief && role === 'Extractor' ? {...relief,projectedCpu,ceiling:reliefCeiling} : undefined,
         replacementCount: cpuReplacement ? replacing.length : 0,
         populationClass: mandatory ? 'MANDATORY' : kind, softPopulation: view.population.softCap,
         hardPopulation: view.population.hardSafetyCap, spawnLoad: spawns.utilization };

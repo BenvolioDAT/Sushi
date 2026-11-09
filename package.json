@@ -4,7 +4,7 @@
   "scripts": {
     "build": "node tools/runtime-build.js",
     "prevalidate": "npm run build",
-    "validate": "node test/freighter-renewal.js && node test/remote-planning.js && node test/remote-hauling-demand.js && node test/extractor-station.js && node test/extractor-consolidation.js && node test/tech-station.js && node test/worker-replacement-claims.js && node test/pixels.js && node test/deployment.js && node test/module-graph.js && node test/movement-audit.js",
+    "validate": "node test/freighter-renewal.js && node test/remote-planning.js && node test/remote-hauling-demand.js && node test/remote-hauling-capacity.js && node test/extractor-station.js && node test/extractor-consolidation.js && node test/tech-station.js && node test/worker-replacement-claims.js && node test/pixels.js && node test/deployment.js && node test/module-graph.js && node test/movement-audit.js",
     "test": "npm run validate",
     "test:freighter-renewal": "node test/freighter-renewal.js",
     "test:deployment": "node test/deployment.js",

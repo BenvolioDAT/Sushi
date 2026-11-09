@@ -1,0 +1,45 @@
+{
+  "tick": 84157988,
+  "sources": [
+    {
+      "id": "5bbcaadf9099fc012e632562",
+      "room": "W39S48",
+      "visible": false,
+      "lastSeen": 84157615,
+      "advertised": 84157615,
+      "delivered": 84157423,
+      "amount": 1676,
+      "proof": null
+    },
+    {
+      "id": "5bbcaaeb9099fc012e6326f0",
+      "room": "W38S48",
+      "visible": true,
+      "lastSeen": 84157984,
+      "advertised": 84157021,
+      "delivered": 84156354,
+      "amount": 430,
+      "proof": null
+    },
+    {
+      "id": "5bbcaaeb9099fc012e6326ee",
+      "room": "W38S47",
+      "visible": true,
+      "lastSeen": 84157984,
+      "advertised": 84154675,
+      "delivered": 84154442,
+      "amount": 0,
+      "proof": null
+    },
+    {
+      "id": "5bbcaaeb9099fc012e6326ec",
+      "room": "W38S47",
+      "visible": true,
+      "lastSeen": 84157984,
+      "advertised": 84157555,
+      "delivered": 84157778,
+      "amount": 852,
+      "proof": null
+    }
+  ]
+}

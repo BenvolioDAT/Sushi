@@ -37,6 +37,13 @@ test('actual WORK caps production and source output caps overlapping miners', ()
     assert.strictEqual(f.required(), 11);
     f.miner('overlap', 3); assert.strictEqual(f.required(), 11);
 });
+test('a fresh friendly reservation raises hauling demand before portfolio rescoring',()=>{
+    const f=fixture();f.miner('miner',5);f.info.grossEnergyPerTick=10;
+    require('HiveMind.Memory').ensure().identity.username='me';
+    Memory.rooms.W39S48={controller:{reservation:{username:'me',ticksToEnd:2000,observedAt:Game.time}}};
+    assert.strictEqual(f.required(),22);
+    Memory.rooms.W39S48.controller.reservation.username='other';assert.strictEqual(f.required(),11);
+});
 test('unrelated, immobile, damaged or expired miners cannot promise production', () => {
     for (const change of [c => { c.memory.sourceId = 'other'; }, c => { c.memory.homeRoom = 'W1N1'; },
         c => { c.memory.remoteMining = false; }, c => { c.body.find(p => p.type === MOVE).hits = 0; },
@@ -114,5 +121,31 @@ test('a redundant oversized remote hauler expires without speculative successor 
     Game.time += 55; for (const c of Object.values(Game.creeps)) c.ticksToLive -= 55; f.refresh();
     f.manager.runForRoom(f.room, { skipNormalPlanning: true });
     assert.strictEqual(f.queue.find(q=>q.role==='Freighter')?.requestedCarryParts, 7);
+});
+test('remote overflow delivery retains source evidence until the engine resolves its drop', () => {
+    const f = fixture(), c = f.unit('returning', 8, 1000, 'remoteHauling');
+    f.memory.freighterSpawnStockpilePos = { x: 22, y: 26, roomName: f.room.name };
+    f.room.lookForAt = type => type === LOOK_TERRAIN ? ['plain'] : [];
+    Memory.rooms.W39S48 = { sources: { remoteSource: { haul: { lastDeliveryAt: 1 } } } };
+    Object.assign(c.memory, { FreighterWorking: true, freighterJob: 'remoteDelivery',
+        remoteDeliveryRoom: 'W39S48', remoteDeliverySourceId: 'remoteSource' });
+    c.store.energy = 400;
+    let drops = 0;
+    c.drop = () => { drops++; return OK; }; // Engine intents do not mutate the current Store.
+    const planner = require('Planner.Remote');
+    planner.getHomeDeliveryTarget = () => null;
+    planner.moveFreighterAlongRemotePath = () => false;
+    planner.recordRemoteTripLeg = () => false;
+    planner.getActiveRemoteSourcesForHome = () => [];
+    const role = require('role.Freighter');
+    role.run(c);
+    assert.strictEqual(drops, 1);
+    assert.strictEqual(c.memory.remoteDeliverySourceId, 'remoteSource');
+    assert.strictEqual(Memory.rooms.W39S48.sources.remoteSource.haul.lastDeliveryAt, 1);
+    Game.time++; c.store.energy = 0; f.refresh(); role.run(c);
+    assert.strictEqual(Memory.rooms.W39S48.sources.remoteSource.haul.lastDeliveryAt, Game.time);
+    assert.strictEqual(c.memory.freighterFlow.delivered, 400);
+    assert.strictEqual(c.memory.remoteDeliverySourceId, undefined);
+    assert.strictEqual(drops, 1);
 });
 console.log('Remote hauling demand scenarios passed: ' + passed);

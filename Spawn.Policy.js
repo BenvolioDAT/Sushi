@@ -165,6 +165,7 @@ function evaluate(room, request, context, options = {}) {
             (request.memory.strategyEmergency === true || request.memory.strategyMandatory === true),
         options.revalidate, renewal);
     if (!capacity.allowed) return capacity;
+    if (capacity.remoteHaulRelief) hauling.missingCarry = Math.min(hauling.missingCarry, capacity.remoteHaulRelief.carry);
     const roleCap = economyRoleCap(room, role, request, policy);
     const ownQueued = options.revalidate && context.queue.includes(request) ? 1 : 0;
     const mandatoryFloorBypass = controllerGrowthFloor && lifecycle && lifecycle.growthAllowed &&
@@ -185,7 +186,11 @@ function evaluate(room, request, context, options = {}) {
         return { allowed: false, reason: 'new request cap reached', blockSource: 'persistedConfig',
             configPath: 'spawn.maxNewRequestsPerRoomPerTick', configured: policy.maxNewRequestsPerRoomPerTick, admitted };
     }
-    return { allowed: true, reason: renewal?.reason || (recovery.mandatory ? recovery.reason : options.revalidate ? 'revalidated' : 'admitted'),
+    return { allowed: true, reason: capacity.remoteHaulRelief ? 'PRODUCTIVE_REMOTE_HAUL_RELIEF' :
+            capacity.remoteRestart ? 'SUPPORTED_REMOTE_RESTART' :
+            renewal?.reason || (recovery.mandatory ? recovery.reason : options.revalidate ? 'revalidated' : 'admitted'),
+        remoteHaulRelief: capacity.remoteHaulRelief,
+        remoteRestart: capacity.remoteRestart,
         localMissingWork: (request.role || request.memory && request.memory.role) === 'Extractor' ? recovery.missing : undefined,
         ...hauling,
         lifetimeReplacement: recovery.lifetimeReplacement,

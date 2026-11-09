@@ -91,6 +91,12 @@ function describe(room, source, assigned, queue = [], distance = 30) {
     else if (!maximum) reason = 'no valid body within maximum spawning capacity';
     else if (healthyWork >= required) reason = 'existing workers already cover source';
     else if ((action = agingConsolidation(room, source, active, distance))) reason = 'consolidate aging source miners';
+    else if (active.length === 1 && active[0].ticksToLive <= lead && parts(active[0], WORK) >= required) {
+        // Spare seats do not turn an already-full source's lifetime replacement
+        // into anonymous growth. Use the same deadline and handoff as one seat.
+        action = { work: maximum.WORK, replacementFor: active[0].name, minWork: 1, upgrade: false };
+        reason = 'miner lifetime replacement';
+    }
     else if (active.length < positions.length) {
         action = { work: Math.min(required - healthyWork, maximum.WORK), replacementFor: null };
         reason = 'uncovered source WORK and available seat';

@@ -66,7 +66,7 @@ function isRemoteMinerForSource(creep, roomName, info) {
 }
 
 function remoteIncomeEvidence(roomName, info, sourceMemory) {
-    const planned = Math.max(0, info.effectiveEnergyPerTick || 0);
+    const planned = remoteProductionCeiling(info);
     const harvestPower = typeof HARVEST_POWER === 'number' ? HARVEST_POWER : 2;
     let presentWork = 0;
     let stationedWork = 0;
@@ -372,8 +372,13 @@ function remoteCommittedWork(homeRoomName, sourceId) {
     return work;
 }
 
+function remoteProductionCeiling(info) {
+    const reservation=RemoteIntel.getEffectiveReservation(info.roomName), username=HiveMemory.ensure().identity.username;
+    if (username && reservation?.username===username) return Math.max(0,info.grossEnergyPerTick || 10);
+    return Math.max(0,Number.isFinite(info.effectiveEnergyPerTick)?info.effectiveEnergyPerTick:info.grossEnergyPerTick || 0);
+}
 function remoteHaulRequirement(info, haul, homeRoomName = info.parentHome || info.parentRoomName) {
-    const planned = Math.max(0, Number.isFinite(info.effectiveEnergyPerTick) ? info.effectiveEnergyPerTick : info.grossEnergyPerTick || 0);
+    const planned = remoteProductionCeiling(info);
     const production = Math.min(planned, remoteCommittedWork(homeRoomName, info.sourceId) *
         (typeof HARVEST_POWER === 'number' ? HARVEST_POWER : 2));
     const trip = Math.max(1, info.roundTripTicks || info.route && (info.route.roundTripTicks || info.route.estimatedRoundTripTicks) || (info.distance || 1) * 2);
@@ -403,6 +408,88 @@ function remoteHaulingRequest(room, request, queue) {
     if (renewal?.active) return { ...renewal, renewal: true, ordinaryMissing: missing };
     return { obsolete: missing === 0, missing,
         reason: missing > 0 ? 'operational remote hauling deficit' : 'remote hauling already covered or no operational remote sources' };
+}
+
+// A narrow income-delivery allowance, not a budget for remote discovery or
+// speculative miners. Only physically stationed, sufficiently lasting miners
+// with fresh unreserved energy can justify capacity above the ordinary ceiling.
+function productiveRemoteHauling(room, request, queue = []) {
+    if (!isRemoteFreighter(request) || request.bodyRequirements?.fixed) return null;
+    const snapshot = get(room.name), haul = snapshot?.haul;
+    if (snapshot?.sampleTick !== Game.time || ![STATES.STABLE, STATES.SURPLUS].includes(snapshot.state) ||
+        localHarvestCoverage(snapshot).status !== 'HEALTHY' ||
+        snapshot.harvest.sources.some(s => s.healthyWork !== undefined && s.healthyWork < s.workRequired) ||
+        !(haul?.localCarry >= haul?.requiredCarry) || haul.backlog > Math.max(500, haul.localCarry * 50) ||
+        Memory.hive?.threats?.[room.name]?.harmfulHostileCount > 0) return null;
+    const index = TickIndex.get(), creeps = index.creepsByHomeRoom.get(room.name) || [];
+    if (!creeps.some(c => c.memory.role === 'Foreman' && !c.spawning && c.ticksToLive > 100 &&
+        activeParts(c, CARRY) > 0 && activeParts(c, MOVE) > 0)) return null;
+    const planner = Memory.rooms?.[room.name]?.remotePlanner || {};
+    const spawnTime = (request.body || []).length * 3;
+    let productionCarry = 0, backlog = 0;
+    for (const id of planner.activeSourceIds || []) {
+        const info = planner.sourceInfos?.[id], source = Memory.rooms?.[info?.roomName]?.sources?.[id];
+        const trip = info?.roundTripTicks || info?.route?.roundTripTicks || info?.route?.estimatedRoundTripTicks;
+        const stored = source?.haul;
+        if (!info?.active || info.operational === false || info.route?.valid === false || !(trip > 0) ||
+            !source?.pos || !Number.isFinite(stored?.lastSeen) || stored.lastSeen > Game.time ||
+            Game.time - stored.lastSeen > 25 || Memory.hive?.threats?.[info.roomName]?.harmfulHostileCount > 0) continue;
+        const work = creeps.filter(c => isRemoteMinerForSource(c, room.name, info) && !c.spawning &&
+            activeParts(c, MOVE) > 0 && c.ticksToLive > spawnTime + trip + 50 &&
+            c.pos?.roomName === info.roomName && c.pos.getRangeTo(source.pos.x, source.pos.y) <= 1)
+            .reduce((sum, c) => sum + activeParts(c, WORK), 0);
+        const income = Math.min(remoteProductionCeiling(info), work *
+            (typeof HARVEST_POWER === 'number' ? HARVEST_POWER : 2));
+        if (!(income > 0)) continue;
+        productionCarry += Math.ceil(income * trip * 1.1 / 50);
+        backlog += Math.max(0, (stored.amount || 0) - (stored.reservedCarry || 0));
+    }
+    const coverage = freighterCoverage(room.name, 'remote');
+    const otherQueued = queue.filter(q => q !== request && !(q.expiresAt < Game.time) && isRemoteFreighter(q));
+    if (coverage.spawning > 0 || otherQueued.length) return null;
+    const missing = Math.max(0, productionCarry - coverage.living);
+    const carry = Math.min(missing, bodyParts(request.body, CARRY));
+    if (!(carry > 0) || backlog < carry * 50) return null;
+    return { carry, productionCarry, backlog };
+}
+
+// Restart one previously productive source using hauling already paid for.
+// This cannot start a new portfolio or promise an unbuilt support fleet.
+function supportedRemoteRestart(room, request, queue = []) {
+    const m=request.memory || {};
+    if ((request.role || m.role) !== 'Extractor' || !m.remoteMining || request.bodyRequirements?.fixed) return null;
+    const snapshot=get(room.name), haul=snapshot?.haul, index=TickIndex.get();
+    if (snapshot?.sampleTick !== Game.time || ![STATES.STABLE,STATES.SURPLUS].includes(snapshot.state) ||
+        localHarvestCoverage(snapshot).status !== 'HEALTHY' ||
+        snapshot.harvest.sources.some(s=>s.healthyWork!==undefined && s.healthyWork<s.workRequired) ||
+        !(haul?.localCarry>=haul?.requiredCarry) || haul.backlog>Math.max(500,haul.localCarry*50) ||
+        Memory.hive?.threats?.[room.name]?.harmfulHostileCount>0) return null;
+    const creeps=index.creepsByHomeRoom.get(room.name) || [];
+    const remoteMiner=c=>(c.role || c.memory?.role)==='Extractor' && c.memory?.remoteMining;
+    if (creeps.some(remoteMiner) || queue.some(q=>q!==request && !(q.expiresAt<Game.time) && remoteMiner(q)) ||
+        !creeps.some(c=>c.memory.role==='Foreman' && !c.spawning && c.ticksToLive>100 &&
+            activeParts(c,CARRY)>0 && activeParts(c,MOVE)>0)) return null;
+    for (const s of [...(index.ownedSpawnsByRoom.get(room.name) || []),...require('Spawn.Intents').get().spawns]) {
+        if (s.room.name===room.name && s.spawning && remoteMiner({memory:s.request?.memory || Memory.creeps?.[s.spawning.name]})) return null;
+    }
+    const id=sourceIdFor(m), planner=Memory.rooms?.[room.name]?.remotePlanner || {}, info=planner.sourceInfos?.[id];
+    const source=Memory.rooms?.[info?.roomName]?.sources?.[id], stored=source?.haul;
+    const trip=info?.roundTripTicks || info?.route?.roundTripTicks || info?.route?.estimatedRoundTripTicks;
+    const recent=t=>Number.isFinite(t) && t<=Game.time && Game.time-t<=1500;
+    const controller=info && RemoteIntel.controller(info.roomName), username=HiveMemory.ensure().identity.username;
+    const observed=controller?.lastObservedAt ?? stored?.lastSeen;
+    const intelAge=controller?.lastObservedAt!==undefined?500:25;
+    if (!(planner.activeSourceIds || []).includes(id) || !info?.active || info.operational===false ||
+        info.route?.valid===false || !(trip>0) || !source?.pos ||
+        !recent(stored?.lastAdvertisedAt) || !recent(stored?.lastDeliveryAt) ||
+        !Number.isFinite(observed) || observed>Game.time || Game.time-observed>intelAge ||
+        controller?.owner && !controller.my || controller?.reservation && controller.reservation.username!==username ||
+        Memory.hive?.threats?.[info.roomName]?.harmfulHostileCount>0 || bodyParts(request.body,MOVE)===0) return null;
+    const income=Math.min(remoteProductionCeiling(info),bodyParts(request.body,WORK)*
+        (typeof HARVEST_POWER==='number'?HARVEST_POWER:2));
+    const productionCarry=Math.ceil(income*trip*1.1/50);
+    if (!(productionCarry>0) || freighterCoverage(room.name,'remote').living<productionCarry) return null;
+    return {source:id,productionCarry};
 }
 
 function replacementLead(creep, distance) {
@@ -1342,6 +1429,8 @@ function shouldBootstrapSelfDeliver(roomOrName) {
 module.exports = {
     remoteHaulRequirement,
     remoteHaulingRequest,
+    productiveRemoteHauling,
+    supportedRemoteRestart,
     freighterCoverage,
     freighterRenewalPlan,
     freighterRenewalRequest,

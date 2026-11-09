@@ -17,6 +17,14 @@ test('a funded aging two-WORK miner plus a three-WORK peer proposes one full-sou
     assert.strictEqual(p.action.replacementFor, f.incumbent.name); assert.strictEqual(p.action.consolidation, true);
     assert.strictEqual(f.c.ticksToLive, 450, 'the younger miner is not retired by forecasting');
 });
+test('a full-source aging miner uses its named handoff even when spare mining seats exist', () => {
+    const f=setup();f.c.body=[WORK,WORK,WORK,WORK,WORK,MOVE,MOVE,MOVE,CARRY].map(type=>({type,hits:100}));
+    f.c.getActiveBodyparts=type=>f.c.body.filter(p=>p.type===type&&p.hits!==0).length;
+    f.c.ticksToLive=90;
+    const p=f.H.describe(f.c.room,f.source,[f.c],[],10);
+    assert.ok(p.seatCount>1);assert.strictEqual(p.action.replacementFor,f.c.name);
+    assert.strictEqual(p.action.work,5);assert.strictEqual(p.planningReason,'miner lifetime replacement');
+});
 test('a staggered young supplemental miner does not trap the source in small replacement bodies', () => {
     const f = setup();
     f.c.ticksToLive = 90; f.incumbent.ticksToLive = 1132;
