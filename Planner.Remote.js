@@ -1416,6 +1416,10 @@ function isBlockedRoomForPath(homeRoomName, roomName) {
         if (snapshot.danger) return true;
     }
     if (room) return false;
+    if (roomMemory && roomMemory.invaderCore) {
+        Intel.request(roomName, 'INVADER_CORE_NEEDS_VISION', 95);
+        return true;
+    }
     Intel.controller(roomName);
     var hive = HiveMemory.ensure();
     var threat = hive.threats && hive.threats[roomName];
@@ -1584,13 +1588,19 @@ function hasInvaderCore(room) {
         return false;
     }
 
+    var snapshot = getValidationSnapshot(room);
+    if (snapshot.invaderCore !== undefined) return snapshot.invaderCore;
     var cores = room.find(FIND_HOSTILE_STRUCTURES, {
         filter: function(structure) {
             return structure.structureType === STRUCTURE_INVADER_CORE;
         }
     });
 
-    return cores.length > 0;
+    var memory = Memory.rooms[room.name] || (Memory.rooms[room.name] = {});
+    if (cores.length) memory.invaderCore = { id: cores[0].id, level: cores[0].level, observedAt: Game.time };
+    else delete memory.invaderCore;
+    snapshot.invaderCore = cores.length > 0;
+    return snapshot.invaderCore;
 }
 
 function hasSeriousDanger(room) {

@@ -133,6 +133,9 @@ var roleExtractor = {
         }
 
         if(creep.store.getFreeCapacity(RESOURCE_ENERGY) > 0) {
+            // Transfer the energy already carried while harvesting this tick.
+            // Waiting for a full CARRY costs a harvest tick on every unload.
+            if (shouldUnloadBeforeHarvest(creep)) offloadEnergy(creep, source);
             harvestSource(creep, source);
             return;
         }
@@ -343,6 +346,10 @@ function runRemoteStation(creep, source, miningSeat) {
     }
     if (creep.store.getFreeCapacity(RESOURCE_ENERGY) > 0) {
         // No harvest fallback movement: the station is the only normal destination.
+        if (shouldUnloadBeforeHarvest(creep) && container && creep.pos.getRangeTo(container.pos) <= 1 &&
+            container.store.getFreeCapacity(RESOURCE_ENERGY) > 0 && creep.transfer(container, RESOURCE_ENERGY) === OK) {
+            recordSourceContainerHaul(creep, source, container);
+        }
         creep.harvest(source);
         return;
     }
@@ -449,6 +456,12 @@ function harvestSource(creep, source) {
     if(result === ERR_NOT_IN_RANGE) {
         utilityTravelCreep.move(creep, source, {visualizePathStyle: {stroke: '#ffaa00'}});
     }
+}
+
+function shouldUnloadBeforeHarvest(creep) {
+    var power = creep.getActiveBodyparts(WORK) *
+        (typeof HARVEST_POWER !== 'undefined' && Number.isFinite(HARVEST_POWER) ? HARVEST_POWER : 2);
+    return creep.store[RESOURCE_ENERGY] > 0 && creep.store.getFreeCapacity(RESOURCE_ENERGY) <= power * 2;
 }
 
 function offloadEnergy(creep, source) {

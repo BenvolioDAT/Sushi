@@ -136,6 +136,15 @@ function summarizeHostile(hostile, room, attacked, positions, towerSupport, supp
 function ensureDefenseOperation(snapshot) {
     const hive = HiveMemory.ensure();
     const id = `defend:${snapshot.roomName}`;
+    if (!snapshot.owned && snapshot.invaderCore) {
+        const existing = hive.operations[id];
+        if (existing && !['COMPLETE', 'ABORTED'].includes(existing.state)) {
+            existing.state = 'ABORTED'; existing.abortedTick = Game.time; existing.updatedTick = Game.time;
+            existing.debugReason = 'Invader Core installation requires dedicated clearing; ordinary remote defense withdrawn';
+            existing.desiredCapabilities = { damage: 0, healing: 0 }; existing.spawnDemands = [];
+        }
+        return null;
+    }
     if (!(snapshot.actionableHostileCount > 0) || !Policy.isDefenseRoom(snapshot.roomName) || !snapshot.respondingColony) {
         const existing = hive.operations[id];
         if (existing && existing.state !== 'COMPLETE') {
@@ -189,12 +198,23 @@ function observeRoom(room, suppliedHostiles) {
         return body.melee > 0 || body.ranged > 0;
     }).map(Policy.usernameOf));
     const records = hostiles.map(hostile => summarizeHostile(hostile, room, attacked, positions, towerSupport, armedOwners.has(Policy.usernameOf(hostile))));
+    const byType = index.structuresByRoom.get(room.name);
+    const coreType = typeof STRUCTURE_INVADER_CORE !== 'undefined' ? STRUCTURE_INVADER_CORE : 'invaderCore';
+    const core = (byType && byType.get(coreType) || []).find(item => Policy.usernameOf(item) === 'Invader');
+    const roomMemory = Memory.rooms[room.name] || (Memory.rooms[room.name] = {});
+    if (core) roomMemory.invaderCore = { id: core.id, level: core.level, observedAt: Game.time };
+    else delete roomMemory.invaderCore;
+    const avoidCore = core && !(room.controller && room.controller.my);
+    if (avoidCore) for (const record of records) {
+        record.autoEngage = false; record.reason = 'INVADER_CORE_AVOIDANCE';
+    }
     const harmful = records.filter(record => record.harmful);
     const actionable = records.filter(record => record.autoEngage);
     const snapshot = {
         tick: Game.time,
         roomName: room.name,
         owned: !!(room.controller && room.controller.my),
+        invaderCore: core ? { id: core.id, level: core.level } : null,
         lastSeen: Game.time,
         hostileCount: records.length,
         harmfulHostileCount: harmful.length,
@@ -229,11 +249,11 @@ function observeRoom(room, suppliedHostiles) {
 
 function refreshPermissions(snapshot) {
     const targets = (snapshot.hostiles || []).filter(record => {
-        record.autoEngage = !!record.harmful && Policy.mayAutoDefendAgainst(record.owner, {
+        record.autoEngage = !(snapshot.invaderCore && !snapshot.owned) && !!record.harmful && Policy.mayAutoDefendAgainst(record.owner, {
             roomName: snapshot.roomName, attackedUs: record.attackedUs
         });
         record.classification = Policy.getClassification(record.owner);
-        record.reason = record.harmful ? Policy.autoEngageReason(record.owner, {
+        record.reason = snapshot.invaderCore && !snapshot.owned ? 'INVADER_CORE_AVOIDANCE' : record.harmful ? Policy.autoEngageReason(record.owner, {
             roomName: snapshot.roomName, attackedUs: record.attackedUs
         }) : 'HARMLESS';
         return record.autoEngage;

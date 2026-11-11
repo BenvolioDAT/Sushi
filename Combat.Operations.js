@@ -119,6 +119,11 @@ function evaluate(operation) {
     if (!operation || !OFFENSIVE_TYPES.includes(operation.type)) {
         return { allowed: false, viable: false, code: 'NOT_OFFENSE', reason: 'Not an offensive operation' };
     }
+    if (operation.type === 'CLEAR_NPC_STRONGHOLD') {
+        const assessment = assessStronghold(operation);
+        if (!assessment.viable) return { allowed: false, viable: false,
+            wait: assessment.status === 'NEEDS_INTEL', code: 'NPC_CLEAR_UNSUPPORTED', reason: assessment.reason };
+    }
     const directive = operationDirective(operation);
     const snapshot = roomSnapshot(operation);
     let targetOwner = operation.targetOwner || null;
@@ -222,19 +227,19 @@ function assessStronghold(operation) {
     const requiredDismantle = barriers.reduce((sum, barrier) => sum + Math.max(0, barrier.hits || 0), 0) > 0 ?
         Math.max(50, Math.min(5000, Math.max(...barriers.map(barrier => barrier.hits || 0)) / 20)) : 0;
     const assessment = {
-        status: 'VIABLE', viable: true, reason: 'Visible NPC stronghold has a force plan',
+        status: 'NOT_VIABLE', viable: false,
+        reason: level === 0 ? 'Lesser core detected; no validated core-clearing force implementation' :
+            'Stronghold detected; automatic siege is unsupported',
         coreId: core.id || null, coreLevel: level, coreHits: core.hits || 0,
         enemyDps: enemyDamage, enemyHealing, towerDps: towerDamage,
         barrierEstimate: requiredDismantle, requiredDps: requiredDamage,
         requiredHealing, requiredDismantle, defenderCount: hostile.length,
         ticksToDeploy: core.ticksToDeploy || 0, visible: true
     };
-    if ((core.ticksToDeploy || 0) > 0) {
+    if ((core.ticksToDeploy || 0) > 0 || (core.effects || []).some(effect =>
+        effect.effect === (typeof EFFECT_INVULNERABILITY !== 'undefined' ? EFFECT_INVULNERABILITY : 1001) && effect.ticksRemaining > 0)) {
         assessment.status = 'NEEDS_INTEL'; assessment.viable = false;
         assessment.reason = 'Invader Core is still deploying and invulnerable';
-    } else if (towerDamage > requiredHealing * 8 && towerDamage > 0) {
-        assessment.status = 'NOT_VIABLE'; assessment.viable = false;
-        assessment.reason = `Tower DPS ${towerDamage} exceeds support capacity ${requiredHealing}`;
     }
     operation.targetId = core.id || operation.targetId;
     operation.targetOwner = 'Invader';
@@ -262,13 +267,7 @@ function createStronghold(options = {}) {
     operation.manualDirective = options.manualDirective === true;
     operation.strongholdRelevant = options.strongholdRelevant === true || operation.manualDirective;
     operation.retreatRoom = options.retreatRoom || options.originRoom || null;
-    operation.spawnDemands = [{
-        id: `${operation.id}:breacher`, role: 'CoreBreaker', count: 1,
-        capabilities: { work: 6 },
-        bodyRequirements: { scalable: true }, economyCategory: 'combat',
-        priority: operation.priority + 1, targetRoom: operation.targetRoom,
-        memory: { formationRole: 'breacher', allowOffensiveTargets: true }
-    }];
+    operation.spawnDemands = [];
     return { ok: true, operation };
 }
 
@@ -308,11 +307,20 @@ function run() {
             const room = operation.targetRoom && Game.rooms && Game.rooms[operation.targetRoom];
             const remainingNpc = room && safeFind(room, typeof FIND_HOSTILE_CREEPS !== 'undefined' ? FIND_HOSTILE_CREEPS : undefined)
                 .filter(creep => ['Invader', 'Source Keeper'].includes(ownerName(creep)) && creep.hits > 0);
-            if (assessment.status === 'NOT_VIABLE' && !strongholdCore(room) && remainingNpc.length === 0 && operation.state === 'ACTIVE') {
+            if (room && !strongholdCore(room) && remainingNpc.length === 0) {
                 Operations.transition(operation, 'COMPLETE', 'Invader Core destroyed and dangerous NPC presence cleared');
                 operation.strongholdState = 'COMPLETE';
                 continue;
             }
+            // Revoke previously approved legacy missions through the existing
+            // abort/retreat flow. Desired DPS is not evidence of a ready army.
+            operation.policyApproved = false;
+            operation.spawnDemands = [];
+            operation.offensiveAssessment = { tick: Game.time, allowed: false, viable: false,
+                code: 'NPC_CLEAR_UNSUPPORTED', reason: assessment.reason };
+            Operations.abort(operation.id, assessment.reason);
+            results[operation.id] = operation.offensiveAssessment;
+            continue;
         }
         results[operation.id] = applyAssessment(operation, evaluate(operation));
     }

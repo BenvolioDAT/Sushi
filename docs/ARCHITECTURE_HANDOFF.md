@@ -1,6 +1,18 @@
 # Sushi architecture handoff
 
-Updated November 8, 2026 for remote planning cadence and verified deployment. General tick order and subsystem architecture remain documented in [`HIVEMIND.md`](../HIVEMIND.md).
+## Operational audit: container ownership and NPC safety
+
+Stationed local and remote Extractors can now transfer existing cargo and harvest in the same tick while their CARRY still has space. The existing unload helper is attempted near the next full-store boundary, avoiding the old mandatory unload-only tick without introducing movement or another job owner. Full or missing sinks retain the existing full-store transfer/drop/bootstrap behavior. `test/extractor-throughput.js` uses start-of-tick cargo/capacity semantics; its idealized output gain is not a live throughput or CPU benchmark.
+
+The November 10 operational audit keeps `Planner.Brain` and `utility` in their existing roles. The room planner now adopts built source/controller containers and pending container sites, retaining a saved station when duplicates already exist. Adoption records an existing site without passing it through the new-site predicate. Construction release also checks for infrastructure serving the same source or controller, so a persisted plan cannot add a second container after utility has placed one elsewhere. Existing duplicate structures and sites are preserved. This does not migrate remote stations or remove their fixed-route authority.
+
+`Combat.ThreatLedger` and the remote planner's safety fallback retain core observations as optional plain `Memory.rooms[room].invaderCore = {id, level, observedAt}`. The ledger uses the tick structure index; the planner's existing per-tick route snapshot shares its fallback scan. Without vision, a remembered core blocks civilian routes and requests scouting; only a visible observation without a core clears the record. The threat snapshot also carries `invaderCore`; a remote installation suppresses ordinary defense targets and aborts existing remote-defense operations, preventing stronghold defenders from bypassing clearing restrictions. Owned-room defense remains available. Existing route invalidation, retreat, ownership, and economy gates retain their owners.
+
+Automatic core/stronghold clearing is deliberately unavailable. The previous assessment derived desired DPS/healing from enemy strength, then treated those desired values as a viable force; its WORK breacher could not dismantle the core. Discovery now reports lesser cores separately from stronger/unknown strongholds without creating attack operations. `Combat.Operations` rejects core clearing, checks deployment/invulnerability, removes executable clearing demands, and aborts legacy missions through existing squad retreat handling. Disabled independent CoreBreakers return home. Ordinary NPC-creep defense and manual player operations retain their existing policy. A tested lesser-core attacker and a force-readiness-based siege system remain future work, not supported capabilities.
+
+Validation adds container-policy, NPC-safety, and logistics-reservation suites to `npm run validate`. These cover construction-site adoption, stale-plan release, persisted core safety after reset/vision loss, legacy clearing cancellation, courier death/target loss, shared delivery capacity and spawn-refill preemption. Live measurements and deployment evidence belong in `docs/OPERATIONAL-AUDIT-2026-11-10.md`.
+
+The November 8 changes below describe remote planning cadence and the preceding verified deployment. General tick order and subsystem architecture remain documented in [`HIVEMIND.md`](../HIVEMIND.md).
 
 ## Stationary work, light renewal, and pixels
 

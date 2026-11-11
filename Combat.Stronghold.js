@@ -1,6 +1,4 @@
 const HiveMemory = require('HiveMind.Memory');
-const Operations = require('HiveMind.Operations');
-const CombatOperations = require('Combat.Operations');
 
 const CORE_TYPE = typeof STRUCTURE_INVADER_CORE !== 'undefined' ? STRUCTURE_INVADER_CORE : 'invaderCore';
 
@@ -33,17 +31,11 @@ function discover(room, options = {}) {
     if (!core) return { ok: false, reason: 'No visible NPC Invader Core' };
     const relevant = options.manual === true || options.strongholdRelevant === true || relevantRoom(room.name);
     if (!relevant) return { ok: false, reason: 'Core is not relevant to a route, remote, safety, or selected objective', core };
-    const existing = Object.values(HiveMemory.ensure().operations || {}).find(operation =>
-        operation && operation.type === 'CLEAR_NPC_STRONGHOLD' && operation.targetRoom === room.name &&
-        !['COMPLETE', 'ABORTED'].includes(operation.state));
-    if (existing) return { ok: true, operation: existing, core, created: false };
-    const result = CombatOperations.createStronghold({
-        targetRoom: room.name, targetId: core.id, originRoom: options.originRoom,
-        retreatRoom: options.retreatRoom || options.originRoom,
-        strongholdRelevant: true, manualDirective: options.manual === true,
-        priority: options.priority || (options.manual === true ? 80 : 65)
-    });
-    return { ...result, core, created: result.ok };
+    // Detection/remote exclusion is supported. Neither a WORK breacher (which
+    // cannot dismantle a core) nor requested squad DPS proves a clearing force.
+    return { ok: false, core, reason: core.level === 0 ?
+        'Lesser core detected; no validated core-clearing force implementation' :
+        'Stronghold detected; automatic siege is unsupported' };
 }
 
 function manual(options = {}) {

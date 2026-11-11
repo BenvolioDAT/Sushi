@@ -1076,7 +1076,7 @@ function planSourceContainers(room, plan, reserved, anchor) {
         var source = sources[i];
         var pos = findBestSourceSeat(room, source, anchor, reserved);
 
-        if (!pos || !addPlannedStructure(room, plan, reserved, STRUCTURE_CONTAINER, pos, 2)) {
+        if (!pos || !recordContainer(room, plan, reserved, pos, 2)) {
             continue;
         }
 
@@ -1124,18 +1124,9 @@ function ensureSourceMemory(room, sources) {
 }
 
 function findBestSourceSeat(room, source, anchor, reserved) {
-    var existingContainers = source.pos.findInRange(FIND_STRUCTURES, 1, {
-        filter: function(structure) {
-            return structure.structureType === STRUCTURE_CONTAINER;
-        }
-    });
-
-    if (existingContainers.length > 0) {
-        existingContainers.sort(function(a, b) {
-            return a.pos.getRangeTo(anchor) - b.pos.getRangeTo(anchor);
-        });
-        return existingContainers[0].pos;
-    }
+    var saved = Memory.rooms[room.name].sources[source.id];
+    var existing = reusableContainer(room, source.pos, 1, anchor, saved && saved.containerPlannedPos);
+    if (existing) return existing;
 
     var best = null;
 
@@ -1185,7 +1176,7 @@ function planControllerContainer(room, plan, reserved, anchor) {
     }
 
     var pos = findBestControllerPosition(room, anchor, reserved);
-    if (!pos || !addPlannedStructure(room, plan, reserved, STRUCTURE_CONTAINER, pos, 2)) {
+    if (!pos || !recordContainer(room, plan, reserved, pos, 2)) {
         return;
     }
 
@@ -1200,18 +1191,9 @@ function planControllerContainer(room, plan, reserved, anchor) {
 
 function findBestControllerPosition(room, anchor, reserved) {
     var controller = room.controller;
-    var existingContainers = controller.pos.findInRange(FIND_STRUCTURES, 3, {
-        filter: function(structure) {
-            return structure.structureType === STRUCTURE_CONTAINER;
-        }
-    });
-
-    if (existingContainers.length > 0) {
-        existingContainers.sort(function(a, b) {
-            return a.pos.getRangeTo(anchor) - b.pos.getRangeTo(anchor);
-        });
-        return existingContainers[0].pos;
-    }
+    var saved = Memory.rooms[room.name].controller;
+    var existing = reusableContainer(room, controller.pos, 3, anchor, saved && saved.containerPlannedPos);
+    if (existing) return existing;
 
     var best = null;
 
@@ -1239,6 +1221,34 @@ function findBestControllerPosition(room, anchor, reserved) {
     }
 
     return best ? best.pos : null;
+}
+
+// Replanning must adopt real infrastructure before scoring empty tiles. Keep
+// the saved station when duplicates already exist; never demolish either one.
+function reusableContainer(room, endpoint, range, anchor, saved) {
+    for (var kind of [FIND_STRUCTURES, FIND_CONSTRUCTION_SITES]) {
+        var candidates = endpoint.findInRange(kind, range, {
+            filter: function(item) { return item.structureType === STRUCTURE_CONTAINER && item.my !== false; }
+        });
+        candidates.sort(function(a, b) {
+            var aSaved = saved && a.pos.x === saved.x && a.pos.y === saved.y;
+            var bSaved = saved && b.pos.x === saved.x && b.pos.y === saved.y;
+            return Number(!!bSaved) - Number(!!aSaved) ||
+                a.pos.getRangeTo(anchor) - b.pos.getRangeTo(anchor) || a.pos.x - b.pos.x || a.pos.y - b.pos.y;
+        });
+        if (candidates.length) return candidates[0].pos;
+    }
+    return null;
+}
+
+function recordContainer(room, plan, reserved, pos, rcl) {
+    var existing = room.lookForAt(LOOK_STRUCTURES, pos.x, pos.y)
+        .concat(room.lookForAt(LOOK_CONSTRUCTION_SITES, pos.x, pos.y))
+        .some(function(item) { return item.structureType === STRUCTURE_CONTAINER && item.my !== false; });
+    // canPlanAt intentionally rejects sites. Adoption records the existing
+    // site without asking that new-construction predicate to approve it.
+    return existing ? recordPlannedStructure(plan, reserved, STRUCTURE_CONTAINER, pos, rcl) :
+        addPlannedStructure(room, plan, reserved, STRUCTURE_CONTAINER, pos, rcl);
 }
 
 function planStorageLink(room, plan, reserved, anchor) {
@@ -2047,6 +2057,18 @@ function canCreateSite(room, pos, structureType, counts, plan, planReserved) {
 
     if (hasStructureTypeAt(room, pos, structureType)) {
         return false;
+    }
+
+    if (structureType === STRUCTURE_CONTAINER) {
+        // A persisted plan can predate utility's source site or an RCL replan.
+        // Recheck by purpose at release time, not only by exact coordinates.
+        var endpoints = room.find(FIND_SOURCES).filter(function(source) { return pos.getRangeTo(source.pos) <= 1; })
+            .map(function(source) { return { pos: source.pos, range: 1 }; });
+        if (!endpoints.length && room.controller) endpoints.push({ pos: room.controller.pos, range: 3 });
+        for (var endpoint of endpoints) {
+            if (pos.getRangeTo(endpoint.pos) <= endpoint.range &&
+                reusableContainer(room, endpoint.pos, endpoint.range, pos, null)) return false;
+        }
     }
 
     if (room.lookForAt(LOOK_CONSTRUCTION_SITES, pos.x, pos.y).length > 0) {

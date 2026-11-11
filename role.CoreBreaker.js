@@ -5,7 +5,12 @@ const travel = require('utility.Travel.Creep');
 function run(creep) {
     if (!creep || creep.spawning || !creep.memory.operationId) return;
     const operation = HiveMemory.ensure().operations[creep.memory.operationId];
-    if (!operation || operation.type !== 'CLEAR_NPC_STRONGHOLD' || operation.policyApproved !== true) return;
+    if (!operation || operation.type !== 'CLEAR_NPC_STRONGHOLD' || operation.policyApproved !== true ||
+        ['COMPLETE', 'ABORTED'].includes(operation.state)) {
+        const home = operation && (operation.retreatRoom || operation.originRoom) || creep.memory.homeRoom;
+        if (home && creep.room.name !== home) travel.moveToRoom(creep, home, { range: 22, trafficPriority: 96 });
+        return;
+    }
     const target = operation.targetId && Game.getObjectById(operation.targetId);
     if (!target || !target.pos) return;
     const squad = (operation.assignedSquads || []).map(id => HiveMemory.ensure().squads[id]).find(Boolean);
