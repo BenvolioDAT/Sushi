@@ -4,11 +4,13 @@ var utilityTravelCreep = require('utility.Travel.Creep');
 var RemotePlanner = require('Planner.Remote');
 var Strategy = require('Strategy.Provider');
 var PowerIntel = require('Power.Intel');
+var KeeperIntel = require('Keeper.Intel');
 
 var SCOUT_RADIUS = 3;
 var SCOUT_RESCAN_AFTER_TICKS = 3000;
 var SCOUT_PLAN_MEMORY_KEY = 'scoutPlan';
 var SCOUT_UNREACHABLE_TICKS = 300;
+var SCOUT_TRAVEL_STALL_TICKS = 50;
 
 /*
  * role.Scout.js
@@ -46,6 +48,11 @@ var roleScout = {
          */
         saveScoutVisit(creep);
         Intel.refresh(creep.room);
+        KeeperIntel.observe(creep.room);
+        if (require('Keeper.Combat').fleeCivilian(creep)) {
+            delete creep.memory.scoutTravelProgress;
+            return;
+        }
 
         /*
          * Remote planning uses scanRoom plus the fresh visible Room object. The
@@ -56,7 +63,17 @@ var roleScout = {
 
         Strategy.observeRoom(creep.room, creep.memory.homeRoom, true);
         PowerIntel.observeRoom(creep.room);
-        if (Strategy.runScoutDirective(creep)) return;
+        if (require('NPC.Policy').needsObserver(creep.room.name)) {
+            delete creep.memory.scoutTravelProgress;
+            creep.memory.npcObserveRoom = creep.room.name;
+            utilityTravelCreep.moveOffExit(creep);
+            return;
+        }
+        delete creep.memory.npcObserveRoom;
+        if (Strategy.runScoutDirective(creep)) {
+            delete creep.memory.scoutTravelProgress;
+            return;
+        }
 
         /*
          * If the Scout just arrived, clear targetRoom so the next choice comes
@@ -399,10 +416,15 @@ function chooseNextScoutRoom(creep) {
         }
 
         var intel = Memory.rooms[roomName];
+        var mission = intel && [intel.keeperOperation, intel.npcCoreOperation].some(function(op) {
+            return op && op.funded && op.updatedAt <= Game.time && op.updatedAt >= Game.time - 1 &&
+                ['ASSEMBLE', 'CLEAR', 'GUARD'].indexOf(op.phase) !== -1;
+        });
+        var priority = Math.max(intel && intel.intelPriority || 0, mission ? 100 : 0);
         if (intel && intel.intelRefreshRequestedAt !== undefined &&
-            (!priorityRoom || (intel.intelPriority || 0) > priorityRoom.priority ||
-                (intel.intelPriority || 0) === priorityRoom.priority && intel.intelRefreshRequestedAt < priorityRoom.at)) {
-            priorityRoom = { roomName: roomName, priority: intel.intelPriority || 0, at: intel.intelRefreshRequestedAt };
+            (!priorityRoom || priority > priorityRoom.priority ||
+                priority === priorityRoom.priority && intel.intelRefreshRequestedAt < priorityRoom.at)) {
+            priorityRoom = { roomName: roomName, priority: priority, at: intel.intelRefreshRequestedAt };
         }
         if(roomRecord.lastScanTick === null || roomRecord.lastScanTick === undefined) {
             if(
@@ -436,7 +458,15 @@ function chooseNextScoutRoom(creep) {
         }
     }
 
-    if (priorityRoom) { creep.memory.targetRoom = priorityRoom.roomName; return true; }
+    var background = bestNeverScanned || (oldestScanned &&
+        Game.time - oldestScanned.lastScanTick >= SCOUT_RESCAN_AFTER_TICKS ? oldestScanned : null);
+    // Repeated passive safety requests must not starve discovery indefinitely.
+    // Keep requests pending and routes closed; funded/critical vision stays first.
+    if (priorityRoom && !(background && priorityRoom.priority < 100 && (plan.priorityStreak || 0) >= 3)) {
+        plan.priorityStreak = Math.min(3, (plan.priorityStreak || 0) + 1);
+        creep.memory.targetRoom = priorityRoom.roomName; return true;
+    }
+    plan.priorityStreak = 0;
     if(bestNeverScanned) {
         creep.memory.targetRoom = bestNeverScanned.roomName;
         return true;
@@ -470,7 +500,28 @@ function moveToTargetRoom(creep, roomName) {
     }
 
     if(creep.room.name === roomName) {
+        delete creep.memory.scoutTravelProgress;
         return true;
+    }
+
+    // Successful move intents can still oscillate around a partial path's end.
+    // Room transitions or five tiles of displacement renew this bounded lease.
+    var progress = creep.memory.scoutTravelProgress;
+    if (!progress || progress.target !== roomName || progress.room !== creep.room.name ||
+        !Number.isFinite(progress.at) || !Number.isFinite(progress.x) || !Number.isFinite(progress.y) || progress.at > Game.time ||
+        Math.max(Math.abs(progress.x - creep.pos.x), Math.abs(progress.y - creep.pos.y)) >= 5) {
+        progress = creep.memory.scoutTravelProgress = { target: roomName, room: creep.room.name,
+            x: creep.pos.x, y: creep.pos.y, at: Game.time };
+    }
+    if (creep.fatigue > 0) progress.at = Game.time;
+    if (Game.time - progress.at >= SCOUT_TRAVEL_STALL_TICKS) {
+        markScoutRoomUnreachable(creep, roomName, SCOUT_UNREACHABLE_TICKS);
+        var plan = getScoutPlan(creep);
+        if (plan && plan.rooms && plan.rooms[roomName]) plan.rooms[roomName].unreachableReason = 'NO_TRAVEL_PROGRESS';
+        delete creep.memory.targetRoom;
+        delete creep.memory.scoutTravelProgress;
+        if (creep.memory._trav) delete creep.memory._trav.path;
+        return false;
     }
 
     /*
@@ -482,6 +533,7 @@ function moveToTargetRoom(creep, roomName) {
     if(exitDir < 0) {
         markScoutRoomUnreachable(creep, roomName, SCOUT_UNREACHABLE_TICKS);
         delete creep.memory.targetRoom;
+        delete creep.memory.scoutTravelProgress;
         return false;
     }
 
@@ -492,7 +544,14 @@ function moveToTargetRoom(creep, roomName) {
      */
     var moveResult = utilityTravelCreep.moveToRoom(creep, roomName, {
         range: 22,
-        reusePath: 20,
+        reusePath: KeeperIntel.known(creep.room.name) ? 0 : 20,
+        disableSharedRouteCache: true,
+        roomCallback: function(name, matrix) {
+            var escaping = name === creep.room.name && KeeperIntel.hazards(name).some(function(h) {
+                return creep.pos.getRangeTo(h.pos) <= h.range;
+            });
+            return KeeperIntel.applyCosts(name, matrix, escaping);
+        },
         visualizePathStyle: {
             stroke: '#ffffff'
         }
@@ -501,6 +560,7 @@ function moveToTargetRoom(creep, roomName) {
     if(moveResult === ERR_NO_PATH || moveResult === ERR_INVALID_TARGET || moveResult === ERR_INVALID_ARGS) {
         markScoutRoomUnreachable(creep, roomName, SCOUT_UNREACHABLE_TICKS);
         delete creep.memory.targetRoom;
+        delete creep.memory.scoutTravelProgress;
         return false;
     }
 
@@ -549,5 +609,6 @@ function idleNearHome(creep) {
     }
 }
 
-roleScout._test = { chooseNextScoutRoom: chooseNextScoutRoom, ensureScoutPlan: ensureScoutPlan };
+roleScout._test = { chooseNextScoutRoom: chooseNextScoutRoom, ensureScoutPlan: ensureScoutPlan,
+    moveToTargetRoom: moveToTargetRoom };
 module.exports = roleScout;

@@ -1,0 +1,573 @@
+{
+  "at": "2026-11-12T14:10:24.246Z",
+  "build": {
+    "id": "507ba4c0040d5e1a1563b4dcdf2d83f274ef05450c26cc3c36edb497ada2c7c5",
+    "modules": 114
+  },
+  "target": "C:\\Users\\xbenv\\AppData\\Local\\Screeps\\scripts\\127_0_0_1___21025\\Sushi",
+  "activeBranch": "Sushi",
+  "release": "npc-auto-release.json",
+  "npmTest": {
+    "exitCode": 0,
+    "passed": 226,
+    "newNpcScenarios": 34,
+    "log": "npc-auto-root-validation-final.log"
+  },
+  "syntaxModules": 114,
+  "installedEngineBattle": {
+    "checks": 3,
+    "engineVersion": "4.3.0-beta",
+    "model": "Fixed positions, unboosted bodies, installed effectiveness/intent/damage/healing/body processors; no world writes.",
+    "rangedKeeper": {
+      "range": 3,
+      "ticks": 50,
+      "guardHits": 4000,
+      "keeperHits": 0,
+      "guardSurvived": true,
+      "keeperDestroyed": true
+    },
+    "unsafeMelee": {
+      "range": 1,
+      "ticks": 14,
+      "guardHits": -28,
+      "keeperHits": 4050,
+      "guardSurvived": false,
+      "keeperDestroyed": false
+    },
+    "unopposedCore": {
+      "ticks": 556,
+      "attackerHits": 1200,
+      "coreDestroyed": true
+    }
+  },
+  "desktopExecution": {
+    "tick": 685576,
+    "build": {
+      "id": "507ba4c0040d5e1a1563b4dcdf2d83f274ef05450c26cc3c36edb497ada2c7c5",
+      "modules": 114
+    },
+    "query": "JSON.stringify({tick:Game.time,build:Sushi.debug.build(),keeper:Memory.rooms.W6N4.keeperOperation})",
+    "result": "Final fingerprint returned; Keeper phase DEFERRED"
+  },
+  "snapshots": [
+    {
+      "file": "npc-auto-predeploy.json",
+      "tick": 677919,
+      "codeMatches": 111,
+      "codeDifferences": [],
+      "memoryChars": 323650,
+      "cpuTick": 677900,
+      "cpu": 36.524053257544324,
+      "homeState": "STABLE",
+      "keeperOperations": {},
+      "coreOperations": {},
+      "missionCreeps": [],
+      "recentErrors": [],
+      "historicalRoleErrors": {
+        "Annex": {
+          "creepName": "Annex_001",
+          "roomName": "W7N3",
+          "message": "Cannot read properties of undefined (reading 'username')",
+          "tick": 642475,
+          "count": 100370,
+          "lastLogTick": 642437
+        }
+      }
+    },
+    {
+      "file": "npc-auto-post-1.json",
+      "tick": 679994,
+      "codeMatches": 114,
+      "codeDifferences": [],
+      "memoryChars": 288644,
+      "cpuTick": 679900,
+      "cpu": 34.97909303601393,
+      "npcCpu": 0.29901661312871863,
+      "homeState": "RECOVERY",
+      "keeperOperations": {
+        "W6N4": {
+          "phase": "DEFERRED",
+          "reason": "GUARD_BODY_UNAFFORDABLE",
+          "updatedAt": 679994
+        },
+        "W6N5": {
+          "phase": "DEFERRED",
+          "reason": "GUARD_BODY_UNAFFORDABLE",
+          "updatedAt": 679994
+        },
+        "W5N4": {
+          "phase": "DEFERRED",
+          "reason": "GUARD_BODY_UNAFFORDABLE",
+          "updatedAt": 679994
+        }
+      },
+      "coreOperations": {
+        "W6N3": {
+          "phase": "DEFERRED",
+          "reason": "CORE_FORCE_UNFUNDED"
+        },
+        "W5N3": {
+          "phase": "DEFERRED",
+          "reason": "NEEDS_VISION"
+        }
+      },
+      "missionCreeps": [],
+      "recentErrors": [],
+      "historicalRoleErrors": {
+        "Annex": {
+          "creepName": "Annex_001",
+          "roomName": "W7N3",
+          "message": "Cannot read properties of undefined (reading 'username')",
+          "tick": 642475,
+          "count": 100370,
+          "lastLogTick": 642437
+        }
+      }
+    },
+    {
+      "file": "npc-auto-post-2.json",
+      "tick": 680819,
+      "codeMatches": 114,
+      "codeDifferences": [],
+      "memoryChars": 294349,
+      "cpuTick": 680800,
+      "cpu": 31.281159586947165,
+      "npcCpu": 0.28528783357828347,
+      "homeState": "RECOVERY",
+      "keeperOperations": {
+        "W6N4": {
+          "phase": "DEFERRED",
+          "reason": "GUARD_BODY_UNAFFORDABLE",
+          "updatedAt": 680819
+        },
+        "W6N5": {
+          "phase": "DEFERRED",
+          "reason": "GUARD_BODY_UNAFFORDABLE",
+          "updatedAt": 680819
+        },
+        "W5N4": {
+          "phase": "DEFERRED",
+          "reason": "GUARD_BODY_UNAFFORDABLE",
+          "updatedAt": 680819
+        }
+      },
+      "coreOperations": {
+        "W6N3": {
+          "phase": "DEFERRED",
+          "reason": "NEEDS_VISION"
+        },
+        "W5N3": {
+          "phase": "DEFERRED",
+          "reason": "NEEDS_VISION"
+        }
+      },
+      "missionCreeps": [],
+      "recentErrors": [],
+      "historicalRoleErrors": {
+        "Annex": {
+          "creepName": "Annex_001",
+          "roomName": "W7N3",
+          "message": "Cannot read properties of undefined (reading 'username')",
+          "tick": 642475,
+          "count": 100370,
+          "lastLogTick": 642437
+        }
+      }
+    },
+    {
+      "file": "npc-auto-post-3.json",
+      "tick": 682427,
+      "codeMatches": 114,
+      "codeDifferences": [],
+      "memoryChars": 306175,
+      "cpuTick": 682400,
+      "cpu": 38.38065360653473,
+      "npcCpu": 0.2678433096832392,
+      "homeState": "STABLE",
+      "keeperOperations": {
+        "W6N4": {
+          "phase": "DEFERRED",
+          "reason": "GUARD_BODY_UNAFFORDABLE",
+          "updatedAt": 682427
+        },
+        "W6N5": {
+          "phase": "DEFERRED",
+          "reason": "GUARD_BODY_UNAFFORDABLE",
+          "updatedAt": 682427
+        },
+        "W5N4": {
+          "phase": "DEFERRED",
+          "reason": "GUARD_BODY_UNAFFORDABLE",
+          "updatedAt": 682427
+        }
+      },
+      "coreOperations": {
+        "W6N3": {
+          "phase": "DEFERRED",
+          "reason": "NEEDS_VISION"
+        },
+        "W5N3": {
+          "phase": "DEFERRED",
+          "reason": "NEEDS_VISION"
+        }
+      },
+      "missionCreeps": [],
+      "recentErrors": [],
+      "historicalRoleErrors": {
+        "Annex": {
+          "creepName": "Annex_001",
+          "roomName": "W7N3",
+          "message": "Cannot read properties of undefined (reading 'username')",
+          "tick": 642475,
+          "count": 100370,
+          "lastLogTick": 642437
+        }
+      }
+    },
+    {
+      "file": "npc-auto-post-4.json",
+      "tick": 683609,
+      "codeMatches": 114,
+      "codeDifferences": [],
+      "memoryChars": 290443,
+      "cpuTick": 683600,
+      "cpu": 34.433089160924624,
+      "npcCpu": 0.3471728393037024,
+      "homeState": "RECOVERY",
+      "keeperOperations": {
+        "W6N4": {
+          "phase": "DEFERRED",
+          "reason": "GUARD_BODY_UNAFFORDABLE",
+          "updatedAt": 683609
+        },
+        "W6N5": {
+          "phase": "DEFERRED",
+          "reason": "GUARD_BODY_UNAFFORDABLE",
+          "updatedAt": 683609
+        },
+        "W5N4": {
+          "phase": "DEFERRED",
+          "reason": "GUARD_BODY_UNAFFORDABLE",
+          "updatedAt": 683609
+        }
+      },
+      "coreOperations": {
+        "W6N3": {
+          "phase": "DEFERRED",
+          "reason": "NEEDS_VISION",
+          "failures": 1,
+          "retryAt": 684547
+        },
+        "W5N3": {
+          "phase": "DEFERRED",
+          "reason": "NEEDS_VISION"
+        }
+      },
+      "missionCreeps": [
+        {
+          "name": "Ronin_001",
+          "room": "W7N4",
+          "hits": 1200,
+          "ttl": 546
+        }
+      ],
+      "recentErrors": [],
+      "historicalRoleErrors": {
+        "Annex": {
+          "creepName": "Annex_001",
+          "roomName": "W7N3",
+          "message": "Cannot read properties of undefined (reading 'username')",
+          "tick": 642475,
+          "count": 100370,
+          "lastLogTick": 642437
+        }
+      }
+    },
+    {
+      "file": "npc-auto-post-5.json",
+      "tick": 684695,
+      "codeMatches": 114,
+      "codeDifferences": [],
+      "memoryChars": 302674,
+      "cpuTick": 684600,
+      "cpu": 37.30999609031286,
+      "npcCpu": 0.41492323462905156,
+      "homeState": "RECOVERY",
+      "keeperOperations": {
+        "W6N4": {
+          "phase": "DEFERRED",
+          "reason": "GUARD_BODY_UNAFFORDABLE",
+          "updatedAt": 684695
+        },
+        "W6N5": {
+          "phase": "DEFERRED",
+          "reason": "GUARD_BODY_UNAFFORDABLE",
+          "updatedAt": 684695
+        },
+        "W5N4": {
+          "phase": "DEFERRED",
+          "reason": "GUARD_BODY_UNAFFORDABLE",
+          "updatedAt": 684695
+        }
+      },
+      "coreOperations": {
+        "W6N3": {
+          "phase": "DEFERRED",
+          "reason": "NEEDS_VISION",
+          "failures": 1,
+          "retryAt": 684547
+        },
+        "W5N3": {
+          "phase": "DEFERRED",
+          "reason": "NEEDS_VISION"
+        }
+      },
+      "missionCreeps": [
+        {
+          "name": "Ronin_001",
+          "room": "W7N4",
+          "hits": 1200,
+          "ttl": 1398
+        }
+      ],
+      "recentErrors": [],
+      "historicalRoleErrors": {
+        "Annex": {
+          "creepName": "Annex_001",
+          "roomName": "W7N3",
+          "message": "Cannot read properties of undefined (reading 'username')",
+          "tick": 642475,
+          "count": 100370,
+          "lastLogTick": 642437
+        }
+      }
+    },
+    {
+      "file": "npc-auto-final.json",
+      "tick": 685652,
+      "codeMatches": 114,
+      "codeDifferences": [],
+      "memoryChars": 283801,
+      "cpuTick": 685600,
+      "cpu": 37.01654449419244,
+      "npcCpu": 0.3260469140749728,
+      "homeState": "RECOVERY",
+      "keeperOperations": {
+        "W6N4": {
+          "phase": "DEFERRED",
+          "reason": "GUARD_BODY_UNAFFORDABLE",
+          "updatedAt": 685652
+        },
+        "W6N5": {
+          "phase": "DEFERRED",
+          "reason": "GUARD_BODY_UNAFFORDABLE",
+          "updatedAt": 685652
+        },
+        "W5N4": {
+          "phase": "DEFERRED",
+          "reason": "GUARD_BODY_UNAFFORDABLE",
+          "updatedAt": 685652
+        }
+      },
+      "coreOperations": {
+        "W6N3": {
+          "phase": "DEFERRED",
+          "reason": "CORE_FORCE_UNFUNDED",
+          "failures": 1,
+          "retryAt": 684547
+        },
+        "W5N3": {
+          "phase": "DEFERRED",
+          "reason": "NEEDS_VISION"
+        }
+      },
+      "missionCreeps": [
+        {
+          "name": "Ronin_001",
+          "room": "W7N4",
+          "hits": 1200,
+          "ttl": 441
+        }
+      ],
+      "recentErrors": [],
+      "historicalRoleErrors": {
+        "Annex": {
+          "creepName": "Annex_001",
+          "roomName": "W7N3",
+          "message": "Cannot read properties of undefined (reading 'username')",
+          "tick": 642475,
+          "count": 100370,
+          "lastLogTick": 642437
+        }
+      }
+    }
+  ],
+  "limitations": [
+    "No live Keeper battle, mining or hauling commissioning at current 1800 home capacity",
+    "No live core destruction; naturally spawned attacker recalled, pause/replacement issues fixed",
+    "Stronghold and defended-core assaults remain excluded",
+    "Fixed-position engine fixtures do not establish terrain/squad victory",
+    "Ordinary remote CARRY deficit and home recovery remain unresolved by NPC changes"
+  ],
+  "followup": {
+    "tick": 685962,
+    "file": "npc-auto-final-followup.json",
+    "codeMatches": 114,
+    "codeDifferences": [],
+    "coreOperation": {
+      "id": "npcCore:W6N3",
+      "roomName": "W6N3",
+      "phase": "DEFERRED",
+      "createdAt": 679642,
+      "updatedAt": 685961,
+      "funded": false,
+      "phaseSince": 684628,
+      "reason": "NEEDS_VISION",
+      "targetId": "26c3ffa5562e6a7",
+      "originRoom": "W7N4",
+      "lastRouteAttempt": 684547,
+      "route": {
+        "at": 684547,
+        "targetId": "26c3ffa5562e6a7",
+        "rooms": [
+          "W7N4",
+          "W7N3",
+          "W6N3"
+        ],
+        "travelTicks": 152
+      },
+      "routeRooms": [
+        "W7N4",
+        "W7N3",
+        "W6N3"
+      ],
+      "travelTicks": 152,
+      "fighter": {
+        "id": "b084014aa981653",
+        "deathAt": 686093
+      },
+      "failures": 1,
+      "retryAt": 684547
+    },
+    "missionCreeps": [
+      {
+        "name": "Ronin_001",
+        "room": "W7N4",
+        "hits": 1200,
+        "ttl": 131
+      }
+    ]
+  },
+  "expiryObservation": {
+    "file": "npc-auto-expiry-check.json",
+    "tick": 686069,
+    "codeMatches": 114,
+    "coreOperation": {
+      "id": "npcCore:W6N3",
+      "roomName": "W6N3",
+      "phase": "DEFERRED",
+      "createdAt": 679642,
+      "updatedAt": 686068,
+      "funded": false,
+      "phaseSince": 684628,
+      "reason": "NEEDS_VISION",
+      "targetId": "26c3ffa5562e6a7",
+      "originRoom": "W7N4",
+      "lastRouteAttempt": 685965,
+      "route": {
+        "at": 685965,
+        "targetId": "26c3ffa5562e6a7",
+        "rooms": [
+          "W7N4",
+          "W7N3",
+          "W6N3"
+        ],
+        "travelTicks": 152
+      },
+      "routeRooms": [
+        "W7N4",
+        "W7N3",
+        "W6N3"
+      ],
+      "travelTicks": 152,
+      "fighter": {
+        "id": "b084014aa981653",
+        "deathAt": 686093
+      },
+      "failures": 1,
+      "retryAt": 684547
+    },
+    "ordinaryOperations": {
+      "defend:W8N3": {
+        "id": "defend:W8N3",
+        "type": "DEFEND_REMOTE",
+        "state": "RECOVERING",
+        "createdTick": 685910,
+        "targetRoom": "W8N3",
+        "assignedCreeps": [
+          "Cleric_002",
+          "Volley_001"
+        ],
+        "assignedSquads": [
+          "duo:defend:W8N3"
+        ],
+        "priority": 80,
+        "originRoom": "W7N4",
+        "updatedTick": 686068,
+        "lastConfirmedTick": 685978,
+        "desiredCapabilities": {
+          "damage": 100,
+          "healing": 20
+        },
+        "spawnDemands": [],
+        "debugReason": "DEFEND_REMOTE requires current target-room visibility",
+        "strategyDecision": "wait",
+        "strategyReason": "DEFEND_REMOTE requires current target-room visibility",
+        "strategyTick": 686068,
+        "stateStartTick": 686068,
+        "utility": {
+          "total": 75,
+          "components": {
+            "urgency": 80,
+            "expectedValue": 0,
+            "strategicValue": 0,
+            "energyCost": 0,
+            "spawnCost": 0,
+            "travelTime": 5,
+            "risk": 0,
+            "opportunityCost": 0
+          }
+        },
+        "utilityUpdatedTick": 686055
+      },
+      "defend:W7N4": {
+        "id": "defend:W7N4",
+        "type": "DEFEND_OWNED_ROOM",
+        "state": "COMPLETE",
+        "createdTick": 685910,
+        "targetRoom": "W7N4",
+        "assignedCreeps": [
+          "Cleric_001"
+        ],
+        "assignedSquads": [
+          "duo:defend:W7N4",
+          "quad:defend:W7N4"
+        ],
+        "priority": 80,
+        "originRoom": "W7N4",
+        "updatedTick": 685919,
+        "lastConfirmedTick": 685918,
+        "desiredCapabilities": {
+          "damage": 0,
+          "healing": 0
+        },
+        "spawnDemands": [],
+        "debugReason": "Live vision is safe",
+        "strategyDecision": "allow",
+        "strategyReason": "Emergency owned-room defense prerequisites accepted",
+        "strategyTick": 685918,
+        "completedTick": 685919
+      }
+    }
+  }
+}

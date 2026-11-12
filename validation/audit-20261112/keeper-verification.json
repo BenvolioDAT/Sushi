@@ -1,0 +1,353 @@
+{
+  "generatedAt": "2026-11-12T12:17:48.323Z",
+  "build": {
+    "id": "106f60395238f963af345e7c17b61f9795ff8a93bd1e4cc6118b2f877f583538",
+    "modules": 111
+  },
+  "deployment": {
+    "at": "2026-11-12T12:07:58.864Z",
+    "before": {
+      "id": "5fa6a628ea7abbf44eac82049ec43a2dda3a9da5de16b0a26461c07f4ae7ff63",
+      "modules": 109
+    },
+    "after": {
+      "id": "106f60395238f963af345e7c17b61f9795ff8a93bd1e4cc6118b2f877f583538",
+      "modules": 111
+    },
+    "changes": [
+      "Combat.Policy.js",
+      "Combat.ThreatLedger.js",
+      "Keeper.Combat.js",
+      "Keeper.Intel.js",
+      "Planner.Remote.js",
+      "role.Annex.js",
+      "role.Extractor.js",
+      "role.Freighter.js",
+      "role.Scout.js",
+      "role.Volley.js",
+      "Runtime.Build.js"
+    ],
+    "backup": "C:\\Users\\xbenv\\AppData\\Local\\Screeps\\scripts\\127_0_0_1___21025\\Sushi\\validation\\deployments\\keeper-20261112\\original",
+    "branch": "Sushi",
+    "target": "C:\\Users\\xbenv\\AppData\\Local\\Screeps\\scripts\\127_0_0_1___21025\\Sushi"
+  },
+  "tests": {
+    "command": "npm test",
+    "exitCode": 0,
+    "passChecks": 192,
+    "keeperChecks": 24,
+    "engineChecks": {
+      "passed": 8,
+      "engineVersion": "4.3.0-beta",
+      "checks": [
+        "undamaged Keeper has no countdown",
+        "damage starts 300-tick timer",
+        "timer does not restart",
+        "new spawn replaces living Keeper",
+        "50-part body composition",
+        "first resource within five, not nearest",
+        "Keeper attacks both melee and ranged",
+        "self-heal coexists with ranged attack, suppresses melee attack"
+      ],
+      "parts": {
+        "tough": 17,
+        "move": 13,
+        "attack": 10,
+        "ranged_attack": 10
+      }
+    },
+    "syntaxModules": 111,
+    "moduleGraph": {
+      "reachable": 111,
+      "cycles": 0
+    },
+    "movementCallSites": 14,
+    "log": "keeper-root-validation.log"
+  },
+  "desktop": {
+    "tick": 642978,
+    "build": "106f60395238f963af345e7c17b61f9795ff8a93bd1e4cc6118b2f877f583538",
+    "modules": 111
+  },
+  "observations": [
+    {
+      "label": "keeper-predeploy",
+      "tick": 638902,
+      "codeMatches": 109,
+      "differences": [],
+      "cpu": {
+        "status": {
+          "tick": 638901,
+          "mode": "high",
+          "modeSince": 638235,
+          "limit": 100,
+          "runtimeLimit": 100,
+          "tickLimit": 500,
+          "bucket": 10000,
+          "strategicUsed": 2.33,
+          "used": 34.1,
+          "remaining": 65.9
+        }
+      },
+      "memoryChars": 293582,
+      "state": "RECOVERY",
+      "annexError": {
+        "creepName": "Annex_004",
+        "roomName": "W7N3",
+        "message": "Cannot read properties of undefined (reading 'username')",
+        "tick": 633982,
+        "count": 98084,
+        "lastLogTick": 633912
+      },
+      "scouts": [
+        {
+          "name": "Scout_001",
+          "room": "W6N5",
+          "x": 10,
+          "y": 48,
+          "hits": 100,
+          "ageTime": 640368
+        }
+      ],
+      "remote": {
+        "gross": 8.5,
+        "net": 6.179400000000001,
+        "plannedIncome": 30,
+        "provenIncome": 8.5,
+        "provenSources": 0,
+        "backlog": 15159,
+        "reservedCarry": 0,
+        "activeSources": 4,
+        "operationalSources": 4,
+        "selectedSources": 4,
+        "portfolioSources": 13,
+        "candidateSources": 4,
+        "reservedSources": 2,
+        "unreservedSources": 2,
+        "requiredCarry": 96,
+        "oldestHaulAge": 57,
+        "availableCarry": 0
+      }
+    },
+    {
+      "label": "keeper-post-1",
+      "tick": 642894,
+      "codeMatches": 111,
+      "differences": [],
+      "cpu": {
+        "status": {
+          "tick": 642893,
+          "mode": "high",
+          "modeSince": 642544,
+          "limit": 100,
+          "runtimeLimit": 100,
+          "tickLimit": 500,
+          "bucket": 10000,
+          "strategicUsed": 3.06,
+          "used": 28.17,
+          "remaining": 71.83
+        }
+      },
+      "memoryChars": 284696,
+      "state": "RECOVERY",
+      "intel": {
+        "observedAt": 642893,
+        "lairs": 4,
+        "keepers": 4,
+        "timers": [
+          null,
+          null,
+          null,
+          null
+        ],
+        "serializedChars": 1663
+      },
+      "annexError": {
+        "creepName": "Annex_001",
+        "roomName": "W7N3",
+        "message": "Cannot read properties of undefined (reading 'username')",
+        "tick": 642475,
+        "count": 100370,
+        "lastLogTick": 642437
+      },
+      "scouts": [
+        {
+          "name": "Scout_001",
+          "room": "W6N4",
+          "x": 45,
+          "y": 1,
+          "hits": 100,
+          "ageTime": 643445
+        }
+      ],
+      "remote": {
+        "gross": 16,
+        "net": 12.33,
+        "plannedIncome": 40,
+        "provenIncome": 16,
+        "provenSources": 0,
+        "backlog": 17758,
+        "reservedCarry": 0,
+        "activeSources": 4,
+        "operationalSources": 4,
+        "selectedSources": 4,
+        "portfolioSources": 13,
+        "candidateSources": 6,
+        "reservedSources": 4,
+        "unreservedSources": 0,
+        "requiredCarry": 138,
+        "oldestHaulAge": 1,
+        "availableCarry": 0
+      }
+    },
+    {
+      "label": "keeper-post-2",
+      "tick": 643600,
+      "codeMatches": 111,
+      "differences": [],
+      "cpu": {
+        "status": {
+          "tick": 643600,
+          "mode": "high",
+          "modeSince": 643237,
+          "limit": 100,
+          "runtimeLimit": 100,
+          "tickLimit": 500,
+          "bucket": 10000,
+          "strategicUsed": 2.27,
+          "used": 32.64,
+          "remaining": 67.36
+        }
+      },
+      "memoryChars": 292288,
+      "state": "RECOVERY",
+      "intel": {
+        "observedAt": 643600,
+        "lairs": 4,
+        "keepers": 0,
+        "timers": [
+          643882,
+          643882,
+          643882,
+          643882
+        ],
+        "serializedChars": 1173
+      },
+      "annexError": {
+        "creepName": "Annex_001",
+        "roomName": "W7N3",
+        "message": "Cannot read properties of undefined (reading 'username')",
+        "tick": 642475,
+        "count": 100370,
+        "lastLogTick": 642437
+      },
+      "scouts": [
+        {
+          "name": "Scout_001",
+          "room": "W6N4",
+          "x": 41,
+          "y": 13,
+          "hits": 100,
+          "ageTime": 644969
+        }
+      ],
+      "remote": {
+        "gross": 12,
+        "net": 8.926,
+        "plannedIncome": 40,
+        "provenIncome": 12,
+        "provenSources": 0,
+        "backlog": 17543,
+        "reservedCarry": 0,
+        "activeSources": 4,
+        "operationalSources": 4,
+        "selectedSources": 4,
+        "portfolioSources": 13,
+        "candidateSources": 6,
+        "reservedSources": 4,
+        "unreservedSources": 0,
+        "requiredCarry": 138,
+        "oldestHaulAge": 1,
+        "availableCarry": 0
+      }
+    },
+    {
+      "label": "keeper-post-3",
+      "tick": 644164,
+      "codeMatches": 111,
+      "differences": [],
+      "cpu": {
+        "status": {
+          "tick": 644163,
+          "mode": "high",
+          "modeSince": 643237,
+          "limit": 100,
+          "runtimeLimit": 100,
+          "tickLimit": 500,
+          "bucket": 10000,
+          "strategicUsed": 3.2,
+          "used": 40.29,
+          "remaining": 59.71
+        }
+      },
+      "memoryChars": 311325,
+      "state": "RECOVERY",
+      "intel": {
+        "observedAt": 644163,
+        "lairs": 4,
+        "keepers": 4,
+        "timers": [
+          null,
+          null,
+          null,
+          null
+        ],
+        "serializedChars": 1663
+      },
+      "annexError": {
+        "creepName": "Annex_001",
+        "roomName": "W7N3",
+        "message": "Cannot read properties of undefined (reading 'username')",
+        "tick": 642475,
+        "count": 100370,
+        "lastLogTick": 642437
+      },
+      "scouts": [
+        {
+          "name": "Scout_001",
+          "room": "W6N5",
+          "x": 44,
+          "y": 49,
+          "hits": 100,
+          "ageTime": 644969
+        }
+      ],
+      "remote": {
+        "gross": 16,
+        "net": 12.33,
+        "plannedIncome": 40,
+        "provenIncome": 16,
+        "provenSources": 0,
+        "backlog": 22149,
+        "reservedCarry": 0,
+        "activeSources": 4,
+        "operationalSources": 4,
+        "selectedSources": 4,
+        "portfolioSources": 13,
+        "candidateSources": 6,
+        "reservedSources": 4,
+        "unreservedSources": 0,
+        "requiredCarry": 143,
+        "oldestHaulAge": 1,
+        "availableCarry": 0
+      }
+    }
+  ],
+  "limits": [
+    "No combat victory tested",
+    "No Keeper mining or hauling commissioned",
+    "No guard spawned",
+    "Single-guard shared coverage unverified",
+    "Existing RCL5 recovery and ordinary remote hauling shortfalls remain"
+  ]
+}

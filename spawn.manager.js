@@ -626,7 +626,8 @@ function runRoomInternal(roomName, decision, selectedSpawn) {
         }
         var preview = previewAffordableQueuedBodyForSpawn(previewSpawn, bodyCandidate);
         candidate.affordableBodyCache = bodyCandidate.affordableBodyCache;
-        const sizing = require('Spawn.Sizing').evaluate(spawn.room, candidate, preview, survival);
+        const sizing = require('Spawn.Sizing').evaluate(spawn.room, bodyCandidate, preview, survival);
+        candidate.spawnSizing = bodyCandidate.spawnSizing;
         details.sizingReason = sizing.reason;
         details.energyCapacity = sizing.capacity;
         details.preferredCost = sizing.preferredCost;
@@ -778,6 +779,7 @@ function runRoomInternal(roomName, decision, selectedSpawn) {
      */
     if (result === OK) {
         SpawnIntents.record(spawn, creepName, request, getBodyCost(request.body), availableEnergy);
+        require('Remote.Accounting').recordSpawn(spawn.room.name, request, request.body);
         queue.splice(requestIndex, 1);
 
         try { console.log(

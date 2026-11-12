@@ -1,0 +1,316 @@
+{
+  "at": "2026-11-12T18:12:46.498Z",
+  "build": {
+    "id": "57b0fa09ad95782c9c9ab82f330bc74cad8dc1cc673237184c3a4ab18080bef6",
+    "modules": 115
+  },
+  "target": "C:\\Users\\xbenv\\AppData\\Local\\Screeps\\scripts\\127_0_0_1___21025\\Sushi",
+  "branch": "Sushi",
+  "test": {
+    "passed": 238,
+    "exitCode": 0,
+    "syntaxModules": 115,
+    "log": "runtime-review-validation-final.log",
+    "exactStagedRuntime": true
+  },
+  "desktop": {
+    "tick": 765998,
+    "build": "57b0fa09ad95782c9c9ab82f330bc74cad8dc1cc673237184c3a4ab18080bef6",
+    "probe": false,
+    "npc": 4,
+    "human": 0,
+    "emergency": false
+  },
+  "probeEnabledAt": 764594,
+  "probeUntil": 765594,
+  "probeStopped": true,
+  "observations": [
+    {
+      "file": "runtime-review-baseline.json",
+      "tick": 763085,
+      "codeMatches": 114,
+      "codeDifferences": [],
+      "memoryChars": 301700,
+      "probe": null,
+      "keeper": {
+        "W6N5": {
+          "tick": 763039,
+          "npc": 0,
+          "human": 4,
+          "emergency": true,
+          "actionable": 0
+        }
+      },
+      "recentErrors": [],
+      "roleErrors": {
+        "Annex": {
+          "creepName": "Annex_001",
+          "roomName": "W7N3",
+          "message": "Cannot read properties of undefined (reading 'username')",
+          "tick": 642475,
+          "count": 100370,
+          "lastLogTick": 642437
+        }
+      },
+      "cpu": 31.27337892485876
+    },
+    {
+      "file": "runtime-review-probe-deployed.json",
+      "tick": 764513,
+      "codeMatches": 115,
+      "codeDifferences": [],
+      "memoryChars": 288346,
+      "probe": null,
+      "keeper": {
+        "W6N4": {
+          "tick": 764512,
+          "npc": 0,
+          "human": 4,
+          "emergency": true,
+          "actionable": 0
+        },
+        "W6N5": {
+          "tick": 764390,
+          "npc": 0,
+          "human": 4,
+          "emergency": true,
+          "actionable": 0
+        }
+      },
+      "recentErrors": [],
+      "roleErrors": {
+        "Annex": {
+          "creepName": "Annex_001",
+          "roomName": "W7N3",
+          "message": "Cannot read properties of undefined (reading 'username')",
+          "tick": 642475,
+          "count": 100370,
+          "lastLogTick": 642437
+        }
+      },
+      "cpu": 36.82051087953552
+    },
+    {
+      "file": "runtime-review-probe-1.json",
+      "tick": 764667,
+      "codeMatches": 115,
+      "codeDifferences": [],
+      "memoryChars": 309326,
+      "probe": {
+        "enabled": true,
+        "count": 8,
+        "retained": 8,
+        "lastTick": 764665,
+        "stopReason": null,
+        "size": 17233,
+        "errors": []
+      },
+      "keeper": {
+        "W6N5": {
+          "tick": 764642,
+          "npc": 0,
+          "human": 4,
+          "emergency": true,
+          "actionable": 0
+        }
+      },
+      "recentErrors": [],
+      "roleErrors": {
+        "Annex": {
+          "creepName": "Annex_001",
+          "roomName": "W7N3",
+          "message": "Cannot read properties of undefined (reading 'username')",
+          "tick": 642475,
+          "count": 100370,
+          "lastLogTick": 642437
+        }
+      },
+      "cpu": 31.124075388153265
+    },
+    {
+      "file": "runtime-review-probe-2.json",
+      "tick": 764961,
+      "codeMatches": 115,
+      "codeDifferences": [],
+      "memoryChars": 330887,
+      "probe": {
+        "enabled": true,
+        "count": 37,
+        "retained": 13,
+        "lastTick": 764955,
+        "stopReason": null,
+        "size": 28595,
+        "errors": []
+      },
+      "keeper": {
+        "W6N4": {
+          "tick": 764943,
+          "npc": 0,
+          "human": 4,
+          "emergency": true,
+          "actionable": 0
+        },
+        "W6N5": {
+          "tick": 764894,
+          "npc": 0,
+          "human": 3,
+          "emergency": true,
+          "actionable": 0
+        }
+      },
+      "recentErrors": [],
+      "roleErrors": {
+        "Annex": {
+          "creepName": "Annex_001",
+          "roomName": "W7N3",
+          "message": "Cannot read properties of undefined (reading 'username')",
+          "tick": 642475,
+          "count": 100370,
+          "lastLogTick": 642437
+        }
+      },
+      "cpu": 32.6315286921714
+    },
+    {
+      "file": "runtime-review-probe-3.json",
+      "tick": 765246,
+      "codeMatches": 115,
+      "codeDifferences": [],
+      "memoryChars": 330054,
+      "probe": {
+        "enabled": true,
+        "count": 66,
+        "retained": 14,
+        "lastTick": 765245,
+        "stopReason": null,
+        "size": 29811,
+        "errors": []
+      },
+      "keeper": {
+        "W6N4": {
+          "tick": 765245,
+          "npc": 0,
+          "human": 4,
+          "emergency": true,
+          "actionable": 0
+        },
+        "W6N5": {
+          "tick": 765020,
+          "npc": 0,
+          "human": 3,
+          "emergency": true,
+          "actionable": 0
+        }
+      },
+      "recentErrors": [],
+      "roleErrors": {
+        "Annex": {
+          "creepName": "Annex_001",
+          "roomName": "W7N3",
+          "message": "Cannot read properties of undefined (reading 'username')",
+          "tick": 642475,
+          "count": 100370,
+          "lastLogTick": 642437
+        }
+      },
+      "cpu": 35.636994618797026
+    },
+    {
+      "file": "runtime-review-final-1.json",
+      "tick": 765883,
+      "codeMatches": 115,
+      "codeDifferences": [],
+      "memoryChars": 312558,
+      "probe": {
+        "enabled": false,
+        "count": 99,
+        "retained": 14,
+        "lastTick": 765585,
+        "stopReason": "EXPIRED",
+        "size": 29985,
+        "errors": []
+      },
+      "keeper": {
+        "W6N4": {
+          "tick": 765882,
+          "npc": 4,
+          "keepers": 4,
+          "human": 0,
+          "emergency": false,
+          "actionable": 0
+        },
+        "W6N5": {
+          "tick": 765798,
+          "npc": 1,
+          "keepers": 1,
+          "human": 0,
+          "emergency": false,
+          "actionable": 0
+        }
+      },
+      "recentErrors": [],
+      "roleErrors": {
+        "Annex": {
+          "creepName": "Annex_001",
+          "roomName": "W7N3",
+          "message": "Cannot read properties of undefined (reading 'username')",
+          "tick": 642475,
+          "count": 100370,
+          "lastLogTick": 642437
+        }
+      },
+      "cpu": 34.678632092376255
+    },
+    {
+      "file": "runtime-review-final-2.json",
+      "tick": 766130,
+      "codeMatches": 115,
+      "codeDifferences": [],
+      "memoryChars": 319862,
+      "probe": {
+        "enabled": false,
+        "count": 99,
+        "retained": 14,
+        "lastTick": 765585,
+        "stopReason": "EXPIRED",
+        "size": 29985,
+        "errors": []
+      },
+      "keeper": {
+        "W6N4": {
+          "tick": 766130,
+          "npc": 4,
+          "keepers": 4,
+          "human": 0,
+          "emergency": false,
+          "actionable": 0
+        },
+        "W6N5": {
+          "tick": 766050,
+          "npc": 4,
+          "keepers": 4,
+          "human": 0,
+          "emergency": false,
+          "actionable": 0
+        }
+      },
+      "recentErrors": [],
+      "roleErrors": {
+        "Annex": {
+          "creepName": "Annex_001",
+          "roomName": "W7N3",
+          "message": "Cannot read properties of undefined (reading 'username')",
+          "tick": 642475,
+          "count": 100370,
+          "lastLogTick": 642437
+        }
+      },
+      "cpu": 36.1858609315279
+    }
+  ],
+  "limitations": [
+    "No new exceptions recorded; retained Annex error is historical",
+    "Local source backlog/replacement gaps and absent remote CARRY remain economic limitations",
+    "Existing blackbox and operational CPU telemetry retain prior defaults; the new probe defaults OFF"
+  ]
+}

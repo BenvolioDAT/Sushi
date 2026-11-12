@@ -1,0 +1,9 @@
+{
+  "at": "2026-11-12T19:31:17.314Z",
+  "build": {
+    "id": "75288eb7ceb96f921dd3fe66efe285262e9ce63ea2c9da51b247f19e9ccc4c07",
+    "modules": 115
+  },
+  "source": "C:\\Users\\xbenv\\AppData\\Local\\Screeps\\scripts\\127_0_0_1___21025\\Sushi",
+  "note": "Preserves existing modified runtime and pre-existing repository changes; old IP folder left intact"
+}

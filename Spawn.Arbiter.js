@@ -69,6 +69,10 @@ function normalize(roomName, request, options = {}) {
         }
     }
     normalized.bodyMetrics = profiles.metrics(normalized.body || [], normalized.memory);
+    if (normalized.role === 'Freighter' && require('HiveMind.Economy').isRemoteFreighter(normalized) &&
+        !normalized.freighterRenewal && !normalized.bodyRequirements?.fixed) {
+        normalized.minimumCarryParts = Math.max(normalized.minimumCarryParts || 0, Math.min(4, normalized.bodyMetrics.CARRY));
+    }
     normalized.priority = (normalized.priority || 0) + require('HiveMind.Surplus').requestBias(roomName, normalized);
     normalized.requestId = fingerprint(roomName, normalized, producer);
     normalized.producer = producer;
@@ -79,6 +83,28 @@ function normalize(roomName, request, options = {}) {
     normalized.refreshTick = now;
     normalized.memory.requestId = normalized.requestId;
     return normalized;
+}
+
+// A large unqueued hauler must not wait forever when a useful smaller body fits
+// the same spawn budget. Never resize renewals, fixed protection or local floors.
+function fitRemoteHauler(room, request, decision) {
+    if (decision.reason !== 'SPAWN_LOAD_HIGH' || !Number.isFinite(decision.spawnHeadroom) ||
+        request.role !== 'Freighter' || !require('HiveMind.Economy').isRemoteFreighter(request) ||
+        request.freighterRenewal || request.replacementFor || request.bodyRequirements?.fixed || request.emergency) return null;
+    const profiles = require('BodyProfiles'), original = profiles.metrics(request.body, request.memory);
+    const minimum = Math.max(Math.min(4, original.CARRY), request.minimumCarryParts || 0);
+    const horizon = Math.max(1, Number(HiveMemory.getConfig('capacity').queueHorizon) || 300);
+    const bodyOptions = profiles.requestOptions(room, request);
+    for (let carry = original.CARRY - 1; carry >= minimum; carry--) {
+        const candidate = profiles.build('Freighter', { ...bodyOptions, desiredCarry: carry });
+        if (!candidate || candidate.CARRY !== carry) continue;
+        const metrics = profiles.metrics(candidate.body, request.memory);
+        if (metrics.estimatedReplacementLoad + metrics.spawnTime / horizon > decision.spawnHeadroom) continue;
+        return { body: candidate.body, bodyMetrics: metrics, requestedCarryParts: carry, maxCarryParts: carry, minimumCarryParts: minimum,
+            bodyProfile: { ...bodyOptions, desiredCarry: carry }, bodyReason: 'remote hauling body fitted to current spawn budget',
+            capacityFit: { originalCarry: original.CARRY, carry, spawnHeadroom: decision.spawnHeadroom } };
+    }
+    return null;
 }
 
 function admit(roomName, request, options = {}) {
@@ -135,7 +161,14 @@ function admit(roomName, request, options = {}) {
         evaluationContext.byRole[displaced.role]--;
         evaluationContext.nonCombatTotal--;
     }
-    const decision = recordDecision(roomName, normalized, Policy.evaluate(room, normalized, evaluationContext, options));
+    let evaluation = Policy.evaluate(room, normalized, evaluationContext, options);
+    const fitted = fitRemoteHauler(room, normalized, evaluation);
+    if (fitted) {
+        Object.assign(normalized, fitted);
+        spawnMemory.governor.nextBody = { role: normalized.role, ...normalized.bodyMetrics, reason: normalized.bodyReason };
+        evaluation = Policy.evaluate(room, normalized, evaluationContext, options);
+    }
+    const decision = recordDecision(roomName, normalized, evaluation);
     if (!decision.allowed) return { ...decision, ok: false, requested: 0, role: normalized.role };
     if (displaced) context.queue.splice(context.queue.indexOf(displaced), 1);
     context.queue.push(normalized);

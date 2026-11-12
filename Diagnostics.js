@@ -184,6 +184,7 @@ function begin() {
     } catch (error) { if (heap) { heap.storage = 'MEMORY'; heap.storageReason = 'storage unavailable'; } }
 }
 function finish(cpu) {
+    try { require('Diagnostics.Probe').sample(roomReader); } catch (error) { /* Optional evidence cannot stop the colony. */ }
     try {
         const c = config(); if (c.mode === 'OFF') return;
         const h = current();
@@ -249,6 +250,7 @@ function status() {
         lastFlush: state().lastFlush || null, segment: c.segment }; } catch (error) { return { unavailable: true }; }
 }
 function exception(event, room, error, subsystem) {
+    try { require('Diagnostics.Probe').exception(event, room, error, subsystem); } catch (probeError) { /* Keep ordinary reporting reachable. */ }
     try { return record('ERRORS', 'ERROR', event, room, { subsystem, message: String(error && error.message || error).slice(0, 110),
         stack: String(error && error.stack || '').split('\n').slice(1, 3).join(' ').slice(0, 110) }); } catch (reportingError) { return false; }
 }
@@ -328,6 +330,7 @@ function movement(creep, result, destination) {
 // Sample nested costs without changing phase totals. Keep this recorder free
 // of manager dependencies so movement and logistics can both use it.
 function measureOperation(name, fn) {
+    if (Memory.config?.diagnostics?.mode === 'OFF') return fn();
     const enabled = Game.time % 25 === 0 || config().mode === 'PROFILE';
     if (!enabled || !Game.cpu || typeof Game.cpu.getUsed !== 'function') return fn();
     if (!operationSample || operationSample.tick !== Game.time || operationSample.game !== Game) {
@@ -396,6 +399,8 @@ function install(readRoom, readCpu, readPixels) {
     if (readPixels) pixelReader = readPixels;
     if (!global.Sushi || typeof global.Sushi !== 'object') global.Sushi = {};
     global.Sushi.debug = { status, build: () => require('Runtime.Build'),
+        probe: (on, options) => require('Diagnostics.Probe').toggle(on, options),
+        probeReport: () => require('Diagnostics.Probe').report(),
         pixels: () => ({ current: pixelReader(), last: Memory.hive?.telemetry?.pixels || null }),
         events, errors: (n = 20) => events(n, { severity: 'ERROR' }),
         room: name => ({ tick: tick(), current: roomReader(name), events: events(30, { room: name }) }), cpu: () => ({ ...cpuReader(), rolling: global.__sushiCpuRolling || Memory.hive?.telemetry?.cpu || null,

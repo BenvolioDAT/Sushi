@@ -1,0 +1,17 @@
+C:\Users\xbenv\AppData\Local\Screeps\scripts\127_0_0_1___21025\Sushi\validation\audit-20261112\workspace\HiveMind.Telemetry.js:45
+        phases[name] = (previous.phases[name] || 0) * 0.9 + (telemetry.phases[name] || 0) * 0.1;
+                                       ^
+
+TypeError: Cannot read properties of undefined (reading 'diagnostics')
+    at Object.finish (C:\Users\xbenv\AppData\Local\Screeps\scripts\127_0_0_1___21025\Sushi\validation\audit-20261112\workspace\HiveMind.Telemetry.js:45:40)
+    at C:\Users\xbenv\AppData\Local\Screeps\scripts\127_0_0_1___21025\Sushi\validation\audit-20261112\workspace\test\telemetry-recovery.js:15:17
+    at test (C:\Users\xbenv\AppData\Local\Screeps\scripts\127_0_0_1___21025\Sushi\validation\audit-20261112\workspace\test\telemetry-recovery.js:12:27)
+    at Object.<anonymous> (C:\Users\xbenv\AppData\Local\Screeps\scripts\127_0_0_1___21025\Sushi\validation\audit-20261112\workspace\test\telemetry-recovery.js:13:1)
+    at Module._compile (node:internal/modules/cjs/loader:1781:14)
+    at Object..js (node:internal/modules/cjs/loader:1913:10)
+    at Module.load (node:internal/modules/cjs/loader:1505:32)
+    at Function._load (node:internal/modules/cjs/loader:1309:12)
+    at wrapModuleLoad (node:internal/modules/cjs/loader:254:19)
+    at Function.executeUserEntryPoint [as runMain] (node:internal/modules/run_main:171:5)
+
+Node.js v22.23.2

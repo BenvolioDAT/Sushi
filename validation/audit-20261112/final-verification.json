@@ -1,0 +1,51 @@
+{
+  "generatedAt": "2026-11-12T12:17:48.323Z",
+  "note": "Original audit outcomes are historical; Keeper follow-up adds a later release and current limitations.",
+  "runtimeReleaseBeforeKeeper": "5fa6a628ea7abbf44eac82049ec43a2dda3a9da5de16b0a26461c07f4ae7ff63",
+  "historicalEvidence": [
+    "baseline.json",
+    "release-post-2.json",
+    "economy-post-1.json",
+    "economy-post-2.json",
+    "loading-post-1.json",
+    "loading-post-2.json"
+  ],
+  "finalBuild": {
+    "id": "106f60395238f963af345e7c17b61f9795ff8a93bd1e4cc6118b2f877f583538",
+    "modules": 111
+  },
+  "tests": {
+    "command": "npm test",
+    "exitCode": 0,
+    "passChecks": 192,
+    "keeperChecks": 24,
+    "engineChecks": {
+      "passed": 8,
+      "engineVersion": "4.3.0-beta",
+      "checks": [
+        "undamaged Keeper has no countdown",
+        "damage starts 300-tick timer",
+        "timer does not restart",
+        "new spawn replaces living Keeper",
+        "50-part body composition",
+        "first resource within five, not nearest",
+        "Keeper attacks both melee and ranged",
+        "self-heal coexists with ranged attack, suppresses melee attack"
+      ],
+      "parts": {
+        "tough": 17,
+        "move": 13,
+        "attack": 10,
+        "ranged_attack": 10
+      }
+    },
+    "syntaxModules": 111,
+    "moduleGraph": {
+      "reachable": 111,
+      "cycles": 0
+    },
+    "movementCallSites": 14,
+    "log": "keeper-root-validation.log"
+  },
+  "followup": "keeper-verification.json"
+}

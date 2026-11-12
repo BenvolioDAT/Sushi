@@ -1,0 +1,26 @@
+{
+  "checks": 3,
+  "engineVersion": "4.3.0-beta",
+  "model": "Fixed positions, unboosted bodies, installed effectiveness/intent/damage/healing/body processors; no world writes.",
+  "rangedKeeper": {
+    "range": 3,
+    "ticks": 50,
+    "guardHits": 4000,
+    "keeperHits": 0,
+    "guardSurvived": true,
+    "keeperDestroyed": true
+  },
+  "unsafeMelee": {
+    "range": 1,
+    "ticks": 14,
+    "guardHits": -28,
+    "keeperHits": 4050,
+    "guardSurvived": false,
+    "keeperDestroyed": false
+  },
+  "unopposedCore": {
+    "ticks": 556,
+    "attackerHits": 1200,
+    "coreDestroyed": true
+  }
+}

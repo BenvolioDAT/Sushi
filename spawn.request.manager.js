@@ -2321,9 +2321,10 @@ function requestRemoteExtractorsForRoom(room, extractorBody, priority, maxReques
         }
 
         var demand = demands[i];
+        var keeperMining = require('Keeper.Intel').known(demand.remoteRoomName);
         var remoteBody = creepBodyConfig.getExtractorBodyForWork(
             room,
-            demand.missingWork || SOURCE_WORK_TARGET
+            keeperMining ? 7 : demand.missingWork || SOURCE_WORK_TARGET
         ) || extractorBody;
 
         /*
@@ -2335,6 +2336,8 @@ function requestRemoteExtractorsForRoom(room, extractorBody, priority, maxReques
             economyCategory: demand.sourceInfo && demand.sourceInfo.state === 'BOOTSTRAPPING' ?
                 'remoteBootstrap' : 'remoteMaintenance',
             body: remoteBody,
+            bodyRequirements: keeperMining ? { fixed: true } : undefined,
+            minimumWorkParts: keeperMining ? 7 : undefined,
             requestedWorkParts: countBodyParts(remoteBody, WORK),
             maxWorkParts: countBodyParts(remoteBody, WORK),
             priority: priority,
@@ -3679,8 +3682,8 @@ function cleanDefenseQueue(roomName, demand) {
         var role = getRequestRole(request);
         var memory = request && request.memory || {};
         if (!desired.hasOwnProperty(role)) continue;
-        var belongsToDefense = memory.defenseRequest === true ||
-            (!memory.operationId && !memory.manualCombat);
+        var belongsToDefense = !memory.keeperOperationId && !memory.npcCoreOperationId && (memory.defenseRequest === true ||
+            (!memory.operationId && !memory.manualCombat));
         if (belongsToDefense && (!desired[role] || demand.harmfulHostileCount <= 0)) {
             queue.splice(i, 1);
             removed++;

@@ -28,6 +28,43 @@ test('levels 1 through 5 and unknown levels cannot approve imaginary siege capab
         assert.strictEqual(f.operations.assessStronghold(f.op).viable, false);
     }
 });
+
+test('Source Keepers remain NPC threats without triggering human counts or null-range emergencies', () => {
+    const f=fixture(0);f.structures.length=0;
+    f.hostiles.push({id:'keeper',name:'Keeperlair',owner:{username:'Source Keeper'},hits:5000,hitsMax:5000,
+        body:[{type:ATTACK,hits:100}],pos:new RoomPosition(20,20,f.room.name)});
+    const threat=require('Combat.ThreatLedger').observeRoom(f.room,f.hostiles);
+    assert.strictEqual(threat.npcHostileCount,1);assert.strictEqual(threat.sourceKeeperCount,1);
+    assert.strictEqual(threat.humanThreatCount,0);assert.strictEqual(threat.emergency,false);
+    assert.strictEqual(threat.dangerousHostileCount,1);assert.strictEqual(threat.actionableHostileCount,0);
+    assert.strictEqual(threat.hostiles[0].classification,'SOURCE_KEEPER');
+});
+
+test('ordinary Invaders and player threats remain distinct in mixed Keeper intelligence', () => {
+    const f=fixture(0);f.structures.length=0;
+    for(const [i,owner] of ['Source Keeper','Invader','enemy'].entries())f.hostiles.push({id:'enemy'+i,name:'enemy'+i,
+        owner:{username:owner},hits:100,hitsMax:100,body:[{type:ATTACK,hits:100}],pos:new RoomPosition(20,20,f.room.name)});
+    const threat=require('Combat.ThreatLedger').observeRoom(f.room,f.hostiles);
+    assert.strictEqual(threat.npcHostileCount,2);assert.strictEqual(threat.sourceKeeperCount,1);
+    assert.strictEqual(threat.humanThreatCount,1);assert.strictEqual(threat.dangerousHostileCount,3);
+});
+
+test('a real hostile within three tiles of the controller still triggers emergency defense', () => {
+    const f=fixture(0);f.structures.length=0;f.room.controller={my:true,pos:new RoomPosition(22,22,f.room.name)};
+    f.hostiles.push({id:'invader',owner:{username:'Invader'},hits:100,hitsMax:100,body:[{type:ATTACK,hits:100}],
+        pos:new RoomPosition(20,20,f.room.name)});
+    assert.strictEqual(require('Combat.ThreatLedger').observeRoom(f.room,f.hostiles).emergency,true);
+});
+
+test('cached Keeper classification counts repair without claiming a new observation', () => {
+    const f=fixture(0);f.structures.length=0;const ledger=require('Combat.ThreatLedger');
+    f.hostiles.push({id:'keeper',owner:{username:'Source Keeper'},hits:100,hitsMax:100,body:[{type:ATTACK,hits:100}],
+        pos:new RoomPosition(20,20,f.room.name)});
+    const threat=ledger.observeRoom(f.room,f.hostiles),observed=threat.tick;
+    threat.npcHostileCount=0;threat.humanThreatCount=1;delete Game.rooms[f.room.name];Game.time++;ledger.run();
+    assert.strictEqual(threat.npcHostileCount,1);assert.strictEqual(threat.humanThreatCount,0);
+    assert.strictEqual(threat.tick,observed);assert.strictEqual(threat.actionableHostileCount,0);
+});
 test('lesser cores are distinguished but cannot spawn an unvalidated WORK breacher', () => {
     const f = fixture(0), result = require('Combat.Stronghold').discover(f.room);
     assert.strictEqual(result.ok, false);

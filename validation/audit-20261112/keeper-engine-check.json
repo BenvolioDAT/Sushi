@@ -1,0 +1,20 @@
+{
+  "passed": 8,
+  "engineVersion": "4.3.0-beta",
+  "checks": [
+    "undamaged Keeper has no countdown",
+    "damage starts 300-tick timer",
+    "timer does not restart",
+    "new spawn replaces living Keeper",
+    "50-part body composition",
+    "first resource within five, not nearest",
+    "Keeper attacks both melee and ranged",
+    "self-heal coexists with ranged attack, suppresses melee attack"
+  ],
+  "parts": {
+    "tough": 17,
+    "move": 13,
+    "attack": 10,
+    "ranged_attack": 10
+  }
+}

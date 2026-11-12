@@ -1,0 +1,61 @@
+{
+  "checks": 4,
+  "model": "Installed combat and Keeper AI plus live lair processor; fixed front range three/rear four, perfect adjacent focused healing, no pathfinding/formation proof.",
+  "under1800Solo": {
+    "costs": [
+      1500
+    ],
+    "ticks": 19,
+    "survivingGuards": 0,
+    "hits": [
+      -76
+    ],
+    "keeperDestroyed": false,
+    "keeperHits": 4610,
+    "replacements": 0
+  },
+  "compactSolo": {
+    "costs": [
+      3100
+    ],
+    "ticks": 250,
+    "survivingGuards": 1,
+    "hits": [
+      2200
+    ],
+    "keeperDestroyed": true,
+    "keeperHits": 0,
+    "replacements": 0
+  },
+  "tooSlowSolo": {
+    "costs": [
+      2900
+    ],
+    "ticks": 300,
+    "survivingGuards": 1,
+    "hits": [
+      2000
+    ],
+    "keeperDestroyed": false,
+    "keeperHits": 2000,
+    "replacements": 1
+  },
+  "coordinatedTrio": {
+    "costs": [
+      1300,
+      1300,
+      1300
+    ],
+    "ticks": 125,
+    "survivingGuards": 3,
+    "hits": [
+      1000,
+      1000,
+      1000
+    ],
+    "keeperDestroyed": true,
+    "keeperHits": 0,
+    "replacements": 0
+  },
+  "activation": "None. Current independent-guard admission unchanged. A trio requires a new validated shared-healing/formation/failure controller."
+}

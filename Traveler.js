@@ -130,10 +130,7 @@ class Traveler {
             let ret = this.findTravelPath(creep.pos, destination, options);
             let cpuUsed = Game.cpu.getUsed() - cpu;
             state.cpu = _.round(cpuUsed + state.cpu);
-            if (state.cpu > REPORT_CPU_THRESHOLD) {
-                // see note at end of file for more info on this
-                console.log(`TRAVELER: heavy cpu use: ${creep.name}, cpu: ${state.cpu} origin: ${creep.pos}, dest: ${destination}`);
-            }
+            this.reportPathCpu(creep, travelData, cpuUsed, state.cpu, destination);
             let color = "orange";
             if (ret.incomplete) {
                 // uncommenting this is a great way to diagnose creep behavior issues
@@ -646,6 +643,19 @@ class Traveler {
         travelData.state = [creep.pos.x, creep.pos.y, state.stuckCount, state.cpu, destination.x, destination.y,
             destination.roomName];
     }
+    static reportPathCpu(creep, travelData, searchCpu, cumulativeCpu, destination) {
+        // Optional diagnostics never mistake lifetime path cost for per-tick CPU.
+        const diagnostics = Memory.config && Memory.config.diagnostics;
+        const config = diagnostics && diagnostics.travelerCpu;
+        if (!config || config.enabled !== true || diagnostics.mode === 'OFF') return;
+        const threshold = Number.isFinite(config.threshold) ? Math.max(0.1, config.threshold) : 5;
+        if (!Number.isFinite(searchCpu) || searchCpu < threshold) return;
+        const interval = Number.isFinite(config.interval) ? Math.max(10, Math.min(2000, config.interval)) : 100;
+        const previous = travelData.pathCpuWarningAt;
+        if (Number.isFinite(previous) && Game.time >= previous && Game.time - previous < interval) return;
+        travelData.pathCpuWarningAt = Game.time;
+        console.log(`TRAVELER: path search ${creep.name}: searchCpu=${searchCpu.toFixed(2)} cumulativeCpu=${cumulativeCpu} origin=${creep.pos} dest=${destination}`);
+    }
     static isStuck(creep, state) {
         let stuck = false;
         if (state.lastCoord !== undefined) {
@@ -664,9 +674,6 @@ class Traveler {
 Traveler.structureMatrixCache = {};
 Traveler.creepMatrixCache = {};
 exports.Traveler = Traveler;
-// this might be higher than you wish, setting it lower is a great way to diagnose creep behavior issues. When creeps
-// need to repath to often or they aren't finding valid paths, it can sometimes point to problems elsewhere in your code
-const REPORT_CPU_THRESHOLD = 1000;
 const DEFAULT_MAXOPS = 20000;
 const DEFAULT_STUCK_VALUE = 2;
 const STATE_PREV_X = 0;

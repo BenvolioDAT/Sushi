@@ -21,6 +21,8 @@ var utility = require('utility');
 var Economy = require('HiveMind.Economy');
 var HiveMemory = require('HiveMind.Memory');
 var Scheduler = require('HiveMind.Scheduler');
+var KeeperIntel = require('Keeper.Intel');
+var NpcPolicy = require('NPC.Policy');
 
 var PATH_VERSION = 1;
 var HEAVY_PLAN_INTERVAL = 75;
@@ -134,6 +136,10 @@ function scanVisibleRoom(homeRoomName, room) {
         return false;
     }
 
+    if (KeeperIntel.known(room.name)) {
+        if (!NpcPolicy.miningAllowed(room.name, homeRoomName)) return false;
+        scoreRemoteRoom(homeRoomName, room.name); selectActiveSources(homeRoomName); return true;
+    }
     if (hasInvaderCore(room) || hasSeriousDanger(room)) {
         rememberBlockedRemote(homeRoomName, room.name, 'danger');
         return false;
@@ -425,7 +431,10 @@ function scoreRemoteSource(homeRoomName, sourceId) {
     var roadCost = distance * ROAD_REPAIR_COST_PER_TILE;
     var riskPenalty = (info.risk || 0) + getTransitRisk(info.route, homeRoomName, info.roomName);
 
-    var netIncome = effectiveEnergyPerTick - minerCostPerTick - haulerCostPerTick - CONTAINER_OR_DROP_LOSS - roadCost - riskPenalty;
+    var keeperOperation = NpcPolicy.keeper(info.roomName);
+    var guardCost = roomType === 'keeper' && keeperOperation && keeperOperation.economics ?
+        keeperOperation.economics.combat / Math.max(1, keeperOperation.sourceIds.length) : 0;
+    var netIncome = effectiveEnergyPerTick - minerCostPerTick - haulerCostPerTick - CONTAINER_OR_DROP_LOSS - roadCost - riskPenalty - guardCost;
 
     info.grossEnergyPerTick = round3(grossEnergyPerTick);
     info.effectiveEnergyPerTick = round3(effectiveEnergyPerTick);
@@ -551,7 +560,7 @@ function getRemotePath(homeRoomName, sourceId) {
 
     ensureOrderedRoute(info);
     if (info.route.valid !== false && info.route.roomSequence.some(function(roomName) {
-        return isBlockedRoomForPath(homeRoomName, roomName);
+        return isBlockedRoomForPath(homeRoomName, roomName, info.roomName);
     })) info.route.dirty = true;
     if (info.route.dirty || info.route.validatedRevision !== info.route.revision ||
         routeDestinationChanged(homeRoomName, info)) {
@@ -691,7 +700,7 @@ function routeValidationDue(info) {
     var route = ensureOrderedRoute(info);
     var interval = Number((HiveMemory.getConfig('remote') || {}).routeValidationInterval) || ROUTE_VALIDATION_INTERVAL;
     return route.valid === false && route.invalidReason === 'HOSTILE_TRANSIT_ROOM' &&
-        route.roomSequence.every(function(roomName) { return !isBlockedRoomForPath(info.parentHome || info.parentRoomName, roomName); }) ||
+        route.roomSequence.every(function(roomName) { return !isBlockedRoomForPath(info.parentHome || info.parentRoomName, roomName, info.roomName); }) ||
         route.dirty || route.validatedRevision !== route.revision ||
         routeDestinationChanged(info.parentHome || info.parentRoomName, info) ||
         Game.time - (route.lastValidationAttemptAt || route.lastValidatedAt || 0) >= interval;
@@ -730,7 +739,7 @@ function validateRemoteRoute(homeRoomName, sourceId, force) {
         if (!reason && i > 0) {
             reason = getBorderContinuityReason(route.segments[i - 1], segment);
         }
-        if (isBlockedRoomForPath(homeRoomName, segment.room)) {
+        if (isBlockedRoomForPath(homeRoomName, segment.room, info.roomName)) {
             reason = 'HOSTILE_TRANSIT_ROOM';
             break;
         }
@@ -1001,7 +1010,16 @@ function shouldUseRemoteSource(homeRoomName, sourceId, ignoreScore) {
     if (!info) {
         return false;
     }
+    if (info.economicPause) {
+        info.rejectReason = info.economicPause.reason;
+        info.blockedReason = info.rejectReason;
+        return false;
+    }
 
+    if (KeeperIntel.known(info.roomName) && !NpcPolicy.miningAllowed(info.roomName, homeRoomName)) {
+        info.rejectReason = 'Keeper protection is not commissioned'; info.blockedReason = 'KEEPER_OPERATION_NOT_SECURE'; return false;
+    }
+    if (KeeperIntel.known(info.roomName) && NpcPolicy.miningAllowed(info.roomName, homeRoomName)) info.risk = 0;
     var category = sourceSpendCategory(planner, info);
     var spend = Economy.checkSpend(homeRoomName, category);
     info.spendCategory = category;
@@ -1057,6 +1075,12 @@ function shouldUseRemoteSource(homeRoomName, sourceId, ignoreScore) {
         info.rejectReason = 'enemy owned room';
         return false;
     }
+    var reservation = getReservationUsername(controller);
+    if (reservation && reservation !== getMyUsername()) {
+        info.rejectReason = 'hostile reservation';
+        info.blockedReason = 'HOSTILE_RESERVATION';
+        return false;
+    }
 
     if (!ignoreScore && info.score <= 0) {
         return false;
@@ -1081,7 +1105,73 @@ function unpackCoord(packed, roomName) {
     return new RoomPosition(x, y, roomName);
 }
 
-function planRemoteSource(homeRoomName, remoteRoom, sourceId, sourceMemory, roomType) {
+// Geometry only: no selection, spawning, construction or civilian entry.
+function prepareKeeperOperation(homeRoomName, roomName) {
+    var room = Game.rooms[roomName], intel = KeeperIntel.get(roomName), home = Game.rooms[homeRoomName];
+    var op = NpcPolicy.keeper(roomName);
+    if (!NpcPolicy.enabled() || !op || op.originRoom !== homeRoomName || !home || home.energyCapacityAvailable < 5000 ||
+        !room || !intel || intel.observedAt !== Game.time || intel.core || intel.otherHostiles) return { ready: false, reason: 'KEEPER_PLAN_UNSAFE' };
+    var memory = Memory.rooms[roomName], planner = ensurePlannerMemory(homeRoomName);
+    var sourceIds = Object.keys(intel.resources).filter(function(id) { return intel.resources[id].kind === 'source'; });
+    var lairIds = Object.keys(intel.lairs).filter(function(id) { return intel.lairs[id].resourceIds.some(function(s) { return sourceIds.indexOf(s) >= 0; }); });
+    var prepared = [], travelTicks = 0, minerTravelTicks = 0, emptyHaulTicks = 0, totalLength = 0;
+    for (var id of sourceIds) {
+        if (!memory.sources || !memory.sources[id] || !getSourceSeatCount(memory.sources[id])) return { ready: false, reason: 'KEEPER_SOURCE_SEATS_UNKNOWN' };
+        // Adopt existing adjacent infrastructure before choosing one canonical
+        // endpoint. This writes a plan only; construction waits for secure entry.
+        var sourceMemory = memory.sources[id];
+        if (!utility.getPlannedSourceContainerPosition(sourceMemory)) {
+            var byType = TickIndex.get().structuresByRoom.get(roomName);
+            var existing = (byType && byType.get(STRUCTURE_CONTAINER) || []).concat(Object.values(Game.constructionSites || {}).filter(function(s) {
+                return s.structureType === STRUCTURE_CONTAINER;
+            })).find(function(s) { return s.pos && s.pos.roomName === roomName &&
+                Math.max(Math.abs(s.pos.x - sourceMemory.pos.x), Math.abs(s.pos.y - sourceMemory.pos.y)) === 1; });
+            if (existing) sourceMemory.containerPlannedPos = { x: existing.pos.x, y: existing.pos.y, roomName: roomName };
+        }
+        var old = planner.sourceInfos[id];
+        var info = old && old.route && old.route.version === PATH_VERSION && Game.time - old.lastPlanned < 1500 ? old :
+            planRemoteSource(homeRoomName, room, id, memory.sources[id], 'keeper', true);
+        if (!info || info.distance > MAX_REMOTE_DISTANCE) return { ready: false, reason: 'KEEPER_ROUTE_UNREACHABLE' };
+        prepared.push(info); totalLength += info.distance;
+        travelTicks = Math.max(travelTicks, estimateRouteTravelTicks(info.route, [CARRY,MOVE], true));
+        emptyHaulTicks = Math.max(emptyHaulTicks, info.distance);
+        minerTravelTicks = Math.max(minerTravelTicks,
+            estimateRouteTravelTicks(info.route, [WORK,WORK,WORK,WORK,WORK,WORK,WORK,CARRY,MOVE,MOVE,MOVE,MOVE], true));
+    }
+    var capacity = getEffectiveRemoteSourceCap(home, Economy.get(homeRoomName));
+    if (sourceIds.length > capacity) return { ready: false, reason: 'KEEPER_PORTFOLIO_TOO_LARGE' };
+    var incumbents = planner.activeSourceIds.filter(function(id) { return sourceIds.indexOf(id) < 0; })
+        .map(function(id) { return planner.sourceInfos[id]; }).filter(Boolean).sort(function(a,b) { return a.netIncome - b.netIncome; });
+    var displaced = incumbents.slice(0, Math.max(0, incumbents.length + sourceIds.length - capacity));
+    for (var sourceInfo of prepared) {
+        var station = unpackCoord(sourceInfo.containerCoord, roomName), source = memory.sources[sourceInfo.sourceId];
+        if (Math.max(Math.abs(station.x - source.pos.x), Math.abs(station.y - source.pos.y)) !== 1)
+            return { ready: false, reason: 'KEEPER_STATION_UNSERVICEABLE' };
+        if (!utility.getPlannedSourceContainerPosition(source)) source.containerPlannedPos = { x: station.x, y: station.y, roomName: roomName };
+        planner.sourceInfos[sourceInfo.sourceId] = mergeReplannedSource(homeRoomName, planner.sourceInfos[sourceInfo.sourceId], sourceInfo);
+    }
+    planner.remotes[roomName] = { roomName: roomName, parentRoomName: homeRoomName, type: 'keeper', status: 'military',
+        sourceIds: sourceIds, lastSeen: Game.time, risk: 10 };
+    return { ready: true, at: Game.time, sourceIds: sourceIds, lairIds: lairIds, travelTicks: travelTicks,
+        minerTravelTicks: minerTravelTicks, haulRoundTripTicks: emptyHaulTicks + travelTicks,
+        infrastructureCost: sourceIds.length * 0.5 + totalLength * ROAD_REPAIR_COST_PER_TILE,
+        displacedNet: displaced.reduce(function(sum,info) { return sum + Math.max(0,info.netIncome || 0); },0) };
+}
+
+function prepareNpcCoreRoute(homeRoomName, roomName, core) {
+    var room = Game.rooms[roomName];
+    if (!room || !core || core.level !== 0 || !core.owner || core.owner.username !== 'Invader') return null;
+    var ret = PathFinder.search(getHomeAnchor(homeRoomName), { pos: core.pos, range: 1 }, {
+        maxRooms: MAX_PATH_ROOMS, maxOps: MAX_PATH_OPS, plainCost: 1, swampCost: 5,
+        roomCallback: function(name) { return buildRemoteCostMatrix(homeRoomName, name, name === roomName, roomName); }
+    });
+    if (ret.incomplete || !ret.path || !ret.path.length) return null;
+    var terrain = getRouteTerrain(ret.path);
+    return { at: Game.time, targetId: core.id, rooms: getPathRoomSequence([getHomeAnchor(homeRoomName)].concat(ret.path)),
+        travelTicks: terrain.road + terrain.plain + terrain.swamp * 5 };
+}
+
+function planRemoteSource(homeRoomName, remoteRoom, sourceId, sourceMemory, roomType, keeperPlanning) {
     var anchor = getHomeAnchor(homeRoomName);
     var targetInfo = getSourceTargetInfo(sourceMemory);
 
@@ -1095,7 +1185,7 @@ function planRemoteSource(homeRoomName, remoteRoom, sourceId, sourceMemory, room
         plainCost: 2,
         swampCost: 10,
         roomCallback: function(roomName) {
-            return buildRemoteCostMatrix(homeRoomName, roomName);
+            return buildRemoteCostMatrix(homeRoomName, roomName, keeperPlanning && roomName === remoteRoom.name, remoteRoom.name);
         }
     });
 
@@ -1362,8 +1452,8 @@ function makeRoomPosition(pos) {
     return new RoomPosition(pos.x, pos.y, pos.roomName);
 }
 
-function buildRemoteCostMatrix(homeRoomName, roomName, allowDanger) {
-    if (!allowDanger && isBlockedRoomForPath(homeRoomName, roomName)) {
+function buildRemoteCostMatrix(homeRoomName, roomName, allowDanger, destinationRoom) {
+    if (!allowDanger && isBlockedRoomForPath(homeRoomName, roomName, destinationRoom)) {
         return false;
     }
 
@@ -1400,15 +1490,16 @@ function buildRemoteCostMatrix(homeRoomName, roomName, allowDanger) {
         }
     }
 
-    return costs;
+    return KeeperIntel.applyCosts(roomName, costs, allowDanger);
 }
 
-function isBlockedRoomForPath(homeRoomName, roomName) {
+function isBlockedRoomForPath(homeRoomName, roomName, destinationRoom) {
     var roomMemory = Memory.rooms && Memory.rooms[roomName];
     var room = Game.rooms[roomName];
     var remoteConfig = HiveMemory.getConfig('remote') || {};
 
-    if (!remoteConfig.allowKeeperRooms && isKeeperRoom(roomName, room)) return true;
+    if (isKeeperRoom(roomName, room) &&
+        !(destinationRoom === roomName && NpcPolicy.miningAllowed(roomName, homeRoomName))) return true;
     if (room && isOwnedEnemyRoom(room)) return true;
     if (room) {
         var snapshot = getValidationSnapshot(room);
@@ -1451,6 +1542,8 @@ function makeRemoteInfo(homeRoomName, remoteRoom, roomType) {
     if (isOwnedEnemyRoom(remoteRoom)) {
         status = 'blocked';
     }
+    if (remoteRoom.controller && remoteRoom.controller.reservation &&
+        remoteRoom.controller.reservation.username !== getMyUsername()) status = 'blocked';
 
     if (hasInvaderCore(remoteRoom) || hasSeriousDanger(remoteRoom)) {
         status = 'danger';
@@ -1608,6 +1701,9 @@ function hasSeriousDanger(room) {
         return false;
     }
 
+    if (KeeperIntel.known(room.name) && NpcPolicy.miningAllowed(room.name)) {
+        var keeperIntel = KeeperIntel.get(room.name); return keeperIntel.core || keeperIntel.otherHostiles;
+    }
     var freshThreat = HiveMemory.ensure().threats[room.name];
     if (freshThreat && freshThreat.lastSeen === Game.time) return freshThreat.harmfulHostileCount > 0;
     var hostiles = room.find(FIND_HOSTILE_CREEPS, {
@@ -1628,7 +1724,7 @@ function hasSeriousDanger(room) {
 function getRoomRisk(room, roomType) {
     var risk = 0;
 
-    if (roomType === 'keeper') {
+    if (roomType === 'keeper' && !NpcPolicy.miningAllowed(room.name)) {
         risk += 10;
     }
 
@@ -1748,6 +1844,66 @@ function rescorePlanner(homeRoomName) {
     }
 }
 
+function updateEconomicSupport(homeRoomName, planner, economy) {
+    if (HiveMemory.getConfig('remote').economicPauseEnabled === false) return;
+    var support = planner.haulSupport || (planner.haulSupport = {});
+    if (support.checkedAt <= Game.time && Game.time - support.checkedAt < 25) return;
+    support.checkedAt = Game.time;
+    var remote = economy && economy.growth && economy.growth.remote || {};
+    var localHealthy = economy && ['STABLE', 'SURPLUS'].includes(economy.state) &&
+        economy.harvest && economy.harvest.workActive >= economy.harvest.workRequired * 0.9 &&
+        economy.haul && economy.haul.localCarry >= economy.haul.requiredCarry;
+    var recovered = localHealthy && (remote.availableCarry || 0) >= (remote.requiredCarry || 0) * 1.1 &&
+        (remote.backlog || 0) <= 500;
+    for (var info of Object.values(planner.sourceInfos)) {
+        var pause = info.economicPause;
+        if (!pause) continue;
+        if (pause.since > Game.time) { pause.since = Game.time; pause.until = Game.time + 1500; delete pause.readySince; }
+        if (!recovered || Game.time < pause.until) { delete pause.readySince; continue; }
+        if (!Number.isFinite(pause.readySince) || pause.readySince > Game.time) pause.readySince = Game.time;
+        var fresh = !!Game.rooms[info.roomName];
+        if (!fresh) {
+            if (!pause.visionRequestedAt || Game.time - pause.visionRequestedAt >= 100) {
+                Intel.request(info.roomName, 'REMOTE_ECONOMICS_RECHECK', 70); pause.visionRequestedAt = Game.time;
+            }
+            continue;
+        }
+        if (Game.time - pause.readySince >= 300) delete info.economicPause;
+    }
+    var summary = require('Remote.Accounting').summary(Memory.rooms[homeRoomName].remoteAccounting);
+    var overloaded = summary && summary.ticks >= 750 && summary.sampledTicks >= summary.ticks * 0.9 &&
+        summary.harvested > 3000 && (summary.delivered || 0) < summary.harvested * 0.6 &&
+        remote.requiredCarry > 0 && (remote.availableCarry || 0) < remote.requiredCarry * 0.65 && remote.backlog > 1500;
+    if (!overloaded) { delete support.overloadedSince; return; }
+    if (!Number.isFinite(support.overloadedSince) || support.overloadedSince > Game.time) support.overloadedSince = Game.time;
+    if (Game.time - support.overloadedSince < 500 || support.lastPauseAt <= Game.time && Game.time - support.lastPauseAt < 1000) return;
+    var groups = {};
+    for (var id of planner.activeSourceIds) {
+        var candidate = planner.sourceInfos[id];
+        if (!candidate || KeeperIntel.known(candidate.roomName)) continue;
+        var measured = require('Remote.Accounting').summary(candidate.accounting);
+        if (!measured || measured.selectedTicks < 500 || !(measured.harvested > 0)) continue;
+        var group = groups[candidate.roomName] || (groups[candidate.roomName] = { room: candidate.roomName, ids: [],
+            harvested: 0, delivered: 0, score: 0, distance: 0 });
+        group.ids.push(id); group.harvested += measured.harvested || 0; group.delivered += measured.delivered || 0;
+        group.score += candidate.score || 0; group.distance += candidate.distance || 0;
+    }
+    var rooms = Object.values(groups);
+    if (rooms.length < 2) return; // Keep a revenue room; never suspend the whole economy.
+    rooms = rooms.filter(g => g.delivered < g.harvested * 0.5).sort((a,b) =>
+        a.score / a.ids.length - b.score / b.ids.length || b.distance - a.distance);
+    var worst = rooms[0]; if (!worst) return;
+    for (var paused of Object.values(planner.sourceInfos)) if (paused.roomName === worst.room) {
+        paused.economicPause = { since: Game.time, until: Game.time + 1500, reason: 'LOGISTICS_UNSUPPORTED',
+            harvested: worst.harvested, delivered: worst.delivered, evidenceStart: summary.start };
+        paused.active = false; paused.state = REMOTE_STATES.SUSPENDED_ECONOMY; paused.blockedReason = 'LOGISTICS_UNSUPPORTED';
+        removeFromActiveList(planner, paused.sourceId);
+    }
+    support.lastPauseAt = Game.time; delete support.overloadedSince;
+    support.lastDecision = { tick: Game.time, room: worst.room, reason: 'LOGISTICS_UNSUPPORTED',
+        resume: '1500-tick cooldown, fresh vision, then 300 ticks of local health, 110% remote CARRY and backlog <=500' };
+}
+
 function selectActiveSources(homeRoomName) {
     var planner = ensurePlannerMemory(homeRoomName);
     var candidates = [];
@@ -1775,6 +1931,8 @@ function selectActiveSources(homeRoomName) {
         return;
     }
     delete planner.suspendedReason;
+    updateEconomicSupport(homeRoomName, planner, economy);
+    selectedBefore = planner.activeSourceIds.slice();
 
     for (var sourceId in planner.sourceInfos) {
         if (!planner.sourceInfos.hasOwnProperty(sourceId)) {
@@ -1829,10 +1987,7 @@ function selectActiveSources(homeRoomName) {
         reason: getPlannerBlockedReason(planner),
         category: previousActive.length === 0 ? 'remoteBootstrap' : 'remoteExpansion'
     };
-    var returning = candidates.filter(function(info) { return info.established && previousActive.indexOf(info.sourceId) < 0; });
-    for (var restart = 0; restart < returning.length && previousActive.length < levelCap; restart++) {
-        previousActive.push(returning[restart].sourceId);
-    }
+    // Established knowledge does not bypass the same one-source rollout gate.
     var targetCount = Math.min(Math.max(levelCap, previousActive.length), previousActive.length + (ramp.ready ? 1 : 0));
     if (previousActive.length === 0 && levelCap > 0 && ramp.ready) targetCount = 1;
     var selected = previousActive.slice(0, targetCount);
@@ -1840,6 +1995,20 @@ function selectActiveSources(homeRoomName) {
         if (selected.indexOf(candidates[i].sourceId) < 0) selected.push(candidates[i].sourceId);
     }
     rebalanceRemotePortfolio(homeRoomName, planner, candidates, selected, ramp);
+    // A Keeper force is financed for a source group. Admit the complete group,
+    // charging the income of any displaced ordinary sources before switching.
+    for (var keeperRoomName of Object.keys(Memory.rooms || {})) {
+        var keeperOp = NpcPolicy.keeper(keeperRoomName);
+        if (!keeperOp || keeperOp.originRoom !== homeRoomName || !NpcPolicy.miningAllowed(keeperRoomName, homeRoomName)) continue;
+        var group = keeperOp.sourceIds || [];
+        if (!group.length || group.length > levelCap || !group.every(function(id) { return candidates.some(function(c) { return c.sourceId === id; }); })) continue;
+        var remaining = selected.filter(function(id) { return group.indexOf(id) < 0; });
+        var removed = remaining.slice().sort(function(a,b) { return planner.sourceInfos[a].score - planner.sourceInfos[b].score; })
+            .slice(0, Math.max(0, remaining.length + group.length - levelCap));
+        var lostNet = removed.reduce(function(sum,id) { return sum + Math.max(0, planner.sourceInfos[id].netIncome || 0); }, 0);
+        if (removed.length && !(keeperOp.economics.net > lostNet + 2)) continue;
+        selected = remaining.filter(function(id) { return removed.indexOf(id) < 0; }).concat(group);
+    }
     planner.activeSourceIds = selected;
     Object.keys(planner.sourceInfos).forEach(function(id) { planner.sourceInfos[id].active = selected.indexOf(id) >= 0; });
     planner.effectiveSourceCap = levelCap;
@@ -2253,7 +2422,74 @@ function isBetterExtractorRemote(candidate, best) {
     return candidate.sourceId < best.sourceId;
 }
 
+function guardKeeperCivilian(creep, homeRoomName, sourceId) {
+    if (!creep || !homeRoomName || !sourceId) return false;
+    var info = ensurePlannerMemory(homeRoomName).sourceInfos[sourceId];
+    if (!info || !KeeperIntel.known(info.roomName)) return false;
+    var path = getRemotePath(homeRoomName, sourceId);
+    var escape = KeeperIntel.escapeTicks(creep, path, info.roomName);
+    var safety = KeeperIntel.windowFor(info.roomName, sourceId, {
+        escapeTicks: escape, approachTicks: creep.pos.roomName === info.roomName ? 0 : escape,
+        workTicks: creep.memory.role === 'Freighter' ? 50 : 5
+    });
+    var operation = NpcPolicy.keeper(info.roomName);
+    var stageAllowed = !operation || (creep.memory.role === 'Freighter' ? NpcPolicy.haulingAllowed(info.roomName, homeRoomName) :
+        NpcPolicy.miningAllowed(info.roomName, homeRoomName));
+    var protectedRoom = stageAllowed && require('Keeper.Combat').protection(info.roomName, homeRoomName).ready;
+    if (safety.safe && protectedRoom) { delete creep.memory.keeperWaitReason; return false; }
+    creep.memory.keeperWaitReason = protectedRoom ? safety.reason : 'KEEPER_PROTECTION_UNAVAILABLE';
+    if (creep.memory.role === 'Freighter') {
+        releaseRemoteFreighterReservation(creep);
+        if ((creep.store[RESOURCE_ENERGY] || 0) > 0) {
+            creep.memory.remoteDeliverySourceId = sourceId;
+            creep.memory.remoteDeliveryRoom = info.roomName;
+            creep.memory.FreighterWorking = true;
+            creep.memory.freighterJob = 'remoteDelivery';
+            for (var key of ['pickupRoom', 'pickupSourceId', 'pickupTargetId', 'pickupTargetType',
+                'freighterReservedCarry', 'freighterReservedUntil', 'remoteLoadStartedAt']) delete creep.memory[key];
+        } else if (creep.pos.roomName === homeRoomName) clearRemoteFreighterMemory(creep);
+    }
+    return retreatRemoteCreep(creep, homeRoomName);
+}
+
+function guardEconomicCivilian(creep) {
+    var home = creep.memory.homeRoom, id = creep.memory.sourceId || creep.memory.pickupSourceId;
+    var info = Memory.rooms[home] && Memory.rooms[home].remotePlanner && Memory.rooms[home].remotePlanner.sourceInfos[id];
+    if (!info || !info.economicPause) return false;
+    creep.memory.remoteWaitReason = info.economicPause.reason;
+    if (creep.memory.role === 'Freighter') {
+        releaseRemoteFreighterReservation(creep);
+        if ((creep.store[RESOURCE_ENERGY] || 0) > 0) {
+            creep.memory.remoteDeliveryRoom = info.roomName; creep.memory.remoteDeliverySourceId = id;
+            creep.memory.freighterJob = 'remoteDelivery'; creep.memory.FreighterWorking = true;
+            delete creep.memory.pickupSourceId; delete creep.memory.pickupRoom;
+            return false; // Deliver the already-loaded cargo through the normal return owner.
+        }
+        clearRemoteFreighterMemory(creep);
+        return retreatRemoteCreep(creep, home);
+    }
+    if (creep.pos.roomName !== home) return retreatRemoteCreep(creep, home);
+    var sourceMemory = Memory.rooms[info.roomName] && Memory.rooms[info.roomName].sources && Memory.rooms[info.roomName].sources[id];
+    if (sourceMemory && Array.isArray(sourceMemory.assignedMiner)) sourceMemory.assignedMiner = sourceMemory.assignedMiner.filter(v => v !== creep.id && v !== creep.name);
+    for (var key of ['remoteMining', 'sourceId', 'targetSourceId', 'sourceRoom', 'targetRoom', 'miningSeat', 'miningSeatKey', 'remoteWaitReason']) delete creep.memory[key];
+    return false; // Existing local/remote assignment logic can reuse the worker.
+}
+
 function moveExtractorAlongRemotePath(creep, homeRoomName, sourceId) {
+    var planner = ensurePlannerMemory(homeRoomName);
+    var info = planner.sourceInfos[sourceId];
+    var controller = info && getControllerInfo(info.roomName);
+    var reservation = getReservationUsername(controller);
+    if (controller && (controller.owner && controller.owner !== getMyUsername() ||
+        reservation && reservation !== getMyUsername())) {
+        info.active = false;
+        info.operational = false;
+        info.state = REMOTE_STATES.SUSPENDED_DANGER;
+        info.blockedReason = reservation ? 'HOSTILE_RESERVATION' : 'HOSTILE_OWNERSHIP';
+        removeFromActiveList(planner, sourceId);
+        Intel.request(info.roomName, info.blockedReason, 90);
+        return retreatRemoteCreep(creep, homeRoomName);
+    }
     creep.memory.extractorState = 'movingToRemoteSource';
     return followRemotePath(creep, homeRoomName, sourceId, false);
 }
@@ -2299,6 +2535,7 @@ function getActiveRemoteSourcesForHome(homeRoomName) {
             continue;
         }
 
+        if (KeeperIntel.known(info.roomName) && !NpcPolicy.miningAllowed(info.roomName, homeRoomName)) continue;
         activeSources.push(info);
     }
 
@@ -2565,6 +2802,7 @@ function claimRemotePickupTarget(creep, pickupInfo) {
     delete creep.memory.remoteTrip;
     delete creep.memory.remoteReturnComplete;
     delete creep.memory.remoteOutboundLane;
+    delete creep.memory.remoteLoadStartedAt;
 
     LogisticsIndex.update(creep);
     syncSourceHaulReservation(pickupRoom, pickupInfo.sourceId, haul, null);
@@ -2578,6 +2816,7 @@ function clearRemoteFreighterMemory(creep) {
     }
 
     releaseRemoteFreighterReservation(creep);
+    delete creep.memory.remoteLoadStartedAt;
 
     delete creep.memory.freighterJob;
     delete creep.memory.pickupRoom;
@@ -2617,8 +2856,17 @@ function refreshRemoteFreighterReservation(creep) {
         creep.memory.homeRoom
     );
 
-    if (!haul || haul.targetId !== creep.memory.pickupTargetId) {
+    var info = ensurePlannerMemory(creep.memory.homeRoom).sourceInfos[creep.memory.pickupSourceId];
+    if (!haul || !info || !info.active || info.operational === false ||
+        !shouldUseRemoteSource(creep.memory.homeRoom, creep.memory.pickupSourceId)) {
         return false;
+    }
+    if (haul.targetId !== creep.memory.pickupTargetId) {
+        if (!(haul.lastSeen <= Game.time && Game.time - haul.lastSeen <= 25)) return false;
+        // Drop buffers change object IDs as piles are collected or decay. The
+        // source commitment remains stable; update only this source's target.
+        creep.memory.pickupTargetId = haul.targetId || null;
+        creep.memory.pickupTargetType = haul.targetType || null;
     }
 
     var freeCapacity = creep.store.getFreeCapacity(RESOURCE_ENERGY);
@@ -2744,6 +2992,7 @@ function retreatRemoteCreep(creep, homeRoomName) {
 function followRemotePath(creep, homeRoomName, sourceId, reverse) {
     var info = ensurePlannerMemory(homeRoomName).sourceInfos[sourceId];
     if (!info) return true; // Missing plan: wait for the planner, never invent an outbound route.
+    if (!reverse && guardKeeperCivilian(creep, homeRoomName, sourceId)) return true;
     var path = getRemotePath(homeRoomName, sourceId);
     if (!path.length) {
         if (creep.memory) {
@@ -2959,6 +3208,8 @@ function getDiagnostics(homeRoomName) {
 }
 
 module.exports = {
+    updateEconomicSupport: updateEconomicSupport,
+    guardEconomicCivilian: guardEconomicCivilian,
     getDiagnostics: getDiagnostics,
     run: run,
     getEffectiveReservation: Intel.getEffectiveReservation,
@@ -3005,6 +3256,9 @@ module.exports = {
     unpackCoord: unpackCoord,
 
     /* Extra small helpers used by role.Extractor.js. */
+    prepareKeeperOperation: prepareKeeperOperation,
+    prepareNpcCoreRoute: prepareNpcCoreRoute,
+    guardKeeperCivilian: guardKeeperCivilian,
     moveExtractorAlongRemotePath: moveExtractorAlongRemotePath,
     getRemoteSourcePosition: getRemoteSourcePosition,
     getRemoteRampStatus: getRemoteRampStatus,
