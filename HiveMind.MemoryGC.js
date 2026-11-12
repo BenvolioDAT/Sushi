@@ -6,7 +6,6 @@ function protectedRooms(hive) {
     const names = new Set(hive.homeRooms && hive.homeRooms.names || []);
     for (const [name, record] of Object.entries(Memory.rooms || {})) {
         if (record && record.identity && ['HOME', 'OWNED_BOOTSTRAP', 'REMOTE'].includes(record.identity.type)) names.add(name);
-<<<<<<< HEAD
         for (const mission of [record && record.keeperOperation, record && record.npcCoreOperation]) {
             if (mission && ['ASSEMBLE', 'CLEAR', 'GUARD', 'MINE', 'HAUL', 'SUSPENDED'].includes(mission.phase)) {
                 names.add(name); if (mission.originRoom) names.add(mission.originRoom);
@@ -18,11 +17,6 @@ function protectedRooms(hive) {
         const planner = record && record.remotePlanner;
         if (!names.has(name) && !['HOME', 'OWNED_BOOTSTRAP'].includes(record?.identity?.type) &&
             !Game.rooms[name]?.controller?.my) continue;
-=======
-        // A selected remote and its transit rooms remain strategic references
-        // even when their last observation is old or civilians are suspended.
-        const planner = record && record.remotePlanner;
->>>>>>> 5b456351d30ae183b5154e773854caf9d7bb98c6
         const selected = new Set(planner && planner.activeSourceIds || []);
         for (const [id, source] of Object.entries(planner && planner.sourceInfos || {})) {
             if (!source || !(selected.has(id) || source.active || source.established)) continue;
