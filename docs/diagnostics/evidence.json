@@ -1,0 +1,314 @@
+{
+  "auditDateLocal": "2026-11-11",
+  "environment": "Benvolio-DAT private server",
+  "build": {
+    "id": "5d35cd2adb57c4cc27858879ba066814b043fa3e14a9a207523621bcf793d86e",
+    "modules": 109,
+    "queryTick": 436437
+  },
+  "observation": {
+    "firstDashboardTick": 435497,
+    "lastRuntimeTick": 453204,
+    "endpointSpan": 17707,
+    "coverage": "Intermittent early and late observations with a substantial gap; retained CPU history supplied separately"
+  },
+  "baseline": {
+    "tick": 436213,
+    "cpuLimit": 100,
+    "gcl": {
+      "level": 2,
+      "progress": 252218,
+      "progressTotal": 4278031.643091577
+    },
+    "visibleRooms": [
+      "W7N4",
+      "W6N4"
+    ],
+    "memoryCharacters": 250255,
+    "legacyCpuRecord": {
+      "used": 12.431599999999946,
+      "bucket": 10000,
+      "limit": 100
+    }
+  },
+  "memory": [
+    {
+      "tick": 436213,
+      "characters": 250255,
+      "deadCreepRecords": null,
+      "gc": {
+        "tick": 436149,
+        "work": 25,
+        "removed": 1,
+        "sweepPending": true
+      }
+    },
+    {
+      "tick": 436958,
+      "characters": 240839,
+      "deadCreepRecords": 0,
+      "gc": {
+        "tick": 436957,
+        "work": 25,
+        "removed": 1,
+        "sweepPending": true
+      }
+    },
+    {
+      "tick": 452696,
+      "characters": 274048,
+      "deadCreepRecords": 0,
+      "gc": {
+        "tick": 452612,
+        "work": 20,
+        "removed": 0,
+        "sweepPending": false
+      }
+    },
+    {
+      "tick": 452956,
+      "characters": 286693,
+      "deadCreepRecords": 0,
+      "gc": {
+        "tick": 452915,
+        "work": 25,
+        "removed": 1,
+        "sweepPending": true
+      }
+    }
+  ],
+  "error": {
+    "event": "SUBSYSTEM_EXCEPTION",
+    "subsystem": "telemetry",
+    "message": "Cannot read properties of undefined (reading 'diagnostics')",
+    "stack": " at Object.finish (HiveMind.Telemetry:45:40) at main:41:44",
+    "retrievedAt": 436437,
+    "records": [
+      {
+        "tick": 434926,
+        "count": 227,
+        "lastTick": 435152
+      },
+      {
+        "tick": 435153,
+        "count": 565,
+        "lastTick": 435717
+      },
+      {
+        "tick": 435718,
+        "count": 440,
+        "lastTick": 436157
+      },
+      {
+        "tick": 436158,
+        "count": 280,
+        "lastTick": 436437
+      }
+    ],
+    "lateRecord": {
+      "retrievedAt": 452956,
+      "tick": 452525,
+      "count": 432,
+      "lastTick": 452956
+    }
+  },
+  "sources": {
+    "tick": 452496,
+    "room": "W7N4",
+    "rows": [
+      {
+        "id": "c44207728e621fc",
+        "x": 12,
+        "y": 31,
+        "energy": 890,
+        "plannerSeats": 5,
+        "miners": [
+          {
+            "name": "Extractor_003",
+            "x": 13,
+            "y": 31,
+            "ttl": 67,
+            "work": 1,
+            "carry": 1,
+            "move": 1
+          },
+          {
+            "name": "Extractor_004",
+            "x": 13,
+            "y": 30,
+            "ttl": 98,
+            "work": 2,
+            "carry": 1,
+            "move": 1
+          },
+          {
+            "name": "Extractor_005",
+            "x": 12,
+            "y": 30,
+            "ttl": 940,
+            "work": 2,
+            "carry": 1,
+            "move": 1
+          }
+        ]
+      },
+      {
+        "id": "80d207728e6597b",
+        "x": 41,
+        "y": 46,
+        "energy": 1216,
+        "plannerSeats": 1,
+        "miners": [
+          {
+            "name": "Extractor_001",
+            "x": 40,
+            "y": 45,
+            "ttl": 124,
+            "work": 4,
+            "carry": 1,
+            "move": 2
+          }
+        ]
+      }
+    ],
+    "containers": [
+      {
+        "x": 13,
+        "y": 31,
+        "energy": 200
+      },
+      {
+        "x": 40,
+        "y": 45,
+        "energy": 80
+      },
+      {
+        "x": 37,
+        "y": 15,
+        "energy": 2000
+      }
+    ],
+    "drops": [
+      {
+        "x": 33,
+        "y": 31,
+        "energy": 8103
+      },
+      {
+        "x": 33,
+        "y": 30,
+        "energy": 3785
+      },
+      {
+        "x": 32,
+        "y": 27,
+        "energy": 220
+      },
+      {
+        "x": 35,
+        "y": 31,
+        "energy": 22
+      },
+      {
+        "x": 34,
+        "y": 29,
+        "energy": 15
+      }
+    ]
+  },
+  "population": {
+    "tick": 452696,
+    "roles": {
+      "Tech": 1,
+      "Freighter": 16,
+      "Extractor": 4,
+      "Foreman": 1,
+      "Scout": 1
+    },
+    "freighterCarryHistogram": {
+      "1": 14,
+      "2": 2
+    },
+    "constructionSites": {
+      "road": 82
+    }
+  },
+  "logistics": {
+    "tick": 452818,
+    "room": "W7N4",
+    "local": {
+      "required": 17,
+      "living": 17,
+      "spawning": 0,
+      "queued": 0,
+      "missing": 0,
+      "workers": 15,
+      "idleWorkers": 5,
+      "noProgressWorkers": 0,
+      "fatiguedWorkers": 0,
+      "assessment": "CAPACITY_COVERED_IDLE_WORKERS"
+    },
+    "remote": {
+      "required": 0,
+      "living": 0,
+      "workers": 0
+    },
+    "renewals": [],
+    "flow": {
+      "observedCreepTicks": 10489,
+      "workCreepTicks": 6522,
+      "parkingCreepTicks": 2150,
+      "picked": 11170,
+      "delivered": 10920
+    },
+    "roleCpu": {
+      "tick": 452800,
+      "total": 2.8036253126797144,
+      "perCreep": 0.1770929328013995,
+      "utilization": 0.6480234147859942
+    },
+    "backlog": 262
+  },
+  "final": {
+    "tick": 453204,
+    "owned": [
+      {
+        "name": "W7N4",
+        "rcl": 2,
+        "progress": 5652,
+        "total": 45000,
+        "energy": 550,
+        "capacity": 550,
+        "spawns": [
+          {
+            "name": "Spawn1",
+            "busy": false
+          }
+        ],
+        "extensions": 5
+      }
+    ],
+    "remoteWorkersByCommonFlags": [],
+    "memoryDomainCharacters": {
+      "rooms": 180785,
+      "creeps": 13176,
+      "sourceInfos": 7244,
+      "hive": 35815,
+      "config": 3198
+    },
+    "hiveDomainCharacters": {
+      "telemetry": 17424,
+      "threats": 8163,
+      "resources": 4740,
+      "expansion": 3889,
+      "capacity": 1028,
+      "gc": 100
+    }
+  },
+  "isolatedReproduction": {
+    "method": "Node VM with read-only source and mocked Game/Memory/require",
+    "result": "TypeError: Cannot read properties of undefined (reading 'diagnostics')",
+    "location": "HiveMind.Telemetry.js:45:40",
+    "changedRuntime": false
+  }
+}
