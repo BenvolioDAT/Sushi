@@ -373,7 +373,11 @@ function remoteCommittedWork(homeRoomName, sourceId) {
 }
 
 function remoteProductionCeiling(info) {
-    const reservation=RemoteIntel.getEffectiveReservation(info.roomName), username=HiveMemory.ensure().identity.username;
+    const controller = RemoteIntel.controller(info.roomName);
+    const reservation = controller && controller.reservation, username=HiveMemory.ensure().identity.username;
+    // A committed miner cannot produce energy under another owner's reservation.
+    // Check current intel before pricing future CARRY, including the arrival tick.
+    if (controller && controller.owner || reservation && reservation.username !== username) return 0;
     if (username && reservation?.username===username) return Math.max(0,info.grossEnergyPerTick || 10);
     return Math.max(0,Number.isFinite(info.effectiveEnergyPerTick)?info.effectiveEnergyPerTick:info.grossEnergyPerTick || 0);
 }
@@ -863,7 +867,9 @@ function buildSnapshot(room, previous) {
         const estimated = Math.min(sourceIncome, stationedWork * harvestPower);
         const rowBacklog = sourceBacklog(source);
         const transport = analyzeSourceTransport(source, sourceIncome, rowBacklog, transportContext);
-        const coverage = sourceReplacementCoverage(source, required, distance, assigned, queue, spawns);
+        const plan = Harvest.describe(room, source, assigned, queue, distance);
+        const coverage = sourceReplacementCoverage(source, sourceHarvestFloor({ ...plan, workRequired: required }),
+            distance, assigned, queue, spawns);
         workRequired += required;
         workActive += activeWork;
         incomeExpected += sourceIncome;
@@ -893,7 +899,7 @@ function buildSnapshot(room, previous) {
             backlog: rowBacklog.energy,
             transport,
             ...coverage,
-            ...Harvest.describe(room, source, assigned, queue, distance)
+            ...plan
         });
     }
 
@@ -1038,6 +1044,16 @@ function buildSnapshot(room, previous) {
     return snapshot;
 }
 
+// Keep full source demand for mining plans and diagnostics. Health may accept
+// the actual body/seat ceiling only for an explicit capacity constraint; the
+// room-wide 90% WORK and 65% income floors still apply below.
+function sourceHarvestFloor(source) {
+    const required = source.workRequired || 0;
+    return source.constraint === 'SPAWN_CAPACITY' && source.seatCount > 0 &&
+        source.spawnEnergyCapacity > 0 && Number.isInteger(source.maxAchievableWork) && source.maxAchievableWork > 0 ?
+        Math.min(required, source.maxAchievableWork) : required;
+}
+
 function rawState(snapshot) {
     const harvest = snapshot.harvest;
     const haul = snapshot.haul;
@@ -1063,7 +1079,7 @@ function rawState(snapshot) {
         return { state: STATES.SURVIVAL, reason: 'spawn energy critically low and harvest income below replacement level', reasonCode: 'SPAWN_FILL_RECOVERY' };
     }
     if (harvestRatio < 0.9 || incomeRatio < 0.65 || (harvest.sources || []).some(row =>
-        row.workActive < row.workRequired * 0.9 || row.estimatedIncome < row.expectedIncome * 0.65)) {
+        row.workActive < sourceHarvestFloor(row) * 0.9 || row.estimatedIncome < row.expectedIncome * 0.65)) {
         return { state: STATES.RECOVERY, reason: 'harvesting below sustainable local demand', reasonCode: 'LOCAL_HARVEST_SHORTAGE' };
     }
     if (haulRatio < 0.85 || haul.backlog > Math.max(500, haul.activeCarry * 75) ||
@@ -1294,7 +1310,7 @@ function localHarvestCoverage(snapshot) {
     const incomeRatio = harvest.expectedIncome > 0 ?
         (harvest.actualOrEstimatedIncome || 0) / harvest.expectedIncome : 0;
     const healthy = activeRatio >= 0.9 && incomeRatio >= 0.65 &&
-        sources.every(row => row.workActive >= row.workRequired * 0.9 && row.estimatedIncome >= row.expectedIncome * 0.65);
+        sources.every(row => row.workActive >= sourceHarvestFloor(row) * 0.9 && row.estimatedIncome >= row.expectedIncome * 0.65);
     const incomingCovered = sources.length ? sources.every(row =>
         (row.plannedWork ?? row.workActive + (row.workSpawning || 0) + (row.workQueued || 0)) >= row.workRequired * 0.9) :
         activeWork + spawningWork + queuedWork >= requiredWork * 0.9;

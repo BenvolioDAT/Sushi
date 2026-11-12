@@ -248,6 +248,12 @@ function evaluate(room, request, context, mandatory, revalidate, renewal) {
     const cpuReplacement = replacing.length >= (haulingReplacement ? 2 : 1) && metrics[capability] <= replacementWork &&
         metrics.spawnTime <= replacementDeadline &&
         (haulingReplacement || cpu.mode !== 'critical' && cpu.bucket >= 1800);
+    // An already-validated local hauling renewal replaces needed workers and
+    // reduces their future count. A capacity-limited source can keep the room
+    // in RECOVERY indefinitely; that is not a reason to perpetuate tiny haulers.
+    // Keep funding, trend, deadline, spawn-load and hard-cap checks below.
+    const localHaulRenewal = haulingReplacement && cpuReplacement &&
+        require('HiveMind.Economy').isLocalFreighter(request);
     const rolling = global.__sushiCpuRolling;
     const projectedCpu = Math.max(cpu.rollingUsed, status.used) + queuedCpu + Math.max(0.5, roleCpu(role));
     const reliefCeiling = cpu.limit * Math.min(0.90, Math.max(0.5, safe(settings.remoteHaulReliefCeiling, 0.90)));
@@ -265,7 +271,7 @@ function evaluate(room, request, context, mandatory, revalidate, renewal) {
         if (!cpuReplacement && !relief && (cpu.bucket < 4000 || cpu.mode === 'critical' || Math.min(view.cpu.share,
             cpu.headroom / Math.max(1, Object.keys(get().rooms).length)) < queuedCpu + roleCpu(role))) reason = 'CPU_CAPACITY_EXHAUSTED';
         else if (spawns.headroom < metrics.estimatedReplacementLoad + metrics.spawnTime / settings.queueHorizon) reason = 'SPAWN_LOAD_HIGH';
-        else if (!intelFloor && view.energy.known !== false && (!view.energy.healthy || view.energy.aboveReserve < metrics.cost +
+        else if (!intelFloor && view.energy.known !== false && ((!view.energy.healthy && !localHaulRenewal) || view.energy.aboveReserve < metrics.cost +
             queue.reduce((sum, q) => sum + Bodies.cost(q.body || []), 0) +
             accepted.reduce((sum, s) => sum + Bodies.cost(s.request.body), 0) || view.energy.trend < -1 && !view.energy.drawdownSpend)) reason = 'ENERGY_BELOW_RESERVE';
         else if (utilization && utilization.samples >= 8 && utilization.utilization < 0.5 &&

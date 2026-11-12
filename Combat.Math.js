@@ -20,6 +20,7 @@ function rangeBetween(a, b) {
     const aPos = a && a.pos ? a.pos : a;
     const bPos = b && b.pos ? b.pos : b;
     if (!aPos || !bPos) return Infinity;
+    if (aPos.roomName && bPos.roomName && aPos.roomName !== bPos.roomName) return Infinity;
     if (typeof aPos.getRangeTo === 'function') return aPos.getRangeTo(bPos);
     return Math.max(Math.abs(aPos.x - bPos.x), Math.abs(aPos.y - bPos.y));
 }
@@ -116,17 +117,30 @@ function towerPowerAtRange(basePower, range) {
 }
 
 function towerEffectMultiplier(tower) {
-    if (!tower || !Array.isArray(tower.effects) || typeof PWR_OPERATE_TOWER === 'undefined') return 1;
-    const effect = tower.effects.find(item => item && item.effect === PWR_OPERATE_TOWER);
-    return effect ? 1 + Math.max(0, effect.level || 0) * 0.1 : 1;
+    if (!tower || !Array.isArray(tower.effects)) return 1;
+    let multiplier = 1;
+    for (const name of ['PWR_OPERATE_TOWER', 'PWR_DISRUPT_TOWER']) {
+        if (typeof global[name] !== 'number') continue;
+        const effect = tower.effects.find(item => item && item.effect === global[name] && item.ticksRemaining > 0);
+        if (!effect) continue;
+        const values = typeof POWER_INFO !== 'undefined' && POWER_INFO[global[name]] && POWER_INFO[global[name]].effect;
+        const fallback = name === 'PWR_OPERATE_TOWER' ? [1.1, 1.2, 1.3, 1.4, 1.5] : [0.9, 0.8, 0.7, 0.6, 0.5];
+        const value = (values || fallback)[effect.level - 1];
+        if (Number.isFinite(value)) multiplier *= value;
+    }
+    return multiplier;
 }
 
 function towerDamage(tower, target) {
-    return towerPowerAtRange(constant('TOWER_POWER_ATTACK', 600), rangeBetween(tower, target)) * towerEffectMultiplier(tower);
+    const range = rangeBetween(tower, target);
+    if (!Number.isFinite(range) || tower && tower.store && tower.store[partName('RESOURCE_ENERGY', 'energy')] < constant('TOWER_ENERGY_COST', 10)) return 0;
+    return Math.floor(towerPowerAtRange(constant('TOWER_POWER_ATTACK', 600), range) * towerEffectMultiplier(tower));
 }
 
 function towerHeal(tower, target) {
-    return towerPowerAtRange(constant('TOWER_POWER_HEAL', 400), rangeBetween(tower, target)) * towerEffectMultiplier(tower);
+    const range = rangeBetween(tower, target);
+    if (!Number.isFinite(range) || tower && tower.store && tower.store[partName('RESOURCE_ENERGY', 'energy')] < constant('TOWER_ENERGY_COST', 10)) return 0;
+    return Math.floor(towerPowerAtRange(constant('TOWER_POWER_HEAL', 400), range) * towerEffectMultiplier(tower));
 }
 
 function incomingDamage(target, attackers) {

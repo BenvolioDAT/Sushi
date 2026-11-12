@@ -209,6 +209,12 @@ function handleRemoteCollection(creep) {
     }
 
     if(!RemotePlanner.refreshRemoteFreighterReservation(creep)) {
+        if ((creep.store[RESOURCE_ENERGY] || 0) > 0) {
+            creep.memory.FreighterWorking = true;
+            finishRemotePickup(creep);
+            deliverRemoteEnergy(creep);
+            return true;
+        }
         RemotePlanner.clearRemoteFreighterMemory(creep);
         return false;
     }
@@ -276,6 +282,7 @@ function clearPickupMemory(creep) {
 }
 
 function finishRemotePickup(creep) {
+    delete creep.memory.remoteLoadStartedAt;
     RemotePlanner.recordRemoteTripLeg(creep, 'OUTBOUND');
     creep.memory.remoteDeliveryRoom = creep.memory.pickupRoom;
     creep.memory.remoteDeliverySourceId = creep.memory.pickupSourceId;
@@ -868,6 +875,7 @@ function collectFromTarget(creep, target) {
 }
 
 function handleRemoteTargetGone(creep) {
+    if (waitForRemoteLoad(creep)) return true;
     if(creep.store[RESOURCE_ENERGY] > 0) {
         creep.memory.FreighterWorking = true;
         finishRemotePickup(creep);
@@ -877,6 +885,29 @@ function handleRemoteTargetGone(creep) {
 
     RemotePlanner.clearRemoteFreighterMemory(creep);
     return false;
+}
+
+// A disappearing drop is not proof that its producing source has run dry.
+// Wait only at a live, safe station, with a bounded loading time and enough TTL
+// for the return. This prevents a 250-capacity hauler returning with one energy.
+function waitForRemoteLoad(creep) {
+    var m = creep.memory;
+    var info = Memory.rooms[m.homeRoom]?.remotePlanner?.sourceInfos?.[m.pickupSourceId];
+    var source = Memory.rooms[m.pickupRoom]?.sources?.[m.pickupSourceId];
+    var haul = source && source.haul;
+    var miner = haul && Game.creeps[haul.lastAdvertisedBy];
+    if (!info || !info.active || info.operational === false || !source?.pos ||
+        creep.pos.roomName !== m.pickupRoom || creep.pos.getRangeTo(source.pos.x, source.pos.y) > 2 ||
+        !RemotePlanner.shouldUseRemoteSource(m.homeRoom, m.pickupSourceId) ||
+        !miner || miner.spawning || miner.memory?.role !== 'Extractor' || !miner.memory.remoteMining ||
+        (miner.memory.sourceId || miner.memory.targetSourceId) !== m.pickupSourceId ||
+        miner.pos.roomName !== m.pickupRoom || miner.pos.getRangeTo(source.pos.x, source.pos.y) > 1 ||
+        miner.getActiveBodyparts(WORK) <= 0 ||
+        (creep.ticksToLive !== undefined && creep.ticksToLive < (info.distance || 50) * 2 + 75)) return false;
+    var capacity = creep.store.getCapacity(RESOURCE_ENERGY);
+    if ((creep.store[RESOURCE_ENERGY] || 0) >= Math.max(50, Math.ceil(capacity * 0.8))) return false;
+    if (!Number.isSafeInteger(m.remoteLoadStartedAt) || m.remoteLoadStartedAt > Game.time) m.remoteLoadStartedAt = Game.time;
+    return Game.time - m.remoteLoadStartedAt < 50;
 }
 
 function rememberPickupTarget(creep, target, sourceId, pickupType) {

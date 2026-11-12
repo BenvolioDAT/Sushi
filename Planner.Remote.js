@@ -1057,6 +1057,12 @@ function shouldUseRemoteSource(homeRoomName, sourceId, ignoreScore) {
         info.rejectReason = 'enemy owned room';
         return false;
     }
+    var reservation = getReservationUsername(controller);
+    if (reservation && reservation !== getMyUsername()) {
+        info.rejectReason = 'hostile reservation';
+        info.blockedReason = 'HOSTILE_RESERVATION';
+        return false;
+    }
 
     if (!ignoreScore && info.score <= 0) {
         return false;
@@ -1451,6 +1457,8 @@ function makeRemoteInfo(homeRoomName, remoteRoom, roomType) {
     if (isOwnedEnemyRoom(remoteRoom)) {
         status = 'blocked';
     }
+    if (remoteRoom.controller && remoteRoom.controller.reservation &&
+        remoteRoom.controller.reservation.username !== getMyUsername()) status = 'blocked';
 
     if (hasInvaderCore(remoteRoom) || hasSeriousDanger(remoteRoom)) {
         status = 'danger';
@@ -2254,6 +2262,20 @@ function isBetterExtractorRemote(candidate, best) {
 }
 
 function moveExtractorAlongRemotePath(creep, homeRoomName, sourceId) {
+    var planner = ensurePlannerMemory(homeRoomName);
+    var info = planner.sourceInfos[sourceId];
+    var controller = info && getControllerInfo(info.roomName);
+    var reservation = getReservationUsername(controller);
+    if (controller && (controller.owner && controller.owner !== getMyUsername() ||
+        reservation && reservation !== getMyUsername())) {
+        info.active = false;
+        info.operational = false;
+        info.state = REMOTE_STATES.SUSPENDED_DANGER;
+        info.blockedReason = reservation ? 'HOSTILE_RESERVATION' : 'HOSTILE_OWNERSHIP';
+        removeFromActiveList(planner, sourceId);
+        Intel.request(info.roomName, info.blockedReason, 90);
+        return retreatRemoteCreep(creep, homeRoomName);
+    }
     creep.memory.extractorState = 'movingToRemoteSource';
     return followRemotePath(creep, homeRoomName, sourceId, false);
 }
@@ -2565,6 +2587,7 @@ function claimRemotePickupTarget(creep, pickupInfo) {
     delete creep.memory.remoteTrip;
     delete creep.memory.remoteReturnComplete;
     delete creep.memory.remoteOutboundLane;
+    delete creep.memory.remoteLoadStartedAt;
 
     LogisticsIndex.update(creep);
     syncSourceHaulReservation(pickupRoom, pickupInfo.sourceId, haul, null);
@@ -2578,6 +2601,7 @@ function clearRemoteFreighterMemory(creep) {
     }
 
     releaseRemoteFreighterReservation(creep);
+    delete creep.memory.remoteLoadStartedAt;
 
     delete creep.memory.freighterJob;
     delete creep.memory.pickupRoom;
@@ -2617,8 +2641,17 @@ function refreshRemoteFreighterReservation(creep) {
         creep.memory.homeRoom
     );
 
-    if (!haul || haul.targetId !== creep.memory.pickupTargetId) {
+    var info = ensurePlannerMemory(creep.memory.homeRoom).sourceInfos[creep.memory.pickupSourceId];
+    if (!haul || !info || !info.active || info.operational === false ||
+        !shouldUseRemoteSource(creep.memory.homeRoom, creep.memory.pickupSourceId)) {
         return false;
+    }
+    if (haul.targetId !== creep.memory.pickupTargetId) {
+        if (!(haul.lastSeen <= Game.time && Game.time - haul.lastSeen <= 25)) return false;
+        // Drop buffers change object IDs as piles are collected or decay. The
+        // source commitment remains stable; update only this source's target.
+        creep.memory.pickupTargetId = haul.targetId || null;
+        creep.memory.pickupTargetType = haul.targetType || null;
     }
 
     var freeCapacity = creep.store.getFreeCapacity(RESOURCE_ENERGY);

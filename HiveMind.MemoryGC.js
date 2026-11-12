@@ -6,6 +6,15 @@ function protectedRooms(hive) {
     const names = new Set(hive.homeRooms && hive.homeRooms.names || []);
     for (const [name, record] of Object.entries(Memory.rooms || {})) {
         if (record && record.identity && ['HOME', 'OWNED_BOOTSTRAP', 'REMOTE'].includes(record.identity.type)) names.add(name);
+        // A selected remote and its transit rooms remain strategic references
+        // even when their last observation is old or civilians are suspended.
+        const planner = record && record.remotePlanner;
+        const selected = new Set(planner && planner.activeSourceIds || []);
+        for (const [id, source] of Object.entries(planner && planner.sourceInfos || {})) {
+            if (!source || !(selected.has(id) || source.active || source.established)) continue;
+            if (source.roomName) names.add(source.roomName);
+            for (const roomName of source.route && source.route.roomSequence || []) names.add(roomName);
+        }
     }
     for (const operation of Object.values(hive.operations || {})) {
         if (!operation || TERMINAL.has(operation.state)) continue;

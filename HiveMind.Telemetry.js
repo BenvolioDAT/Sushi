@@ -39,13 +39,21 @@ function finish() {
     telemetry.bucket = Game.cpu && Game.cpu.bucket;
     telemetry.mode = cpuStatus.persistCurrent().mode;
     // Heap EMA uses every completed tick; occasional Memory persistence survives resets.
-    const previous = global.__sushiCpuRolling || HiveMemory.ensure().telemetry.cpu || { samples: 0, phases: {} };
+    const previous = global.__sushiCpuRolling || HiveMemory.ensure().telemetry.cpu || {};
+    // Older colonies persisted {used, bucket, limit}, before the completed-tick
+    // EMA existed. Missing/invalid history starts a fresh sample; it must not
+    // prevent controller progress and future CPU admission from updating.
+    const previousPhases = previous.phases && typeof previous.phases === 'object' ? previous.phases : {};
+    const samples = Number.isFinite(previous.samples) && previous.samples > 0 &&
+        Number.isFinite(previous.total) && previous.tick <= Game.time ? Math.min(1000, previous.samples) : 0;
     const phases = {};
-    for (const name of new Set([...Object.keys(previous.phases || {}), ...Object.keys(telemetry.phases)])) {
-        phases[name] = (previous.phases[name] || 0) * 0.9 + (telemetry.phases[name] || 0) * 0.1;
+    for (const name of new Set([...Object.keys(previousPhases), ...Object.keys(telemetry.phases)])) {
+        const old = samples && Number.isFinite(previousPhases[name]) ? previousPhases[name] : 0;
+        const current = telemetry.phases[name] || 0;
+        phases[name] = samples ? old * 0.9 + current * 0.1 : current;
     }
-    global.__sushiCpuRolling = { tick: Game.time, samples: Math.min(1000, previous.samples + 1),
-        total: previous.samples ? previous.total * 0.9 + telemetry.total * 0.1 : telemetry.total,
+    global.__sushiCpuRolling = { tick: Game.time, samples: Math.min(1000, samples + 1),
+        total: samples ? previous.total * 0.9 + telemetry.total * 0.1 : telemetry.total,
         phases, bucket: telemetry.bucket, mode: telemetry.mode };
     sampleControllerProgress();
 
