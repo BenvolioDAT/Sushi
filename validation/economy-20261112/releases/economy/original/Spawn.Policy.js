@@ -1,0 +1,206 @@
+const HiveMemory = require('HiveMind.Memory');
+const Economy = require('HiveMind.Economy');
+const ColonyState = require('HiveMind.ColonyState');
+const Context = require('Spawn.Context');
+const Bodies = require('role.creepBodyConfig');
+const Capacity = require('HiveMind.Capacity');
+
+function maxCreeps(room, policy) {
+    const rcl = room && room.controller && room.controller.level || 1;
+    const capacity = room && Capacity.get().rooms[room.name];
+    if (capacity) return capacity.population.softCap;
+    return policy.maxCreepsPerRoomByRcl && policy.maxCreepsPerRoomByRcl[`RCL${rcl}`] || 10;
+}
+
+function isOwnedDefense(request) {
+    const memory = request.memory || {};
+    const targetName = memory.defendedRoom || request.defendedRoom || memory.targetRoom || request.targetRoom;
+    const target = targetName && Game.rooms[targetName];
+    return Context.isCombatRole(request.role || memory.role) &&
+        (memory.defenseRequest === true || request.defenseRequest === true) && target && target.controller && target.controller.my;
+}
+
+function isImminentOwnedDefense(request) {
+    if (!isOwnedDefense(request) || request.emergency !== true) return false;
+    const memory = request.memory || {};
+    const target = memory.defendedRoom || request.defendedRoom || memory.targetRoom || request.targetRoom;
+    const threat = HiveMemory.ensure().threats[target];
+    return !!(threat && threat.tick === Game.time && threat.emergency &&
+        (threat.hostiles || []).some(hostile => hostile.autoEngage &&
+            (hostile.attackedUs || hostile.closestCriticalRange <= 3)));
+}
+
+function economyRoleCap(room, role, request, policy) {
+    const configured = policy.roleCaps && policy.roleCaps[role];
+    if (request.strategyCategory === 'SPECIAL_STRATEGY' ||
+        request.memory && request.memory.strategyCategory === 'SPECIAL_STRATEGY') {
+        const spawn = HiveMemory.getRoomSpawnMemory(room.name);
+        const governor = spawn.governor || (spawn.governor = {});
+        if (!governor.roleCaps) governor.roleCaps = {};
+        governor.roleCaps[role] = { configured: configured === undefined ? null : configured, effective: null,
+            source: 'strategy demand', reason: 'SPECIAL_STRATEGY uses provider demand, not generic roleCaps' };
+        return undefined;
+    }
+    if (['Tech', 'Artificer'].includes(role) && request.maxWorkParts > 0) {
+        const view = Capacity.get().rooms[room.name];
+        const settings = require('HiveMind.Surplus').config();
+        const dynamic = HiveMemory.getConfig('surplus').dynamicRoleCaps !== false;
+        const target = role === 'Tech' ? Math.min(room.controller.level === 8 ? 15 : settings.techMaxWork,
+            (Memory.rooms[room.name] || {}).techDesiredWork || 0) : (Memory.rooms[room.name] || {}).artificerDesiredWork || 0;
+        const profile = require('BodyProfiles').build(role, { energyCapacity: room.energyCapacityAvailable, desiredWork: target });
+        const needed = profile ? Math.ceil(target / Math.max(1, profile.WORK)) : 0;
+        const effective = dynamic && view && ['NORMAL', 'SURPLUS', 'EXPAND'].includes(view.mode) ?
+            Math.max(configured || 0, role === 'Tech' ? 5 : 8, needed) : configured;
+        const governor = HiveMemory.getRoomSpawnMemory(room.name).governor ||
+            (HiveMemory.getRoomSpawnMemory(room.name).governor = {});
+        if (!governor.roleCaps) governor.roleCaps = {};
+        governor.roleCaps[role] = { configured, effective, source: 'persisted configuration; provenance unknown',
+            reason: effective !== configured ? 'dynamic healthy-room capability cap' : 'configured cap', dynamic };
+        return effective;
+    }
+    if (role === 'Annex') {
+        const planner = Memory.rooms[room.name] && Memory.rooms[room.name].remotePlanner || {};
+        const rooms = new Set((planner.activeSourceIds || []).map(id => (planner.sourceInfos || {})[id])
+            .filter(info => info && info.active && info.operational !== false && (!info.route || info.route.valid !== false))
+            .map(info => info.roomName).filter(name => {
+                const controller = require('Remote.Intel').controller(name);
+                const spawn = (require('HiveMind.Index').get().ownedSpawnsByRoom.get(room.name) || [])[0];
+                const username = HiveMemory.ensure().identity.username || spawn && spawn.owner && spawn.owner.username;
+                return controller && !controller.my && !controller.owner &&
+                    (!controller.reservation || controller.reservation.username === username);
+            }));
+        return Math.min(6, Math.max(configured || 0, rooms.size));
+    }
+    if (!['Extractor', 'Freighter'].includes(role)) return configured;
+    const memory = Memory.rooms[room.name] || {};
+    const planner = memory.remotePlanner || {};
+    const active = (planner.activeSourceIds || []).map(id => (planner.sourceInfos || {})[id]).filter(info =>
+        info && info.active && info.operational !== false && (!info.route || info.route.valid !== false));
+    const economy = Economy.get(room.name) || {};
+    let required;
+    if (role === 'Extractor') {
+        const body = request.body || Bodies.getExtractorBody(room) || [];
+        const work = Math.max(1, body.filter(part => (part.type || part) === WORK).length);
+        const utility = require('utility');
+        const local = require('HiveMind.Index').getSources(room).reduce((sum, source) => sum +
+            Math.min(utility.getValidSourceMiningSeats((memory.sources || {})[source.id], source.pos).length,
+                Math.ceil(utility.getSourceHarvestProfile(source).requiredWork / work)), 0);
+        required = local + active.reduce((sum, info) => sum + Math.max(1, Math.ceil((info.requiredWork || work) / work)), 0);
+    } else {
+        const body = request.body || Bodies.getFreighterBody(room) || [];
+        const carry = Math.max(1, body.filter(part => (part.type || part) === CARRY).length);
+        const requiredCarry = (economy.haul && economy.haul.requiredCarry || 0) +
+            active.reduce((sum, info) => sum + (info.requiredCarry || 0), 0);
+        required = Math.ceil(requiredCarry / carry);
+    }
+    const hard = policy.economyRoleHardCaps && policy.economyRoleHardCaps[role] !== undefined ?
+        policy.economyRoleHardCaps[role] : (role === 'Extractor' ? 32 : 64);
+    return Math.min(hard, Math.max(configured || 0, required + 1)); // One replacement handoff.
+}
+
+function evaluate(room, request, context, options = {}) {
+    if (!room || !request) return { allowed: false, reason: 'missing room or request' };
+    const npcAdmission = require('NPC.Policy').spawnAllowed(room, request);
+    if (!npcAdmission.allowed) return npcAdmission;
+    const operation = request.operationId && HiveMemory.ensure().operations[request.operationId];
+    if (operation && ['COMPLETE', 'ABORTED'].includes(operation.state)) {
+        return { allowed: false, reason: 'operation is terminal' };
+    }
+    if (request.expiresAt && request.expiresAt < Game.time) return { allowed: false, reason: 'request expired' };
+    const economy = Economy.canSpawnRequest(room, request);
+    if (!economy.allowed) return { ...economy, allowed: false };
+    const recovery = Economy.localRecoveryRequest(room, request, context.queue);
+    if (recovery.obsolete) return { allowed: false, obsolete: true, reason: recovery.reason };
+    const remoteHauling = Economy.remoteHaulingRequest(room, request, context.queue);
+    if (remoteHauling.obsolete) return { allowed: false, obsolete: true, reason: remoteHauling.reason };
+    const renewal = recovery.renewal ? recovery : remoteHauling.renewal ? remoteHauling : null;
+    const lifecycle = ColonyState.get(room.name);
+    const category = Economy.categoryForRequest(request);
+    const controllerGrowthFloor = category === 'controllerGrowth' && request.memory &&
+        request.memory.controllerGrowthFloor === true;
+    const protectedWork = ['harvest', 'logistics', 'spawnFill', 'controllerSafety',
+        'criticalController', 'controllerGrowth', 'criticalInfrastructure'].includes(category);
+    if (controllerGrowthFloor) {
+        const floorCoveredOnlyByThisRequest = lifecycle && lifecycle.growthAllowed &&
+            lifecycle.baselineTechWork > 0 && (context.byRole.Tech || 0) <= (options.revalidate ? 1 : 0);
+        if (!lifecycle || !lifecycle.growthAllowed ||
+            (!lifecycle.baselineTechRequired && !floorCoveredOnlyByThisRequest)) {
+            return { allowed: false, reason: lifecycle && lifecycle.blockedReason || 'baseline controller growth is not required' };
+        }
+    }
+    const economicScout = category === 'remoteIntel' && (request.role || request.memory && request.memory.role) === 'Scout';
+    if (economicScout && lifecycle && (lifecycle.alert === 'SIEGE' || lifecycle.nextMandatoryRole)) {
+        return { allowed: false, reason: lifecycle.blockedReason || 'mandatory local floor pending' };
+    }
+    if (lifecycle && ['OWNED_NO_SPAWN', 'BOOTSTRAP'].includes(lifecycle.phase) && !protectedWork && !isOwnedDefense(request) && !economicScout) {
+        return { allowed: false, reason: `blocked during ${lifecycle.phase}` };
+    }
+    const role = request.role || request.memory && request.memory.role;
+    const hauling = role === 'Freighter' ? { missingCarry: Economy.isLocalFreighter(request) ? recovery.missing :
+        Economy.isRemoteFreighter(request) ? remoteHauling.missing : undefined,
+        minimumCarryParts: renewal?.minimumCarryParts || (Economy.isRemoteFreighter(request) ?
+            Math.min(request.minimumCarryParts || 0, remoteHauling.missing || 0) : undefined), freighterRenewal: !!renewal,
+        freighterPredecessors: renewal?.predecessors } : {};
+    const policy = HiveMemory.getConfig('spawn');
+    if (policy.enabled === false) return { allowed: true, reason: 'spawn policy disabled', ...hauling };
+    const ownedDefense = isOwnedDefense(request);
+    if (ownedDefense) {
+        const hasAnchor = (context.byRole.Extractor || 0) > 0 && (context.byRole.Freighter || 0) > 0;
+        if (!hasAnchor && !isImminentOwnedDefense(request)) return { allowed: false, reason: 'protected survival economy anchor missing' };
+        const combatQueued = context.queue.filter(item => {
+            if (options.revalidate && item === request) return false;
+            const itemRole = item && (item.role || item.memory && item.memory.role);
+            return Context.isCombatRole(itemRole);
+        }).length;
+        const shareLimit = policy.combatSpawnShare === 0 ? 0 :
+            Math.max(1, Math.ceil(policy.maxQueueLengthPerRoom * policy.combatSpawnShare));
+        if (!request.emergency && combatQueued >= shareLimit) {
+            return { allowed: false, reason: 'combat spawn-share budget exhausted', blockSource: 'persistedConfig',
+                configPath: 'spawn.combatSpawnShare', configured: policy.combatSpawnShare, effectiveLimit: shareLimit };
+        }
+    }
+    const localEconomicRole = recovery.missing !== undefined;
+    const survivalBypass = recovery.mandatory || !localEconomicRole &&
+        options.emergency === true && options.bypassRoleCap === true && protectedWork;
+    const defenseBypass = ownedDefense && request.emergency === true;
+    const capacity = Capacity.evaluate(room, request, context, survivalBypass || defenseBypass ||
+        request.strategyEmergency === true || request.strategyMandatory === true || request.memory &&
+            (request.memory.strategyEmergency === true || request.memory.strategyMandatory === true),
+        options.revalidate, renewal);
+    if (!capacity.allowed) return capacity;
+    if (capacity.remoteHaulRelief) hauling.missingCarry = Math.min(hauling.missingCarry, capacity.remoteHaulRelief.carry);
+    const roleCap = economyRoleCap(room, role, request, policy);
+    const ownQueued = options.revalidate && context.queue.includes(request) ? 1 : 0;
+    const mandatoryFloorBypass = controllerGrowthFloor && lifecycle && lifecycle.growthAllowed &&
+        (context.byRole.Tech || 0) <= (options.revalidate ? 1 : 0) &&
+        context.nonCombatTotal <= (policy.maxCreepsPerRoomByRcl['RCL' + room.controller.level] || 10) + (options.revalidate ? 1 : 0);
+    if (typeof roleCap === 'number' && (context.byRole[role] || 0) - ownQueued - (capacity.replacementCount || 0) >= roleCap && !survivalBypass && !mandatoryFloorBypass &&
+        !(renewal && capacity.replacementCount > 1)) {
+        return { allowed: false, reason: 'role cap reached', blockSource: 'persistedConfig',
+            configPath: 'spawn.roleCaps.' + role, configured: policy.roleCaps[role], effectiveLimit: roleCap };
+    }
+    // Capacity owns the population ceiling; RCL remains a baseline and role guardrail.
+    if (!options.revalidate && context.queue.length >= policy.maxQueueLengthPerRoom && !survivalBypass && !defenseBypass) {
+        return { allowed: false, reason: 'spawn queue full', blockSource: 'persistedConfig',
+            configPath: 'spawn.maxQueueLengthPerRoom', configured: policy.maxQueueLengthPerRoom, queueLength: context.queue.length };
+    }
+    const admitted = context.queue.filter(item => item && item.requestedAt === Game.time).length;
+    if (!options.revalidate && admitted >= policy.maxNewRequestsPerRoomPerTick && !survivalBypass && !defenseBypass && !economicScout) {
+        return { allowed: false, reason: 'new request cap reached', blockSource: 'persistedConfig',
+            configPath: 'spawn.maxNewRequestsPerRoomPerTick', configured: policy.maxNewRequestsPerRoomPerTick, admitted };
+    }
+    return { allowed: true, reason: capacity.remoteHaulRelief ? 'PRODUCTIVE_REMOTE_HAUL_RELIEF' :
+            capacity.remoteRestart ? 'SUPPORTED_REMOTE_RESTART' :
+            renewal?.reason || (recovery.mandatory ? recovery.reason : options.revalidate ? 'revalidated' : 'admitted'),
+        remoteHaulRelief: capacity.remoteHaulRelief,
+        remoteRestart: capacity.remoteRestart,
+        localMissingWork: (request.role || request.memory && request.memory.role) === 'Extractor' ? recovery.missing : undefined,
+        ...hauling,
+        lifetimeReplacement: recovery.lifetimeReplacement,
+        minimumWorkParts: recovery.minimumWorkParts,
+        minerConsolidation: recovery.minerConsolidation,
+        mandatoryEconomy: recovery.mandatory, mandatoryFloorBypass: mandatoryFloorBypass || recovery.mandatory &&
+            context.nonCombatTotal - ownQueued >= maxCreeps(room, policy) };
+}
+
+module.exports = { economyRoleCap, evaluate, isOwnedDefense, isImminentOwnedDefense, maxCreeps };

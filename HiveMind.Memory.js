@@ -5,7 +5,8 @@ const CONFIG_DEFAULTS = Object.freeze({
     cpu: { telemetry: { persistInterval: 100, debug: false, errorLogInterval: 100 } },
     diagnostics: { mode: 'NORMAL', level: 'INFO', maxEvents: 1000, maxChars: 90000,
         useSegments: true, segment: 98, snapshotInterval: 100, flushInterval: 25,
-        fallbackEvents: 64, fallbackChars: 16000, retentionTicks: 50000, duplicateWindow: 50 },
+        fallbackEvents: 64, fallbackChars: 16000, retentionTicks: 50000, duplicateWindow: 50,
+        travelerCpu: { enabled: false, threshold: 5, interval: 100 } },
     capacity: { interval: 5, absoluteMaximum: 150, spawnTarget: 0.75, queueHorizon: 300,
         cpuCritical: 0.55, cpuLow: 0.65, cpuHealthy: 0.78, cpuFull: 0.83 },
     spawn: {
@@ -21,7 +22,8 @@ const CONFIG_DEFAULTS = Object.freeze({
         maxSpendPerTick: 100, techMaxWork: 60, artificerMaxWork: 80,
         constructionHorizon: 5000, workDutyCycle: 0.65, dynamicRoleCaps: true },
     economy: {}, lifecycle: { hysteresisTicks: 5, milestoneTimeout: 1500 },
-    remote: { maxRoomRange: 2, allowKeeperRooms: false, routeValidationInterval: 251 },
+    remote: { maxRoomRange: 2, allowKeeperRooms: false, routeValidationInterval: 251, accountingEnabled: true,
+        economicPauseEnabled: true },
     memoryGC: {
         interval: 101, workBudget: 25, squadRetention: 250, operationRetention: 1000,
         demandRetention: 25, queueRetention: 50, playerRetention: 50000,
@@ -33,6 +35,8 @@ const CONFIG_DEFAULTS = Object.freeze({
         upgradeRush: false
     },
     combat: {
+        keepers: { enabled: true, expectedUptime: 0.7, spawnShare: 0.5, secureTicks: 25 },
+        npcCores: { enabled: true },
         independentCombat: true, useWarRoom: false,
         diplomacy: { playerResponseMode: 'observe', npcAutoDefense: true, incidentHalfLife: 5000, hostileThreshold: 100 },
         towers: { energyReserve: 200, repairEnergyReserve: 700 },
@@ -369,9 +373,10 @@ function getRoomEconomyMemory(roomName) {
 }
 
 
-function remoteParents() {
+function remoteParents(homes) {
     const parents = {};
     for (const [homeName, room] of Object.entries(Memory.rooms || {})) {
+        if (!homes.has(homeName) && !(Game.rooms[homeName]?.controller?.my)) continue;
         const planner = room && room.remotePlanner;
         for (const [remoteName, remote] of Object.entries(planner && planner.remotes || {})) {
             if (remote && (remote.status === 'active' || remote.sourceIds && remote.sourceIds.length)) parents[remoteName] = homeName;
@@ -385,7 +390,7 @@ function syncHomeRooms(index) {
     const names = (index && index.ownedSpawnRooms || []).map(room => room.name).sort();
     hive.homeRooms = { updatedAt: Game.time, names };
     const homes = new Set(names);
-    const parents = remoteParents();
+    const parents = remoteParents(homes);
     for (const [roomName, roomMemory] of Object.entries(Memory.rooms || {})) {
         if (!isObject(roomMemory)) continue;
         const visible = Game.rooms && Game.rooms[roomName];

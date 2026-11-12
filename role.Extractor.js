@@ -27,6 +27,8 @@ var roleExtractor = {
         if(!creep || creep.spawning) {
             return;
         }
+        if (creep.memory.remoteMining && RemotePlanner.guardEconomicCivilian(creep)) return;
+        if (creep.memory.remoteMining && RemotePlanner.guardKeeperCivilian(creep, creep.memory.homeRoom, creep.memory.sourceId)) return;
         if (utilityCreep.runExtractorLifecycle(creep)) return;
         /*
          * Keep source container planning fresh for this room. This may read

@@ -1,0 +1,105 @@
+{
+  "scope": "Illustrative sensitivity analysis, not measured profitability or an admission decision",
+  "sourceTick": 642893,
+  "assumptions": "Three sources, energy lairs only; shared conservative travel input; 80% uptime; 1 energy/tick maintenance; half of one spawn available; no boosts or combat loss allowance.",
+  "currentCapacity": {
+    "viable": false,
+    "profitable": true,
+    "gross": 32,
+    "net": 8.892857142857142,
+    "combat": 10.714285714285714,
+    "mining": 2.0357142857142856,
+    "hauling": 9.357142857142858,
+    "carry": 131,
+    "guards": 3,
+    "spawnUsage": 0.8957142857142857,
+    "guardBodyCost": 5000,
+    "reason": "GUARD_BODY_UNAFFORDABLE"
+  },
+  "cases": [
+    {
+      "travelTicks": 30,
+      "uptime": 0.8,
+      "infrastructureCost": 1,
+      "energyCapacity": 5600,
+      "spawnBudget": 0.5,
+      "result": {
+        "viable": true,
+        "profitable": true,
+        "gross": 32,
+        "net": 16.068027210884352,
+        "combat": 10.204081632653061,
+        "mining": 1.9387755102040816,
+        "hauling": 2.7891156462585034,
+        "carry": 41,
+        "guards": 3,
+        "spawnUsage": 0.4857142857142857,
+        "guardBodyCost": 5000,
+        "reason": "MODELED_FEASIBILITY_ONLY"
+      }
+    },
+    {
+      "travelTicks": 50,
+      "uptime": 0.8,
+      "infrastructureCost": 1,
+      "energyCapacity": 5600,
+      "spawnBudget": 0.5,
+      "result": {
+        "viable": false,
+        "profitable": true,
+        "gross": 32,
+        "net": 14.06896551724138,
+        "combat": 10.344827586206897,
+        "mining": 1.9655172413793103,
+        "hauling": 4.620689655172414,
+        "carry": 67,
+        "guards": 3,
+        "spawnUsage": 0.6,
+        "guardBodyCost": 5000,
+        "reason": "SPAWN_BUDGET_EXCEEDED"
+      }
+    },
+    {
+      "travelTicks": 100,
+      "uptime": 0.8,
+      "infrastructureCost": 1,
+      "energyCapacity": 5600,
+      "spawnBudget": 0.5,
+      "result": {
+        "viable": false,
+        "profitable": true,
+        "gross": 32,
+        "net": 8.892857142857142,
+        "combat": 10.714285714285714,
+        "mining": 2.0357142857142856,
+        "hauling": 9.357142857142858,
+        "carry": 131,
+        "guards": 3,
+        "spawnUsage": 0.8957142857142857,
+        "guardBodyCost": 5000,
+        "reason": "SPAWN_BUDGET_EXCEEDED"
+      }
+    },
+    {
+      "travelTicks": 150,
+      "uptime": 0.8,
+      "infrastructureCost": 1,
+      "energyCapacity": 5600,
+      "spawnBudget": 0.5,
+      "result": {
+        "viable": false,
+        "profitable": true,
+        "gross": 32,
+        "net": 3.333333333333334,
+        "combat": 11.11111111111111,
+        "mining": 2.111111111111111,
+        "hauling": 14.444444444444445,
+        "carry": 195,
+        "guards": 3,
+        "spawnUsage": 1.2133333333333334,
+        "guardBodyCost": 5000,
+        "reason": "SPAWN_BUDGET_EXCEEDED"
+      }
+    }
+  ]
+}

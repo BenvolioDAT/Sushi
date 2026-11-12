@@ -28,6 +28,8 @@ var roleRonin = {
             return;
         }
 
+        if (require('NPC.Operations').runCreep(creep)) return;
+
         if (creep.memory.powerBankOperationId) {
             runPowerBankAttacker(creep);
             return;
@@ -40,11 +42,12 @@ var roleRonin = {
 
         if(target) {
             /*
-             * Healing is a support action, so Ronin can heal and still use its
-             * ATTACK parts this tick. Do not chase a heal target while an
-             * enemy target exists because melee positioning comes first.
+             * Self-healing and melee attack conflict. Patch while approaching,
+             * then apply melee damage once the target is in range.
              */
-            supportCombatHealing(creep, false);
+            // HEAL suppresses ATTACK in the engine. Patch while approaching;
+            // in melee, apply damage rather than silently cancelling it.
+            if (creep.pos.getRangeTo(target) > 1) supportCombatHealing(creep, false);
             attackMeleeTarget(creep, target);
 
             /*

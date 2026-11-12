@@ -3,6 +3,7 @@ const HiveMemory = require('HiveMind.Memory');
 const TickIndex = require('HiveMind.Index');
 const CombatMath = require('Combat.Math');
 const Policy = require('Combat.Policy');
+const KeeperIntel = require('Keeper.Intel');
 
 const THREAT_FORGET_TICKS = 1500;
 
@@ -105,12 +106,12 @@ function summarizeHostile(hostile, room, attacked, positions, towerSupport, supp
     };
     const context = { roomName: room.name, attackedUs: !!incident, supportingArmed };
     const harmful = Policy.isDangerous(owner, capabilities, context);
-    const autoEngage = harmful && Policy.mayAutoDefendAgainst(owner, context);
+    const autoEngage = owner !== 'Source Keeper' && harmful && Policy.mayAutoDefendAgainst(owner, context);
     const proximity = closestRange(hostile.pos, positions);
     return {
         id: hostile.id || hostile.name || null,
         owner,
-        classification: Policy.getClassification(owner),
+        classification: owner === 'Source Keeper' ? 'SOURCE_KEEPER' : Policy.getClassification(owner),
         lastSeen: Game.time,
         capabilities,
         boosts: body.boosts,
@@ -123,7 +124,7 @@ function summarizeHostile(hostile, room, attacked, positions, towerSupport, supp
         harmful, // Legacy safety signal. Combat consumers must use autoEngage.
         dangerous: harmful,
         autoEngage,
-        reason: harmful ? Policy.autoEngageReason(owner, context) : 'HARMLESS',
+        reason: owner === 'Source Keeper' ? 'KEEPER_PATROL_REQUIRED' : harmful ? Policy.autoEngageReason(owner, context) : 'HARMLESS',
         score: Math.round(
             (capabilities.melee + capabilities.ranged + capabilities.dismantle) * 4 +
             capabilities.heal * 6 + body.effectiveHits * 0.05 +
@@ -131,6 +132,13 @@ function summarizeHostile(hostile, room, attacked, positions, towerSupport, supp
         ),
         timeLastConfirmed: Game.time
     };
+}
+
+function refreshIdentityCounts(snapshot) {
+    const harmful = (snapshot.hostiles || []).filter(record => record.harmful);
+    snapshot.sourceKeeperCount = harmful.filter(record => record.owner === 'Source Keeper').length;
+    snapshot.npcHostileCount = harmful.filter(record => record.classification === 'npc' || record.owner === 'Source Keeper').length;
+    snapshot.humanThreatCount = harmful.length - snapshot.npcHostileCount;
 }
 
 function ensureDefenseOperation(snapshot) {
@@ -188,6 +196,7 @@ function ensureDefenseOperation(snapshot) {
 function observeRoom(room, suppliedHostiles) {
     if (!room) return null;
     RemoteIntel.refresh(room);
+    KeeperIntel.observe(room);
     const index = TickIndex.get();
     const hostiles = suppliedHostiles || index.hostilesByRoom.get(room.name) || [];
     const attacked = attackEvents(room);
@@ -220,8 +229,6 @@ function observeRoom(room, suppliedHostiles) {
         harmfulHostileCount: harmful.length,
         dangerousHostileCount: harmful.length,
         actionableHostileCount: actionable.length,
-        npcHostileCount: harmful.filter(record => record.classification === 'npc').length,
-        humanThreatCount: harmful.filter(record => record.classification !== 'npc').length,
         actionableMelee: actionable.reduce((sum, record) => sum + record.capabilities.melee, 0),
         actionableRanged: actionable.reduce((sum, record) => sum + record.capabilities.ranged, 0),
         actionableDismantle: actionable.reduce((sum, record) => sum + record.capabilities.dismantle, 0),
@@ -233,11 +240,13 @@ function observeRoom(room, suppliedHostiles) {
         hostileHealing: harmful.reduce((sum, record) => sum + record.capabilities.heal, 0),
         hostileEffectiveHits: harmful.reduce((sum, record) => sum + record.effectiveHits, 0),
         totalThreat: harmful.reduce((sum, record) => sum + record.score, 0),
-        emergency: harmful.some(record => record.attackedUs || record.closestCriticalRange <= 3),
+        emergency: harmful.some(record => record.attackedUs ||
+            Number.isFinite(record.closestCriticalRange) && record.closestCriticalRange <= 3),
         respondingColony: nearestOwnedRoom(room.name),
         hostiles: records,
         timeLastConfirmed: Game.time
     };
+    refreshIdentityCounts(snapshot);
     HiveMemory.ensure().threats[room.name] = snapshot;
     ensureDefenseOperation(snapshot);
     if (!global.__sushiLiveThreats || global.__sushiLiveThreats.tick !== Game.time) {
@@ -249,16 +258,17 @@ function observeRoom(room, suppliedHostiles) {
 
 function refreshPermissions(snapshot) {
     const targets = (snapshot.hostiles || []).filter(record => {
-        record.autoEngage = !(snapshot.invaderCore && !snapshot.owned) && !!record.harmful && Policy.mayAutoDefendAgainst(record.owner, {
+        record.autoEngage = record.owner !== 'Source Keeper' && !(snapshot.invaderCore && !snapshot.owned) && !!record.harmful && Policy.mayAutoDefendAgainst(record.owner, {
             roomName: snapshot.roomName, attackedUs: record.attackedUs
         });
-        record.classification = Policy.getClassification(record.owner);
-        record.reason = snapshot.invaderCore && !snapshot.owned ? 'INVADER_CORE_AVOIDANCE' : record.harmful ? Policy.autoEngageReason(record.owner, {
+        record.classification = record.owner === 'Source Keeper' ? 'SOURCE_KEEPER' : Policy.getClassification(record.owner);
+        record.reason = record.owner === 'Source Keeper' ? 'KEEPER_PATROL_REQUIRED' : snapshot.invaderCore && !snapshot.owned ? 'INVADER_CORE_AVOIDANCE' : record.harmful ? Policy.autoEngageReason(record.owner, {
             roomName: snapshot.roomName, attackedUs: record.attackedUs
         }) : 'HARMLESS';
         return record.autoEngage;
     });
     snapshot.actionableHostileCount = targets.length;
+    refreshIdentityCounts(snapshot);
     for (const [field, capability] of [['Melee', 'melee'], ['Ranged', 'ranged'], ['Dismantle', 'dismantle'], ['Healing', 'heal']]) {
         snapshot[`actionable${field}`] = targets.reduce((sum, record) => sum + (record.capabilities[capability] || 0), 0);
     }
@@ -298,6 +308,7 @@ function run() {
         }
     }
     for (const room of index.visibleRooms) {
+        KeeperIntel.observe(room);
         if (relevant.has(room.name) || (room.controller && room.controller.my) || (index.hostilesByRoom.get(room.name) || []).length > 0) {
             observeRoom(room);
         }
@@ -306,7 +317,10 @@ function run() {
         if (Game.rooms[snapshot.roomName]) continue;
         refreshPermissions(snapshot);
         ensureDefenseOperation(snapshot);
-        if (snapshot.dangerousHostileCount > 0) RemoteIntel.request(snapshot.roomName, 'DEFENSE_NEEDS_INTEL', 90);
+        // Passive Keepers have a dedicated owner. Ordinary defense must not
+        // continually consume Scout visits for an unfunded Keeper operation.
+        if (snapshot.actionableHostileCount > 0 || snapshot.owned && snapshot.dangerousHostileCount > 0)
+            RemoteIntel.request(snapshot.roomName, 'DEFENSE_NEEDS_INTEL', 90);
     }
     cleanup();
 }

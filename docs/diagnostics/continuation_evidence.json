@@ -1,0 +1,188 @@
+{
+  "scope": "Read-only native UI continuation; no runtime edits or deployment",
+  "snapshots": [
+    {
+      "tick": 456913,
+      "memoryCharacters": 249951,
+      "controllerProgress": 7190
+    },
+    {
+      "tick": 457224,
+      "memoryCharacters": 274362,
+      "controllerProgress": 7317
+    },
+    {
+      "tick": 457703,
+      "memoryCharacters": 242635,
+      "controllerProgress": 7573
+    }
+  ],
+  "matching": "Same name AND tick + ticksToLive across endpoints; excludes deaths and reused names",
+  "matched311": {
+    "firstTick": 456913,
+    "lastTick": 457224,
+    "survivingWorkers": 14,
+    "allHavePositiveDeliveredDelta": true
+  },
+  "matched790": {
+    "firstTick": 456913,
+    "lastTick": 457703,
+    "survivingWorkers": 13,
+    "picked": 12288,
+    "unloaded": 12138,
+    "workers": [
+      {
+        "name": "Freighter_010",
+        "picked": 950,
+        "unloaded": 900,
+        "workTicks": 721,
+        "parkingTicks": 58,
+        "observedTicks": 790,
+        "finalTtl": 105
+      },
+      {
+        "name": "Freighter_011",
+        "picked": 2068,
+        "unloaded": 1968,
+        "workTicks": 735,
+        "parkingTicks": 40,
+        "observedTicks": 790,
+        "finalTtl": 147
+      },
+      {
+        "name": "Freighter_003",
+        "picked": 950,
+        "unloaded": 950,
+        "workTicks": 735,
+        "parkingTicks": 47,
+        "observedTicks": 790,
+        "finalTtl": 197
+      },
+      {
+        "name": "Freighter_004",
+        "picked": 980,
+        "unloaded": 930,
+        "workTicks": 697,
+        "parkingTicks": 85,
+        "observedTicks": 790,
+        "finalTtl": 225
+      },
+      {
+        "name": "Freighter_012",
+        "picked": 1050,
+        "unloaded": 1000,
+        "workTicks": 677,
+        "parkingTicks": 100,
+        "observedTicks": 790,
+        "finalTtl": 231
+      },
+      {
+        "name": "Freighter_013",
+        "picked": 1040,
+        "unloaded": 1090,
+        "workTicks": 631,
+        "parkingTicks": 146,
+        "observedTicks": 790,
+        "finalTtl": 240
+      },
+      {
+        "name": "Freighter_016",
+        "picked": 900,
+        "unloaded": 900,
+        "workTicks": 664,
+        "parkingTicks": 116,
+        "observedTicks": 790,
+        "finalTtl": 252
+      },
+      {
+        "name": "Freighter_005",
+        "picked": 1900,
+        "unloaded": 1900,
+        "workTicks": 646,
+        "parkingTicks": 136,
+        "observedTicks": 790,
+        "finalTtl": 291
+      },
+      {
+        "name": "Freighter_006",
+        "picked": 750,
+        "unloaded": 800,
+        "workTicks": 556,
+        "parkingTicks": 188,
+        "observedTicks": 790,
+        "finalTtl": 306
+      },
+      {
+        "name": "Freighter_017",
+        "picked": 750,
+        "unloaded": 750,
+        "workTicks": 482,
+        "parkingTicks": 215,
+        "observedTicks": 790,
+        "finalTtl": 339
+      },
+      {
+        "name": "Freighter_007",
+        "picked": 550,
+        "unloaded": 550,
+        "workTicks": 328,
+        "parkingTicks": 190,
+        "observedTicks": 790,
+        "finalTtl": 572
+      },
+      {
+        "name": "Freighter_008",
+        "picked": 250,
+        "unloaded": 250,
+        "workTicks": 178,
+        "parkingTicks": 199,
+        "observedTicks": 790,
+        "finalTtl": 612
+      },
+      {
+        "name": "Freighter_009",
+        "picked": 150,
+        "unloaded": 150,
+        "workTicks": 69,
+        "parkingTicks": 333,
+        "observedTicks": 790,
+        "finalTtl": 681
+      }
+    ]
+  },
+  "cleanup": {
+    "queryTick": 457539,
+    "lastReport": {
+      "tick": 457460,
+      "work": 20,
+      "removed": 0,
+      "stale": 0,
+      "sweepPending": false
+    }
+  },
+  "error": {
+    "queryTick": 457539,
+    "id": 4698,
+    "tick": 455956,
+    "lastTick": 457539,
+    "count": 1584,
+    "event": "SUBSYSTEM_EXCEPTION",
+    "subsystem": "telemetry",
+    "message": "Cannot read properties of undefined (reading 'diagnostics')",
+    "stack": " at Object.finish (HiveMind.Telemetry:45:40) at main:41:44"
+  },
+  "construction": {
+    "tick": 457539,
+    "observedSiteTypes": [
+      "road"
+    ],
+    "allRetrievedSiteProgressZero": true,
+    "individualSiteIdsNotCaptured": true
+  },
+  "limits": [
+    "Delivered counter records negative cargo delta, including overflow drops; not verified final consumer receipt.",
+    "workTicks can count movement with truthy freighterJob=\"idle\" as job movement.",
+    "No new CPU sample statistics or dead-creep count were successfully collected in this continuation.",
+    "Scout birth wall-clock logs alone do not establish death cause or actual game-tick lifetime."
+  ]
+}

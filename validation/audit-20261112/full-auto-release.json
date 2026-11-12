@@ -1,0 +1,93 @@
+{
+  "at": "2026-11-12T18:42:26.078Z",
+  "target": "C:\\Users\\xbenv\\AppData\\Local\\Screeps\\scripts\\127_0_0_1___21025\\Sushi",
+  "branch": "Sushi",
+  "before": {
+    "id": "57b0fa09ad95782c9c9ab82f330bc74cad8dc1cc673237184c3a4ab18080bef6",
+    "modules": 115
+  },
+  "after": {
+    "id": "19395829da596e7d28dde9a55f5c36ba2d6e82a156bef3e11986b1faaf9514d8",
+    "modules": 115
+  },
+  "passed": 260,
+  "backup": "validation/deployments/full-auto-hauler-20261112/original",
+  "files": [
+    "Spawn.Arbiter.js",
+    "Spawn.Policy.js",
+    "HiveMind.Capacity.js",
+    "Runtime.Build.js",
+    "package.json",
+    "test/spawn-hauler-fit.js"
+  ],
+  "followup": {
+    "at": "2026-11-12T18:51:35.877Z",
+    "before": {
+      "id": "19395829da596e7d28dde9a55f5c36ba2d6e82a156bef3e11986b1faaf9514d8",
+      "modules": 115
+    },
+    "after": {
+      "id": "51aa4c60bad4c2fde996e757a164b454d612e7908823cd0b4370b72101af83e8",
+      "modules": 115
+    },
+    "passed": 251,
+    "backup": "validation/deployments/full-auto-scout-gc-20261112/original",
+    "files": [
+      "Spawn.Arbiter.js",
+      "Spawn.Policy.js",
+      "Combat.ThreatLedger.js",
+      "HiveMind.Memory.js",
+      "HiveMind.MemoryGC.js",
+      "role.Scout.js",
+      "Runtime.Build.js",
+      "package.json",
+      "test/keeper-safety.js",
+      "test/memory-gc-protection.js",
+      "test/spawn-hauler-fit.js",
+      "test/scout-fairness.js"
+    ]
+  },
+  "finalBuild": {
+    "id": "75288eb7ceb96f921dd3fe66efe285262e9ce63ea2c9da51b247f19e9ccc4c07",
+    "modules": 115
+  },
+  "logging": {
+    "at": "2026-11-12T19:02:47.981Z",
+    "before": {
+      "id": "51aa4c60bad4c2fde996e757a164b454d612e7908823cd0b4370b72101af83e8",
+      "modules": 115
+    },
+    "after": {
+      "id": "d28816f96ae0d3d8ce2539d407ac9738be66f77d323741aff3667256220f56d6",
+      "modules": 115
+    },
+    "passed": 255,
+    "backup": "validation/deployments/full-auto-traveler-20261112/original",
+    "files": [
+      "Traveler.js",
+      "HiveMind.Memory.js",
+      "Runtime.Build.js",
+      "package.json",
+      "test/traveler-diagnostics.js"
+    ]
+  },
+  "scoutProgress": {
+    "at": "2026-11-12T19:07:22.956Z",
+    "before": {
+      "id": "d28816f96ae0d3d8ce2539d407ac9738be66f77d323741aff3667256220f56d6",
+      "modules": 115
+    },
+    "after": {
+      "id": "75288eb7ceb96f921dd3fe66efe285262e9ce63ea2c9da51b247f19e9ccc4c07",
+      "modules": 115
+    },
+    "passed": 260,
+    "backup": "validation/deployments/full-auto-scout-progress-20261112/original",
+    "files": [
+      "role.Scout.js",
+      "Runtime.Build.js",
+      "package.json",
+      "test/scout-progress.js"
+    ]
+  }
+}

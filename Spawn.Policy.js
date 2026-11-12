@@ -100,6 +100,8 @@ function economyRoleCap(room, role, request, policy) {
 
 function evaluate(room, request, context, options = {}) {
     if (!room || !request) return { allowed: false, reason: 'missing room or request' };
+    const npcAdmission = require('NPC.Policy').spawnAllowed(room, request);
+    if (!npcAdmission.allowed) return npcAdmission;
     const operation = request.operationId && HiveMemory.ensure().operations[request.operationId];
     if (operation && ['COMPLETE', 'ABORTED'].includes(operation.state)) {
         return { allowed: false, reason: 'operation is terminal' };
@@ -136,7 +138,8 @@ function evaluate(room, request, context, options = {}) {
     const role = request.role || request.memory && request.memory.role;
     const hauling = role === 'Freighter' ? { missingCarry: Economy.isLocalFreighter(request) ? recovery.missing :
         Economy.isRemoteFreighter(request) ? remoteHauling.missing : undefined,
-        minimumCarryParts: renewal?.minimumCarryParts, freighterRenewal: !!renewal,
+        minimumCarryParts: renewal?.minimumCarryParts || (Economy.isRemoteFreighter(request) ?
+            Math.min(request.minimumCarryParts || 0, remoteHauling.missing || 0) : undefined), freighterRenewal: !!renewal,
         freighterPredecessors: renewal?.predecessors } : {};
     const policy = HiveMemory.getConfig('spawn');
     if (policy.enabled === false) return { allowed: true, reason: 'spawn policy disabled', ...hauling };

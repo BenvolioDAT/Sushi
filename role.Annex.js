@@ -140,7 +140,15 @@ var roleAnnex = {
         }
 
         /* Signing is secondary: the reservation intent is always issued first. */
-        if ((!controller.sign || controller.sign.text !== ANNEX_SIGN) && creep.pos.inRangeTo(controller, 1)) {
+        var sign;
+        try { sign = controller.sign; }
+        catch (error) {
+            // Some private-server signs reference a missing user. Keep the ordinary
+            // reservation/sign intent path usable and retain bounded evidence.
+            creep.memory.annexSignReadErrorAt = Game.time;
+            creep.memory.annexSignReadError = String(error.message || error).slice(0, 120);
+        }
+        if ((!sign || sign.text !== ANNEX_SIGN) && creep.pos.inRangeTo(controller, 1)) {
             if (creep.signController(controller, ANNEX_SIGN) === OK) {
                 creep.memory.annexState = 'signing';
             }

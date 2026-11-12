@@ -1,0 +1,27 @@
+{
+  "at": "2026-11-12T12:07:58.864Z",
+  "before": {
+    "id": "5fa6a628ea7abbf44eac82049ec43a2dda3a9da5de16b0a26461c07f4ae7ff63",
+    "modules": 109
+  },
+  "after": {
+    "id": "106f60395238f963af345e7c17b61f9795ff8a93bd1e4cc6118b2f877f583538",
+    "modules": 111
+  },
+  "changes": [
+    "Combat.Policy.js",
+    "Combat.ThreatLedger.js",
+    "Keeper.Combat.js",
+    "Keeper.Intel.js",
+    "Planner.Remote.js",
+    "role.Annex.js",
+    "role.Extractor.js",
+    "role.Freighter.js",
+    "role.Scout.js",
+    "role.Volley.js",
+    "Runtime.Build.js"
+  ],
+  "backup": "C:\\Users\\xbenv\\AppData\\Local\\Screeps\\scripts\\127_0_0_1___21025\\Sushi\\validation\\deployments\\keeper-20261112\\original",
+  "branch": "Sushi",
+  "target": "C:\\Users\\xbenv\\AppData\\Local\\Screeps\\scripts\\127_0_0_1___21025\\Sushi"
+}

@@ -129,6 +129,11 @@ function isDefenseRoom(roomName) {
 }
 
 function autoEngageReason(subject, context = {}) {
+    if (usernameOf(subject) === 'Source Keeper') return 'KEEPER_PATROL_REQUIRED';
+    const room = Game.rooms[context.roomName];
+    const keeperIntel = Memory.rooms && Memory.rooms[context.roomName] && Memory.rooms[context.roomName].keeperIntel;
+    if (keeperIntel && Object.keys(keeperIntel.lairs || {}).length && !(room && room.controller && room.controller.my))
+        return 'KEEPER_OPERATION_REQUIRED';
     const classification = getClassification(subject);
     if (classification === CLASSIFICATIONS.ALLY) return 'ALLY';
     if (classification === CLASSIFICATIONS.NPC) {
@@ -160,6 +165,7 @@ function shouldDefendAgainst(subject, capabilities = {}, attackedUs = false) {
 function mayLaunchOffense(subject, manualDirective = false) {
     if (isAlly(subject)) return false;
     if (manualDirective === true) return true;
+    if (usernameOf(subject) === 'Source Keeper') return false;
     if (getClassification(subject) === CLASSIFICATIONS.NPC) return HiveMemory.getConfig('combat').diplomacy.npcAutoDefense !== false;
     return playerResponseMode() === 'war' && getClassification(subject) === CLASSIFICATIONS.HOSTILE;
 }

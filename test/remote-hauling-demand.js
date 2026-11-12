@@ -42,7 +42,7 @@ test('a fresh friendly reservation raises hauling demand before portfolio rescor
     require('HiveMind.Memory').ensure().identity.username='me';
     Memory.rooms.W39S48={controller:{reservation:{username:'me',ticksToEnd:2000,observedAt:Game.time}}};
     assert.strictEqual(f.required(),22);
-    Memory.rooms.W39S48.controller.reservation.username='other';assert.strictEqual(f.required(),11);
+    Memory.rooms.W39S48.controller.reservation.username='other';assert.strictEqual(f.required(),0);
 });
 test('unrelated, immobile, damaged or expired miners cannot promise production', () => {
     for (const change of [c => { c.memory.sourceId = 'other'; }, c => { c.memory.homeRoom = 'W1N1'; },

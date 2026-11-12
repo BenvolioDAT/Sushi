@@ -15,6 +15,8 @@ const Economy = require('HiveMind.Economy');
 const HiveMemory = require('HiveMind.Memory');
 const ColonyState = require('HiveMind.ColonyState');
 const PowerManager = require('Power.Manager');
+const KeeperOperations = require('Keeper.Operations');
+const NpcOperations = require('NPC.Operations');
 
 function isWarRoomEnabled() {
     return HiveMemory.getConfig('combat').useWarRoom === true;
@@ -26,10 +28,12 @@ function refreshIntelAndThreats() {
 }
 
 function runStrategy() {
+    Telemetry.measure('remoteAccounting', () => require('Remote.Accounting').run());
     /* Economy is sampled first so every planner and demand emitter shares one policy. */
     Telemetry.measure('economy', () => Economy.run());
     Telemetry.measure('colonyState', () => ColonyState.run());
     Telemetry.measure('capacity', () => require('HiveMind.Capacity').get());
+    Telemetry.measure('npcOperations', () => { KeeperOperations.run(); NpcOperations.run(); });
     Telemetry.measure('remotePlanning', () => {
         Scheduler.run('remotePlanning', () => RemotePlanner.run(), { interval: 5 });
     });

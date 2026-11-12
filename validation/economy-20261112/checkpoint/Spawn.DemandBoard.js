@@ -1,0 +1,399 @@
+const HiveMemory = require('HiveMind.Memory');
+const TickIndex = require('HiveMind.Index');
+const spawnManager = require('spawn.manager');
+const bodyConfig = require('role.creepBodyConfig');
+const Economy = require('HiveMind.Economy');
+const Arbiter = require('Spawn.Arbiter');
+
+function tickState() {
+    const hive = HiveMemory.ensure();
+    if (!global.__sushiDemandBoard || global.__sushiDemandBoard.tick !== Game.time ||
+        global.__sushiDemandBoard.hive !== hive) {
+        global.__sushiDemandBoard = { tick: Game.time, hive, demands: new Map(), emitted: new Set(), hydrated: false };
+    }
+    return global.__sushiDemandBoard;
+}
+
+function stableId(demand) {
+    if (demand.id) return demand.id;
+    const memory = demand.memory || {};
+    // JSON boundaries avoid delimiter collisions; source fields are independent.
+    return JSON.stringify(['demand', demand.operationId || memory.operationId || null,
+        demand.role || null, demand.originRoom || null, demand.targetRoom || memory.targetRoom || null,
+        demand.squadId || memory.squadId || null, demand.assignmentKey || memory.strategyAssignmentKey ||
+            memory.assignmentKey || null, demand.producer || 'demandBoard',
+        memory.sourceId || null, memory.sourceTargetId || null, memory.remoteSourceId || null,
+        memory.sourceRoom || null, demand.strategyProvider || memory.strategyProvider || null]);
+}
+
+function plainDemand(input) {
+    const demand = {
+        id: stableId(input),
+        operationId: input.operationId || null,
+        squadId: input.squadId || null,
+        role: input.role || null,
+        capabilities: input.capabilities ? { ...input.capabilities } : null,
+        count: Number.isFinite(input.count) ? Math.max(0, Math.floor(input.count)) : 0,
+        priority: Number.isFinite(input.priority) ? input.priority : 50,
+        deadline: Number.isFinite(input.deadline) ? input.deadline : null,
+        originRoom: input.originRoom || null,
+        targetRoom: input.targetRoom || null,
+        preferredSpawnRoom: input.preferredSpawnRoom || null,
+        bodyRequirements: input.bodyRequirements ? { ...input.bodyRequirements } : null,
+        boostRequirements: input.boostRequirements ? { ...input.boostRequirements } : null,
+        replacementBuffer: Number.isFinite(input.replacementBuffer) ? input.replacementBuffer : 50,
+        validUntil: Number.isFinite(input.validUntil) ? input.validUntil :
+            Game.time + (HiveMemory.getConfig('memoryGC').demandRetention || 25),
+        emergency: input.emergency === true,
+        defenseRequest: input.defenseRequest === true,
+        defendedRoom: input.defendedRoom || null,
+        economyCategory: input.economyCategory || null,
+        strategyProvider: input.strategyProvider || null,
+        strategyCategory: input.strategyCategory || null,
+        strategyEmergency: input.strategyEmergency === true,
+        strategyMandatory: input.strategyMandatory === true,
+        assignmentKey: input.assignmentKey || null,
+        producer: input.producer || 'demandBoard',
+        memory: input.memory ? { ...input.memory } : {},
+        reason: input.reason || null,
+        emittedTick: Game.time
+    };
+    return require('Strategy.Provider').normalizeDemand(demand);
+}
+
+function beginTick() {
+    const state = tickState();
+    if (state.hydrated) return state;
+    state.hydrated = true;
+    const hive = HiveMemory.ensure();
+    for (const [id, rawSaved] of Object.entries(hive.demands)) {
+        const saved = require('Strategy.Provider').normalizeDemand(rawSaved);
+        const operation = saved.operationId && hive.operations[saved.operationId];
+        const operationEnded = operation && (operation.state === 'COMPLETE' || operation.state === 'ABORTED');
+        if (!saved || saved.validUntil < Game.time || operationEnded || !strategyDemandAllowed(saved)) {
+            delete hive.demands[id];
+            state.demands.delete(id);
+            continue;
+        }
+        state.demands.set(id, saved);
+    }
+    return state;
+}
+
+function strategyDemandAllowed(demand) { return require('Strategy.Provider').validateDemand(demand); }
+
+function operationDemandAllowed(demand) {
+    const operation = demand.operationId && HiveMemory.ensure().operations[demand.operationId];
+    if (!operation) return true; // Some producers use an assignment id without a generic operation.
+    if (['COMPLETE', 'ABORTED'].includes(operation.state)) return false;
+    return !operation.strategyDecision || operation.strategyDecision === 'allow' && operation.strategyTick === Game.time;
+}
+
+function emit(input) {
+    const state = beginTick();
+    const incoming = plainDemand(input || {});
+    if (!incoming.role && !incoming.capabilities) throw new Error('Spawn demand requires a role or capabilities');
+    // Persisted demand is a fallback between producer runs, not a permanent
+    // high-water mark. Only concurrent emissions in this tick are merged.
+    const existing = state.emitted.has(incoming.id) && state.demands.get(incoming.id);
+    const merged = existing ? {
+        ...existing,
+        ...incoming,
+        count: Math.max(existing.count || 0, incoming.count || 0),
+        priority: Math.max(existing.priority || 0, incoming.priority || 0),
+        deadline: existing.deadline === null ? incoming.deadline :
+            incoming.deadline === null ? existing.deadline : Math.min(existing.deadline, incoming.deadline),
+        validUntil: Math.max(existing.validUntil || 0, incoming.validUntil || 0),
+        emergency: existing.emergency || incoming.emergency
+    } : incoming;
+    state.demands.set(merged.id, merged);
+    state.emitted.add(merged.id);
+    HiveMemory.ensure().demands[merged.id] = merged;
+    return merged;
+}
+
+function memoryMatches(demand, memory) {
+    if (!memory) return false;
+    if (memory.demandId) return memory.demandId === demand.id;
+    if (demand.assignmentKey && (memory.strategyAssignmentKey || memory.assignmentKey) !== demand.assignmentKey) return false;
+    for (const key of ['sourceId', 'sourceTargetId', 'remoteSourceId']) {
+        if (demand.memory && demand.memory[key] && memory[key] !== demand.memory[key]) return false;
+    }
+    if (demand.squadId && memory.squadId !== demand.squadId) return false;
+    if (demand.operationId && memory.operationId === demand.operationId && memory.role === demand.role) return true;
+    if (demand.operationId && demand.operationId.startsWith('expand:') &&
+        memory.expansionId === demand.targetRoom && memory.role === demand.role) return true;
+    if (demand.assignmentKey && memory.strategyAssignmentKey === demand.assignmentKey &&
+        memory.role === demand.role) return true;
+    return false;
+}
+
+function cancel(id) {
+    if (!id) return false;
+    const state = beginTick();
+    const existed = state.demands.delete(id) || !!HiveMemory.ensure().demands[id];
+    state.emitted.delete(id);
+    delete HiveMemory.ensure().demands[id];
+    for (const roomMemory of Object.values(Memory.rooms || {})) {
+        const queue = roomMemory && roomMemory.spawn && roomMemory.spawn.queue;
+        if (!Array.isArray(queue)) continue;
+        for (let index = queue.length - 1; index >= 0; index--) {
+            const request = queue[index];
+            if (request && request.memory && request.memory.demandId === id) queue.splice(index, 1);
+        }
+    }
+    return existed;
+}
+
+function assignmentCount(demand, includeQueued = true) {
+    const seen = new Set();
+    let count = 0;
+    for (const creep of TickIndex.get().allCreeps) {
+        if (!creep || !memoryMatches(demand, creep.memory)) continue;
+        const lead = (creep.body ? creep.body.length * 3 : 0) + demand.replacementBuffer;
+        if (creep.ticksToLive !== undefined && creep.ticksToLive <= lead) continue;
+        const key = creep.name || creep.id;
+        if (!seen.has(key)) {
+            seen.add(key);
+            count++;
+        }
+    }
+    for (const spawn of TickIndex.get().ownedSpawns.concat(require('Spawn.Intents').get().spawns)) {
+        const name = spawn && spawn.spawning && spawn.spawning.name;
+        const memory = spawn.request && spawn.request.memory || name && Memory.creeps && Memory.creeps[name];
+        if (!name || seen.has(name) || !memoryMatches(demand, memory)) continue;
+        seen.add(name);
+        count++;
+    }
+    if (!includeQueued) return count;
+    const rooms = Memory.rooms || {};
+    for (const [roomName, roomMemory] of Object.entries(rooms)) {
+        const queue = roomMemory && roomMemory.spawn && roomMemory.spawn.queue || [];
+        for (let requestIndex = 0; requestIndex < queue.length; requestIndex++) {
+            const request = queue[requestIndex];
+            if (!memoryMatches(demand, request.memory)) continue;
+            const key = `queued:${roomName}:${requestIndex}:${request.requestedAt || 0}`;
+            if (!seen.has(key)) {
+                seen.add(key);
+                count++;
+            }
+        }
+    }
+    return count;
+}
+
+function reconcileQueued(demand) {
+    const active = assignmentCount(demand, false);
+    let remaining = Math.max(0, demand.count - active), kept = 0;
+    // Stable room/queue order retains earlier admitted work. Living and spawning
+    // assignments remain untouched, including expiring replacement handoffs.
+    for (const roomName of Object.keys(Memory.rooms || {}).sort()) {
+        const room = Memory.rooms[roomName];
+        const queue = room && room.spawn && room.spawn.queue;
+        if (!Array.isArray(queue)) continue;
+        for (let i = 0; i < queue.length; i++) {
+            const request = queue[i];
+            if (!request || !memoryMatches(demand, request.memory)) continue;
+            if (remaining <= 0) { queue.splice(i--, 1); continue; }
+            remaining--; kept++;
+            // Retained requests must also shed stale emergency exemptions.
+            request.priority = demand.priority + require('HiveMind.Surplus').requestBias(roomName, demand);
+            request.emergency = demand.emergency;
+            request.deadline = demand.deadline;
+            request.defenseRequest = demand.defenseRequest;
+            request.defendedRoom = demand.defendedRoom;
+            request.memory.defenseRequest = demand.defenseRequest || demand.memory.defenseRequest === true;
+            request.memory.defendedRoom = demand.defendedRoom || demand.memory.defendedRoom || null;
+            request.memory.emergencyDefense = demand.memory.emergencyDefense === true;
+            request.strategyEmergency = demand.strategyEmergency;
+            request.strategyMandatory = demand.strategyMandatory;
+            request.memory.strategyEmergency = demand.strategyEmergency;
+            request.memory.strategyMandatory = demand.strategyMandatory;
+            request.expiresAt = demand.validUntil;
+        }
+    }
+    return active + kept;
+}
+
+function roomSurvivalReady(room, demand) {
+    if (demand.emergency) return true;
+    const creeps = TickIndex.get().creepsByHomeRoom.get(room.name) || [];
+    const roles = new Set(creeps.map(creep => creep.memory && creep.memory.role));
+    return roles.has('Foreman') && roles.has('Extractor') && roles.has('Freighter');
+}
+
+function validScalableDemand(demand) {
+    if (!demand.bodyRequirements || demand.bodyRequirements.scalable !== true) return true;
+    const capabilities = demand.capabilities;
+    return !!(demand.role && capabilities && typeof capabilities === 'object' && !Array.isArray(capabilities) &&
+        Object.values(capabilities).every(value => Number.isFinite(value) && value >= 0) &&
+        ['work', 'carry', 'claim', 'attack', 'ranged_attack', 'heal'].some(key => capabilities[key] > 0));
+}
+
+function bodyForDemand(demand, room) {
+    if (!validScalableDemand(demand)) return null;
+    const specified = demand.bodyRequirements && demand.bodyRequirements.body;
+    if (Array.isArray(specified) && specified.length) return specified.slice();
+    if (demand.capabilities && demand.role && demand.bodyRequirements && demand.bodyRequirements.scalable === true) {
+        const capability = demand.capabilities;
+        const selected = require('BodyProfiles').build(demand.role, { energyCapacity: room.energyCapacityAvailable,
+            energyAvailable: room.energyAvailable, urgency: demand.emergency ? 'EMERGENCY' : 'NORMAL',
+            desiredWork: capability.work, desiredCarry: capability.carry, desiredClaim: capability.claim,
+            desiredPower: capability.attack || capability.ranged_attack || capability.heal });
+        if (selected) return selected.body;
+    }
+    return demand.role ? bodyConfig.getBody(demand.role, room) : null;
+}
+
+function spawnRoomScore(room, demand) {
+    if (!room || !room.controller || !room.controller.my || !roomSurvivalReady(room, demand)) return -Infinity;
+    const localPolicy = Economy.canSpawnRequest(room, demand);
+    if (!localPolicy.allowed) return -Infinity;
+    const origin = demand.originRoom && Game.rooms[demand.originRoom];
+    if (origin && !Economy.canSpawnRequest(origin, demand).allowed) return -Infinity;
+    const body = bodyForDemand(demand, room);
+    if (!body || !body.length) return -Infinity;
+    const cost = spawnManager.getBodyCost(body);
+    if ((room.energyCapacityAvailable || 0) < cost) return -Infinity;
+    const distance = demand.targetRoom && Game.map && typeof Game.map.getRoomLinearDistance === 'function' ?
+        Game.map.getRoomLinearDistance(room.name, demand.targetRoom) : 0;
+    let score = (room.energyAvailable || 0) - cost - distance * 100;
+    if (demand.originRoom === room.name) score += 1000;
+    if (demand.preferredSpawnRoom === room.name) score += 2000;
+    return score;
+}
+
+function eligibleSpawnRooms(demand) {
+    return TickIndex.get().ownedSpawnRooms.map(room => ({ room, score: spawnRoomScore(room, demand) }))
+        .filter(item => item.score > -Infinity)
+        .sort((a, b) => b.score - a.score || a.room.name.localeCompare(b.room.name))
+        .map(item => item.room);
+}
+
+function chooseSpawnRoom(demand) { return eligibleSpawnRooms(demand)[0] || null; }
+
+function nextSlot(demand) {
+    const used = new Set();
+    const inspect = memory => {
+        if (memory && memory.demandId === demand.id && Number.isInteger(memory.demandSlot)) used.add(memory.demandSlot);
+    };
+    for (const creep of TickIndex.get().allCreeps) inspect(creep.memory);
+    for (const spawn of TickIndex.get().ownedSpawns.concat(require('Spawn.Intents').get().spawns)) {
+        inspect(spawn.request && spawn.request.memory || spawn.spawning && Memory.creeps && Memory.creeps[spawn.spawning.name]);
+    }
+    for (const room of Object.values(Memory.rooms || {})) {
+        for (const request of room.spawn && room.spawn.queue || []) inspect(request && request.memory);
+    }
+    let slot = 0;
+    while (used.has(slot)) slot++;
+    return slot;
+}
+
+function queueDemand(demand, room, count) {
+    const body = bodyForDemand(demand, room);
+    if (!body) return 0;
+    let added = 0;
+    const limit = count;
+    for (let i = 0; i < limit; i++) {
+        const memory = {
+            role: demand.role,
+            homeRoom: room.name,
+            targetRoom: demand.targetRoom,
+            operationId: demand.operationId,
+            economyCategory: demand.economyCategory,
+            strategyProvider: demand.strategyProvider,
+            strategyCategory: demand.strategyCategory,
+            strategyEmergency: demand.strategyEmergency,
+            strategyMandatory: demand.strategyMandatory,
+            assignmentKey: demand.assignmentKey,
+            squadId: demand.squadId,
+            demandId: demand.id,
+            boostRequirements: demand.boostRequirements
+        };
+        Object.assign(memory, demand.memory || {});
+        const slot = nextSlot(demand);
+        Object.assign(memory, { demandId: demand.id, demandSlot: slot });
+        const result = Arbiter.admit(room.name, {
+            requestId: JSON.stringify(['demand', demand.id, slot]),
+            role: demand.role,
+            body,
+            bodyRequirements: demand.bodyRequirements,
+            bodyProfile: demand.bodyRequirements && demand.bodyRequirements.scalable === true ? {
+                desiredWork: demand.capabilities.work, desiredCarry: demand.capabilities.carry,
+                desiredClaim: demand.capabilities.claim,
+                desiredPower: demand.capabilities.attack || demand.capabilities.ranged_attack || demand.capabilities.heal,
+                urgency: demand.emergency ? 'EMERGENCY' : 'NORMAL'
+            } : undefined,
+            priority: demand.priority,
+            deadline: demand.deadline,
+            demandId: demand.id,
+            operationId: demand.operationId,
+            economyCategory: demand.economyCategory,
+            emergency: demand.emergency,
+            strategyProvider: demand.strategyProvider,
+            strategyCategory: demand.strategyCategory,
+            strategyEmergency: demand.strategyEmergency,
+            strategyMandatory: demand.strategyMandatory,
+            defenseRequest: demand.defenseRequest,
+            defendedRoom: demand.defendedRoom,
+            memory,
+            expiresAt: demand.validUntil
+        }, { producer: demand.producer || 'demandBoard', emergency: demand.emergency, ttl: 5 });
+        if (result.ok && result.requested > 0) added += result.requested;
+        else break;
+    }
+    return added;
+}
+
+function cleanupQueues(activeIds) {
+    for (const roomMemory of Object.values(Memory.rooms || {})) {
+        const queue = roomMemory && roomMemory.spawn && roomMemory.spawn.queue;
+        if (!Array.isArray(queue)) continue;
+        for (let i = queue.length - 1; i >= 0; i--) {
+            const demandId = queue[i] && queue[i].memory && queue[i].memory.demandId;
+            if (demandId && !activeIds.has(demandId)) queue.splice(i, 1);
+            else if (queue[i] && queue[i].expiresAt && queue[i].expiresAt < Game.time) queue.splice(i, 1);
+        }
+    }
+}
+
+function flush() {
+    const state = beginTick();
+    const demands = Array.from(state.demands.values())
+        .filter(demand => demand.count > 0 && demand.validUntil >= Game.time &&
+            strategyDemandAllowed(demand) && operationDemandAllowed(demand))
+        .sort((a, b) => b.priority - a.priority ||
+            (a.deadline || Infinity) - (b.deadline || Infinity) || a.id.localeCompare(b.id));
+    const activeIds = new Set(demands.map(demand => demand.id));
+    // Stale queued assignments must not hide a real demand deficit.
+    for (const room of TickIndex.get().ownedSpawnRooms) Arbiter.pruneRoom(room.name);
+    cleanupQueues(activeIds);
+    const report = { tick: Game.time, demands: {}, rooms: {} };
+    for (const demand of demands) {
+        const assigned = reconcileQueued(demand);
+        const missing = Math.max(0, demand.count - assigned);
+        let room = null, queued = 0;
+        if (missing > 0) for (const candidate of eligibleSpawnRooms(demand)) {
+            const added = queueDemand(demand, candidate, missing - queued);
+            if (added > 0) {
+                room = room || candidate;
+                report.rooms[candidate.name] = true;
+                queued += added;
+            }
+            if (queued >= missing) break;
+        }
+        report.demands[demand.id] = {
+            role: demand.role, desired: demand.count, assigned, missing,
+            queued, spawnRoom: room && room.name || null,
+            reason: validScalableDemand(demand) ? null : 'invalid scalable capabilities'
+        };
+        if (room) report.rooms[room.name] = true;
+    }
+    return report;
+}
+
+function getDemands() {
+    return Array.from(beginTick().demands.values());
+}
+
+module.exports = { beginTick, emit, cancel, flush, getDemands, assignmentCount, chooseSpawnRoom, memoryMatches };

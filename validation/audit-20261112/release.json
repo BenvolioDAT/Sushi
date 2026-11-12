@@ -1,0 +1,19 @@
+{
+  "identity": {
+    "id": "5fa6a628ea7abbf44eac82049ec43a2dda3a9da5de16b0a26461c07f4ae7ff63",
+    "modules": 109
+  },
+  "files": [
+    "HiveMind.Capacity.js",
+    "HiveMind.MemoryGC.js",
+    "Combat.Math.js",
+    "HiveMind.Telemetry.js",
+    "Runtime.Build.js",
+    "HiveMind.Economy.js",
+    "Planner.Remote.js",
+    "role.Freighter.js"
+  ],
+  "backup": "C:\\Users\\xbenv\\AppData\\Local\\Screeps\\scripts\\127_0_0_1___21025\\Sushi\\validation\\deployments\\audit-20261112\\original",
+  "validation": "final-staged-validation.log",
+  "deployedAt": "2026-11-12T04:49:02.407Z"
+}

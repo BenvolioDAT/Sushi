@@ -1,0 +1,109 @@
+{
+  "at": "2026-11-12T13:50:34.857Z",
+  "before": {
+    "id": "106f60395238f963af345e7c17b61f9795ff8a93bd1e4cc6118b2f877f583538",
+    "modules": 111
+  },
+  "after": {
+    "id": "718f8b0745273b5fdc7c9148d507a5bfe7443ba340a542182bfe9164ad5c7f41",
+    "modules": 114
+  },
+  "changes": [
+    "Combat.Policy.js",
+    "HiveMind.Economy.js",
+    "HiveMind.Memory.js",
+    "HiveMind.MemoryGC.js",
+    "Keeper.Combat.js",
+    "Keeper.Intel.js",
+    "Keeper.Operations.js",
+    "NPC.Operations.js",
+    "NPC.Policy.js",
+    "Planner.Remote.js",
+    "role.Freighter.js",
+    "role.Ronin.js",
+    "Runtime.Build.js",
+    "Spawn.Policy.js",
+    "spawn.request.manager.js",
+    "Tick.Planning.js"
+  ],
+  "backup": "C:\\Users\\xbenv\\AppData\\Local\\Screeps\\scripts\\127_0_0_1___21025\\Sushi\\validation\\deployments\\npc-auto-20261112\\original",
+  "target": "C:\\Users\\xbenv\\AppData\\Local\\Screeps\\scripts\\127_0_0_1___21025\\Sushi",
+  "branch": "Sushi",
+  "checks": 226,
+  "syntaxModules": 114,
+  "observerFollowup": {
+    "at": "2026-11-12T13:58:20.347Z",
+    "before": {
+      "id": "718f8b0745273b5fdc7c9148d507a5bfe7443ba340a542182bfe9164ad5c7f41",
+      "modules": 114
+    },
+    "after": {
+      "id": "edb984faae70aa9835d339429fe356e52ca6b179775c9167afbb32bede21231c",
+      "modules": 114
+    },
+    "backup": "C:\\Users\\xbenv\\AppData\\Local\\Screeps\\scripts\\127_0_0_1___21025\\Sushi\\validation\\deployments\\npc-auto-observer-20261112\\original",
+    "files": [
+      "NPC.Policy.js",
+      "role.Scout.js",
+      "Runtime.Build.js",
+      "test/npc-automation.js"
+    ]
+  },
+  "finalBuild": {
+    "id": "507ba4c0040d5e1a1563b4dcdf2d83f274ef05450c26cc3c36edb497ada2c7c5",
+    "modules": 114
+  },
+  "progressFollowup": {
+    "at": "2026-11-12T14:04:37.859Z",
+    "before": {
+      "id": "edb984faae70aa9835d339429fe356e52ca6b179775c9167afbb32bede21231c",
+      "modules": 114
+    },
+    "after": {
+      "id": "333c5bea79cb5a235c076ee38b8ba2fbebf6e5b68f3f45f4cff616cf83a471a4",
+      "modules": 114
+    },
+    "backup": "validation/deployments/npc-auto-progress-20261112/original",
+    "files": [
+      "NPC.Operations.js",
+      "test/npc-automation.js",
+      "Runtime.Build.js"
+    ]
+  },
+  "retryFollowup": {
+    "at": "2026-11-12T14:07:48.755Z",
+    "before": {
+      "id": "333c5bea79cb5a235c076ee38b8ba2fbebf6e5b68f3f45f4cff616cf83a471a4",
+      "modules": 114
+    },
+    "after": {
+      "id": "bfeeb7f79fbf917935a1690eae0c60f24a6d730006e19a479bd2427bdb1aafec",
+      "modules": 114
+    },
+    "backup": "validation/deployments/npc-auto-retry-20261112/original",
+    "files": [
+      "NPC.Operations.js",
+      "test/npc-automation.js",
+      "Runtime.Build.js"
+    ]
+  },
+  "stabilityFollowup": {
+    "at": "2026-11-12T14:08:55.011Z",
+    "before": {
+      "id": "bfeeb7f79fbf917935a1690eae0c60f24a6d730006e19a479bd2427bdb1aafec",
+      "modules": 114
+    },
+    "after": {
+      "id": "507ba4c0040d5e1a1563b4dcdf2d83f274ef05450c26cc3c36edb497ada2c7c5",
+      "modules": 114
+    },
+    "backup": "validation/deployments/npc-auto-stability-20261112/original",
+    "files": [
+      "NPC.Operations.js",
+      "test/npc-automation.js",
+      "Runtime.Build.js"
+    ]
+  },
+  "newNpcScenarios": 34,
+  "verifiedAt": "2026-11-12T14:10:24.246Z"
+}

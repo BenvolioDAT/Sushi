@@ -22,6 +22,7 @@ var travel = require('utility.Travel.Creep');
 var CombatMath = require('Combat.Math');
 var SquadTactics = require('Squad.Tactics');
 var CombatPolicy = require('Combat.Policy');
+var KeeperCombat = require('Keeper.Combat');
 
 var roleVolley = {
 
@@ -31,6 +32,8 @@ var roleVolley = {
             return;
         }
 
+
+        if (KeeperCombat.run(creep)) return;
 
         /*
          * Local danger always matters more than a remote flag or target room.

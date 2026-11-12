@@ -1,0 +1,43 @@
+{
+  "at": "2026-11-12T18:06:51.494Z",
+  "target": "C:\\Users\\xbenv\\AppData\\Local\\Screeps\\scripts\\127_0_0_1___21025\\Sushi",
+  "branch": "Sushi",
+  "before": {
+    "id": "507ba4c0040d5e1a1563b4dcdf2d83f274ef05450c26cc3c36edb497ada2c7c5",
+    "modules": 114
+  },
+  "after": {
+    "id": "6c9f2a8705dcca3637493036d4568d3805cc2a7ddd0f09fa1dfd455427057cc3",
+    "modules": 115
+  },
+  "passed": 238,
+  "backup": "validation/deployments/runtime-review-probe-20261112/original",
+  "files": [
+    "Diagnostics.Probe.js",
+    "Diagnostics.js",
+    "Runtime.Build.js",
+    "test/diagnostic-probe.js",
+    "package.json"
+  ],
+  "threatFollowup": {
+    "at": "2026-11-12T18:11:24.634Z",
+    "before": {
+      "id": "6c9f2a8705dcca3637493036d4568d3805cc2a7ddd0f09fa1dfd455427057cc3",
+      "modules": 115
+    },
+    "after": {
+      "id": "57b0fa09ad95782c9c9ab82f330bc74cad8dc1cc673237184c3a4ab18080bef6",
+      "modules": 115
+    },
+    "backup": "validation/deployments/runtime-review-threats-20261112/original",
+    "files": [
+      "Combat.ThreatLedger.js",
+      "Runtime.Build.js",
+      "test/npc-safety.js"
+    ]
+  },
+  "finalBuild": {
+    "id": "57b0fa09ad95782c9c9ab82f330bc74cad8dc1cc673237184c3a4ab18080bef6",
+    "modules": 115
+  }
+}

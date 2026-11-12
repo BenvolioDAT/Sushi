@@ -1,2 +1,9 @@
 # Recoverable deployment backups stay local and outside the runtime target.
 validation/deployments/
+
+# Reproducible staging copy; root tests and release evidence are retained.
+validation/audit-20261112/workspace/
+
+validation/audit-20261112/keeper-auto-workspace/
+validation/audit-20261112/runtime-review-workspace/
+validation/audit-20261112/full-auto-workspace/

@@ -1,0 +1,19 @@
+{
+  "source": "Existing HEALTH_SNAPSHOT events read through native game console at tick 452956",
+  "scope": "Empire-wide partial-loop CPU, not engine full-tick total; fixed 100-tick cadence",
+  "count": 47,
+  "firstTick": 448284,
+  "lastTick": 452884,
+  "spanTicks": 4600,
+  "mean": 21.86351276595745,
+  "median": 21.253,
+  "samplePeak": 37.5078,
+  "p95NearestRank": 29.654,
+  "minimum": 16.4461,
+  "cpuLimit": 100,
+  "bucket": {
+    "min": 10000,
+    "max": 10000
+  },
+  "precision": "CSV inputs rounded to four decimal places"
+}

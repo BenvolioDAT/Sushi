@@ -1,0 +1,309 @@
+{
+  "tick": 636366,
+  "room": [
+    {
+      "_id": "cf560772f3a3b50",
+      "type": "source",
+      "x": 15,
+      "y": 4,
+      "energyCapacity": 4000
+    },
+    {
+      "_id": "42af0772f3a2c10",
+      "type": "keeperLair",
+      "x": 15,
+      "y": 7,
+      "nextSpawnTime": 636588
+    },
+    {
+      "_id": "828b0772f3abaa1",
+      "type": "source",
+      "x": 32,
+      "y": 11,
+      "energyCapacity": 4000
+    },
+    {
+      "_id": "64af0772f3ac285",
+      "type": "keeperLair",
+      "x": 27,
+      "y": 12,
+      "nextSpawnTime": 636588
+    },
+    {
+      "_id": "4e520772f3af775",
+      "type": "keeperLair",
+      "x": 46,
+      "y": 34,
+      "nextSpawnTime": 636588
+    },
+    {
+      "_id": "df3d0772f3ad46f",
+      "type": "source",
+      "x": 15,
+      "y": 43,
+      "energyCapacity": 4000
+    },
+    {
+      "_id": "b54c0772f3ab469",
+      "type": "keeperLair",
+      "x": 14,
+      "y": 47,
+      "nextSpawnTime": 636588
+    },
+    {
+      "_id": "f3d461653e33218",
+      "type": "mineral",
+      "x": 41,
+      "y": 35
+    },
+    {
+      "_id": "2a7161653e34b2e",
+      "type": "extractor",
+      "x": 41,
+      "y": 35
+    },
+    {
+      "_id": "5991f978b292adc",
+      "type": "creep",
+      "x": 7,
+      "y": 8,
+      "user": "26cd1181566aab9",
+      "name": "Scout_002",
+      "hits": 100,
+      "body": [
+        {
+          "type": "move",
+          "hits": 100
+        }
+      ]
+    },
+    {
+      "_id": "bc40f978db46df2",
+      "type": "tombstone",
+      "x": 14,
+      "y": 5,
+      "user": "3"
+    },
+    {
+      "_id": "f640f978db4a5be",
+      "type": "tombstone",
+      "x": 31,
+      "y": 10,
+      "user": "3"
+    },
+    {
+      "_id": "734af978db40355",
+      "type": "tombstone",
+      "x": 42,
+      "y": 34,
+      "user": "3"
+    },
+    {
+      "_id": "90a5f978db4141e",
+      "type": "tombstone",
+      "x": 16,
+      "y": 44,
+      "user": "3"
+    }
+  ],
+  "intel": {
+    "sources": {
+      "cf560772f3a3b50": {
+        "id": "cf560772f3a3b50",
+        "pos": {
+          "x": 15,
+          "y": 4,
+          "roomName": "W6N4"
+        },
+        "lastScanned": 636366,
+        "seats": [
+          {
+            "x": 14,
+            "y": 5,
+            "roomName": "W6N4"
+          }
+        ],
+        "seatCount": 1,
+        "seatVersion": 1,
+        "Flag": false,
+        "flagName": null,
+        "assignedMiner": null,
+        "containerId": null,
+        "linkId": null,
+        "roadPlanned": false,
+        "haul": {
+          "targetId": null,
+          "targetType": null,
+          "amount": 0,
+          "lastSeen": 0,
+          "reservedBy": null,
+          "reservedUntil": 0,
+          "reservedCarry": 0,
+          "homeRoom": null
+        }
+      },
+      "828b0772f3abaa1": {
+        "id": "828b0772f3abaa1",
+        "pos": {
+          "x": 32,
+          "y": 11,
+          "roomName": "W6N4"
+        },
+        "lastScanned": 636366,
+        "seats": [
+          {
+            "x": 31,
+            "y": 10,
+            "roomName": "W6N4"
+          }
+        ],
+        "seatCount": 1,
+        "seatVersion": 1,
+        "Flag": false,
+        "flagName": null,
+        "assignedMiner": null,
+        "containerId": null,
+        "linkId": null,
+        "roadPlanned": false,
+        "haul": {
+          "targetId": null,
+          "targetType": null,
+          "amount": 0,
+          "lastSeen": 0,
+          "reservedBy": null,
+          "reservedUntil": 0,
+          "reservedCarry": 0,
+          "homeRoom": null
+        }
+      },
+      "df3d0772f3ad46f": {
+        "id": "df3d0772f3ad46f",
+        "pos": {
+          "x": 15,
+          "y": 43,
+          "roomName": "W6N4"
+        },
+        "lastScanned": 636366,
+        "seats": [
+          {
+            "x": 14,
+            "y": 42,
+            "roomName": "W6N4"
+          },
+          {
+            "x": 15,
+            "y": 42,
+            "roomName": "W6N4"
+          },
+          {
+            "x": 16,
+            "y": 42,
+            "roomName": "W6N4"
+          },
+          {
+            "x": 16,
+            "y": 43,
+            "roomName": "W6N4"
+          },
+          {
+            "x": 16,
+            "y": 44,
+            "roomName": "W6N4"
+          }
+        ],
+        "seatCount": 5,
+        "seatVersion": 1,
+        "Flag": false,
+        "flagName": null,
+        "assignedMiner": null,
+        "containerId": null,
+        "linkId": null,
+        "roadPlanned": false,
+        "haul": {
+          "targetId": null,
+          "targetType": null,
+          "amount": 0,
+          "lastSeen": 0,
+          "reservedBy": null,
+          "reservedUntil": 0,
+          "reservedCarry": 0,
+          "homeRoom": null
+        }
+      }
+    },
+    "Mineral": {
+      "f3d461653e33218": {
+        "id": "f3d461653e33218",
+        "pos": {
+          "x": 41,
+          "y": 35,
+          "roomName": "W6N4"
+        },
+        "density": 3,
+        "mineralType": "Z",
+        "lastKnownAmount": 45246.13072547015,
+        "lastScanned": 636366,
+        "Amount": 0,
+        "flag": false,
+        "flagName": null,
+        "extractorId": null,
+        "containerId": null,
+        "roadPlanned": false
+      }
+    },
+    "roomName": "W6N4",
+    "lastScanned": 636366,
+    "controller": null,
+    "lastScanTick": 636366,
+    "scoutIntel": {
+      "lastScanTick": 636366,
+      "roomName": "W6N4",
+      "roomStatus": "normal",
+      "sourceCount": 3,
+      "mineralType": "Z",
+      "hostileCreepCount": 0,
+      "hostileStructureCount": 4,
+      "invaderCore": false,
+      "controllerOwner": null,
+      "controllerReservation": null,
+      "controllerLevel": null
+    },
+    "lastIntelRefreshAt": 636366,
+    "identity": {
+      "type": "INTEL"
+    }
+  },
+  "scouts": [
+    {
+      "name": "Scout_002",
+      "room": "W6N4",
+      "x": 7,
+      "y": 8,
+      "m": {
+        "role": "Scout",
+        "homeRoom": "W7N4",
+        "economyCategory": "remoteIntel",
+        "requestId": "legacy:W7N4:Scout::::",
+        "spawnCapability": {
+          "work": 0,
+          "carry": 0,
+          "claim": 0
+        },
+        "_trav": {
+          "state": [
+            7,
+            8,
+            0,
+            3,
+            25,
+            25,
+            "W7N3"
+          ],
+          "path": "566666656666666666666676444444555546665655655"
+        },
+        "_sushiMoveTick": 636366,
+        "targetRoom": "W7N3"
+      }
+    }
+  ]
+}
