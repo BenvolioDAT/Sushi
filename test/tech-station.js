@@ -39,6 +39,59 @@ test('out-of-range Techs still move to upgrade range', () => {
     const f = fixture(); f.c.pos = new RoomPosition(6, 31, 'W39S47'); f.c.memory.upgrading = true;
     f.role.run(f.c); assert.strictEqual(f.moves(), 1); assert.strictEqual(f.c._trafficLocked, false);
 });
+test('a loaded arrival selects a free reachable upgrading tile instead of queuing behind a worker', () => {
+    const f=fixture(); f.c.pos=new RoomPosition(11,35,f.c.room.name); f.c.memory.upgrading=true;
+    const blocker={name:'stationaryTech',room:f.c.room,pos:new RoomPosition(10,35,f.c.room.name),memory:{role:'Tech'}};
+    Game.creeps[blocker.name]=blocker;
+    f.c.pos.findClosestByPath=(tiles,options)=>{
+        assert.strictEqual(options.ignoreCreeps,false);
+        assert.ok(tiles.every(p=>p.getRangeTo(f.c.room.controller)<=3));
+        assert.ok(!tiles.some(p=>p.isEqualTo(blocker.pos)||p.isEqualTo(f.c.room.controller.pos)));
+        return tiles.find(p=>p.x===10&&p.y===34);
+    };
+    f.role.run(f.c); assert.strictEqual(f.moves(),1);
+    assert.ok(f.moveTarget().isEqualTo(new RoomPosition(10,34,f.c.room.name)));
+});
+test('two arrivals reserve distinct destinations in the same tick', () => {
+    const f=fixture(); f.c.pos=new RoomPosition(11,35,f.c.room.name);
+    const selected=[]; f.c.pos.findClosestByPath=tiles=>{selected.push(tiles[0]);return tiles[0];};
+    f.role.moveToControllerStation(f.c); f.role.moveToControllerStation(f.c);
+    assert.strictEqual(selected.length,2); assert.ok(!selected[0].isEqualTo(selected[1]));
+    Game.time++; f.role.moveToControllerStation(f.c);
+    assert.ok(selected[0].isEqualTo(selected[2]),'tick reservations must expire');
+});
+test('refilling approaches require both withdraw and upgrade range and avoid occupied tiles', () => {
+    const f=fixture(); f.c.pos=new RoomPosition(10,33,f.c.room.name); f.c.store.energy=0;
+    f.c.pos.findClosestByPath=tiles=>{
+        assert.ok(tiles.length); assert.ok(tiles.every(p=>p.getRangeTo(f.container)<=1&&p.getRangeTo(f.c.room.controller)<=3));
+        return tiles[0];
+    };
+    f.role.getEnergyForTech(f.c); assert.strictEqual(f.moves(),1);
+    assert.ok(f.moveTarget().getRangeTo(f.container)<=1);
+    assert.ok(f.moveTarget().getRangeTo(f.c.room.controller)<=3);
+});
+test('station selection excludes hostile creeps, power creeps, terrain, structures, resources and sites', () => {
+    const f=fixture(); f.c.pos=new RoomPosition(11,35,f.c.room.name);
+    const pos=(x,y)=>new RoomPosition(x,y,f.c.room.name);
+    const hostile={name:'enemy',pos:pos(9,34)}; const power={name:'power',pos:pos(9,35)};
+    f.structures.push({structureType:STRUCTURE_SPAWN,pos:pos(9,36)},
+        {structureType:STRUCTURE_RAMPART,my:false,isPublic:false,pos:pos(9,37)});
+    f.c.room.find=type=>type===FIND_STRUCTURES?f.structures:type===FIND_HOSTILE_CREEPS?[hostile]:
+        type===FIND_MY_POWER_CREEPS?[power]:type===FIND_SOURCES?[{pos:pos(8,34)}]:
+        type===FIND_CONSTRUCTION_SITES?[{pos:pos(8,35)}]:[];
+    Game.map.getRoomTerrain=()=>({get:(x,y)=>x===8&&y===36?TERRAIN_MASK_WALL:0});
+    f.c.pos.findClosestByPath=tiles=>{
+        for(const [x,y] of [[9,34],[9,35],[9,36],[9,37],[8,34],[8,35],[8,36]])
+            assert.ok(!tiles.some(p=>p.x===x&&p.y===y),x+':'+y+' cannot be a station');
+        return tiles[0];
+    };
+    f.role.moveToControllerStation(f.c); assert.strictEqual(f.moves(),1);
+});
+test('an inaccessible station set falls back to the proper controller range', () => {
+    const f=fixture(); f.c.pos=new RoomPosition(11,35,f.c.room.name);
+    f.c.pos.findClosestByPath=()=>null; f.role.moveToControllerStation(f.c);
+    assert.ok(f.moveTarget().isEqualTo(f.c.room.controller.pos)); assert.strictEqual(f.moves(),1);
+});
 test('an empty nearby container releases the stationary traffic lock', () => {
     const f = fixture(); f.container.store.energy = 0; f.role.run(f.c);
     assert.strictEqual(f.c._trafficLocked, false);

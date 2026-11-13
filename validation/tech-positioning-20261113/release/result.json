@@ -1,0 +1,14 @@
+{
+  "build": {
+    "id": "59f4701b7b83691828b9caeeb5fd6e46dee6b0759ee87677a71af649c2b2de3e",
+    "modules": 116
+  },
+  "modules": 116,
+  "changed": [
+    "role.Artificer.js",
+    "role.Tech.js",
+    "Runtime.Build.js"
+  ],
+  "backup": "C:\\Users\\xbenv\\AppData\\Local\\Screeps\\scripts\\192_168_0_217___21025\\Sushi\\validation\\tech-positioning-20261113\\release\\backup",
+  "verifiedAt": "2026-11-13T03:42:06.107Z"
+}

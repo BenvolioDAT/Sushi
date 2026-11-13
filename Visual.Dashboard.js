@@ -31,10 +31,11 @@ function build(room, mode = 'NORMAL') {
         role + ': ' + (view.counts[role] || 0) + ' + ' + (view.spawning[role] || 0) + ' + ' + (view.queued[role] || 0)), { maxRows: 9 });
     const diagnostic = Diagnostics.summary(room.name);
     Layout.add(layout, 0, 'DIAGNOSTICS', [
-        'History: ' + Diagnostics.status().events + ' | Warnings ' + diagnostic.warnings + ' | Errors ' + diagnostic.errors,
+        'Recent 1000 ticks: WARN ' + diagnostic.warnings + ' | ERROR ' + diagnostic.errors,
+        'Resolved kept: ' + diagnostic.resolvedWarnings + ' | History: ' + Diagnostics.status().events,
         diagnostic.last ? 'Last: ' + diagnostic.last.event + ' @' + diagnostic.last.tick : 'No recorded room events',
-        'Console: Sushi.debug.room("' + room.name + '")'
-    ], { maxRows: 3 });
+        'Console: Sushi.debug.report("' + room.name + '")'
+    ], { maxRows: 4 });
     const sourceRows = [];
     view.sources.forEach((s, i) => {
         sourceRows.push('Source ' + (i + 1) + ' | WORK ' + s.activeWork + '/' + s.requiredWork);
@@ -59,6 +60,12 @@ function build(room, mode = 'NORMAL') {
         view.spawn.sizingReason || 'Harvest: ' + view.activeWork + '/' + view.requiredWork + ' active WORK',
         view.spawn.admission || 'Incoming: ' + view.spawningWork + ' spawning + ' + view.queuedWork + ' queued WORK'
     ].slice(0, mode === 'DEBUG' ? 6 : 4) : ['No spawn decision this tick'], { maxRows: mode === 'DEBUG' ? 6 : 4 });
+    const haul = view.logistics.local;
+    Layout.add(layout, 1, 'LOCAL HAULING', [
+        'CARRY ' + number(haul.living) + '/' + number(haul.required) + ' | Workers ' + haul.workers,
+        'Idle ' + haul.idleWorkers + ' | No progress ' + haul.noProgressWorkers,
+        'Source backlog: ' + number(view.hauling?.backlog) + ' energy'
+    ], { maxRows: 3 });
     Layout.add(layout, 1, 'REMOTE OPERATIONS', view.remotes.map(r => r.room + ' | ' + r.status + ' | ' + r.sources + ' sources'),
         { when: view.remotes.length > 0, maxRows: 4 });
     const resources = Object.entries(view.resources).filter(([,n]) => n > 0).sort((a, b) => b[1] - a[1]);

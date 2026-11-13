@@ -1,0 +1,42 @@
+{
+  "baselineTick": 2191631,
+  "baselineBuild": "744e6480d2d774a20a97302b4ad03134cee7c3d2e64d089b238c234e3e55ffa3",
+  "executedBuild": "2871b12c1eceab25dc150e4b7c96c220195dabee7622c8a581e80cf5d7956044",
+  "modules": 116,
+  "executedBuildReceiptTick": 2196399,
+  "endingTick": 2198058,
+  "elapsedTicks": 6427,
+  "postReceiptTicks": 1659,
+  "checksPassed": 294,
+  "target": "C:/Users/xbenv/AppData/Local/Screeps/scripts/192_168_0_217___21025/Sushi",
+  "baseline": { "cpuEma": 29.607742631886925, "bucket": 10000, "recentWarnings": 81, "errors": 0 },
+  "snapshots": [
+    { "tick": 2191963, "progress": 17705, "healthyCarry": 20, "requiredCarry": 19, "backlog": 4305, "noProgressWorkers": 1 },
+    { "tick": 2192620, "cpuEma": 36.050136273417024, "protectedConflict": { "worker": "Freighter_001", "position": [36,28], "next": [35,29], "miner": "Extractor_006", "idleTicks": 639 } },
+    { "tick": 2194680, "progress": 24253, "cpuEma": 35.36149047081078, "worstSampledIdleTicks": 391 },
+    { "tick": 2195084, "source": "dashboard", "newHaulingPanel": true, "backlogApproximate": 3300, "noProgressWorkers": 0 },
+    { "tick": 2195432, "source": "dashboard", "state": "STABLE", "backlog": 566, "noProgressWorkers": 0 },
+    { "tick": 2195479, "source": "dashboard", "state": "STABLE", "backlog": 294, "noProgressWorkers": 0 },
+    { "tick": 2196101, "source": "dashboard", "backlog": 637, "noProgressWorkers": 0 },
+    { "tick": 2196298, "source": "dashboard", "backlog": 116, "noProgressWorkers": 0 },
+    { "tick": 2197431, "humanReadableReportExecuted": true },
+    { "tick": 2197707, "progress": 35369, "state": "RECOVERY", "healthyCarry": 13, "spawningCarry": 5, "requiredCarry": 18, "backlog": 1630, "noProgressWorkers": 0, "survivingWorkerDeliveredTotal": 17572 },
+    { "tick": 2197990, "source": "dashboard", "state": "STABLE", "rcl2ProgressPercentApproximate": 81.9, "backlog": 413, "noProgressWorkers": 0 }
+  ],
+  "probe": { "startedAt": 2196617, "until": 2197717, "cadence": 50, "samplesAdded": 22, "cumulativeCount": 42, "retained": 11, "skipped": 0, "errorCount": 0, "errors": [], "stopReason": "EXPIRED", "enabledAtEndingTick": false },
+  "probeSamples": [
+    { "tick": 2197168, "work": [10,10], "backlog": 1977, "lateTickCpu": 22.369880000012927, "rollingCpu": 40.24949752657941 },
+    { "tick": 2197218, "work": [8,10], "backlog": 1837, "lateTickCpu": 31.41065200000594, "rollingCpu": 33.3657574417294 },
+    { "tick": 2197268, "work": [10,10], "backlog": 1186, "lateTickCpu": 43.06671099999221, "rollingCpu": 42.110332584345024 },
+    { "tick": 2197318, "work": [10,10], "backlog": 1135, "lateTickCpu": 40.769564999995055, "rollingCpu": 35.76668474910245 },
+    { "tick": 2197368, "work": [10,10], "backlog": 1217, "lateTickCpu": 31.340698999993037, "rollingCpu": 35.27298657180703 },
+    { "tick": 2197418, "work": [10,10], "backlog": 1343, "lateTickCpu": 25.101626000003307, "rollingCpu": 36.249984285740396 },
+    { "tick": 2197468, "work": [10,10], "backlog": 2165, "lateTickCpu": 34.28226499998709, "rollingCpu": 34.824216527918715 },
+    { "tick": 2197518, "work": [10,10], "backlog": 3176, "lateTickCpu": 25.011041000005207, "rollingCpu": 32.7814213330733 },
+    { "tick": 2197568, "work": [10,10], "backlog": 2837, "lateTickCpu": 30.988026000006357, "rollingCpu": 34.76360700047485 },
+    { "tick": 2197618, "work": [10,10], "backlog": 2405, "lateTickCpu": 33.33393900000374, "rollingCpu": 33.58691312258249 },
+    { "tick": 2197668, "work": [10,10], "backlog": 2026, "lateTickCpu": 42.9862690000009, "rollingCpu": 38.17303559437514 }
+  ],
+  "matchedWorkerFlow": { "from": 2197168, "through": 2197668, "generationFence": "name and tick + ticksToLive", "delivered": { "Freighter_002": 1400, "Freighter_003": 2250, "Freighter_004": 550, "Freighter_006": 2200, "Freighter_007": 553, "Freighter_005": 500 }, "total": 7453 },
+  "remaining": ["temporary ordinary congestion", "replacement-related harvest/hauling coverage gaps", "small recovery bodies", "backlog-driven RECOVERY", "remote income and dangerous combat not certified"]
+}

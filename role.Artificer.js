@@ -959,9 +959,7 @@ function upgradeController(creep) {
         return;
     }
 
-    if(creep.room.controller && creep.upgradeController(creep.room.controller) === ERR_NOT_IN_RANGE) {
-        utilityTravelCreep.move(creep, creep.room.controller, {visualizePathStyle: {stroke: '#ffffff'}});
-    }
+    roleTech.upgradeRoomController(creep);
 }
 
 function getControllerUpgradePolicy(creep, spend) {

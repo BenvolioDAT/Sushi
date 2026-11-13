@@ -1,0 +1,4118 @@
+/*
+ * spawn.request.manager.js
+ *
+ * This file decides what creeps the room should request.
+ *
+ * It does not directly spawn creeps.
+ * It asks spawn.manager.js to queue the creeps.
+ *
+ * Current setup:
+ * - Loops every visible owned room that has at least one owned spawn.
+ * - Rooms without an owned spawn are not managed as mature spawn rooms yet.
+ */
+
+var spawnManager = require('spawn.manager');
+var creepBodyConfig = require('role.creepBodyConfig');
+var RemotePlanner = require('Planner.Remote');
+var creepUtility = require('utility.Creep');
+var cpuStatusUtility = require('CPU.Status');
+var Strategy = require('Strategy.Provider');
+var TickIndex = require('HiveMind.Index');
+var defenseDemand = require('Defense.Demand');
+var DemandBoard = require('Spawn.DemandBoard');
+var SquadController = require('Squad.Controller');
+var HiveMemory = require('HiveMind.Memory');
+var Economy = require('HiveMind.Economy');
+var SpawnArbiter = require('Spawn.Arbiter');
+var ColonyState = require('HiveMind.ColonyState');
+var SpawnContext = require('Spawn.Context');
+
+var RESERVE_DESIRED_TICKS = 4000;
+var RESERVE_SPAWN_AT_TICKS = 2500;
+var TECH_DOWNGRADE_DANGER_TICKS = 5000;
+var TECH_BASE_MAX_DESIRED_WORK = 24;
+var TECH_MAX_DESIRED_WORK = 60;
+var TECH_RCL8_MAX_WORK = 15;
+var TECH_ABSOLUTE_CREEP_CAP = 5;
+var MANDATORY_FLOOR_CAP_ALLOWANCE = 1;
+var ARTIFICER_MAX_DESIRED_WORK = 24;
+var ARTIFICER_LOW_STORAGE_ENERGY = 20000;
+var ARTIFICER_CRITICAL_STORAGE_ENERGY = 5000;
+var ARTIFICER_HEALTHY_STORAGE_ENERGY = 50000;
+var REMOTE_CONTAINER_REPAIR_START_PERCENT = 0.80;
+var REMOTE_ROAD_REPAIR_START_PERCENT = 0.60;
+
+var DEFAULT_CPU_POLICY = {
+    spawnPlanningCpuBudget: 1.5,
+    roomPlanningInterval: 3,
+    remotePlanningInterval: 10,
+    constructionDemandInterval: 10,
+    repairDemandInterval: 25
+};
+
+var DEFAULT_SPAWN_POLICY = {
+    enabled: true,
+    maxQueueLengthPerRoom: 8,
+    maxNewRequestsPerRoomPerTick: 2,
+    roleCaps: {
+        Foreman: 1,
+        Scout: 1,
+        Annex: 4,
+        Ronin: 4,
+        Volley: 4,
+        Cleric: 3,
+        Tech: 3,
+        Artificer: 3,
+        Extractor: 6,
+        Freighter: 6,
+        Pioneer: 2,
+        SupplyRunner: 2
+    },
+    maxCreepsPerRoomByRcl: {
+        RCL1: 10,
+        RCL2: 16,
+        RCL3: 20,
+        RCL4: 26,
+        RCL5: 30,
+        RCL6: 36,
+        RCL7: 40,
+        RCL8: 46
+    }
+};
+
+var activePlanningContext = null;
+
+/*
+ * How many creeps we want for now.
+ *
+ * Later, room.manager.js can calculate these numbers dynamically.
+ */
+var DESIRED_COUNTS = {
+    Foreman: 1,
+    /*
+     * Annex uses this as a maximum cap, not a fixed desired count. It only
+     * spawns when an active remote room needs controller reservation help.
+     */
+    Annex: 6,
+    Scout: 1,
+    Ronin: 0,
+    Volley: 0,
+    Cleric: 0
+};
+
+/*
+ * Higher number = more important.
+ *
+ * Foreman is highest because you said Foreman should always be alive.
+ * These priorities are saved onto spawn queue requests. spawn.manager.js sorts
+ * the queue so higher priority requests are attempted first.
+ */
+var PRIORITY = {
+    Foreman: 100,
+    Extractor: 80,
+    Freighter: 60,
+    Annex: 8,
+    Tech: 30,
+    Artificer: 20,
+    Pioneer: 55,
+    SupplyRunner: 54,
+    Scout: 50,
+    Ronin: 85,
+    Volley: 86,
+    Cleric: 84,
+    MineralMiner: 32,
+    ResourceCourier: 48
+};
+var ANNEX_INITIAL_PRIORITY = 64;
+var LOCAL_RENEWAL_PRIORITY = 113; // Same maintenance tier in full and light planning.
+var ANNEX_MAINTENANCE_PRIORITY = 18;
+var ANNEX_CONTINUITY_PRIORITY = 45;
+var ARTIFICER_PRIORITY_BY_CATEGORY = {
+    criticalMaintenance: 75,
+    criticalInfrastructure: 65,
+    remoteBootstrap: 50,
+    construction: 20,
+    remote: 12
+};
+
+/*
+ * Extra safety ticks.
+ *
+ * The spawn time only covers time inside the spawn.
+ * This buffer gives the new creep a little time to move into position.
+ */
+var REPLACEMENT_BUFFER_TICKS = {
+    Foreman: 30,
+    Extractor: 30,
+    Freighter: 40,
+    Annex: 80,
+    Tech: 40,
+    Artificer: 40,
+    Pioneer: 60,
+    SupplyRunner: 80,
+    Scout: 10,
+    Ronin: 40,
+    Volley: 40,
+    Cleric: 40,
+    MineralMiner: 75,
+    ResourceCourier: 60
+};
+
+/*
+ * This manager is the "demand planner" for spawning.
+ *
+ * It deliberately does not call spawn.spawnCreep directly. Instead, it writes
+ * requests into Memory.rooms[roomName].spawnQueue and lets spawn.manager.js be
+ * the single place that actually consumes the queue. Keeping demand planning
+ * separate from spawning makes it easier to reason about duplicate requests.
+ */
+
+function roomHasOwnedSpawn(room) {
+    if (!room) {
+        return false;
+    }
+
+    for (var spawnName in Game.spawns) {
+        if (!Game.spawns.hasOwnProperty(spawnName)) {
+            continue;
+        }
+
+        var spawn = Game.spawns[spawnName];
+
+        if (!spawn || !spawn.room) {
+            continue;
+        }
+
+        if (spawn.my === false) {
+            continue;
+        }
+
+        if (spawn.room.name === room.name) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+/**
+ * Get every visible owned room that has at least one owned spawn.
+ *
+ * This intentionally excludes owned rooms without spawns so expansion/bootstrap
+ * code can be added later without treating those rooms as normal mature rooms.
+ *
+ * @returns {Room[]}
+ */
+function getOwnedSpawnRooms() {
+    return TickIndex.get().ownedSpawnRooms.slice();
+}
+
+/**
+ * Calculate how soon we should request a replacement.
+ *
+ * Spawn time is body parts * 3 ticks.
+ * Then we add a small buffer for walking / delay.
+ *
+ * Example:
+ * body length 5 = 15 spawn ticks
+ * buffer 30
+ * replacement lead = 45 ticks
+ *
+ * @param {string} role
+ * @param {array} body
+ * @returns {number}
+ */
+function getReplacementLeadTicks(role, body) {
+    /*
+     * In Screeps, spawning takes 3 ticks per body part. A larger body needs to
+     * be requested earlier so the replacement finishes before the old creep dies.
+     */
+    var bodyPartCount = body ? body.length : 0;
+    var spawnTime = bodyPartCount * 3;
+    var buffer = REPLACEMENT_BUFFER_TICKS[role] || 30;
+
+    return spawnTime + buffer;
+}
+
+function ensureNumberSetting(target, key, defaultValue) {
+    if (typeof target[key] !== 'number') {
+        target[key] = defaultValue;
+    }
+}
+
+function ensureCpuPolicyMemory() {
+    var policy = HiveMemory.getConfig('cpu');
+
+    for (var key in DEFAULT_CPU_POLICY) {
+        if (DEFAULT_CPU_POLICY.hasOwnProperty(key)) {
+            ensureNumberSetting(policy, key, DEFAULT_CPU_POLICY[key]);
+        }
+    }
+
+    return policy;
+}
+
+function ensureUpgradeSettings() {
+    var settings = HiveMemory.getConfig('upgrade');
+
+    if (settings.autoCpuUpgradeBoost === undefined) {
+        settings.autoCpuUpgradeBoost = true;
+    }
+    if (typeof settings.cpuUpgradeBoostMaximum !== 'number') {
+        settings.cpuUpgradeBoostMaximum = 1.75;
+    }
+    if (typeof settings.cpuUpgradeMinimumBucket !== 'number') {
+        settings.cpuUpgradeMinimumBucket = 7000;
+    }
+    if (typeof settings.cpuUpgradeMinimumStorage !== 'number') {
+        settings.cpuUpgradeMinimumStorage = 50000;
+    }
+
+    return settings;
+}
+
+function ensureSpawnPolicyMemory() {
+    var policy = HiveMemory.getConfig('spawn');
+
+    if (policy.enabled === undefined) {
+        policy.enabled = DEFAULT_SPAWN_POLICY.enabled;
+    }
+
+    ensureNumberSetting(
+        policy,
+        'maxQueueLengthPerRoom',
+        DEFAULT_SPAWN_POLICY.maxQueueLengthPerRoom
+    );
+    ensureNumberSetting(
+        policy,
+        'maxNewRequestsPerRoomPerTick',
+        DEFAULT_SPAWN_POLICY.maxNewRequestsPerRoomPerTick
+    );
+
+    if (!policy.roleCaps) {
+        policy.roleCaps = {};
+    }
+
+    for (var role in DEFAULT_SPAWN_POLICY.roleCaps) {
+        if (
+            DEFAULT_SPAWN_POLICY.roleCaps.hasOwnProperty(role) &&
+            typeof policy.roleCaps[role] !== 'number'
+        ) {
+            policy.roleCaps[role] = DEFAULT_SPAWN_POLICY.roleCaps[role];
+        }
+    }
+
+    if (!policy.maxCreepsPerRoomByRcl) {
+        policy.maxCreepsPerRoomByRcl = {};
+    }
+
+    for (var rclKey in DEFAULT_SPAWN_POLICY.maxCreepsPerRoomByRcl) {
+        if (
+            DEFAULT_SPAWN_POLICY.maxCreepsPerRoomByRcl.hasOwnProperty(rclKey) &&
+            typeof policy.maxCreepsPerRoomByRcl[rclKey] !== 'number'
+        ) {
+            policy.maxCreepsPerRoomByRcl[rclKey] =
+                DEFAULT_SPAWN_POLICY.maxCreepsPerRoomByRcl[rclKey];
+        }
+    }
+
+    return policy;
+}
+
+function ensureRoomMemory(roomName) {
+    return HiveMemory.getRoomMemory(roomName);
+}
+
+function getSpawnDemandCache(roomName) {
+    var roomMemory = ensureRoomMemory(roomName);
+
+    return HiveMemory.getRoomSpawnMemory(roomName).demandCache;
+}
+
+function getCpuUsed() {
+    if (!Game.cpu || typeof Game.cpu.getUsed !== 'function') {
+        return 0;
+    }
+
+    return Game.cpu.getUsed();
+}
+
+function getPositiveInterval(value, fallback) {
+    if (!Number.isSafeInteger(value) || value < 1) {
+        return fallback;
+    }
+
+    return Math.max(1, Math.floor(value));
+}
+
+function getNextStaggeredFullPlanTick(startTick, interval, roomIndex) {
+    if (interval <= 1) {
+        return startTick;
+    }
+
+    var offset = (interval - ((startTick + roomIndex) % interval)) % interval;
+    return startTick + offset;
+}
+
+function shouldRunFullPlan(cache, cpuPolicy, roomIndex, skipNormalPlanning) {
+    var interval = getPositiveInterval(cpuPolicy.roomPlanningInterval, DEFAULT_CPU_POLICY.roomPlanningInterval);
+    const next = cache.nextFullPlanTick;
+    const rollback = Number.isFinite(cache.lastPlanCheckTick) && cache.lastPlanCheckTick > Game.time;
+    const invalid = !Number.isSafeInteger(next) || next < 0 || next > Game.time + interval || rollback;
+    if (invalid) {
+        cache.scheduleRepair = { tick: Game.time, previous: String(next),
+            reason: rollback ? 'tick rollback' : 'invalid or future demand cache schedule' };
+        cache.nextFullPlanTick = getNextStaggeredFullPlanTick(Game.time, interval, roomIndex);
+    }
+    cache.lastPlanCheckTick = Game.time;
+    const full = !skipNormalPlanning && (interval <= 1 || Game.time >= cache.nextFullPlanTick);
+    cache.controlState = { tick: Game.time, blocked: !full,
+        blockSource: skipNormalPlanning ? 'cpuBudget' : !full ? 'demandCache' : null,
+        reason: skipNormalPlanning ? 'CPU budget' : full ? 'full plan due' : 'waiting for staggered full plan',
+        nextFullPlanTick: cache.nextFullPlanTick, interval };
+    return full;
+}
+
+function setNextFullPlanTick(cache, cpuPolicy, roomIndex) {
+    var interval = getPositiveInterval(
+        cpuPolicy.roomPlanningInterval,
+        DEFAULT_CPU_POLICY.roomPlanningInterval
+    );
+
+    cache.nextFullPlanTick = getNextStaggeredFullPlanTick(
+        Game.time + 1,
+        interval,
+        roomIndex
+    );
+}
+
+function getActiveContext(roomName) {
+    if (activePlanningContext && activePlanningContext.roomName === roomName) {
+        return activePlanningContext;
+    }
+
+    return null;
+}
+
+function addCount(map, key, amount) {
+    if (!key) {
+        return;
+    }
+
+    map[key] = (map[key] || 0) + (amount || 1);
+}
+
+function addBodyPartCount(map, role, partType, amount) {
+    if (!role || !partType || amount <= 0) {
+        return;
+    }
+
+    if (!map[role]) {
+        map[role] = {};
+    }
+
+    addCount(map[role], partType, amount);
+}
+
+function getBodyPartCount(map, role, partType) {
+    if (!map || !map[role]) {
+        return 0;
+    }
+
+    return map[role][partType] || 0;
+}
+
+function isHealthyForReplacement(creep, role) {
+    if (!creep) {
+        return false;
+    }
+
+    if (creep.ticksToLive === undefined) {
+        return true;
+    }
+
+    return creep.ticksToLive > getReplacementLeadTicks(role, creep.body || []);
+}
+
+function getRequestRole(request) {
+    if (!request) {
+        return null;
+    }
+
+    return request.role || (request.memory && request.memory.role) || null;
+}
+
+function requestBelongsToRoom(request, roomName) {
+    var memory = request && request.memory;
+
+    if (!request || !roomName) {
+        return false;
+    }
+
+    return !memory || !memory.homeRoom || memory.homeRoom === roomName;
+}
+
+function isLocalExtractorMemory(memory, roomName) {
+    if (!memory) {
+        return true;
+    }
+
+    if (memory.remoteMining === true) {
+        return false;
+    }
+
+    if (memory.sourceRoom && memory.sourceRoom !== roomName) {
+        return false;
+    }
+
+    if (memory.targetRoom && memory.targetRoom !== roomName) {
+        return false;
+    }
+
+    return true;
+}
+
+function isQueuedLocalExtractorRequest(request, roomName) {
+    var role = getRequestRole(request);
+
+    return role === 'Extractor' &&
+        requestBelongsToRoom(request, roomName) &&
+        isLocalExtractorMemory(request.memory, roomName);
+}
+
+function countQueueRequestsAtTick(queue, tick) {
+    var count = 0;
+
+    if (!queue) {
+        return count;
+    }
+
+    for (var i = 0; i < queue.length; i++) {
+        if (queue[i] && queue[i].requestedAt === tick) {
+            count++;
+        }
+    }
+
+    return count;
+}
+
+function summarizeQueue(queue, roomName) {
+    var summary = {
+        totalQueued: 0,
+        queuedByRole: {},
+        queuedBodyPartsByRole: {},
+        queuedLocalExtractors: 0
+    };
+
+    if (!queue) {
+        return summary;
+    }
+
+    for (var i = 0; i < queue.length; i++) {
+        var request = queue[i];
+
+        if (!requestBelongsToRoom(request, roomName)) {
+            continue;
+        }
+
+        var role = getRequestRole(request);
+        summary.totalQueued++;
+        addCount(summary.queuedByRole, role, 1);
+
+        if (isQueuedLocalExtractorRequest(request, roomName)) {
+            summary.queuedLocalExtractors++;
+        }
+
+        var body = request.body || [];
+        for (var bodyIndex = 0; bodyIndex < body.length; bodyIndex++) {
+            addBodyPartCount(summary.queuedBodyPartsByRole, role, body[bodyIndex], 1);
+        }
+    }
+
+    return summary;
+}
+
+function buildRoomPlanningContext(room, roomIndex, skipNormalPlanning) {
+    var roomName = room.name;
+    var cpuPolicy = ensureCpuPolicyMemory();
+    var spawnPolicy = ensureSpawnPolicyMemory();
+    var cache = getSpawnDemandCache(roomName);
+    var queue = spawnManager.getSpawnQueue(roomName);
+    var queueSummary = summarizeQueue(queue, roomName);
+    var context = {
+        room: room,
+        roomName: roomName,
+        roomIndex: roomIndex || 0,
+        cpuPolicy: cpuPolicy,
+        spawnPolicy: spawnPolicy,
+        demandCache: cache,
+        queue: queue,
+        cpuStart: getCpuUsed(),
+        skippedForCpu: skipNormalPlanning === true,
+        fullPlan: false,
+        denied: {},
+        newRequests: countQueueRequestsAtTick(queue, Game.time),
+        totalLiving: 0,
+        healthyTotal: 0,
+        totalQueued: queueSummary.totalQueued,
+        livingByRole: {},
+        healthyByRole: {},
+        bodyPartsByRole: {},
+        queuedByRole: queueSummary.queuedByRole,
+        queuedBodyPartsByRole: queueSummary.queuedBodyPartsByRole,
+        livingCreeps: [],
+        idleFreighters: 0,
+        healthyLocalExtractors: 0,
+        queuedLocalExtractors: queueSummary.queuedLocalExtractors,
+        emergencyMinimumBypassByRole: {},
+        mandatoryFloorBypassUsed: false
+    };
+
+    var indexedCreeps = TickIndex.get().creepsByHomeRoom.get(roomName) || [];
+    for (var creepIndex = 0; creepIndex < indexedCreeps.length; creepIndex++) {
+        var creep = indexedCreeps[creepIndex];
+
+        if (!creep || !creep.memory) {
+            continue;
+        }
+
+        var role = creep.memory.role;
+        var healthy = isHealthyForReplacement(creep, role);
+
+        context.totalLiving++;
+        context.livingCreeps.push(creep);
+        addCount(context.livingByRole, role, 1);
+
+        if (!healthy) {
+            continue;
+        }
+
+        context.healthyTotal++;
+        addCount(context.healthyByRole, role, 1);
+
+        if (role === 'Extractor' && isLocalExtractorMemory(creep.memory, roomName)) {
+            context.healthyLocalExtractors++;
+        }
+
+        if (
+            role === 'Freighter' &&
+            !creep.memory.freighterJob &&
+            !creep.memory.FreighterWorking
+        ) {
+            var carriedEnergy = creep.store ? (creep.store[RESOURCE_ENERGY] || 0) : 0;
+
+            if (carriedEnergy === 0) {
+                context.idleFreighters++;
+            }
+        }
+
+        var body = creep.body || [];
+        for (var bodyIndex = 0; bodyIndex < body.length; bodyIndex++) {
+            var part = body[bodyIndex] && body[bodyIndex].type;
+
+            if (part && body[bodyIndex].hits !== 0) {
+                addBodyPartCount(context.bodyPartsByRole, role, part, 1);
+            }
+        }
+    }
+
+    context.fullPlan = shouldRunFullPlan(
+        cache,
+        cpuPolicy,
+        context.roomIndex,
+        context.skippedForCpu
+    );
+
+    return context;
+}
+
+function getMaxCreepsForRoom(room, policy) {
+    var capacity = require('HiveMind.Capacity').get().rooms[room.name];
+    if (capacity) return capacity.population.softCap;
+    var level = room && room.controller ? (room.controller.level || 1) : 1;
+    var key = 'RCL' + level;
+    var maxByRcl = policy.maxCreepsPerRoomByRcl || {};
+
+    return maxByRcl[key] ||
+        DEFAULT_SPAWN_POLICY.maxCreepsPerRoomByRcl[key] ||
+        DEFAULT_SPAWN_POLICY.maxCreepsPerRoomByRcl.RCL1;
+}
+
+function getPlannedRoleCount(context, role) {
+    return (context.healthyByRole[role] || 0) +
+        (context.queuedByRole[role] || 0);
+}
+
+function getPlannedTotal(context) {
+    return context.healthyTotal + context.totalQueued;
+}
+
+function getHomeLivingCreeps(roomName) {
+    var context = getActiveContext(roomName);
+
+    if (context) {
+        return context.livingCreeps;
+    }
+
+    return (TickIndex.get().creepsByHomeRoom.get(roomName) || []).slice();
+}
+
+function recordDenied(context, role, reason) {
+    if (!context) {
+        return;
+    }
+
+    context.denied[role || 'unknown'] = reason;
+}
+
+function canAddSpawnRequest(context, request, options) {
+    if (!context || !request) {
+        return {
+            ok: true
+        };
+    }
+
+    var economyPolicy = Economy.canSpawnRequest(context.room, request);
+    if (!economyPolicy.allowed) {
+        return { ok: false, reason: economyPolicy.reason };
+    }
+
+    var policy = context.spawnPolicy;
+
+    if (!policy || policy.enabled === false) {
+        return {
+            ok: true
+        };
+    }
+
+    var role = getRequestRole(request);
+    var emergency = options && options.emergency === true;
+    var plannedRole = getPlannedRoleCount(context, role);
+    var roleCap = policy.roleCaps ? policy.roleCaps[role] : null;
+    var maxCreeps = getMaxCreepsForRoom(context.room, policy);
+
+    var maxQueueLength = policy.maxQueueLengthPerRoom;
+    var maxNewRequests = policy.maxNewRequestsPerRoomPerTick;
+    var emergencyMinimumBypass = emergency &&
+        options &&
+        options.bypassRoleCap === true;
+    var techWorkRoleCapBypass = role === 'Tech' &&
+        options &&
+        options.allowTechWorkRoleCapBypass === true;
+    var absoluteTechCap = techWorkRoleCapBypass &&
+        typeof options.absoluteTechCreepCap === 'number' ?
+        options.absoluteTechCreepCap : TECH_ABSOLUTE_CREEP_CAP;
+
+    if (techWorkRoleCapBypass && plannedRole >= absoluteTechCap) {
+        return {
+            ok: false,
+            reason: 'absolute Tech creep cap reached'
+        };
+    }
+
+    if (
+        emergencyMinimumBypass &&
+        context.emergencyMinimumBypassByRole[role]
+    ) {
+        return {
+            ok: false,
+            reason: 'emergency minimum already queued'
+        };
+    }
+
+    if (
+        typeof roleCap === 'number' &&
+        plannedRole >= roleCap &&
+        !emergencyMinimumBypass &&
+        !techWorkRoleCapBypass
+    ) {
+        return {
+            ok: false,
+            reason: 'role cap reached'
+        };
+    }
+
+    if (
+        getPlannedTotal(context) >= maxCreeps &&
+        !emergencyMinimumBypass
+    ) {
+        return {
+            ok: false,
+            reason: 'room creep cap reached'
+        };
+    }
+
+    if (
+        context.queue &&
+        context.queue.length >= maxQueueLength &&
+        !emergencyMinimumBypass
+    ) {
+        return {
+            ok: false,
+            reason: 'spawn queue full'
+        };
+    }
+
+    if (
+        context.newRequests >= maxNewRequests &&
+        !emergencyMinimumBypass
+    ) {
+        return {
+            ok: false,
+            reason: 'new request cap reached'
+        };
+    }
+
+    return {
+        ok: true
+    };
+}
+
+function updateContextForQueuedRequest(context, request) {
+    if (!context || !request) {
+        return;
+    }
+
+    var role = getRequestRole(request);
+    context.totalQueued++;
+    context.newRequests++;
+    addCount(context.queuedByRole, role, 1);
+
+    if (isQueuedLocalExtractorRequest(request, context.roomName)) {
+        context.queuedLocalExtractors++;
+    }
+
+    var body = request.body || [];
+    for (var i = 0; i < body.length; i++) {
+        addBodyPartCount(context.queuedBodyPartsByRole, role, body[i], 1);
+    }
+}
+
+function addSpawnRequest(roomName, request, options) {
+    var queue = spawnManager.getSpawnQueue(roomName);
+    var context = getActiveContext(roomName);
+    var role = getRequestRole(request);
+
+    if (!queue || !request || !role) {
+        return {
+            ok: false,
+            role: role,
+            requested: 0,
+            reason: 'Missing spawn queue or request'
+        };
+    }
+
+    var result = SpawnArbiter.admit(roomName, request, Object.assign({ producer: 'legacy' }, options || {}));
+    if (!result.ok) {
+        recordDenied(context, role, result.reason);
+        return result;
+    }
+
+    if (
+        context &&
+        options &&
+        options.emergency === true &&
+        options.bypassRoleCap === true
+    ) {
+        context.emergencyMinimumBypassByRole[role] = true;
+    }
+
+    if (result.requested > 0) updateContextForQueuedRequest(context, result.request);
+
+    return {
+        ok: true,
+        role: role,
+        requested: result.requested,
+        reason: result.reason,
+        mandatoryFloorBypass: result.mandatoryFloorBypass === true
+    };
+}
+
+/**
+ * Count creeps that are alive and still healthy enough to count.
+ *
+ * If a creep is about to die soon, we do NOT count it.
+ * That causes the request manager to queue a replacement before death.
+ *
+ * @param {string} roomName
+ * @param {string} role
+ * @param {number} replacementLeadTicks
+ * @returns {number}
+ */
+function countHealthyCreeps(roomName, role, replacementLeadTicks) {
+    var context = getActiveContext(roomName);
+
+    if (context) {
+        return context.healthyByRole[role] || 0;
+    }
+
+    var count = 0;
+
+    /*
+     * Loop through living creeps and count only matching role/homeRoom creeps
+     * that are not too close to death.
+     */
+    var indexedCreeps = TickIndex.get().creepsByHomeRoom.get(roomName) || [];
+    for (var creepIndex = 0; creepIndex < indexedCreeps.length; creepIndex++) {
+        var creep = indexedCreeps[creepIndex];
+
+        if (!creep || !creep.memory) {
+            continue;
+        }
+
+        if (creep.memory.role !== role) {
+            continue;
+        }
+
+        /*
+         * homeRoom tells us which room owns this creep.
+         *
+         * If homeRoom is missing, fall back to the room the creep is currently in.
+         * This keeps early simple creeps from being ignored.
+         */
+        var creepHomeRoom = creep.memory.homeRoom || creep.room.name;
+
+        if (creepHomeRoom !== roomName) {
+            continue;
+        }
+
+        /*
+         * ticksToLive can be undefined for spawning creeps.
+         * If it is undefined, count the creep.
+         */
+        if (creep.ticksToLive === undefined) {
+            count++;
+            continue;
+        }
+
+        /*
+         * If the creep has enough life left, count it.
+         * If it is too close to death, do not count it.
+         * That triggers an early replacement request.
+         */
+        if (creep.ticksToLive > replacementLeadTicks) {
+            count++;
+        }
+    }
+
+    return count;
+}
+
+/**
+ * Count queued requests for a role in this room.
+ *
+ * This stops us from adding the same replacement every tick.
+ *
+ * @param {string} roomName
+ * @param {string} role
+ * @returns {number}
+ */
+function countQueuedRequests(roomName, role) {
+    var context = getActiveContext(roomName);
+
+    if (context) {
+        return context.queuedByRole[role] || 0;
+    }
+
+    /*
+     * This reads Memory.rooms[roomName].spawnQueue through spawn.manager.js.
+     */
+    var queue = spawnManager.getSpawnQueue(roomName);
+
+    if (!queue) {
+        return 0;
+    }
+
+    var count = 0;
+
+    for (var index = 0; index < queue.length; index++) {
+        var request = queue[index];
+
+        if (!request) {
+            continue;
+        }
+
+        if (request.role === role) {
+            count++;
+        }
+    }
+
+    return count;
+}
+
+function getStoredEnergy(structure) {
+    if (!structure || !structure.store) {
+        return 0;
+    }
+
+    if (typeof structure.store.getUsedCapacity === 'function') {
+        return structure.store.getUsedCapacity(RESOURCE_ENERGY) || 0;
+    }
+
+    return structure.store[RESOURCE_ENERGY] || 0;
+}
+
+function getControllerContainerEnergy(room) {
+    if (!room || !room.controller) {
+        return 0;
+    }
+
+    var containers = room.controller.pos.findInRange(FIND_STRUCTURES, 3, {
+        filter: function(structure) {
+            return structure.structureType === STRUCTURE_CONTAINER;
+        }
+    });
+    var energy = 0;
+
+    for (var i = 0; i < containers.length; i++) {
+        energy += getStoredEnergy(containers[i]);
+    }
+
+    return energy;
+}
+
+function isFreshCacheEntry(entry, interval) {
+    return !!(
+        entry &&
+        typeof entry.tick === 'number' &&
+        Game.time - entry.tick < interval
+    );
+}
+
+function getCachedLocalConstructionDemand(room) {
+    if (!room) {
+        return {
+            tick: Game.time,
+            totalSites: 0,
+            localBuildProgressRemaining: 0,
+            criticalSites: 0,
+            criticalProgress: 0,
+            regularSites: 0,
+            regularProgress: 0,
+            lowPrioritySites: 0,
+            lowPriorityProgress: 0
+        };
+    }
+
+    var cpuPolicy = ensureCpuPolicyMemory();
+    var interval = getPositiveInterval(
+        cpuPolicy.constructionDemandInterval,
+        DEFAULT_CPU_POLICY.constructionDemandInterval
+    );
+    var cache = getSpawnDemandCache(room.name);
+
+    if (isFreshCacheEntry(cache.constructionDemand, interval)) {
+        return cache.constructionDemand;
+    }
+
+    var sites = room.find(FIND_MY_CONSTRUCTION_SITES);
+    var demand = {
+        tick: Game.time,
+        totalSites: sites.length,
+        localBuildProgressRemaining: 0,
+        criticalSites: 0,
+        criticalProgress: 0,
+        regularSites: 0,
+        regularProgress: 0,
+        lowPrioritySites: 0,
+        lowPriorityProgress: 0
+    };
+
+    for (var i = 0; i < sites.length; i++) {
+        var remaining = getProgressRemaining(sites[i]);
+        demand.localBuildProgressRemaining += remaining;
+
+        if (isCriticalArtificerStructureType(sites[i].structureType)) {
+            demand.criticalSites++;
+            demand.criticalProgress += remaining;
+        }
+        else if (isLowPriorityArtificerStructureType(sites[i].structureType)) {
+            demand.lowPrioritySites++;
+            demand.lowPriorityProgress += remaining;
+        }
+        else {
+            demand.regularSites++;
+            demand.regularProgress += remaining;
+        }
+    }
+
+    cache.constructionDemand = demand;
+    return demand;
+}
+
+function getCachedLocalRepairDemand(room) {
+    if (!room) {
+        return {
+            tick: Game.time,
+            targets: 0,
+            emergencyTargets: 0
+        };
+    }
+
+    var cpuPolicy = ensureCpuPolicyMemory();
+    var interval = getPositiveInterval(
+        cpuPolicy.repairDemandInterval,
+        DEFAULT_CPU_POLICY.repairDemandInterval
+    );
+    var cache = getSpawnDemandCache(room.name);
+
+    if (isFreshCacheEntry(cache.repairDemand, interval)) {
+        return cache.repairDemand;
+    }
+
+    var demand = getValidLocalRepairDemand(room);
+    demand.tick = Game.time;
+    cache.repairDemand = demand;
+    return demand;
+}
+
+function getCachedRemoteArtificerDemand(roomName) {
+    var cpuPolicy = ensureCpuPolicyMemory();
+    var interval = getPositiveInterval(
+        cpuPolicy.remotePlanningInterval,
+        DEFAULT_CPU_POLICY.remotePlanningInterval
+    );
+    var cache = getSpawnDemandCache(roomName);
+
+    if (isFreshCacheEntry(cache.remoteArtificerDemand, interval)) {
+        return cache.remoteArtificerDemand;
+    }
+
+    var demand = getVisibleRemoteArtificerDemand(roomName);
+    demand.tick = Game.time;
+    cache.remoteArtificerDemand = demand;
+    return demand;
+}
+
+function getConstructionSiteCount(room) {
+    if (!room) {
+        return 0;
+    }
+
+    return getCachedLocalConstructionDemand(room).totalSites || 0;
+}
+
+/**
+ * Calculate the room's desired active Tech WORK parts.
+ *
+ * Storage is the main long-term signal. Controller-container energy and
+ * profitable remote income add small bonuses, while a construction backlog
+ * reserves more income for Artificers. The result is a WORK target, not a
+ * creep count.
+ */
+function getDesiredTechWork(room) {
+    if (!room || !room.controller) {
+        return 0;
+    }
+
+    var settings = ensureUpgradeSettings();
+    var cpuStatus = cpuStatusUtility.getCpuStatus();
+    var level = room.controller.level || 1;
+    var energyCapacity = room.energyCapacityAvailable || 300;
+    var desiredWork;
+
+    if (level === 1 && !(Economy.get(room.name) && Economy.get(room.name).growth &&
+        Economy.get(room.name).growth.energyAboveReserve >= require('HiveMind.Surplus').config().enterAboveReserve)) {
+        var rcl1Memory = ensureRoomMemory(room.name);
+        setMemoryValueIfChanged(rcl1Memory, 'techBaseDesiredWork', 1);
+        setMemoryValueIfChanged(rcl1Memory, 'techCpuMultiplier', 1);
+        setMemoryValueIfChanged(rcl1Memory, 'techCpuMode', cpuStatus.mode);
+        setMemoryValueIfChanged(rcl1Memory, 'techBoostReason', 'RCL1 baseline controller growth');
+        return 1;
+    }
+
+    var economy = Economy.get(room.name);
+    var growth = economy && economy.growth;
+    desiredWork = growth && typeof growth.affordableWork === 'number' ? growth.affordableWork :
+        (level <= 2 ? 2 : energyCapacity >= 800 ? 5 : 3);
+
+    /* A fueled controller container reduces delivery loss, but never invents income. */
+    if (growth && getControllerContainerEnergy(room) >= 1000 &&
+        growth.energyAboveReserve > 0) desiredWork++;
+
+    var upgradeRush = HiveMemory.getConfig('upgrade').upgradeRush === true;
+    if (upgradeRush) desiredWork = Math.ceil(desiredWork * 1.15);
+
+    if (room.controller.ticksToDowngrade < TECH_DOWNGRADE_DANGER_TICKS) {
+        var emergencyMinimum = energyCapacity >= 550 ? 5 : 2;
+        desiredWork = Math.max(desiredWork, emergencyMinimum);
+    }
+
+    /*
+     * Everything above is the established economic demand. CPU can amplify it,
+     * but cannot erase recovery, construction, or downgrade safeguards.
+     */
+    var baseDesiredWork = Math.max(
+        2,
+        Math.min(desiredWork, TECH_BASE_MAX_DESIRED_WORK)
+    );
+    var cpuMultiplier = 1;
+    var boostReason = growth ? growth.mode + ': ' + growth.blockedReason : 'economy snapshot unavailable';
+    var context = getActiveContext(room.name);
+    var essentialEconomyReady = true;
+
+    if (context) {
+        essentialEconomyReady =
+            getPlannedRoleCount(context, 'Foreman') >= 1 &&
+            getPlannedRoleCount(context, 'Extractor') >= 1 &&
+            getPlannedRoleCount(context, 'Freighter') >= 1;
+    }
+
+    if (settings.autoCpuUpgradeBoost === false) {
+        boostReason = 'automatic CPU boost disabled';
+    }
+    else if (cpuStatus.mode !== 'high') {
+        boostReason = 'CPU mode ' + cpuStatus.mode;
+    }
+    else if (cpuStatus.bucket < settings.cpuUpgradeMinimumBucket) {
+        boostReason = 'CPU bucket below upgrade threshold';
+    }
+    else if (growth && growth.energyAboveReserve <= 0) {
+        boostReason = growth.blockedReason;
+    }
+    else if (!essentialEconomyReady) {
+        boostReason = 'essential economy roles are not ready';
+    }
+    else {
+        var maximumMultiplier = Math.max(
+            1,
+            Math.min(2.5, settings.cpuUpgradeBoostMaximum)
+        );
+        var cpuScale = Math.max(0, Math.min(1, (cpuStatus.limit - 20) / 80));
+        var bucketScale = Math.max(0, Math.min(1,
+            (cpuStatus.bucket - settings.cpuUpgradeMinimumBucket) /
+            Math.max(1, 10000 - settings.cpuUpgradeMinimumBucket)
+        ));
+
+        /* CPU capacity is primary; bucket health softens the top end. */
+        cpuMultiplier = 1 +
+            ((maximumMultiplier - 1) * cpuScale * (0.75 + (0.25 * bucketScale)));
+        cpuMultiplier = Math.round(cpuMultiplier * 100) / 100;
+        boostReason = cpuMultiplier > 1 ? (growth ? growth.mode : 'healthy CPU and room economy') :
+            'CPU limit does not provide extra capacity';
+    }
+
+    desiredWork = Math.ceil(baseDesiredWork * cpuMultiplier);
+    if (growth) {
+        var economicWorkCap = Math.max(level < 8 && growth.mode !== 'RECOVERY' ? 1 : 0,
+            growth.affordableWork + (getControllerContainerEnergy(room) >= 1000 && growth.energyAboveReserve > 0 ? 1 : 0));
+        desiredWork = Math.min(desiredWork, economicWorkCap);
+    }
+    desiredWork = Math.max(level < 8 ? 1 : 0, Math.min(desiredWork, TECH_MAX_DESIRED_WORK));
+    var capacity = require('HiveMind.Capacity').get().rooms[room.name];
+    var surplus = require('HiveMind.Surplus').plan(room, economy, capacity);
+    desiredWork = Math.max(desiredWork, Math.min(require('HiveMind.Surplus').config().techMaxWork, surplus.techWork));
+
+    /* RCL 8 controllers accept at most 15 normal upgrade energy per tick. */
+    if (level === 8) {
+        desiredWork = Math.min(desiredWork, TECH_RCL8_MAX_WORK);
+    }
+
+    var roomMemory = ensureRoomMemory(room.name);
+    setMemoryValueIfChanged(roomMemory, 'techBaseDesiredWork', baseDesiredWork);
+    setMemoryValueIfChanged(roomMemory, 'techCpuMultiplier', cpuMultiplier);
+    setMemoryValueIfChanged(roomMemory, 'techCpuMode', cpuStatus.mode);
+    setMemoryValueIfChanged(roomMemory, 'techBoostReason', boostReason);
+
+    return desiredWork;
+}
+
+function getCreepActiveBodyParts(creep, partType) {
+    if (!creep) {
+        return 0;
+    }
+
+    if (typeof creep.getActiveBodyparts === 'function') {
+        return creep.getActiveBodyparts(partType);
+    }
+
+    var count = 0;
+    var body = creep.body || [];
+
+    for (var i = 0; i < body.length; i++) {
+        if (body[i] && body[i].type === partType && body[i].hits !== 0) {
+            count++;
+        }
+    }
+
+    return count;
+}
+
+function countLivingRoleBodyParts(roomName, role, partType) {
+    var context = getActiveContext(roomName);
+
+    if (context) {
+        return getBodyPartCount(context.bodyPartsByRole, role, partType);
+    }
+
+    var partCount = 0;
+
+    var indexedCreeps = TickIndex.get().creepsByHomeRoom.get(roomName) || [];
+    for (var creepIndex = 0; creepIndex < indexedCreeps.length; creepIndex++) {
+        var creep = indexedCreeps[creepIndex];
+
+        if (!creep || !creep.memory || creep.memory.role !== role) {
+            continue;
+        }
+
+        var creepHomeRoom = creep.memory.homeRoom ||
+            (creep.room ? creep.room.name : null);
+
+        if (creepHomeRoom !== roomName) {
+            continue;
+        }
+
+        var bodyLength = creep.body ? creep.body.length : 0;
+        var replacementLeadTicks = (bodyLength * 3) +
+            (REPLACEMENT_BUFFER_TICKS[role] || 30);
+
+        if (
+            creep.ticksToLive !== undefined &&
+            creep.ticksToLive <= replacementLeadTicks
+        ) {
+            continue;
+        }
+
+        partCount += getCreepActiveBodyParts(creep, partType);
+    }
+
+    return partCount;
+}
+
+function countQueuedRoleBodyParts(roomName, role, partType) {
+    var context = getActiveContext(roomName);
+
+    if (context) {
+        return getBodyPartCount(context.queuedBodyPartsByRole, role, partType);
+    }
+
+    var queue = spawnManager.getSpawnQueue(roomName);
+    var partCount = 0;
+
+    if (!queue) {
+        return partCount;
+    }
+
+    for (var i = 0; i < queue.length; i++) {
+        var request = queue[i];
+        var requestRole = request && (request.role ||
+            (request.memory && request.memory.role));
+
+        if (requestRole === role) {
+            partCount += countBodyParts(request.body, partType);
+        }
+    }
+
+    return partCount;
+}
+
+function countLivingRoleWork(roomName, role) {
+    return countLivingRoleBodyParts(roomName, role, WORK);
+}
+
+function countQueuedRoleWork(roomName, role) {
+    return countQueuedRoleBodyParts(roomName, role, WORK);
+}
+
+function countQueuedControllerFloorWork(roomName) {
+    var queue = spawnManager.getSpawnQueue(roomName) || [];
+    var work = 0;
+    for (var i = 0; i < queue.length; i++) {
+        var request = queue[i];
+        var memory = request && request.memory || {};
+        if (getRequestRole(request) === 'Tech' &&
+            (memory.controllerGrowthFloor === true || memory.controllerEmergency === true)) {
+            work += countBodyParts(request.body || [], WORK);
+        }
+    }
+    return work;
+}
+
+function setMemoryValueIfChanged(target, key, value) {
+    if (target[key] !== value) {
+        target[key] = value;
+    }
+}
+
+function saveTechWorkDebug(roomName, desiredWork, livingWork, queuedWork) {
+    var roomMemory = ensureRoomMemory(roomName);
+    setMemoryValueIfChanged(roomMemory, 'techDesiredWork', desiredWork);
+    setMemoryValueIfChanged(roomMemory, 'techLivingWork', livingWork);
+    setMemoryValueIfChanged(roomMemory, 'techQueuedWork', queuedWork);
+}
+
+function saveTechRequestDebug(roomName, status, reason, demand, plannedCreeps) {
+    var roomMemory = ensureRoomMemory(roomName);
+
+    setMemoryValueIfChanged(roomMemory, 'techRequestTick', Game.time);
+    setMemoryValueIfChanged(roomMemory, 'techRequestStatus', status);
+    setMemoryValueIfChanged(roomMemory, 'techRequestBlockReason', reason || null);
+    setMemoryValueIfChanged(roomMemory, 'techPlannedCreeps', plannedCreeps);
+    setMemoryValueIfChanged(
+        roomMemory,
+        'techAbsoluteCreepCap',
+        TECH_ABSOLUTE_CREEP_CAP
+    );
+    setMemoryValueIfChanged(
+        roomMemory,
+        'techRequestEconomyReason',
+        roomMemory.techBoostReason || null
+    );
+
+    if (demand) {
+        setMemoryValueIfChanged(
+            roomMemory,
+            'techRequestMissingWork',
+            Math.max(0, demand.missingWork || 0)
+        );
+    }
+}
+
+function getTechWorkDemand(room) {
+    if (!room) {
+        return {
+            desiredWork: 0,
+            livingWork: 0,
+            queuedWork: 0,
+            missingWork: 0
+        };
+    }
+
+    var desiredWork = getDesiredTechWork(room);
+    var capability = SpawnContext.capability(room.name, 'Tech', WORK);
+    var livingWork = capability.active;
+    var queuedWork = capability.queued;
+    ensureRoomMemory(room.name).techSpawningWork = capability.spawning;
+
+    return {
+        desiredWork: desiredWork,
+        livingWork: livingWork,
+        queuedWork: queuedWork,
+        spawningWork: capability.spawning,
+        missingWork: Math.max(0, desiredWork - livingWork - capability.spawning - queuedWork)
+    };
+}
+
+function requestTechWorkForRoom(room, demandOverride, options) {
+    if (!room) {
+        return {
+            ok: false,
+            role: 'Tech',
+            requested: 0,
+            reason: 'Missing room'
+        };
+    }
+
+    var demand = demandOverride || getTechWorkDemand(room);
+    var missingWork = demand.missingWork;
+    var context = getActiveContext(room.name);
+    var techBody = creepBodyConfig.getTechBody(room);
+    var techReplacementLead = getReplacementLeadTicks('Tech', techBody);
+    var plannedTechCreeps = context ? getPlannedRoleCount(context, 'Tech') :
+        countHealthyCreeps(room.name, 'Tech', techReplacementLead) +
+            countQueuedRequests(room.name, 'Tech');
+    var colony = ColonyState.get(room.name);
+    var emergencyRequest = !!(options && options.emergency);
+    var controllerGrowthFloor = !emergencyRequest && !!(
+        options && options.controllerGrowthFloor === true ||
+        colony && colony.growthAllowed && colony.baselineTechRequired && plannedTechCreeps < 1
+    );
+    var result = {
+        ok: true,
+        role: 'Tech',
+        requested: 0,
+        desiredWork: demand.desiredWork,
+        livingWork: demand.livingWork,
+        queuedWork: demand.queuedWork,
+        missingWork: Math.max(0, missingWork)
+    };
+
+    saveTechWorkDebug(
+        room.name,
+        demand.desiredWork,
+        demand.livingWork,
+        demand.queuedWork
+    );
+
+    if (missingWork <= 0) {
+        result.reason = 'Enough Tech WORK already planned';
+        saveTechRequestDebug(
+            room.name,
+            'satisfied',
+            'TECH_CAPABILITY_SATISFIED',
+            demand,
+            plannedTechCreeps
+        );
+        return result;
+    }
+
+    if (plannedTechCreeps >= Math.max(TECH_ABSOLUTE_CREEP_CAP,
+        require('Spawn.Policy').economyRoleCap(room, 'Tech', { maxWorkParts: 1 }, ensureSpawnPolicyMemory()) || 0)) {
+        result.ok = false;
+        result.reason = 'Absolute Tech creep cap reached';
+        saveTechRequestDebug(
+            room.name,
+            'blocked',
+            'absolute Tech creep cap reached',
+            demand,
+            plannedTechCreeps
+        );
+        return result;
+    }
+
+    var body = creepBodyConfig.getTechBodyForWork(room, missingWork);
+    var requestedWork = countBodyParts(body, WORK);
+
+    if (!body || requestedWork <= 0) {
+        result.ok = false;
+        result.reason = 'No affordable Tech body for missing WORK';
+        saveTechRequestDebug(
+            room.name,
+            'blocked',
+            'insufficient body',
+            demand,
+            plannedTechCreeps
+        );
+        return result;
+    }
+
+    var requestOptions = {};
+    if (options) {
+        for (var optionKey in options) {
+            if (options.hasOwnProperty(optionKey)) {
+                requestOptions[optionKey] = options[optionKey];
+            }
+        }
+    }
+    if (controllerGrowthFloor) requestOptions.mandatoryFloorBypass = true;
+
+    /* Add exactly one Tech request per tick. Later ticks can fill more WORK. */
+    var addResult = addSpawnRequest(room.name, {
+        role: 'Tech',
+        economyCategory: emergencyRequest ? 'controllerSafety' :
+            controllerGrowthFloor ? 'controllerGrowth' : 'upgradeSurplus',
+        body: body,
+        maxWorkParts: requestedWork,
+        priority: controllerGrowthFloor ? 50 : PRIORITY.Tech,
+        memory: {
+            role: 'Tech',
+            homeRoom: room.name,
+            controllerEmergency: emergencyRequest,
+            controllerGrowthFloor: controllerGrowthFloor
+        },
+        requestedAt: Game.time
+    }, requestOptions);
+
+    if (!addResult.ok) {
+        result.ok = false;
+        result.reason = addResult.reason;
+        saveTechRequestDebug(
+            room.name,
+            'blocked',
+            addResult.reason,
+            demand,
+            plannedTechCreeps
+        );
+        return result;
+    }
+
+    if (addResult.mandatoryFloorBypass) {
+        if (context) context.mandatoryFloorBypassUsed = true;
+        var spawnMemory = HiveMemory.getRoomSpawnMemory(room.name);
+        if (!spawnMemory.governor || typeof spawnMemory.governor !== 'object') spawnMemory.governor = {};
+        spawnMemory.governor.mandatoryFloorBypassUsed = true;
+        spawnMemory.governor.mandatoryFloorAllowance = MANDATORY_FLOOR_CAP_ALLOWANCE;
+    }
+
+    result.requested = addResult.requested;
+    result.requestedWork = requestedWork;
+    result.queuedWork += requestedWork;
+    demand.queuedWork = result.queuedWork;
+    demand.missingWork = Math.max(
+        0,
+        demand.desiredWork - demand.livingWork - demand.queuedWork
+    );
+    saveTechWorkDebug(
+        room.name,
+        demand.desiredWork,
+        demand.livingWork,
+        result.queuedWork
+    );
+    saveTechRequestDebug(
+        room.name,
+        'queued',
+        null,
+        demand,
+        plannedTechCreeps + (addResult.requested > 0 ? 1 : 0)
+    );
+
+    return result;
+}
+
+function isCriticalArtificerStructureType(structureType) {
+    return structureType === STRUCTURE_SPAWN ||
+        structureType === STRUCTURE_EXTENSION ||
+        structureType === STRUCTURE_TOWER ||
+        structureType === STRUCTURE_STORAGE ||
+        structureType === STRUCTURE_CONTAINER ||
+        structureType === STRUCTURE_LINK ||
+        structureType === STRUCTURE_TERMINAL;
+}
+
+function isLowPriorityArtificerStructureType(structureType) {
+    return structureType === STRUCTURE_ROAD ||
+        structureType === STRUCTURE_RAMPART ||
+        structureType === STRUCTURE_WALL;
+}
+
+function getProgressRemaining(site) {
+    if (!site) {
+        return 0;
+    }
+
+    return Math.max(0, (site.progressTotal || 0) - (site.progress || 0));
+}
+
+function localStructureNeedsRepair(structure) {
+    if (creepUtility.shouldRepairStructure) {
+        return creepUtility.shouldRepairStructure(structure);
+    }
+
+    return !!(structure && structure.hits < structure.hitsMax);
+}
+
+function remoteStructureNeedsArtificerRepair(structure) {
+    if (!structure || structure.hits >= structure.hitsMax) {
+        return false;
+    }
+
+    if (structure.structureType === STRUCTURE_CONTAINER) {
+        return structure.hits <
+            structure.hitsMax * REMOTE_CONTAINER_REPAIR_START_PERCENT;
+    }
+
+    if (structure.structureType === STRUCTURE_ROAD) {
+        return structure.hits <
+            structure.hitsMax * REMOTE_ROAD_REPAIR_START_PERCENT;
+    }
+
+    return false;
+}
+
+function getValidLocalRepairDemand(room) {
+    var roomMemory = Memory.rooms && Memory.rooms[room.name];
+    var repairList = roomMemory && roomMemory.RepairStructure;
+    var seen = {};
+    var targets = 0;
+    var emergencyTargets = 0;
+    var missingHits = 0;
+
+    if (!repairList || !Array.isArray(repairList)) {
+        return {
+            targets: targets,
+            emergencyTargets: emergencyTargets
+        };
+    }
+
+    for (var i = 0; i < repairList.length; i++) {
+        var targetId = repairList[i];
+
+        if (!targetId || seen[targetId]) {
+            continue;
+        }
+
+        seen[targetId] = true;
+        var target = Game.getObjectById(targetId);
+
+        if (
+            !target ||
+            !target.pos ||
+            target.pos.roomName !== room.name ||
+            !localStructureNeedsRepair(target)
+        ) {
+            continue;
+        }
+
+        targets++;
+        // Match utility.Creep's modest barrier goal, never the enormous hitsMax.
+        var repairGoal = target.structureType === STRUCTURE_WALL || target.structureType === STRUCTURE_RAMPART ?
+            Math.min(10000, target.hitsMax) : target.hitsMax;
+        missingHits += Math.max(0, repairGoal - target.hits);
+
+        if (isCriticalArtificerStructureType(target.structureType)) {
+            emergencyTargets++;
+        }
+    }
+
+    return {
+        targets: targets,
+        missingHits: missingHits,
+        emergencyTargets: emergencyTargets
+    };
+}
+
+function getVisibleRemoteArtificerDemand(roomName) {
+    var activeSources = RemotePlanner.getActiveRemoteSourcesForHome(roomName);
+    var seenRooms = {};
+    var result = {
+        constructionSites: 0,
+        constructionProgressRemaining: 0,
+        containerConstructionSites: 0,
+        containerConstructionProgressRemaining: 0,
+        roadConstructionSites: 0,
+        roadConstructionProgressRemaining: 0,
+        repairTargets: 0,
+        containerRepairTargets: 0,
+        roadRepairTargets: 0
+    };
+
+    for (var i = 0; i < activeSources.length; i++) {
+        var sourceInfo = activeSources[i];
+        var remoteRoomName = sourceInfo && sourceInfo.roomName;
+
+        if (!remoteRoomName || seenRooms[remoteRoomName]) {
+            continue;
+        }
+
+        seenRooms[remoteRoomName] = true;
+        var remoteRoom = Game.rooms[remoteRoomName];
+
+        /* Unseen remotes have no trustworthy live construction or repair data. */
+        if (!remoteRoom) {
+            continue;
+        }
+
+        var sites = remoteRoom.find(FIND_MY_CONSTRUCTION_SITES, {
+            filter: function(site) {
+                return site.structureType === STRUCTURE_CONTAINER ||
+                    site.structureType === STRUCTURE_ROAD;
+            }
+        });
+
+        for (var siteIndex = 0; siteIndex < sites.length; siteIndex++) {
+            var site = sites[siteIndex];
+            var remaining = getProgressRemaining(site);
+
+            result.constructionSites++;
+            result.constructionProgressRemaining += remaining;
+
+            if (site.structureType === STRUCTURE_CONTAINER) {
+                result.containerConstructionSites++;
+                result.containerConstructionProgressRemaining += remaining;
+            }
+            else {
+                result.roadConstructionSites++;
+                result.roadConstructionProgressRemaining += remaining;
+            }
+        }
+
+        var structures = remoteRoom.find(FIND_STRUCTURES, {
+            filter: function(structure) {
+                return remoteStructureNeedsArtificerRepair(structure);
+            }
+        });
+
+        for (var structureIndex = 0;
+            structureIndex < structures.length;
+            structureIndex++
+        ) {
+            result.repairTargets++;
+
+            if (structures[structureIndex].structureType === STRUCTURE_CONTAINER) {
+                result.containerRepairTargets++;
+            }
+            else {
+                result.roadRepairTargets++;
+            }
+        }
+    }
+
+    return result;
+}
+
+function getCountScaledWork(count, baseWork, mediumAt, highAt, maxWork) {
+    if (count <= 0) {
+        return 0;
+    }
+
+    var work = baseWork;
+
+    if (count >= mediumAt) {
+        work += 2;
+    }
+
+    if (count >= highAt) {
+        work += 2;
+    }
+
+    return Math.min(maxWork, work);
+}
+
+var ARTIFICER_ECONOMY_CATEGORIES = [
+    'criticalMaintenance',
+    'criticalInfrastructure',
+    'remoteBootstrap',
+    'construction',
+    'remote'
+];
+
+function emptyArtificerCategoryWork() {
+    return {
+        criticalMaintenance: 0,
+        criticalInfrastructure: 0,
+        remoteBootstrap: 0,
+        construction: 0,
+        remote: 0
+    };
+}
+
+function limitArtificerCategoryWork(workByCategory, desiredWork) {
+    var limited = emptyArtificerCategoryWork();
+    var remaining = desiredWork;
+
+    for(var i = 0; i < ARTIFICER_ECONOMY_CATEGORIES.length; i++) {
+        var category = ARTIFICER_ECONOMY_CATEGORIES[i];
+        limited[category] = Math.min(remaining, Math.max(0, workByCategory[category] || 0));
+        remaining -= limited[category];
+    }
+
+    if(remaining > 0) limited.construction += remaining;
+    return limited;
+}
+
+function getQueuedArtificerWorkByCategory(roomName) {
+    var queued = emptyArtificerCategoryWork();
+    var queue = spawnManager.getSpawnQueue(roomName) || [];
+
+    for(var i = 0; i < queue.length; i++) {
+        var request = queue[i];
+        if(getRequestRole(request) !== 'Artificer') continue;
+        var category = request.economyCategory || request.category || 'construction';
+        if(!queued.hasOwnProperty(category)) category = 'construction';
+        queued[category] += countBodyParts(request.body || [], WORK);
+    }
+
+    return queued;
+}
+
+function getArtificerCreepWorkCategory(creep) {
+    var memory = creep && creep.memory || {};
+    if(ARTIFICER_ECONOMY_CATEGORIES.indexOf(memory.artificerWorkCategory) >= 0) {
+        return memory.artificerWorkCategory;
+    }
+    if(memory.artificerTask === 'CRITICAL_REPAIR') return 'criticalMaintenance';
+    if(memory.artificerTask === 'REPAIR') return 'construction';
+    if(memory.artificerTask === 'BUILD_REMOTE') return 'remote';
+    if(memory.artificerTask === 'BUILD_LOCAL') {
+        var target = memory.buildTargetId && Game.getObjectById(memory.buildTargetId);
+        return target && isCriticalArtificerStructureType(target.structureType) ?
+            'criticalInfrastructure' : 'construction';
+    }
+    if(creep && creep.spawning) {
+        if(memory.criticalMaintenance) return 'criticalMaintenance';
+        if(ARTIFICER_ECONOMY_CATEGORIES.indexOf(memory.economyCategory) >= 0) {
+            return memory.economyCategory;
+        }
+        return 'construction';
+    }
+    if(memory.artificerTask === 'EMERGENCY_FILL') return null;
+    return 'flexible';
+}
+
+function getLivingArtificerWorkCoverage(roomName) {
+    var coverage = {
+        living: emptyArtificerCategoryWork(),
+        spawning: emptyArtificerCategoryWork(),
+        flexible: 0,
+        unavailable: 0
+    };
+    var creeps = TickIndex.get().creepsByHomeRoom.get(roomName) || [];
+    var countedNames = {};
+
+    for(var i = 0; i < creeps.length; i++) {
+        var creep = creeps[i];
+        if(creep && creep.name) countedNames[creep.name] = true;
+        if(!creep || !creep.memory || creep.memory.role !== 'Artificer' ||
+            !isHealthyForReplacement(creep, 'Artificer')) {
+            continue;
+        }
+        var work = getCreepActiveBodyParts(creep, WORK);
+        var category = getArtificerCreepWorkCategory(creep);
+        if(category === 'flexible') coverage.flexible += work;
+        else if(category && coverage.living.hasOwnProperty(category)) {
+            if(creep.spawning) coverage.spawning[category] += work;
+            else coverage.living[category] += work;
+        }
+        else coverage.unavailable += work;
+    }
+
+    /*
+     * A just-started creep can be absent from Game.creeps (and therefore the
+     * per-tick index) after its queue request has been consumed. The spawn's
+     * live spawning state is authoritative; Memory contributes only the role,
+     * home, category, and final scalar WORK count saved by spawn.manager.
+     */
+    var spawns = Game.spawns || {};
+    for(var spawnName in spawns) {
+        if(!spawns.hasOwnProperty(spawnName)) continue;
+        var spawn = spawns[spawnName];
+        var spawningName = spawn && spawn.spawning && spawn.spawning.name;
+        if(!spawningName || countedNames[spawningName] || !spawn.room ||
+            spawn.room.name !== roomName) {
+            continue;
+        }
+        countedNames[spawningName] = true;
+
+        var spawningCreep = Game.creeps && Game.creeps[spawningName];
+        var spawningMemory = spawningCreep && spawningCreep.memory ||
+            Memory.creeps && Memory.creeps[spawningName];
+        if(!spawningMemory || spawningMemory.role !== 'Artificer' ||
+            (spawningMemory.homeRoom || spawn.room.name) !== roomName) {
+            continue;
+        }
+
+        var savedSpawningWork = spawningMemory.artificerSpawnWorkParts;
+        var spawningWork = spawningCreep ?
+            getCreepActiveBodyParts(spawningCreep, WORK) :
+            (typeof savedSpawningWork === 'number' && isFinite(savedSpawningWork) ?
+                Math.min(50, Math.max(0, Math.floor(savedSpawningWork))) : 0);
+        if(spawningWork <= 0) continue;
+
+        var spawningCategory = getArtificerCreepWorkCategory(
+            spawningCreep || { memory: spawningMemory, spawning: true }
+        );
+        if(spawningCategory && coverage.spawning.hasOwnProperty(spawningCategory)) {
+            coverage.spawning[spawningCategory] += spawningWork;
+        }
+        else coverage.unavailable += spawningWork;
+    }
+
+    return coverage;
+}
+
+function getMissingArtificerWorkByCategory(workByCategory, livingCoverage, queuedByCategory) {
+    var missing = emptyArtificerCategoryWork();
+    var remainingFlexibleWork = livingCoverage.flexible || 0;
+
+    for(var i = 0; i < ARTIFICER_ECONOMY_CATEGORIES.length; i++) {
+        var category = ARTIFICER_ECONOMY_CATEGORIES[i];
+        var desired = workByCategory[category] || 0;
+        var categoryCoverage = (livingCoverage.living[category] || 0) +
+            (livingCoverage.spawning[category] || 0);
+        var uncovered = Math.max(0, desired - categoryCoverage - (queuedByCategory[category] || 0));
+        var flexibleCoverage = Math.min(uncovered, remainingFlexibleWork);
+        remainingFlexibleWork -= flexibleCoverage;
+        missing[category] = uncovered - flexibleCoverage;
+    }
+
+    return missing;
+}
+
+function sumArtificerCategoryWork(workByCategory) {
+    return ARTIFICER_ECONOMY_CATEGORIES.reduce(function(total, category) {
+        return total + (workByCategory[category] || 0);
+    }, 0);
+}
+
+/** Calculate live Artificer WORK demand from local and visible remote work. */
+function getArtificerBuildDemand(room) {
+    if (!room) {
+        return {
+            desiredWork: 0,
+            livingWork: 0,
+            spawningWork: 0,
+            queuedWork: 0,
+            totalArtificerWork: 0,
+            missingWork: 0,
+            localBuildProgressRemaining: 0,
+            localConstructionSites: 0,
+            repairTargets: 0,
+            remoteConstructionSites: 0,
+            remoteRepairTargets: 0,
+            mode: 'missing-room'
+        };
+    }
+
+    var constructionDemand = getCachedLocalConstructionDemand(room);
+    var localBuildProgressRemaining =
+        constructionDemand.localBuildProgressRemaining || 0;
+    var criticalSites = constructionDemand.criticalSites || 0;
+    var criticalProgress = constructionDemand.criticalProgress || 0;
+    var regularSites = constructionDemand.regularSites || 0;
+    var regularProgress = constructionDemand.regularProgress || 0;
+    var lowPrioritySites = constructionDemand.lowPrioritySites || 0;
+    var lowPriorityProgress = constructionDemand.lowPriorityProgress || 0;
+    var repairDemand = getCachedLocalRepairDemand(room);
+    var remoteDemand = getCachedRemoteArtificerDemand(room.name);
+    var energyCapacity = room.energyCapacityAvailable || 300;
+    var storageEnergy = getStoredEnergy(room.storage);
+    var criticalBuildWork = 0;
+
+    if (criticalSites > 0) {
+        criticalBuildWork = energyCapacity >= 1300 ? 10 :
+            energyCapacity >= 800 ? 8 : 6;
+
+        if (room.storage && storageEnergy >= 100000) {
+            criticalBuildWork += 2;
+        }
+
+        criticalBuildWork += Math.min(2, Math.floor(criticalProgress / 25000));
+
+        if (criticalSites >= 10) {
+            criticalBuildWork += 2;
+        }
+
+        criticalBuildWork = Math.min(16, criticalBuildWork);
+    }
+
+    var regularBuildWork = getCountScaledWork(
+        regularSites,
+        4,
+        5,
+        15,
+        10
+    );
+    regularBuildWork += Math.min(2, Math.floor(regularProgress / 50000));
+    regularBuildWork = Math.min(10, regularBuildWork);
+
+    var lowPriorityBuildWork = getCountScaledWork(
+        lowPrioritySites,
+        2,
+        10,
+        30,
+        6
+    );
+    lowPriorityBuildWork += Math.min(2, Math.floor(lowPriorityProgress / 75000));
+    lowPriorityBuildWork = Math.min(6, lowPriorityBuildWork);
+
+    /* Critical sites dominate; lower priority local sites wait behind them. */
+    var localBuildWork = criticalBuildWork || regularBuildWork ||
+        lowPriorityBuildWork;
+    var repairWork = getCountScaledWork(
+        repairDemand.targets,
+        2,
+        5,
+        15,
+        6
+    );
+    var remoteContainerBuildWork = getCountScaledWork(
+        remoteDemand.containerConstructionSites,
+        4,
+        2,
+        5,
+        8
+    );
+    var remoteRoadBuildWork = getCountScaledWork(
+        remoteDemand.roadConstructionSites,
+        2,
+        10,
+        25,
+        6
+    );
+    var remoteContainerRepairWork = getCountScaledWork(
+        remoteDemand.containerRepairTargets,
+        2,
+        3,
+        8,
+        4
+    );
+    var remoteRoadRepairWork = getCountScaledWork(
+        remoteDemand.roadRepairTargets,
+        1,
+        10,
+        30,
+        3
+    );
+    var desiredWork = localBuildWork + repairWork +
+        remoteContainerBuildWork + remoteRoadBuildWork +
+        remoteContainerRepairWork + remoteRoadRepairWork;
+    var criticalRepairWork = getCountScaledWork(
+        repairDemand.emergencyTargets,
+        2,
+        5,
+        15,
+        6
+    );
+    var workByEconomyCategory = emptyArtificerCategoryWork();
+    workByEconomyCategory.criticalMaintenance = Math.min(repairWork, criticalRepairWork);
+    workByEconomyCategory.criticalInfrastructure = criticalBuildWork;
+    workByEconomyCategory.construction =
+        (criticalBuildWork > 0 ? 0 : localBuildWork) +
+        repairWork - workByEconomyCategory.criticalMaintenance;
+    workByEconomyCategory.remoteBootstrap = remoteContainerBuildWork + remoteContainerRepairWork;
+    workByEconomyCategory.remote = remoteRoadBuildWork + remoteRoadRepairWork;
+    var mode = 'idle';
+
+    if (criticalSites > 0) {
+        mode = 'critical-local-build';
+    }
+    else if (regularSites > 0) {
+        mode = 'local-build';
+    }
+    else if (lowPrioritySites > 0) {
+        mode = 'low-priority-build';
+    }
+    else if (remoteDemand.containerConstructionSites > 0) {
+        mode = 'remote-container-build';
+    }
+    else if (remoteDemand.roadConstructionSites > 0) {
+        mode = 'remote-road-build';
+    }
+    else if (repairDemand.targets > 0) {
+        mode = 'repair';
+    }
+    else if (remoteDemand.repairTargets > 0) {
+        mode = 'remote-repair';
+    }
+
+    var upgradeRush = HiveMemory.getConfig('upgrade').upgradeRush === true;
+
+    if (upgradeRush) {
+        var emergencyRepairWork = repairDemand.emergencyTargets > 0 ?
+            repairWork : Math.min(2, Math.floor(repairWork / 2));
+        var reducedWork = regularBuildWork + lowPriorityBuildWork +
+            remoteRoadBuildWork + remoteRoadRepairWork;
+
+        desiredWork = criticalBuildWork + remoteContainerBuildWork +
+            remoteContainerRepairWork + emergencyRepairWork +
+            Math.floor(reducedWork / 2);
+        var reducedWorkBudget = Math.floor(reducedWork / 2);
+        var reducedLocalWork = Math.min(
+            reducedWorkBudget,
+            regularBuildWork + lowPriorityBuildWork
+        );
+        workByEconomyCategory.criticalMaintenance = Math.min(
+            emergencyRepairWork,
+            criticalRepairWork
+        );
+        workByEconomyCategory.criticalInfrastructure = criticalBuildWork;
+        workByEconomyCategory.construction = reducedLocalWork +
+            emergencyRepairWork - workByEconomyCategory.criticalMaintenance;
+        workByEconomyCategory.remoteBootstrap = remoteContainerBuildWork + remoteContainerRepairWork;
+        workByEconomyCategory.remote = reducedWorkBudget - reducedLocalWork;
+        mode = desiredWork > 0 ? 'upgrade-rush-' + mode : 'upgrade-rush';
+    }
+
+    var controllerDanger = room.controller &&
+        room.controller.ticksToDowngrade < TECH_DOWNGRADE_DANGER_TICKS;
+    var hasCriticalWork = criticalSites > 0 ||
+        remoteDemand.containerConstructionSites > 0 ||
+        repairDemand.emergencyTargets > 0;
+
+    if (room.storage && !hasCriticalWork) {
+        if (storageEnergy < ARTIFICER_CRITICAL_STORAGE_ENERGY) {
+            desiredWork = Math.min(desiredWork, 2);
+            mode = desiredWork > 0 ? 'low-energy-' + mode : mode;
+        }
+        else if (storageEnergy < ARTIFICER_LOW_STORAGE_ENERGY) {
+            desiredWork = Math.min(desiredWork, 4);
+            mode = desiredWork > 0 ? 'energy-safe-' + mode : mode;
+        }
+    }
+
+    if (controllerDanger) {
+        desiredWork = Math.min(desiredWork, hasCriticalWork ? 8 : 2);
+        mode = desiredWork > 0 ? 'downgrade-safe-' + mode : mode;
+    }
+
+    desiredWork = Math.max(0, Math.min(
+        ARTIFICER_MAX_DESIRED_WORK,
+        Math.ceil(desiredWork)
+    ));
+    var investmentSettings = require('HiveMind.Surplus').config();
+    var backlogWork = (localBuildProgressRemaining + (remoteDemand.constructionProgressRemaining || 0)) /
+        (5 * investmentSettings.constructionHorizon * investmentSettings.workDutyCycle) +
+        (repairDemand.missingHits || 0) / (100 * investmentSettings.constructionHorizon * investmentSettings.workDutyCycle);
+    ensureRoomMemory(room.name).surplusBacklog = { tick: Game.time, work: backlogWork };
+    var investment = require('HiveMind.Surplus').plan(room, Economy.get(room.name), require('HiveMind.Capacity').get().rooms[room.name]);
+    if (!controllerDanger && !upgradeRush && investment.artificerWork > desiredWork) {
+        var investmentCategory = localBuildProgressRemaining > 0 || repairDemand.targets > 0 ?
+            'construction' : remoteDemand.containerConstructionSites > 0 ? 'remoteBootstrap' : 'remote';
+        workByEconomyCategory[investmentCategory] += investment.artificerWork - desiredWork;
+        desiredWork = investment.artificerWork;
+        mode = investment.reason;
+    }
+    workByEconomyCategory = limitArtificerCategoryWork(workByEconomyCategory, desiredWork);
+    var livingWorkCoverage = getLivingArtificerWorkCoverage(room.name);
+    var queuedWorkByEconomyCategory = getQueuedArtificerWorkByCategory(room.name);
+    var livingWork = sumArtificerCategoryWork(livingWorkCoverage.living) +
+        livingWorkCoverage.flexible + livingWorkCoverage.unavailable;
+    var spawningWork = sumArtificerCategoryWork(livingWorkCoverage.spawning);
+    var queuedWork = sumArtificerCategoryWork(queuedWorkByEconomyCategory);
+    var missingWorkByEconomyCategory = getMissingArtificerWorkByCategory(
+        workByEconomyCategory,
+        livingWorkCoverage,
+        queuedWorkByEconomyCategory
+    );
+    var missingWork = sumArtificerCategoryWork(missingWorkByEconomyCategory);
+    var economyCategory = ARTIFICER_ECONOMY_CATEGORIES.find(function(category) {
+        return missingWorkByEconomyCategory[category] > 0;
+    }) || 'construction';
+
+    return {
+        desiredWork: desiredWork,
+        livingWork: livingWork,
+        spawningWork: spawningWork,
+        queuedWork: queuedWork,
+        totalArtificerWork: livingWork + spawningWork + queuedWork,
+        missingWork: missingWork,
+        localBuildProgressRemaining: localBuildProgressRemaining,
+        localConstructionSites: constructionDemand.totalSites || 0,
+        repairTargets: repairDemand.targets,
+        remoteConstructionSites: remoteDemand.constructionSites,
+        remoteRepairTargets: remoteDemand.repairTargets,
+        hasCriticalWork: hasCriticalWork,
+        economyCategory: economyCategory,
+        workByEconomyCategory: workByEconomyCategory,
+        livingWorkByEconomyCategory: livingWorkCoverage.living,
+        spawningWorkByEconomyCategory: livingWorkCoverage.spawning,
+        flexibleLivingWork: livingWorkCoverage.flexible,
+        unavailableLivingWork: livingWorkCoverage.unavailable,
+        queuedWorkByEconomyCategory: queuedWorkByEconomyCategory,
+        missingWorkByEconomyCategory: missingWorkByEconomyCategory,
+        mode: mode
+    };
+}
+
+function saveArtificerDemandDebug(roomName, demand) {
+    if (!Memory.rooms) {
+        Memory.rooms = {};
+    }
+
+    if (!Memory.rooms[roomName]) {
+        Memory.rooms[roomName] = {};
+    }
+
+    var roomMemory = Memory.rooms[roomName];
+    roomMemory.artificerDesiredWork = demand.desiredWork;
+    roomMemory.artificerLivingWork = demand.livingWork;
+    roomMemory.artificerQueuedWork = demand.queuedWork;
+    roomMemory.artificerBuildBacklog = demand.localBuildProgressRemaining;
+    roomMemory.artificerRepairTargets = demand.repairTargets;
+    roomMemory.artificerRemoteBuildTargets = demand.remoteConstructionSites;
+    roomMemory.artificerRemoteRepairTargets = demand.remoteRepairTargets;
+    roomMemory.artificerMode = demand.mode;
+    roomMemory.artificerRequestBlockReason = demand.desiredWork <= 0 ? 'NO_USEFUL_WORK' :
+        demand.missingWork <= 0 ? 'ARTIFICER_BACKLOG_SATISFIED' : null;
+}
+
+function requestDynamicArtificersForRoom(room, demandOverride, options) {
+    if (!room) {
+        return {
+            ok: false,
+            role: 'Artificer',
+            requested: 0,
+            reason: 'Missing room'
+        };
+    }
+
+    var demand = demandOverride || getArtificerBuildDemand(room);
+    var result = {
+        ok: true,
+        role: 'Artificer',
+        requested: 0,
+        requestedWork: 0,
+        desiredWork: demand.desiredWork,
+        livingWork: demand.livingWork,
+        queuedWork: demand.queuedWork,
+        missingWork: demand.missingWork,
+        mode: demand.mode,
+        economyCategory: null
+    };
+
+    saveArtificerDemandDebug(room.name, demand);
+
+    if (demand.missingWork <= 0) {
+        return result;
+    }
+
+    var requestEconomyCategory = ARTIFICER_ECONOMY_CATEGORIES.find(function(category) {
+        return demand.missingWorkByEconomyCategory &&
+            demand.missingWorkByEconomyCategory[category] > 0;
+    }) || demand.economyCategory ||
+        (demand.hasCriticalWork ? 'criticalMaintenance' : 'construction');
+    var categoryMissingWork = demand.missingWorkByEconomyCategory ?
+        demand.missingWorkByEconomyCategory[requestEconomyCategory] : demand.missingWork;
+    if (requestEconomyCategory === 'criticalInfrastructure' && Economy.get(room.name)?.harvest?.infrastructureRecovery) {
+        categoryMissingWork = Math.min(categoryMissingWork, Math.max(0, 2 - demand.livingWork - demand.queuedWork));
+        if (categoryMissingWork <= 0) return result;
+    }
+    result.economyCategory = requestEconomyCategory;
+
+    var body = creepBodyConfig.getArtificerBodyForWork(room, categoryMissingWork);
+    var requestedWork = countBodyParts(body, WORK);
+
+    if (!body || requestedWork <= 0) {
+        result.ok = false;
+        result.reason = 'No Artificer body or spawn queue available';
+        return result;
+    }
+
+    /* Add one request per tick; queued WORK prevents repeated over-requesting. */
+    var addResult = addSpawnRequest(room.name, {
+        role: 'Artificer',
+        demandId: 'Artificer:' + requestEconomyCategory,
+        economyCategory: requestEconomyCategory,
+        body: body,
+        requestedWorkParts: requestedWork,
+        maxWorkParts: requestedWork,
+        priority: ARTIFICER_PRIORITY_BY_CATEGORY[requestEconomyCategory] || PRIORITY.Artificer,
+        memory: {
+            role: 'Artificer',
+            homeRoom: room.name,
+            artificerWorkCategory: requestEconomyCategory,
+            economyCategory: requestEconomyCategory,
+            criticalMaintenance: requestEconomyCategory === 'criticalMaintenance'
+        },
+        requestedAt: Game.time
+    }, options);
+
+    if (!addResult.ok) {
+        result.ok = false;
+        result.reason = addResult.reason;
+        ensureRoomMemory(room.name).artificerRequestBlockReason = addResult.reason;
+        return result;
+    }
+
+    if(addResult.requested > 0) {
+        demand.queuedWork += requestedWork;
+        demand.missingWork = Math.max(0, demand.missingWork - requestedWork);
+        if(demand.missingWorkByEconomyCategory) {
+            demand.missingWorkByEconomyCategory[requestEconomyCategory] = Math.max(
+                0,
+                demand.missingWorkByEconomyCategory[requestEconomyCategory] - requestedWork
+            );
+        }
+    }
+    saveArtificerDemandDebug(room.name, demand);
+
+    result.requested = addResult.requested;
+    result.requestedWork = addResult.requested > 0 ? requestedWork : 0;
+    result.queuedWork = demand.queuedWork;
+    result.missingWork = demand.missingWork;
+    return result;
+}
+
+
+function requestRemoteExtractorsForRoom(room, extractorBody, priority, maxRequests, options) {
+    if (!room || !Economy.canSpend(room, 'remoteMaintenance')) {
+        return { ok: true, role: 'Extractor', requested: 0, reason: 'Remote mining blocked by economy policy' };
+    }
+    var queue = spawnManager.getSpawnQueue(room.name);
+    var demands = RemotePlanner.getRemoteExtractorDemand(room.name, extractorBody, queue);
+    var added = 0;
+
+    if (typeof maxRequests !== 'number' || maxRequests < 0) {
+        maxRequests = demands ? demands.length : 0;
+    }
+
+    if (!queue || !demands || demands.length === 0) {
+        return {
+            ok: true,
+            role: 'Extractor',
+            requested: 0,
+            remote: true
+        };
+    }
+
+    for (var i = 0; i < demands.length; i++) {
+        if (added >= maxRequests) {
+            break;
+        }
+
+        var demand = demands[i];
+        var keeperMining = require('Keeper.Intel').known(demand.remoteRoomName);
+        var remoteBody = creepBodyConfig.getExtractorBodyForWork(
+            room,
+            keeperMining ? 7 : demand.missingWork || SOURCE_WORK_TARGET
+        ) || extractorBody;
+
+        /*
+         * Queue one source-targeted normal Extractor. remoteMining is assignment
+         * state only. Each request fills missing WORK within physical seat capacity.
+         */
+        var addResult = addSpawnRequest(room.name, {
+            role: 'Extractor',
+            economyCategory: demand.sourceInfo && demand.sourceInfo.state === 'BOOTSTRAPPING' ?
+                'remoteBootstrap' : 'remoteMaintenance',
+            body: remoteBody,
+            bodyRequirements: keeperMining ? { fixed: true } : undefined,
+            minimumWorkParts: keeperMining ? 7 : undefined,
+            requestedWorkParts: countBodyParts(remoteBody, WORK),
+            maxWorkParts: countBodyParts(remoteBody, WORK),
+            priority: priority,
+            memory: {
+                role: 'Extractor',
+                homeRoom: room.name,
+                sourceRoom: demand.remoteRoomName,
+                targetRoom: demand.remoteRoomName,
+                sourceId: demand.sourceId,
+                targetSourceId: demand.sourceId,
+                remoteMining: true
+            },
+            requestedAt: Game.time
+        }, options);
+
+        if (addResult.ok) {
+            added++;
+        }
+        else {
+            break;
+        }
+    }
+
+    return {
+        ok: true,
+        role: 'Extractor',
+        requested: added,
+        remote: true,
+        demands: demands.length
+    };
+}
+
+function sortSpawnQueue(queue) {
+    if (!queue) {
+        return;
+    }
+
+    queue.sort(function(a, b) {
+        if (b.priority !== a.priority) {
+            return b.priority - a.priority;
+        }
+
+        return a.requestedAt - b.requestedAt;
+    });
+}
+
+function getMyUsername(room) {
+    if (room && room.controller && room.controller.owner) {
+        return room.controller.owner.username;
+    }
+
+    for (var spawnName in Game.spawns) {
+        if (
+            Game.spawns.hasOwnProperty(spawnName) &&
+            Game.spawns[spawnName].owner
+        ) {
+            return Game.spawns[spawnName].owner.username;
+        }
+    }
+
+    return HiveMemory.ensure().identity.username || null;
+}
+
+function getControllerOwnerUsername(controllerMemory) {
+    if (!controllerMemory || !controllerMemory.owner) {
+        return null;
+    }
+
+    if (typeof controllerMemory.owner === 'string') {
+        return controllerMemory.owner;
+    }
+
+    return controllerMemory.owner.username || null;
+}
+
+
+function isLivingAnnexForHome(creep, homeRoomName) {
+    return !!(
+        creep &&
+        creep.memory &&
+        creep.memory.role === 'Annex' &&
+        creep.memory.homeRoom === homeRoomName
+    );
+}
+
+function getAnnexReplacementLeadTicks(room, remoteRoomName, activeSources, annexBody) {
+    var routeDistance = 0;
+    for (var i = 0; i < activeSources.length; i++) {
+        var info = activeSources[i];
+        if (!info || info.roomName !== remoteRoomName) continue;
+        routeDistance = Math.max(routeDistance, info.distance || 0);
+        var sourceMemory = Memory.rooms && Memory.rooms[remoteRoomName] &&
+            Memory.rooms[remoteRoomName].sources && Memory.rooms[remoteRoomName].sources[info.sourceId];
+        var controllerMemory = Memory.rooms && Memory.rooms[remoteRoomName] &&
+            Memory.rooms[remoteRoomName].controller;
+        if (sourceMemory && sourceMemory.pos && controllerMemory && controllerMemory.pos) {
+            routeDistance = Math.max(routeDistance, (info.distance || 0) + Math.max(
+                Math.abs(sourceMemory.pos.x - controllerMemory.pos.x),
+                Math.abs(sourceMemory.pos.y - controllerMemory.pos.y)
+            ));
+        }
+    }
+    if (routeDistance <= 0 && Game.map && typeof Game.map.getRoomLinearDistance === 'function') {
+        routeDistance = Math.max(1, Game.map.getRoomLinearDistance(room.name, remoteRoomName)) * 50;
+    }
+    return annexBody.length * 3 + Math.max(25, routeDistance) + REPLACEMENT_BUFFER_TICKS.Annex;
+}
+
+function isQueuedAnnexForHome(request, homeRoomName) {
+    var memory = request && request.memory;
+
+    return !!(
+        request &&
+        request.role === 'Annex' &&
+        memory &&
+        memory.homeRoom === homeRoomName
+    );
+}
+
+function requestAnnexForRoom(room) {
+    var result = {
+        ok: true,
+        role: 'Annex',
+        requested: 0,
+        desiredReservationTicks: RESERVE_DESIRED_TICKS,
+        spawnAtTicks: RESERVE_SPAWN_AT_TICKS
+    };
+
+    if (!room) {
+        result.ok = false;
+        result.reason = 'Missing home room';
+        return result;
+    }
+
+    var activeSources = RemotePlanner.getActiveRemoteSourcesForHome(room.name);
+    var queue = spawnManager.getSpawnQueue(room.name);
+    var annexBody = creepBodyConfig.getAnnexBody(room);
+
+    if (!queue || !annexBody || !activeSources || activeSources.length === 0) {
+        result.reason = !annexBody ? 'Room cannot support an Annex body' : 'No active remote rooms';
+        return result;
+    }
+
+    var livingAnnexes = [];
+    var context = getActiveContext(room.name);
+
+    if (context) {
+        for (var homeCreepIndex = 0;
+            homeCreepIndex < context.livingCreeps.length;
+            homeCreepIndex++
+        ) {
+            if (isLivingAnnexForHome(context.livingCreeps[homeCreepIndex], room.name)) {
+                livingAnnexes.push(context.livingCreeps[homeCreepIndex]);
+            }
+        }
+    }
+    else {
+        var indexedCreeps = TickIndex.get().creepsByHomeRoom.get(room.name) || [];
+        for (var creepIndex = 0; creepIndex < indexedCreeps.length; creepIndex++) {
+            if (isLivingAnnexForHome(indexedCreeps[creepIndex], room.name)) {
+                livingAnnexes.push(indexedCreeps[creepIndex]);
+            }
+        }
+    }
+
+    var queuedAnnexes = [];
+    for (var queueIndex = 0; queueIndex < queue.length; queueIndex++) {
+        if (isQueuedAnnexForHome(queue[queueIndex], room.name)) {
+            queuedAnnexes.push(queue[queueIndex]);
+        }
+    }
+
+    /* DESIRED_COUNTS.Annex is a portfolio cap; an expiring creep may overlap its replacement. */
+    var totalPlannedAnnexes = livingAnnexes.length + queuedAnnexes.length;
+
+    var myUsername = getMyUsername(room);
+    var seenRemoteRooms = {};
+
+    for (var sourceIndex = 0; sourceIndex < activeSources.length; sourceIndex++) {
+        var sourceInfo = activeSources[sourceIndex];
+        var remoteRoomName = sourceInfo && sourceInfo.roomName;
+
+        if (!remoteRoomName || seenRemoteRooms[remoteRoomName]) {
+            continue;
+        }
+        seenRemoteRooms[remoteRoomName] = true;
+
+        var controllerMemory = RemotePlanner.getControllerInfo(remoteRoomName);
+        var ownerUsername = getControllerOwnerUsername(controllerMemory);
+        var reservation = RemotePlanner.getEffectiveReservation(remoteRoomName);
+
+        if (ownerUsername && ownerUsername !== myUsername) {
+            continue;
+        }
+
+        if (controllerMemory && controllerMemory.my === true) {
+            continue;
+        }
+
+        if (reservation && reservation.username && reservation.username !== myUsername) {
+            continue;
+        }
+
+        var targetLivingAnnex = null;
+        for (var livingIndex = 0; livingIndex < livingAnnexes.length; livingIndex++) {
+            if (livingAnnexes[livingIndex].memory.targetRoom === remoteRoomName) {
+                targetLivingAnnex = livingAnnexes[livingIndex];
+                break;
+            }
+        }
+
+        var targetQueued = false;
+        for (var queuedIndex = 0; queuedIndex < queuedAnnexes.length; queuedIndex++) {
+            if (queuedAnnexes[queuedIndex].memory.targetRoom === remoteRoomName) {
+                targetQueued = true;
+                break;
+            }
+        }
+        var initialReservation = !reservation || reservation.username !== myUsername ||
+            !(reservation.ticksToEnd > 0);
+        var replacementLead = getAnnexReplacementLeadTicks(
+            room, remoteRoomName, activeSources, annexBody
+        );
+        var replacementDue = !!(targetLivingAnnex &&
+            targetLivingAnnex.ticksToLive !== undefined &&
+            targetLivingAnnex.ticksToLive <= replacementLead);
+        var claimParts = countBodyParts(annexBody, CLAIM);
+        var reservationSpawnAt = claimParts <= 1 ? replacementLead : RESERVE_SPAWN_AT_TICKS;
+
+        if (targetQueued || targetLivingAnnex && !replacementDue) continue;
+        if (replacementDue && claimParts > 1 && reservation &&
+            reservation.username === myUsername && reservation.ticksToEnd >= RESERVE_SPAWN_AT_TICKS) continue;
+        if (!targetLivingAnnex && !initialReservation && reservation.ticksToEnd >= reservationSpawnAt) continue;
+        if (totalPlannedAnnexes - (replacementDue ? 1 : 0) >= DESIRED_COUNTS.Annex) continue;
+
+        var addResult = addSpawnRequest(room.name, {
+            role: 'Annex',
+            body: annexBody,
+            priority: initialReservation ? ANNEX_INITIAL_PRIORITY :
+                claimParts <= 1 ? ANNEX_CONTINUITY_PRIORITY : ANNEX_MAINTENANCE_PRIORITY,
+            economyCategory: initialReservation && ['BOOTSTRAPPING', 'RESERVING'].indexOf(sourceInfo.state) >= 0 ? 'remoteBootstrap' : 'remoteMaintenance',
+            memory: {
+                role: 'Annex',
+                homeRoom: room.name,
+                targetRoom: remoteRoomName,
+                annexMode: 'reserve',
+                initialReservation: initialReservation,
+                replacementLeadTicks: replacementLead,
+                claimParts: claimParts
+            },
+            requestedAt: Game.time
+        });
+
+        if (!addResult.ok) {
+            result.ok = false;
+            result.reason = addResult.reason;
+            return result;
+        }
+
+        if (sourceInfo.reservationBootstrap) {
+            sourceInfo.state = 'RESERVING';
+            sourceInfo.reservationBootstrapStartedAt = Game.time;
+            sourceInfo.reservationBootstrapUntil = Game.time + annexBody.length * 3 + (sourceInfo.distance || 50) * 3 + 500;
+        }
+        result.requested = 1;
+        result.targetRoom = remoteRoomName;
+        result.spawnAtTicks = reservationSpawnAt;
+        result.replacementLeadTicks = replacementLead;
+        return result;
+    }
+
+    result.reason = 'No active remote room needs reservation';
+    return result;
+}
+
+/**
+ * Request one role count for one room.
+ *
+ * This function:
+ * - picks the body
+ * - calculates replacement timing
+ * - counts healthy creeps
+ * - counts queued requests
+ * - asks spawn.manager.js to queue missing creeps
+ *
+ * @param {Room} room
+ * @param {string} role
+ * @param {number} desiredCount
+ * @param {number} priorityOverride
+ * @returns {object}
+ */
+function requestEconomicScout(room, suppressReason) {
+    var scout = require('Scout.Economy').status(room);
+    var request = { role: 'Scout', body: [MOVE], priority: scout.priority, economyCategory: 'remoteIntel',
+        memory: { role: 'Scout', homeRoom: room.name, economyCategory: 'remoteIntel' } };
+    var decision = Economy.canSpawnRequest(room, request);
+    var result = { ok: false, role: 'Scout', requested: 0, reason: suppressReason || decision.reason };
+    if (!suppressReason && decision.allowed && !scout.living && !scout.queued) result = addSpawnRequest(room.name, request);
+    else if (!suppressReason && decision.allowed) {
+        var queued = spawnManager.getSpawnQueue(room.name).find(function(item) { return getRequestRole(item) === 'Scout'; });
+        var queuedDecision = queued && !scout.living ? SpawnArbiter.revalidate(room, queued) : { allowed: true };
+        result = { ok: queuedDecision.allowed, role: 'Scout', requested: 0,
+            reason: queuedDecision.reason || 'Scout already present or queued' };
+    }
+    scout.allowed = result.ok;
+    scout.blockedReason = result.ok ? null : result.reason;
+    scout.queued += result.requested || 0;
+    scout.updatedAt = Game.time;
+    Memory.rooms[room.name].scout = scout;
+    return result;
+}
+
+function requestRoleForRoom(room, role, desiredCount, priorityOverride, options) {
+    /*
+     * Validate the request before doing body calculations or writing anything to
+     * the spawn queue.
+     */
+    if (!room || !role || desiredCount <= 0) {
+        return {
+            ok: false,
+            role: role,
+            reason: 'Invalid requestRoleForRoom input'
+        };
+    }
+
+    var roomName = room.name;
+    /*
+     * Body selection is separated into role.creepBodyConfig.js so this manager
+     * only decides "how many" and not the exact body-part layout.
+     */
+    var body = creepBodyConfig.getBody(role, room);
+    var priority = typeof priorityOverride === 'number' ?
+        priorityOverride : (PRIORITY[role] || 0);
+    var replacementLeadTicks = getReplacementLeadTicks(role, body);
+
+    var healthyCount = countHealthyCreeps(roomName, role, replacementLeadTicks);
+    var queuedCount = countQueuedRequests(roomName, role);
+
+    if (
+        role === 'Extractor' &&
+        Memory.rooms &&
+        Memory.rooms[roomName] &&
+        Memory.rooms[roomName].sources
+    ) {
+        /*
+         * Extractors are special because the desired count is source-driven,
+         * not just role-driven. This block walks each remembered source and
+         * asks whether that exact source still needs mining WORK assigned.
+         */
+        var queue = spawnManager.getSpawnQueue(roomName);
+        var sourcesMemory = Memory.rooms[roomName].sources;
+        var sourceRequestsAdded = 0;
+        var managedSourceCount = 0;
+        var homeLivingCreeps = getHomeLivingCreeps(roomName);
+
+        if (!queue) {
+            return {
+                ok: false,
+                role: role,
+                requested: 0,
+                healthy: healthyCount,
+                queued: queuedCount,
+                desired: desiredCount,
+                reason: 'Missing spawn queue'
+            };
+        }
+
+        for (var source of ensureVisibleLocalSourceMemories(room)) {
+            managedSourceCount++;
+            var sourceMemory = ensureLocalSourceMemory(roomName, source.id);
+            var assigned = homeLivingCreeps.filter(function(c) {
+                return c.memory && c.memory.role === 'Extractor' && !c.memory.remoteMining &&
+                    (!c.memory.sourceRoom || c.memory.sourceRoom === roomName) &&
+                    (!c.memory.targetRoom || c.memory.targetRoom === roomName) &&
+                    (c.memory.sourceId || c.memory.targetSourceId || c.memory.assignedSource) === source.id;
+            });
+            sourceMemory.assignedMiner = assigned.map(function(c) { return c.id || c.name; });
+            var row = Economy.get(roomName)?.harvest?.sources?.find(function(r) { return r.id === source.id; });
+            var plan = require('Harvest.Planning').describe(room, source, assigned, queue, row?.distance || 30);
+            sourceMemory.harvestPlanning = { tick: Game.time, reason: plan.planningReason,
+                constraint: plan.constraint, recommendedAction: plan.recommendedAction };
+            if (!plan.action) continue;
+            var action = plan.action;
+            var selected = require('Harvest.Planning').body(room, action.work);
+            if (!selected) continue;
+            var result = addSpawnRequest(roomName, {
+                role: 'Extractor', body: selected.body,
+                requestedWorkParts: action.work, maxWorkParts: action.work,
+                minimumWorkParts: action.minWork || 1, minerUpgrade: !!action.upgrade,
+                minerConsolidation: action.consolidation ? { predecessors: action.predecessors } : undefined,
+                replacementFor: action.replacementFor ? [action.replacementFor] : undefined,
+                priority: priority,
+                memory: { role: 'Extractor', homeRoom: roomName, sourceRoom: roomName,
+                    targetRoom: roomName, sourceId: source.id, targetSourceId: source.id,
+                    ...(action.replacementFor ? { extractorReplacementFor: action.replacementFor } : {}) },
+                requestedAt: Game.time
+            }, options);
+            Object.assign(sourceMemory.harvestPlanning, { admissionAllowed: result.ok,
+                admissionReason: result.reason || null, blockSource: result.blockSource || null,
+                configPath: result.configPath || null });
+            if (result.ok) sourceRequestsAdded += result.requested || 0;
+            break; // Keep the established one-source-per-tick admission hysteresis.
+        }
+
+        if (managedSourceCount > 0) {
+            var remoteExtractorReport = requestRemoteExtractorsForRoom(
+                room,
+                body,
+                priority - 1,
+                sourceRequestsAdded > 0 || options?.localOnly ? 0 : 1,
+                options
+            );
+
+            return {
+                ok: true,
+                role: role,
+                requested: sourceRequestsAdded + (remoteExtractorReport.requested || 0),
+                localRequested: sourceRequestsAdded,
+                remoteRequested: remoteExtractorReport.requested || 0,
+                healthy: healthyCount,
+                queued: queuedCount,
+                desired: desiredCount
+            };
+        }
+    }
+
+    if (role === 'Freighter') {
+        var freighterQueue = spawnManager.getSpawnQueue(roomName);
+        var totalPlannedFreighters = healthyCount + queuedCount;
+        var missingFreighters = desiredCount - totalPlannedFreighters;
+        var freightersAdded = 0;
+
+        if (freighterQueue && missingFreighters > 0) {
+            for (var freighterIndex = 0; freighterIndex < missingFreighters; freighterIndex++) {
+                var addFreighterResult = addSpawnRequest(roomName, {
+                    role: 'Freighter',
+                    body: body,
+                    priority: priority,
+                    memory: {
+                        role: 'Freighter',
+                        homeRoom: roomName
+                    },
+                    requestedAt: Game.time
+                }, options);
+
+                if (!addFreighterResult.ok) {
+                    break;
+                }
+
+                freightersAdded++;
+            }
+        }
+
+        return {
+            ok: true,
+            role: role,
+            requested: freightersAdded,
+            healthy: healthyCount,
+            queued: queuedCount,
+            desired: desiredCount,
+            replacementLeadTicks: replacementLeadTicks
+        };
+    }
+
+    /*
+     * This is the number we want the spawn queue to think about.
+     *
+     * If desired is 1 Foreman:
+     * - healthy Foreman = 1, queued = 0 -> no request
+     * - healthy Foreman = 0, queued = 0 -> queue 1
+     * - healthy Foreman = 0, queued = 1 -> no extra spam
+     */
+    var plannedCount = healthyCount + queuedCount;
+    var missingCount = desiredCount - plannedCount;
+
+    if (missingCount <= 0) {
+        return {
+            ok: true,
+            role: role,
+            requested: 0,
+            healthy: healthyCount,
+            queued: queuedCount,
+            desired: desiredCount
+        };
+    }
+
+    var added = 0;
+
+    for (var missingIndex = 0; missingIndex < missingCount; missingIndex++) {
+        var memory = {
+            role: role,
+            homeRoom: roomName
+        };
+        if (options && options.memory) {
+            for (var memoryKey in options.memory) {
+                if (options.memory.hasOwnProperty(memoryKey)) {
+                    memory[memoryKey] = options.memory[memoryKey];
+                }
+            }
+        }
+
+        var addResult = addSpawnRequest(roomName, {
+            role: role,
+            body: body,
+            priority: priority,
+            memory: memory,
+            requestedAt: Game.time
+        }, options);
+
+        if (!addResult.ok) {
+            break;
+        }
+
+        added++;
+    }
+
+    return {
+        ok: true,
+        role: role,
+        requested: added,
+        healthy: healthyCount,
+        queued: queuedCount,
+        desired: desiredCount,
+        replacementLeadTicks: replacementLeadTicks
+    };
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+function getHealthyRoleCount(room, role) {
+    var body = creepBodyConfig.getBody(role, room);
+    var replacementLeadTicks = getReplacementLeadTicks(role, body);
+
+    return countHealthyCreeps(room.name, role, replacementLeadTicks);
+}
+
+
+function runStartupBootstrap(room, report) {
+    /*
+     * Startup order:
+     * 1. Foreman first.
+     * 2. Then two Extractors.
+     * 3. Then one Freighter.
+     * 4. Then one Tech.
+     * 5. Then an Artificer only when construction or critical repair demand exists.
+     *
+     * Important:
+     * This checks healthy living creeps first.
+     * Queued creeps should prevent duplicate requests,
+     * but queued creeps should not trick startup into thinking the room is already alive.
+     */
+
+    var economy = Economy.get(room.name);
+    var colony = ColonyState.get(room.name);
+    if (!economy || !colony || colony.lifecycle !== ColonyState.PHASES.BOOTSTRAP) return false;
+
+    var context = getActiveContext(room.name);
+    var emergencyOptions = { emergency: true, bypassRoleCap: true };
+    var localMinerCount = context ? context.healthyLocalExtractors + context.queuedLocalExtractors : 0;
+    var floorUnrecoverable = economy.bootstrap && economy.bootstrap.floorReachable === false;
+
+    /* Full-collapse exception: a CARRY/MOVE Foreman cannot recreate harvest income. */
+    if (localMinerCount < 1 && floorUnrecoverable) {
+        report.requests.push(requestDynamicExtractorsForRoom(room, 120, null, emergencyOptions));
+        return true;
+    }
+    if (!context || getPlannedRoleCount(context, 'Foreman') < 1) {
+        report.requests.push(requestRoleForRoom(room, 'Foreman', 1, 108, emergencyOptions));
+        return true;
+    }
+    if (!economy.harvest?.infrastructureRecovery && (economy.harvest && economy.harvest.sources && economy.harvest.sources.length ?
+        economy.harvest.sources.some(function(source) {
+            return source.workActive + (source.workSpawning || 0) + (source.workQueued || 0) < source.workRequired;
+        }) : localMinerCount < 2)) {
+        report.requests.push(requestDynamicExtractorsForRoom(room, 116, null, emergencyOptions));
+        // Hauling is a prerequisite for the infrastructure escape permission.
+        // A theoretical harvest shortage must not starve the haulers needed to
+        // build capacity, even when one small Freighter already exists.
+        if (economy.haul && economy.haul.localCarryMissing > 0) {
+            report.requests.push(requestDynamicFreightersForRoom(room, 112, null, emergencyOptions));
+        }
+        return true;
+    }
+    if (getPlannedRoleCount(context, 'Freighter') < 1) {
+        report.requests.push(requestDynamicFreightersForRoom(room, 112, null, emergencyOptions));
+        return true;
+    }
+    if (economy.harvest?.infrastructureRecovery) {
+        // Do not let the theoretical mining target indefinitely return from
+        // bootstrap before the builder that can raise its attainable capacity.
+        var infrastructure = requestDynamicArtificersForRoom(room);
+        report.requests.push(infrastructure);
+        if (infrastructure.requested > 0) return true;
+    }
+    if (colony.baselineTechRequired && colony.growthAllowed) {
+        var livingWork = countLivingRoleWork(room.name, 'Tech');
+        var queuedWork = countQueuedControllerFloorWork(room.name);
+        report.requests.push(requestTechWorkForRoom(room, {
+            desiredWork: colony.baselineTechWork,
+            livingWork: livingWork,
+            queuedWork: queuedWork,
+            missingWork: Math.max(0, colony.baselineTechWork - livingWork - queuedWork)
+        }, { controllerGrowthFloor: true }));
+        return true;
+    }
+
+    /* Mandatory floors are covered; normal demand may scale only where policy permits it. */
+    return false;
+}
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+var SOURCE_WORK_TARGET = 6;
+var EXTRACTOR_HANDOFF_TICKS = 100;
+
+function sourceHasLiveContainer(sourceId, sourceMemory) {
+    if (!sourceId || !sourceMemory) {
+        return false;
+    }
+
+    var source = Game.getObjectById(sourceId);
+
+    if (!source || !source.pos) {
+        return false;
+    }
+
+    if (sourceMemory.containerId) {
+        var rememberedContainer = Game.getObjectById(sourceMemory.containerId);
+
+        if (
+            rememberedContainer &&
+            rememberedContainer.structureType === STRUCTURE_CONTAINER &&
+            rememberedContainer.pos.getRangeTo(source.pos) <= 1
+        ) {
+            return true;
+        }
+
+        sourceMemory.containerId = null;
+    }
+
+    var nearbyContainers = source.pos.findInRange(FIND_STRUCTURES, 1, {
+        filter: function(structure) {
+            return structure.structureType === STRUCTURE_CONTAINER;
+        }
+    });
+
+    if (nearbyContainers.length === 0) {
+        return false;
+    }
+
+    sourceMemory.containerId = nearbyContainers[0].id;
+    return true;
+}
+
+function containerSourceNeedsExtractor(
+    assignedCount,
+    assignedWork,
+    hasDyingExtractor,
+    healthyAssignedCount,
+    workTarget
+) {
+    workTarget = workTarget || SOURCE_WORK_TARGET;
+    if (assignedCount <= 0) {
+        return true;
+    }
+
+    /* A live container gets one primary miner and at most one replacement. */
+    if (assignedCount >= 2) {
+        return false;
+    }
+
+    if (assignedWork < workTarget) {
+        return true;
+    }
+
+    return hasDyingExtractor && healthyAssignedCount === 0;
+}
+
+function countBodyParts(body, bodyPartType) {
+    var count = 0;
+
+    if (!body) {
+        return count;
+    }
+
+    for (var i = 0; i < body.length; i++) {
+        if (body[i] === bodyPartType) {
+            count++;
+        }
+    }
+
+    return count;
+}
+
+
+function getRememberedSourceMemory(roomName, sourceId) {
+    var roomMemory = Memory.rooms && Memory.rooms[roomName];
+    var sourcesMemory = roomMemory && roomMemory.sources;
+
+    if (!sourcesMemory) {
+        return null;
+    }
+
+    if (sourcesMemory[sourceId]) {
+        return sourcesMemory[sourceId];
+    }
+
+    for (var key in sourcesMemory) {
+        if (
+            sourcesMemory.hasOwnProperty(key) &&
+            sourcesMemory[key] &&
+            sourcesMemory[key].id === sourceId
+        ) {
+            return sourcesMemory[key];
+        }
+    }
+
+    return null;
+}
+
+function ensureLocalSourceMemory(roomName, sourceId) {
+    if (!Memory.rooms) {
+        Memory.rooms = {};
+    }
+
+    if (!Memory.rooms[roomName]) {
+        Memory.rooms[roomName] = {};
+    }
+
+    if (!Memory.rooms[roomName].sources) {
+        Memory.rooms[roomName].sources = {};
+    }
+
+    if (!Memory.rooms[roomName].sources[sourceId]) {
+        Memory.rooms[roomName].sources[sourceId] = {
+            id: sourceId,
+            assignedMiner: []
+        };
+    }
+
+    return Memory.rooms[roomName].sources[sourceId];
+}
+
+function ensureVisibleLocalSourceMemories(room) {
+    if (!room) {
+        return [];
+    }
+
+    var sources = TickIndex.getSources(room);
+
+    for (var i = 0; i < sources.length; i++) {
+        ensureLocalSourceMemory(room.name, sources[i].id);
+    }
+
+    return sources;
+}
+
+function getSourceMiningDemand(room) {
+    var extractorBody = creepBodyConfig.getBody('Extractor', room);
+    var bodyWork = Math.max(1, countBodyParts(extractorBody, WORK));
+    var localSources = ensureVisibleLocalSourceMemories(room);
+    var remoteAllowed = room && Economy.canSpend(room, 'remoteMaintenance');
+    var activeRemoteSources = remoteAllowed ?
+        RemotePlanner.getActiveRemoteSourcesForHome(room.name) : [];
+    var desiredWork = 0;
+    var economy = room && Economy.get(room.name);
+
+    for (var i = 0; i < localSources.length; i++) {
+        var source = localSources[i];
+        var sourceMemory = ensureLocalSourceMemory(room.name, source.id);
+        var sourceWork = require('utility').getSourceHarvestProfile(source).requiredWork;
+
+
+        desiredWork += sourceWork;
+    }
+
+    for (var remoteIndex = 0; remoteIndex < activeRemoteSources.length; remoteIndex++) {
+        var remoteIncome = activeRemoteSources[remoteIndex].effectiveEnergyPerTick ||
+            activeRemoteSources[remoteIndex].grossEnergyPerTick || 10;
+        desiredWork += Math.max(1, Math.ceil(remoteIncome /
+            (typeof HARVEST_POWER !== 'undefined' ? HARVEST_POWER : 2)));
+    }
+
+    var livingWork = economy ? economy.harvest.workActive : (room ?
+        countLivingRoleBodyParts(room.name, 'Extractor', WORK) : 0);
+    if (activeRemoteSources.length > 0) {
+        var homeCreeps = getHomeLivingCreeps(room.name);
+        for (var creepIndex = 0; creepIndex < homeCreeps.length; creepIndex++) {
+            if (homeCreeps[creepIndex].memory && homeCreeps[creepIndex].memory.remoteMining === true) {
+                livingWork += getCreepActiveBodyParts(homeCreeps[creepIndex], WORK);
+            }
+        }
+    }
+    var queuedWork = room ?
+        countQueuedRoleBodyParts(room.name, 'Extractor', WORK) : 0;
+
+    return {
+        desiredWork: desiredWork,
+        livingWork: livingWork,
+        queuedWork: queuedWork,
+        missingWork: Math.max(0, desiredWork - livingWork - queuedWork),
+        localSources: localSources.length,
+        activeRemoteSources: activeRemoteSources.length
+    };
+}
+
+function countIdleFreighters(roomName) {
+    var context = getActiveContext(roomName);
+
+    if (context) {
+        return context.idleFreighters;
+    }
+
+    var idle = 0;
+
+    var indexedCreeps = TickIndex.get().creepsByHomeRoom.get(roomName) || [];
+    for (var creepIndex = 0; creepIndex < indexedCreeps.length; creepIndex++) {
+        var creep = indexedCreeps[creepIndex];
+        if (!creep || !creep.memory || creep.memory.role !== 'Freighter') {
+            continue;
+        }
+
+        var homeRoom = creep.memory.homeRoom || (creep.room && creep.room.name);
+        if (homeRoom !== roomName || creep.memory.freighterJob) {
+            continue;
+        }
+
+        var replacementLead = getReplacementLeadTicks('Freighter', creep.body || []);
+        if (
+            creep.ticksToLive !== undefined &&
+            creep.ticksToLive <= replacementLead
+        ) {
+            continue;
+        }
+
+        var carriedEnergy = creep.store ? (creep.store[RESOURCE_ENERGY] || 0) : 0;
+        if (!creep.memory.FreighterWorking && carriedEnergy === 0) {
+            idle++;
+        }
+    }
+
+    return idle;
+}
+
+function getFreighterCarryDemand(room) {
+    var energyCapacity = room ? (room.energyCapacityAvailable || 300) : 300;
+    var economy = room && Economy.get(room.name);
+    var baseLocalCarry = economy && economy.haul && Number.isFinite(economy.haul.requiredCarry) ? economy.haul.requiredCarry :
+        (energyCapacity >= 800 ? 8 : energyCapacity >= 550 ? 6 : 4);
+
+    var remoteAllowed = room && Economy.canSpend(room, 'remoteMaintenance');
+    var activeSources = remoteAllowed ?
+        RemotePlanner.getActiveRemoteSourcesForHome(room.name) : [];
+    var remoteBacklog = 0;
+    var remoteReservedCarry = 0;
+    var worstHaulAge = 0;
+
+    for (var i = 0; i < activeSources.length; i++) {
+        var sourceInfo = activeSources[i];
+        var sourceMemory = getRememberedSourceMemory(
+            sourceInfo.roomName,
+            sourceInfo.sourceId
+        );
+        var haul = sourceMemory && sourceMemory.haul;
+
+        if (!haul) {
+            continue;
+        }
+
+        var amount = typeof haul.amount === 'number' ? Math.max(0, haul.amount) : 0;
+        var reserved = typeof haul.reservedCarry === 'number' ?
+            Math.max(0, haul.reservedCarry) : 0;
+        remoteBacklog += amount;
+        remoteReservedCarry += reserved;
+
+        if (amount > 0) {
+            var age = haul.lastSeen > 0 ? Math.max(0, Game.time - haul.lastSeen) : 101;
+            worstHaulAge = Math.max(worstHaulAge, age);
+        }
+    }
+
+    var activeRemoteSources = activeSources.length;
+    var remoteCarryRequired = activeSources.reduce(function(total, sourceInfo) {
+        var source = getRememberedSourceMemory(sourceInfo.roomName, sourceInfo.sourceId);
+        var required = Economy.remoteHaulRequirement(sourceInfo, source && source.haul, room.name);
+        sourceInfo.requiredCarry = required;
+        return total + required;
+    }, 0);
+    var localCarryRequired = baseLocalCarry;
+    var desiredCarryParts = localCarryRequired + remoteCarryRequired;
+
+    // Consumers spend existing production. Upgrade policy cannot invent extra
+    // source transport demand that Economy/admission do not recognize.
+
+    var idleFreighters = room ? countIdleFreighters(room.name) : 0;
+    // Keep diagnostics and admission based on the same assignment totals. The
+    // previous idle adjustment/global cap changed only the displayed total.
+    desiredCarryParts = localCarryRequired + remoteCarryRequired;
+    var localCoverage = room ? Economy.freighterCoverage(room.name, 'local') : { living: 0, queued: 0, spawning: 0 };
+    var remoteCoverage = room ? Economy.freighterCoverage(room.name, 'remote') : { living: 0, queued: 0, spawning: 0 };
+    var localCarryLiving = localCoverage.living;
+    var localCarryQueued = localCoverage.queued + localCoverage.spawning;
+    var remoteCarryLiving = remoteCoverage.living;
+    var remoteCarryQueued = remoteCoverage.queued + remoteCoverage.spawning;
+    var livingCarryParts = localCarryLiving + remoteCarryLiving;
+    var queuedCarryParts = localCarryQueued + remoteCarryQueued;
+    var localCarryMissing = Math.max(0, localCarryRequired - localCarryLiving - localCarryQueued);
+    var remoteCarryMissing = Math.max(0, remoteCarryRequired - remoteCarryLiving - remoteCarryQueued);
+
+    return {
+        desiredCarryParts: desiredCarryParts,
+        livingCarryParts: livingCarryParts,
+        queuedCarryParts: queuedCarryParts,
+        missingCarryParts: localCarryMissing + remoteCarryMissing,
+        localCarryRequired: localCarryRequired,
+        localCarryLiving: localCarryLiving,
+        localCarryQueued: localCarryQueued,
+        localCarryMissing: localCarryMissing,
+        remoteCarryRequired: remoteCarryRequired,
+        remoteCarryLiving: remoteCarryLiving,
+        remoteCarryQueued: remoteCarryQueued,
+        remoteCarryMissing: remoteCarryMissing,
+        remoteBacklog: remoteBacklog,
+        remoteReservedCarry: remoteReservedCarry,
+        worstHaulAge: worstHaulAge,
+        idleFreighters: idleFreighters,
+        activeRemoteSources: activeRemoteSources
+    };
+}
+
+function saveExtractorDemandDebug(roomName, demand) {
+    if (!Memory.rooms) {
+        Memory.rooms = {};
+    }
+
+    if (!Memory.rooms[roomName]) {
+        Memory.rooms[roomName] = {};
+    }
+
+    var roomMemory = Memory.rooms[roomName];
+    roomMemory.extractorDesiredWork = demand.desiredWork;
+    roomMemory.extractorLivingWork = demand.livingWork;
+    roomMemory.extractorQueuedWork = demand.queuedWork;
+}
+
+function saveFreighterDemandDebug(roomName, demand) {
+    if (!Memory.rooms) {
+        Memory.rooms = {};
+    }
+
+    if (!Memory.rooms[roomName]) {
+        Memory.rooms[roomName] = {};
+    }
+
+    var roomMemory = Memory.rooms[roomName];
+    roomMemory.freighterDesiredCarry = demand.desiredCarryParts;
+    roomMemory.freighterLivingCarry = demand.livingCarryParts;
+    roomMemory.freighterQueuedCarry = demand.queuedCarryParts;
+    roomMemory.freighterRemoteBacklog = demand.remoteBacklog;
+    roomMemory.freighterWorstHaulAge = demand.worstHaulAge;
+    roomMemory.localCarryRequired = demand.localCarryRequired;
+    roomMemory.localCarryLiving = demand.localCarryLiving;
+    roomMemory.localCarryQueued = demand.localCarryQueued;
+    roomMemory.localCarryMissing = demand.localCarryMissing;
+    roomMemory.remoteCarryRequired = demand.remoteCarryRequired;
+    roomMemory.remoteCarryLiving = demand.remoteCarryLiving;
+    roomMemory.remoteCarryQueued = demand.remoteCarryQueued;
+    roomMemory.remoteCarryMissing = demand.remoteCarryMissing;
+}
+
+function getEconomyRequestPriorities(miningDemand, freightDemand) {
+    var miningPressure = miningDemand.desiredWork > 0 ?
+        miningDemand.missingWork / miningDemand.desiredWork : 0;
+    var freightPressure = freightDemand.desiredCarryParts > 0 ?
+        freightDemand.missingCarryParts / freightDemand.desiredCarryParts : 0;
+    var unreservedBacklog = Math.max(
+        0,
+        freightDemand.remoteBacklog - freightDemand.remoteReservedCarry
+    );
+
+    freightPressure += Math.min(0.5, unreservedBacklog / 2000);
+    freightPressure += freightDemand.worstHaulAge > 100 ? 0.4 :
+        freightDemand.worstHaulAge > 50 ? 0.2 : 0;
+
+    var highPriority = Math.max(PRIORITY.Extractor, PRIORITY.Freighter) + 2;
+    var lowPriority = highPriority - 4;
+
+    return {
+        extractor: miningPressure >= freightPressure ? highPriority : lowPriority,
+        freighter: freightPressure > miningPressure ? highPriority : lowPriority
+    };
+}
+
+function requestDynamicExtractorsForRoom(room, priorityOverride, demandOverride, options) {
+    var demand = demandOverride || getSourceMiningDemand(room);
+    var requestPriority = priorityOverride;
+
+    if (typeof requestPriority !== 'number') {
+        var freightDemand = getFreighterCarryDemand(room);
+        requestPriority = getEconomyRequestPriorities(
+            demand,
+            freightDemand
+        ).extractor;
+    }
+    var body = creepBodyConfig.getBody('Extractor', room);
+    var bodyWork = Math.max(1, countBodyParts(body, WORK));
+    var targetCount = Math.ceil(demand.desiredWork / bodyWork);
+    var replacementLead = getReplacementLeadTicks('Extractor', body);
+    var healthyCount = countHealthyCreeps(room.name, 'Extractor', replacementLead);
+    var queuedCount = countQueuedRequests(room.name, 'Extractor');
+    var nextCount = Math.min(targetCount, healthyCount + queuedCount + 1);
+    var requestResult = {
+        ok: true,
+        role: 'Extractor',
+        requested: 0,
+        localRequested: 0,
+        remoteRequested: 0
+    };
+
+    if (demand.desiredWork > 0 && nextCount > 0) {
+        requestResult = requestRoleForRoom(
+            room,
+            'Extractor',
+            nextCount,
+            requestPriority,
+            options
+        );
+    }
+
+    demand.queuedWork = countQueuedRoleBodyParts(room.name, 'Extractor', WORK);
+    demand.missingWork = Math.max(
+        0,
+        demand.desiredWork - demand.livingWork - demand.queuedWork
+    );
+    saveExtractorDemandDebug(room.name, demand);
+
+    return {
+        ok: requestResult.ok,
+        role: 'Extractor',
+        requested: requestResult.requested || 0,
+        localRequested: requestResult.localRequested || 0,
+        remoteRequested: requestResult.remoteRequested || 0,
+        desiredWork: demand.desiredWork,
+        livingWork: demand.livingWork,
+        queuedWork: demand.queuedWork,
+        missingWork: demand.missingWork
+    };
+}
+
+function requestDynamicFreightersForRoom(room, priorityOverride, demandOverride, options) {
+    var demand = demandOverride || getFreighterCarryDemand(room);
+    // A cached demand is a target, not a reservation ledger. Requests and spawn
+    // intents may have changed since the economy/full-planning snapshot.
+    var local = Economy.freighterCoverage(room.name, 'local');
+    var remote = Economy.freighterCoverage(room.name, 'remote');
+    demand.localCarryLiving = local.living;
+    demand.localCarryQueued = local.queued + local.spawning;
+    demand.remoteCarryLiving = remote.living;
+    demand.remoteCarryQueued = remote.queued + remote.spawning;
+    demand.livingCarryParts = local.living + remote.living;
+    demand.queuedCarryParts = demand.localCarryQueued + demand.remoteCarryQueued;
+    demand.localCarryMissing = Math.max(0, demand.localCarryRequired - local.living - demand.localCarryQueued);
+    demand.remoteCarryMissing = Math.max(0, demand.remoteCarryRequired - remote.living - demand.remoteCarryQueued);
+    demand.missingCarryParts = demand.localCarryMissing + demand.remoteCarryMissing;
+    var requestPriority = priorityOverride;
+
+    if (typeof requestPriority !== 'number') {
+        var miningDemand = getSourceMiningDemand(room);
+        requestPriority = getEconomyRequestPriorities(
+            miningDemand,
+            demand
+        ).freighter;
+    }
+    var result = {
+        ok: true,
+        role: 'Freighter',
+        requested: 0,
+        desiredCarryParts: demand.desiredCarryParts,
+        livingCarryParts: demand.livingCarryParts,
+        queuedCarryParts: demand.queuedCarryParts,
+        missingCarryParts: demand.missingCarryParts,
+        requestedCarryParts: 0
+    };
+
+    // Look ahead across natural expiries before filling a tiny instantaneous
+    // deficit. Existing workers keep hauling throughout successor production.
+    var localRenewalPriority = Math.max(LOCAL_RENEWAL_PRIORITY, requestPriority + 1);
+    var localRenewal = Economy.freighterRenewalPlan(room, 'local', localRenewalPriority);
+    var remoteRenewal = !options?.localOnly && !localRenewal && demand.localCarryMissing === 0 ? Economy.freighterRenewalPlan(room, 'remote', requestPriority) : null;
+    var renewal = localRenewal || remoteRenewal;
+    if (demand.missingCarryParts > 0 || renewal) {
+        var localRequest = demand.localCarryMissing > 0 || !!localRenewal;
+        var missingForAssignment = localRequest ? demand.localCarryMissing : demand.remoteCarryMissing;
+        var body = renewal ? renewal.body : creepBodyConfig.getFreighterBodyForCarry(
+            room,
+            missingForAssignment
+        );
+        var requestedCarry = countBodyParts(body, CARRY);
+
+        if (!body || requestedCarry <= 0) {
+            result.ok = false;
+            result.reason = 'No Freighter body or spawn queue available';
+        }
+        else {
+            var addResult = addSpawnRequest(room.name, {
+                role: 'Freighter',
+                body: body,
+                requestedCarryParts: requestedCarry,
+                maxCarryParts: requestedCarry,
+                replacementFor: renewal ? renewal.predecessors.map(entry => entry.name) : undefined,
+                freighterRenewal: renewal ? { assignment: renewal.assignment, plannedAt: renewal.plannedAt,
+                    predecessors: renewal.predecessors, needBy: renewal.needBy, through: renewal.through } : undefined,
+                priority: localRenewal ? localRenewalPriority : requestPriority,
+                memory: {
+                    role: 'Freighter',
+                    homeRoom: room.name,
+                    assignmentFunction: localRequest ? 'localLogistics' : 'remoteHauling',
+                    ...(renewal ? { freighterPredecessors: renewal.predecessors } : {})
+                },
+                requestedAt: Game.time
+            }, options);
+
+            if (!addResult.ok) {
+                result.ok = false;
+                result.reason = addResult.reason;
+                saveFreighterDemandDebug(room.name, demand);
+                return result;
+            }
+
+            result.requested = addResult.requested || 0;
+            if (renewal && result.requested) {
+                result.renewal = { predecessors: renewal.predecessors, carry: requestedCarry, needBy: renewal.needBy };
+                require('Diagnostics').record('SPAWNING', 'INFO', 'FREIGHTER_RENEWAL_PLANNED', room.name,
+                    { carry: requestedCarry, workers: renewal.predecessors.length, needBy: renewal.needBy,
+                        through: renewal.through, predecessors: renewal.predecessors.map(p => p.name).join(',') });
+            }
+            result.reason = addResult.reason;
+            result.requestedCarryParts = result.requested ? requestedCarry : 0;
+            // Admission may deduplicate or normalize a request. Read the actual
+            // ledger rather than inventing CARRY for an unchanged queue.
+            local = Economy.freighterCoverage(room.name, 'local');
+            remote = Economy.freighterCoverage(room.name, 'remote');
+            demand.localCarryQueued = local.queued + local.spawning;
+            demand.remoteCarryQueued = remote.queued + remote.spawning;
+            demand.queuedCarryParts = demand.localCarryQueued + demand.remoteCarryQueued;
+            demand.localCarryMissing = Math.max(0, demand.localCarryRequired - local.living - demand.localCarryQueued);
+            demand.remoteCarryMissing = Math.max(0, demand.remoteCarryRequired - remote.living - demand.remoteCarryQueued);
+            demand.missingCarryParts = demand.localCarryMissing + demand.remoteCarryMissing;
+            result.queuedCarryParts = demand.queuedCarryParts;
+            result.missingCarryParts = demand.missingCarryParts;
+        }
+    }
+
+    saveFreighterDemandDebug(room.name, demand);
+    return result;
+}
+
+function refreshSpawnDemandCache(room, context) {
+    var cache = context.demandCache;
+
+    cache.tick = Game.time;
+    cache.miningDemand = getSourceMiningDemand(room);
+    cache.freightDemand = getFreighterCarryDemand(room);
+    cache.techDemand = getTechWorkDemand(room);
+    cache.artificerDemand = getArtificerBuildDemand(room);
+
+    /*
+     * These totals are built from the shared TickIndex room slice.
+     * Keeping a Memory copy makes console inspection cheap.
+     */
+    cache.roleBodyPartTotals = context.bodyPartsByRole;
+    cache.queuedRoleBodyPartTotals = context.queuedBodyPartsByRole;
+
+    setNextFullPlanTick(cache, context.cpuPolicy, context.roomIndex);
+    return cache;
+}
+
+function getCachedSpawnDemand(roomName) {
+    return getSpawnDemandCache(roomName);
+}
+
+function requestEmergencyTechForRoom(room) {
+    var result = {
+        ok: true,
+        role: 'Tech',
+        requested: 0,
+        emergency: true
+    };
+
+    if (
+        !room ||
+        !room.controller ||
+        room.controller.ticksToDowngrade >= TECH_DOWNGRADE_DANGER_TICKS
+    ) {
+        result.reason = 'Controller is not in downgrade danger';
+        return result;
+    }
+
+    var emergencyMinimum = (room.energyCapacityAvailable || 300) >= 550 ? 5 : 2;
+    var livingWork = countLivingRoleWork(room.name, 'Tech');
+    var queuedWork = countQueuedRoleWork(room.name, 'Tech');
+    var demand = {
+        desiredWork: emergencyMinimum,
+        livingWork: livingWork,
+        queuedWork: queuedWork,
+        missingWork: Math.max(0, emergencyMinimum - livingWork - queuedWork)
+    };
+
+    if (demand.missingWork <= 0) {
+        result.reason = 'Emergency Tech WORK is already planned';
+        return result;
+    }
+
+    return requestTechWorkForRoom(room, demand, {
+        emergency: true,
+        bypassRoleCap: true
+    });
+}
+
+function runEmergencyPlanning(room, report, context) {
+    var emergencyOptions = {
+        emergency: true,
+        bypassRoleCap: true
+    };
+
+    var economy = Economy.get(room.name);
+    var survival = economy && economy.state === Economy.STATES.SURVIVAL;
+    var unrecoverableMinerFloor = survival && economy.bootstrap &&
+        economy.bootstrap.floorReachable === false;
+    var localHarvestPlanned = context.healthyLocalExtractors + context.queuedLocalExtractors > 0;
+    // A carrier cannot create income from an empty room. When no miners or
+    // reserves exist, protect the first harvest body even if it is affordable
+    // right now; spending that energy on a Foreman would restart the wait.
+    var minerFirst = !localHarvestPlanned && (unrecoverableMinerFloor || economy &&
+        !(economy.harvest?.workActive > 0) &&
+        (economy.storageEnergy || 0) + (economy.terminalEnergy || 0) + (economy.haul?.backlog || 0) <
+            (economy.bootstrap?.extractorFloor || 200));
+
+    if (getPlannedRoleCount(context, 'Foreman') < 1 && !minerFirst) {
+        report.requests.push(requestRoleForRoom(
+            room,
+            'Foreman',
+            1,
+            survival ? 108 : PRIORITY.Foreman,
+            emergencyOptions
+        ));
+    }
+
+    if (context.healthyLocalExtractors + context.queuedLocalExtractors < 1) {
+        /* Missing local income is one of the few light-pass cases allowed to
+         * scan visible sources so the queued miner gets a concrete source id.
+         */
+        ensureVisibleLocalSourceMemories(room);
+        report.requests.push(requestRoleForRoom(
+            room,
+            'Extractor',
+            1,
+            minerFirst ? 120 : PRIORITY.Extractor + 10,
+            emergencyOptions
+        ));
+        localHarvestPlanned = true;
+    }
+
+    if (getPlannedRoleCount(context, 'Freighter') < 1 && (!survival || localHarvestPlanned)) {
+        report.requests.push(requestRoleForRoom(
+            room,
+            'Freighter',
+            1,
+            survival ? 85 : PRIORITY.Freighter + 10,
+            emergencyOptions
+        ));
+    }
+
+    // A CPU-skipped full pass must not starve the worker-saving renewal that
+    // reduces future CPU. Reuse current local capability data every five ticks.
+    // A remote cohort may also renew through the same bounded forecast, whose
+    // production is capped by committed miners. The current Economy target also
+    // preserves ordinary maintenance when a forecast can no longer meet its
+    // deadline; selecting an unstaffed remote source creates no demand here.
+    if ((context.skippedForCpu || !context.fullPlan) && Game.time % 5 === 0 && economy?.haul?.requiredCarry > 0) {
+        report.requests.push(requestDynamicFreightersForRoom(room, 112, {
+            localCarryRequired: economy.haul.requiredCarry, remoteCarryRequired: economy.haul.remoteCarryRequired || 0,
+            desiredCarryParts: economy.haul.requiredCarry + (economy.haul.remoteCarryRequired || 0)
+        }));
+        if (economy.harvest?.sources?.some(row => row.healthyWork < row.workRequired &&
+            !(row.workSpawning > 0 || row.workQueued > 0 || row.workStaging > 0))) {
+            report.requests.push(requestDynamicExtractorsForRoom(room, 116, {
+                desiredWork: economy.harvest.workRequired, livingWork: economy.harvest.workActive, queuedWork: 0
+            }, { localOnly: true }));
+        }
+    }
+
+    if (
+        room.controller &&
+        room.controller.ticksToDowngrade < TECH_DOWNGRADE_DANGER_TICKS
+    ) {
+        report.requests.push(requestEmergencyTechForRoom(room));
+    }
+
+    if (Game.time % 5 === 0) {
+        var replacement = requestConsolidatingTech(room);
+        if (replacement) report.requests.push(replacement);
+    }
+    report.defense = requestDefendersForRoom(room, context);
+}
+
+function requestConsolidatingTech(room) {
+    var cpu = cpuStatusUtility.getCpuStatus();
+    var rolling = global.__sushiCpuRolling || HiveMemory.ensure().telemetry.cpu || {};
+    var spawnView = (require('HiveMind.Capacity').get().rooms[room.name] || {}).spawn || {};
+    if (cpu.mode === 'critical' || cpu.bucket < 1800 ||
+        cpu.mode !== 'low' && !(rolling.total > cpu.limit * 0.83) &&
+            !(spawnView.utilization >= 0.65) ||
+        !Economy.canSpend(room.name, 'upgradeSurplus') || countQueuedRequests(room.name, 'Tech') > 0) return null;
+    var units = (TickIndex.get().creepsByHomeRoom.get(room.name) || []).filter(function(c) {
+        return c.memory.role === 'Tech' && !c.spawning;
+    });
+    var claimed = SpawnContext.replacementClaims(room.name, 'Tech');
+    var expiring = 0, lasting = 0;
+    units.forEach(function(c) {
+        var work = getCreepActiveBodyParts(c, WORK);
+        if (c.ticksToLive <= 150) { if (!claimed.has(c.name)) expiring += work; } else lasting += work;
+    });
+    var desired = Math.min(room.controller.level === 8 ? 15 : require('HiveMind.Surplus').config().techMaxWork,
+        ensureRoomMemory(room.name).techDesiredWork || 0);
+    var missing = Math.max(0, Math.min(expiring, desired - lasting));
+    if (!missing) return null;
+    return requestTechWorkForRoom(room, { desiredWork: desired, livingWork: lasting,
+        queuedWork: 0, missingWork: missing });
+}
+
+function cleanDefenseQueue(roomName, demand) {
+    var queue = spawnManager.getSpawnQueue(roomName) || [];
+    var independentCombat = HiveMemory.getConfig('combat').independentCombat !== false;
+    var desired = {
+        Ronin: independentCombat ? demand.desiredMelee : 0,
+        Volley: independentCombat ? demand.desiredRanged : 0,
+        Cleric: independentCombat ? demand.desiredHealers : 0
+    };
+    var removed = 0;
+    for (var i = queue.length - 1; i >= 0; i--) {
+        var request = queue[i];
+        var role = getRequestRole(request);
+        var memory = request && request.memory || {};
+        if (!desired.hasOwnProperty(role)) continue;
+        var belongsToDefense = !memory.keeperOperationId && !memory.npcCoreOperationId && (memory.defenseRequest === true ||
+            (!memory.operationId && !memory.manualCombat));
+        if (belongsToDefense && (!desired[role] || demand.harmfulHostileCount <= 0)) {
+            queue.splice(i, 1);
+            removed++;
+        }
+    }
+    return removed;
+}
+
+function requestDefendersForRoom(room, context) {
+    var demand = defenseDemand.getDemand(room);
+    var result = {
+        roomName: room && room.name,
+        demand: demand,
+        requests: [],
+        removedStaleRequests: 0
+    };
+    if (!room || !demand) return result;
+    result.removedStaleRequests = cleanDefenseQueue(room.name, demand);
+    if (demand.harmfulHostileCount <= 0) return result;
+    if (HiveMemory.getConfig('combat').independentCombat === false) {
+        result.independentCombatDisabled = true;
+        return result;
+    }
+    var demandMemory = {
+            defenseRequest: true,
+            defendedRoom: room.name,
+            targetRoom: room.name,
+            operationId: demand.operationId,
+            defenseRequestedAt: Game.time,
+            trafficPriority: demand.emergency ? 100 : 80
+    };
+    function emitDefenseRole(role, count, priority) {
+        if (count <= 0) return null;
+        var partType = role === 'Cleric' ? 'heal' : role === 'Ronin' ? 'attack' : 'ranged_attack';
+        var partPower = role === 'Cleric' ? 12 : role === 'Ronin' ? 30 : 10;
+        var requestedPower = Math.ceil((role === 'Cleric' ? demand.requiredHealing : demand.requiredDamage) / count / partPower);
+        var existingBody = creepBodyConfig.getBody(role, room);
+        var scaleBody = requestedPower > countBodyParts(existingBody, partType);
+        return DemandBoard.emit({
+            id: demand.operationId + ':' + role,
+            operationId: demand.operationId,
+            role: role,
+            capabilities: scaleBody ? { [partType]: requestedPower } : null,
+            bodyRequirements: scaleBody ? { scalable: true } : null,
+            count: count,
+            priority: priority,
+            originRoom: room.name,
+            preferredSpawnRoom: room.name,
+            targetRoom: room.name,
+            emergency: demand.emergency,
+            validUntil: Game.time + 5,
+            memory: demandMemory,
+            reason: 'Dynamic room defense'
+        });
+    }
+    var squadVolley = SquadController.getCommittedRoleCount(demand.operationId, 'Volley');
+    var squadCleric = SquadController.getCommittedRoleCount(demand.operationId, 'Cleric');
+    var independentRanged = Math.max(0, demand.desiredRanged - squadVolley);
+    var independentHealers = Math.max(0, demand.desiredHealers - squadCleric);
+    if (demand.desiredMelee > 0) {
+        result.requests.push(emitDefenseRole('Ronin', demand.desiredMelee, demand.priority));
+    }
+    if (independentRanged > 0) {
+        result.requests.push(emitDefenseRole('Volley', independentRanged, demand.priority + 1));
+    }
+    if (independentHealers > 0 && demand.desiredMelee + demand.desiredRanged > 0) {
+        result.requests.push(emitDefenseRole('Cleric', independentHealers, demand.priority));
+    }
+    return result;
+}
+
+function saveSpawnGovernorDebug(context) {
+    var policy = context.spawnPolicy;
+    var cpuUsed = getCpuUsed() - context.cpuStart;
+
+    context.demandCache.roleSummaryTick = Game.time;
+    context.demandCache.roleBodyPartTotals = context.bodyPartsByRole;
+    context.demandCache.queuedRoleBodyPartTotals = context.queuedBodyPartsByRole;
+
+    var governorContext = SpawnContext.snapshot(context.roomName);
+    var maxCreeps = getMaxCreepsForRoom(context.room, policy);
+    var floorQueued = governorContext.queue.some(function(request) {
+        return request && request.memory && request.memory.controllerGrowthFloor === true;
+    });
+    var savedGovernor = HiveMemory.getRoomSpawnMemory(context.roomName).governor || {};
+    HiveMemory.getRoomSpawnMemory(context.roomName).governor = Object.assign(savedGovernor, {
+        tick: Game.time,
+        fullPlan: context.fullPlan,
+        skippedForCpu: context.skippedForCpu,
+        cpuUsed: Math.round(cpuUsed * 1000) / 1000,
+        totalLiving: context.totalLiving,
+        totalQueued: context.totalQueued,
+        nonCombatTotal: governorContext.nonCombatTotal,
+        maxCreeps: maxCreeps,
+        mandatoryFloorBypassUsed: context.mandatoryFloorBypassUsed ||
+            (floorQueued && governorContext.nonCombatTotal > maxCreeps),
+        mandatoryFloorAllowance: MANDATORY_FLOOR_CAP_ALLOWANCE,
+        queueLength: context.queue ? context.queue.length : 0,
+        maxQueueLength: policy.maxQueueLengthPerRoom,
+        denied: context.denied,
+        demandCacheState: context.demandCache.controlState,
+        demandCacheRepair: context.demandCache.scheduleRepair || null,
+        configRepairs: HiveMemory.ensure().spawnConfigRepairs || null
+    });
+}
+
+function countQueuedStrategyAssignment(roomName, assignmentKey) {
+    var queue = spawnManager.getSpawnQueue(roomName) || [];
+    var count = 0;
+
+    for (var i = 0; i < queue.length; i++) {
+        if (
+            queue[i] &&
+            queue[i].memory &&
+            (queue[i].assignmentKey === assignmentKey ||
+                queue[i].memory.strategyAssignmentKey === assignmentKey)
+        ) {
+            count++;
+        }
+    }
+    return count;
+}
+
+function countHealthyStrategyAssignment(roomName, plan) {
+    var count = 0;
+    var creeps = getHomeLivingCreeps(roomName);
+
+    for (var i = 0; i < creeps.length; i++) {
+        var creep = creeps[i];
+        if (
+            !creep || !creep.memory ||
+            creep.memory.strategyAssignmentKey !== plan.assignmentKey
+        ) {
+            continue;
+        }
+
+        var lead = (creep.body || []).length * 3 + Math.max(0, Number(plan.replacementBuffer) || 0);
+
+        if (creep.ticksToLive === undefined || creep.ticksToLive > lead) {
+            count++;
+        }
+    }
+    return count;
+}
+
+function requestStrategyRolesForRoom(room) {
+    var result = {
+        ok: true,
+        role: 'Strategy',
+        requested: 0,
+        plans: []
+    };
+    var plans = Strategy.getSpecialSpawnPlans(room);
+
+    for (var i = 0; i < plans.length; i++) {
+        var plan = plans[i];
+        var body = plan.body || plan.bodyRequirements && plan.bodyRequirements.body;
+        var healthy = countHealthyStrategyAssignment(room.name, plan);
+        var queued = countQueuedStrategyAssignment(
+            room.name,
+            plan.assignmentKey
+        );
+        var planReport = {
+            role: plan.role,
+            assignmentKey: plan.assignmentKey,
+            desired: plan.desired,
+            healthy: healthy,
+            queued: queued,
+            requested: 0
+        };
+
+        if (!body || body.length === 0) {
+            planReport.reason = 'No affordable configured body';
+            result.ok = false;
+            result.plans.push(planReport);
+            continue;
+        }
+
+        var operationId = 'strategy:' + plan.strategyProvider + ':' + plan.assignmentKey;
+        var emitted = DemandBoard.emit({
+            id: operationId + ':' + plan.role,
+            operationId: operationId,
+            role: plan.role,
+            count: plan.count || plan.desired,
+            priority: typeof plan.priority === 'number' ?
+                plan.priority : (PRIORITY[plan.role] || 0),
+            originRoom: room.name,
+            preferredSpawnRoom: room.name,
+            targetRoom: plan.targetRoom,
+            bodyRequirements: plan.bodyRequirements || { body: body },
+            replacementBuffer: plan.replacementBuffer,
+            validUntil: plan.validUntil,
+            emergency: plan.emergency === true,
+            strategyProvider: plan.strategyProvider,
+            strategyCategory: plan.strategyCategory,
+            strategyEmergency: plan.strategyEmergency === true,
+            strategyMandatory: plan.strategyMandatory === true,
+            assignmentKey: plan.assignmentKey,
+            economyCategory: plan.economyCategory,
+            memory: Object.assign({
+                role: plan.role,
+                homeRoom: room.name
+            }, plan.memory || {}),
+            reason: plan.reason
+        });
+        planReport.demandId = emitted.id;
+        planReport.requested = Math.max(0, (plan.count || plan.desired) - healthy - queued);
+        result.requested += planReport.requested;
+        result.plans.push(planReport);
+    }
+    return result;
+}
+
+/**
+ * Run spawn requests for one visible owned spawn room.
+ *
+ * @param {Room} room
+ * @returns {object}
+ */
+function runForRoom(room, options) {
+    var report = {
+        roomName: room ? room.name : null,
+        requests: []
+    };
+
+    if (!room) {
+        report.ok = false;
+        report.reason = 'Missing room';
+        return report;
+    }
+
+    if (!room.controller || !room.controller.my) {
+        report.ok = false;
+        report.reason = 'Room is not owned';
+        return report;
+    }
+
+    if (!roomHasOwnedSpawn(room)) {
+        report.ok = false;
+        report.reason = 'Room has no owned spawn';
+        return report;
+    }
+
+    report.ok = true;
+    options = options || {};
+    SpawnArbiter.pruneRoom(room.name);
+
+    var context = buildRoomPlanningContext(
+        room,
+        options.roomIndex || 0,
+        options.skipNormalPlanning === true
+    );
+    var previousContext = activePlanningContext;
+    activePlanningContext = context;
+
+    try {
+        report.demandCacheState = context.demandCache.controlState;
+        report.fullPlan = context.fullPlan;
+        report.skippedForCpu = context.skippedForCpu;
+        report.nextFullPlanTick = context.demandCache.nextFullPlanTick || null;
+
+        runEmergencyPlanning(room, report, context);
+        report.requests.push(requestEconomicScout(room, context.skippedForCpu ? 'CPU budget suppresses economic intel' : null));
+
+        if (context.skippedForCpu) {
+            report.reason = 'Normal spawn planning skipped by CPU budget';
+
+            if (
+                typeof context.demandCache.nextFullPlanTick === 'number' &&
+                Game.time >= context.demandCache.nextFullPlanTick
+            ) {
+                setNextFullPlanTick(
+                    context.demandCache,
+                    context.cpuPolicy,
+                    context.roomIndex
+                );
+                report.nextFullPlanTick = context.demandCache.nextFullPlanTick;
+            }
+
+            return report;
+        }
+
+        if (!context.fullPlan) {
+            var cachedDemand = getCachedSpawnDemand(room.name);
+            report.reason = 'Light spawn planning pass';
+            report.cachedDemandTick = cachedDemand.tick || null;
+            return report;
+        }
+
+        /*
+         * A full pass refreshes dynamic demand, then normal request systems may
+         * queue work through the governor. Light passes use this cached demand
+         * only for debug and emergency context.
+         */
+        var demandCache = refreshSpawnDemandCache(room, context);
+
+        if (runStartupBootstrap(room, report)) {
+            return report;
+        }
+
+        /*
+         * Foreman first.
+         *
+         * This matters because Foreman has the highest priority and should always
+         * be considered before the other roles.
+         */
+        report.requests.push(requestRoleForRoom(room, 'Foreman', DESIRED_COUNTS.Foreman));
+
+        var miningDemand = demandCache.miningDemand;
+        var freightDemand = demandCache.freightDemand;
+        var economyPriorities = getEconomyRequestPriorities(
+            miningDemand,
+            freightDemand
+        );
+
+        report.requests.push(requestDynamicExtractorsForRoom(
+            room,
+            economyPriorities.extractor,
+            miningDemand
+        ));
+        report.requests.push(requestDynamicFreightersForRoom(
+            room,
+            economyPriorities.freighter,
+            freightDemand
+        ));
+        report.requests.push(requestAnnexForRoom(room));
+        report.requests.push(requestTechWorkForRoom(room, demandCache.techDemand));
+        report.requests.push(requestDynamicArtificersForRoom(
+            room,
+            demandCache.artificerDemand
+        ));
+        report.requests.push(requestStrategyRolesForRoom(room));
+
+        return report;
+    }
+    finally {
+        saveSpawnGovernorDebug(context);
+        activePlanningContext = previousContext;
+    }
+}
+
+/**
+ * Run spawn requests for every visible owned room that has an owned spawn.
+ *
+ * @returns {object}
+ */
+function run() {
+    var rooms = getOwnedSpawnRooms();
+    var cpuPolicy = ensureCpuPolicyMemory();
+    var spawnPolicy = ensureSpawnPolicyMemory();
+    var cpuStatus = cpuStatusUtility.getCpuStatus();
+    var startCpu = getCpuUsed();
+    var planningScale = cpuStatus.mode === 'high' ?
+        Math.min(2.5, Math.max(1, cpuStatus.limit / 20)) :
+        cpuStatus.mode === 'critical' ? 0.5 : 1;
+    var budget = Math.max(0.25, Math.min(
+        cpuStatus.remaining,
+        cpuPolicy.spawnPlanningCpuBudget * planningScale
+    ));
+    var skipNormalPlanning = cpuStatus.mode === 'critical';
+    var report = {
+        rooms: {},
+        cpuBudget: budget,
+        cpuMode: cpuStatus.mode,
+        cpuLimit: cpuStatus.limit,
+        spawnPolicyEnabled: spawnPolicy.enabled !== false
+    };
+
+    rooms.sort(function(a, b) {
+        return a.name < b.name ? -1 : a.name > b.name ? 1 : 0;
+    });
+
+    for (var i = 0; i < rooms.length; i++) {
+        if (getCpuUsed() - startCpu > budget) {
+            skipNormalPlanning = true;
+        }
+
+        var roomReport = runForRoom(rooms[i], {
+            roomIndex: i,
+            skipNormalPlanning: skipNormalPlanning
+        });
+
+        if (roomReport && roomReport.roomName) {
+            report.rooms[roomReport.roomName] = roomReport;
+        }
+
+        if (getCpuUsed() - startCpu > budget) {
+            skipNormalPlanning = true;
+        }
+    }
+
+    report.cpuUsed = Math.round((getCpuUsed() - startCpu) * 1000) / 1000;
+    return report;
+}
+
+module.exports = {
+    run: run,
+    runForRoom: runForRoom,
+    runRoom: runForRoom,
+
+    /*
+     * Exporting these helps testing from console later.
+     */
+    getOwnedSpawnRooms: getOwnedSpawnRooms,
+    requestRoleForRoom: requestRoleForRoom,
+    requestTechWorkForRoom: requestTechWorkForRoom,
+    requestConsolidatingTech: requestConsolidatingTech,
+    getTechWorkDemand: getTechWorkDemand,
+    getArtificerBuildDemand: getArtificerBuildDemand,
+    saveArtificerDemandDebug: saveArtificerDemandDebug,
+    requestDynamicArtificersForRoom: requestDynamicArtificersForRoom,
+    countHealthyCreeps: countHealthyCreeps,
+    countLivingRoleBodyParts: countLivingRoleBodyParts,
+    countQueuedRoleBodyParts: countQueuedRoleBodyParts,
+    countLivingRoleWork: countLivingRoleWork,
+    countQueuedRoleWork: countQueuedRoleWork,
+    countBodyParts: countBodyParts,
+    getSourceMiningDemand: getSourceMiningDemand,
+    getFreighterCarryDemand: getFreighterCarryDemand,
+    getDesiredTechWork: getDesiredTechWork,
+    getCpuStatus: cpuStatusUtility.getCpuStatus,
+    getReplacementLeadTicks: getReplacementLeadTicks,
+    requestDynamicExtractorsForRoom: requestDynamicExtractorsForRoom,
+    requestDynamicFreightersForRoom: requestDynamicFreightersForRoom,
+    requestRemoteExtractorsForRoom: requestRemoteExtractorsForRoom,
+    requestAnnexForRoom: requestAnnexForRoom,
+    requestEconomicScout: requestEconomicScout,
+    requestStrategyRolesForRoom: requestStrategyRolesForRoom,
+    /* Compatibility export for console/tests; implementation is provider-generic. */
+    requestDefendersForRoom: requestDefendersForRoom,
+    cleanDefenseQueue: cleanDefenseQueue
+};

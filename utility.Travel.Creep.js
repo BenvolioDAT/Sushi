@@ -407,7 +407,14 @@ function isRouteFresh(route) {
     return route && route.path && route.complete && Game.time - route.created <= ROUTE_CACHE_TTL;
 }
 
-function buildRouteCostMatrix(roomName) {
+function protectedMinerAt(position, mover) {
+    var index = require('HiveMind.Index').get();
+    var creeps = index.creepsByCurrentRoom?.get(position.roomName) || [];
+    return creeps.some(c => c !== mover && c.pos.x === position.x && c.pos.y === position.y &&
+        require('traffic_manager').isProtectedStationaryMiner(c));
+}
+
+function buildRouteCostMatrix(roomName, mover) {
     var room = Game.rooms[roomName];
     if (!room) {
         return false;
@@ -447,6 +454,11 @@ function buildRouteCostMatrix(roomName) {
         }
     }
 
+    // The resolver cannot displace a productive miner. A shared lane must not
+    // repeatedly end on, or pass through, the protected station it will reject.
+    var creeps = require('HiveMind.Index').get().creepsByCurrentRoom?.get(roomName) || [];
+    for (var creep of creeps) if (creep !== mover && require('traffic_manager').isProtectedStationaryMiner(creep))
+        costs.set(creep.pos.x, creep.pos.y, 255);
     return costs;
 }
 
@@ -601,7 +613,7 @@ function planSharedRoute(creep, targetPosition, range, routeKey) {
         maxOps: 4000,
         plainCost: 2,
         swampCost: 10,
-        roomCallback: buildRouteCostMatrix
+        roomCallback: name => buildRouteCostMatrix(name, creep)
     }); });
 
     if (ret.incomplete || !ret.path || ret.path.length === 0) {
@@ -732,6 +744,13 @@ function followSharedRoute(creep, routeKey, route, targetPosition, range, moveOp
     }
 
     var nextPosition = positions[index + 1];
+    if (protectedMinerAt(nextPosition, creep)) {
+        // This is a station/lane conflict, not transient hauler traffic. Drop
+        // this invalid lane and let Traveler avoid current occupants now.
+        moveOptions.ignoreCreeps = false;
+        clearCachedMovementForFreshPath(creep);
+        return makeRouteFollowResult(ERR_NO_PATH, ROUTE_FOLLOW_ROUTE_BAD, true, true, true);
+    }
     if (hasBlockingObstacle(nextPosition)) {
         /*
          * Delete shared routes only when there is strong proof that the route
@@ -1359,5 +1378,6 @@ module.exports = {
     cleanupRouteCaches: cleanupRouteCaches,
     buildRoadsFromRouteCache: buildRoadsFromRouteCache,
     getRoomRouteCache: getRoomRouteCache,
-    getRoutePositions: getRoutePositions
+    getRoutePositions: getRoutePositions,
+    _test: { buildRouteCostMatrix, followSharedRoute, protectedMinerAt }
 };

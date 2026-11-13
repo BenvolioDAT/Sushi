@@ -106,10 +106,50 @@ function upgradeRoomController(creep) {
     if (result === OK) {
         preserveControllerStation(creep);
     } else if (result === ERR_NOT_IN_RANGE) {
-        travel.move(creep, creep.room.controller, {
-            range: 3
-        });
+        moveToControllerStation(creep);
     }
+}
+
+// Range goals otherwise funnel every arrival through the same occupied edge
+// tile. Reserve a reachable, vacant work tile for this tick instead. Productive
+// workers never need this search; traffic/Traveler still own the actual move.
+function moveToControllerStation(creep, container) {
+    var controller = creep.room.controller;
+    if (!controller) return ERR_INVALID_TARGET;
+    var fallback = container || controller;
+    var options = { range: container ? 1 : 3, ignoreCreeps: false, disableSharedRouteCache: true };
+    if (creep.pos.getRangeTo(controller) > 6) return travel.move(creep, fallback, options);
+    var index = TickIndex.get(), roomName = creep.room.name;
+    var reserved = index.techStationReservations || (index.techStationReservations = new Set());
+    var blocked = new Set();
+    var add = object => blocked.add(object.pos.x + ':' + object.pos.y);
+    for (var unit of (index.creepsByCurrentRoom.get(roomName) || []).concat(
+        index.hostilesByRoom.get(roomName) || [], index.powerCreepsByRoom.get(roomName) || [])) {
+        if (unit !== creep) add(unit);
+    }
+    var byType = index.structuresByRoom.get(roomName) || new Map();
+    for (var structure of Array.from(byType.values()).flat()) {
+        if (structure.structureType !== STRUCTURE_ROAD && structure.structureType !== STRUCTURE_CONTAINER &&
+            !(structure.structureType === STRUCTURE_RAMPART && (structure.my || structure.isPublic))) add(structure);
+    }
+    for (var object of TickIndex.getSources(creep.room).concat(
+        TickIndex.getMinerals(creep.room), index.constructionSitesByRoom.get(roomName) || [], [controller])) add(object);
+    var terrain = Game.map.getRoomTerrain(roomName), candidates = [];
+    for (var y = Math.max(1, controller.pos.y - 3); y <= Math.min(48, controller.pos.y + 3); y++) {
+        for (var x = Math.max(1, controller.pos.x - 3); x <= Math.min(48, controller.pos.x + 3); x++) {
+            var key = x + ':' + y;
+            if (blocked.has(key) || reserved.has(roomName + ':' + key) ||
+                terrain.get(x, y) === TERRAIN_MASK_WALL) continue;
+            var pos = new RoomPosition(x, y, roomName);
+            if (!container || pos.getRangeTo(container) <= 1) candidates.push(pos);
+        }
+    }
+    var station = candidates.length && creep.pos.findClosestByPath(candidates, {
+        ignoreCreeps: false, maxRooms: 1, maxOps: 2000
+    });
+    if (!station) return travel.move(creep, fallback, options);
+    reserved.add(roomName + ':' + station.x + ':' + station.y);
+    return travel.move(creep, station, { range: 0, ignoreCreeps: false, disableSharedRouteCache: true });
 }
 
 function getEnergyForTech(creep) {
@@ -202,7 +242,12 @@ function withdrawFromControllerContainer(creep) {
         return false;
     }
 
+    if (creep.pos.getRangeTo(container) > 1) {
+        moveToControllerStation(creep, container);
+        return true;
+    }
     var handled = creepUtility.withdrawEnergy(creep, container);
+    if (handled && creep.pos.getRangeTo(creep.room.controller) > 3) moveToControllerStation(creep, container);
     if (handled && creep.pos.getRangeTo(container) <= 1 && creep.pos.getRangeTo(creep.room.controller) <= 3) {
         preserveControllerStation(creep, container);
     }
@@ -238,7 +283,7 @@ function offRoadControllerStation(creep, container) {
     var reserved = index.techStationReservations || (index.techStationReservations = new Set());
     var structures = Array.from(byType.values()).flat();
     var sites = index.constructionSitesByRoom.get(creep.room.name) || [];
-    var resources = (index.sourcesByRoom.get(creep.room.name) || []).concat(index.mineralsByRoom.get(creep.room.name) || []);
+    var resources = TickIndex.getSources(creep.room).concat(TickIndex.getMinerals(creep.room));
     var terrain = Game.map.getRoomTerrain(creep.room.name);
     for (var y = creep.pos.y - 1; y <= creep.pos.y + 1; y++) {
         for (var x = creep.pos.x - 1; x <= creep.pos.x + 1; x++) {
@@ -351,5 +396,6 @@ function findSourceContainerWithEnergy(creep) {
 roleTech.findDroppedEnergyForTech = findDroppedEnergyForTech;
 roleTech.getEnergyForTech = getEnergyForTech;
 roleTech.upgradeRoomController = upgradeRoomController;
+roleTech.moveToControllerStation = moveToControllerStation;
 
 module.exports = roleTech;

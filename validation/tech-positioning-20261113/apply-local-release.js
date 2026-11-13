@@ -1,0 +1,10 @@
+const fs=require('fs'),path=require('path'),assert=require('assert');
+const root=path.resolve(__dirname,'../..');
+assert.equal(root,path.resolve('C:/Users/xbenv/AppData/Local/Screeps/scripts/192_168_0_217___21025/Sushi'));
+const Build=require(path.join(root,'tools/runtime-build')),Deploy=require(path.join(root,'tools/deploy-runtime'));
+assert.deepStrictEqual(Build.inventory(root),Build.inventory(path.join(__dirname,'baseline')),'Runtime drift requires review');
+const plan=Deploy.makePlan(path.join(__dirname,'stage'),root,path.join(__dirname,'release'));
+assert.deepStrictEqual(plan.changed.slice().sort(),['role.Tech.js','role.Artificer.js','Runtime.Build.js'].sort());
+const result=Deploy.apply(plan);
+fs.writeFileSync(path.join(__dirname,'release/result.json'),JSON.stringify(result,null,2)+'\n');
+console.log(JSON.stringify(result,null,2));

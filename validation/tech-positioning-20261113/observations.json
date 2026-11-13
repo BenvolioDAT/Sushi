@@ -1,0 +1,28 @@
+{
+  "room": "W4N3",
+  "controller": [6, 34],
+  "baselineBuild": "2871b12c1eceab25dc150e4b7c96c220195dabee7622c8a581e80cf5d7956044",
+  "build": "59f4701b7b83691828b9caeeb5fd6e46dee6b0759ee87677a71af649c2b2de3e",
+  "baselineStart": 2218417,
+  "baselineEnd": 2220670,
+  "baselineTicks": 2253,
+  "executedBuildReceipt": 2220842,
+  "observationEnd": 2222584,
+  "postDeploymentTicks": 1742,
+  "totalTicks": 4167,
+  "techColumns": ["name", "x", "y", "energy", "upgrading", "ttl"],
+  "snapshots": [
+    {"tick": 2218609, "techs": [["Tech_003",10,31,50,true,null],["Tech_002",10,32,50,true,null],["Tech_004",8,34,0,false,null],["Tech_001",9,32,48,true,null],["Tech_005",9,33,0,false,null]]},
+    {"tick": 2218941, "progress": 18891, "harvestWork": 10, "localCarry": 24, "localCarryRequired": 24, "haulingDeliveredCumulative": 15715},
+    {"tick": 2219696, "progress": 20822, "rollingCpu": 66.84080043498605, "bucket": 10000,
+     "techs": [["Tech_001",9,32,50,true,24],["Tech_005",10,33,0,false,39],["Tech_006",9,34,0,false,663],["Tech_002",8,31,21,true,1140],["Tech_003",10,32,100,true,1305],["Tech_004",31,24,0,null,null]]},
+    {"tick": 2220670, "progress": 25059, "techs": [["Tech_002",10,33,0,false,166],["Tech_003",8,32,34,true,331],["Tech_004",10,32,50,true,526],["Tech_001",9,32,22,true,574],["Tech_005",10,31,100,true,1198]]},
+    {"tick": 2221418, "progress": 30286, "techs": [["Tech_005",9,31,0,false,450],["Tech_002",8,31,39,true,1056],["Tech_003",9,32,18,true,1275],["Tech_004",8,32,14,true,1293],["Tech_006",9,33,19,true,1329]]},
+    {"tick": 2221623, "progress": 31141, "state": "RECOVERY", "reason": "harvest restored, logistics below demand", "localCarry": 18, "localCarrySpawning": 5, "localCarryRequired": 22, "localNoProgressWorkers": 0},
+    {"tick": 2222411, "progress": 35004, "techs": [["Tech_002",9,32,27,true,null],["Tech_003",21,24,38,false,null],["Tech_004",14,31,34,false,null],["Tech_006",14,30,91,false,null]]},
+    {"tick": 2222584, "retainedPostReleaseTechMovementWarnings": [{"tick":2222473,"creep":"Tech_006","x":24,"y":23,"targetX":31,"targetY":24,"stuckTicks":5}]}
+  ],
+  "baselineProbe": {"readAt":2220399,"errorCount":0,"optionalSkips":3,"sampleTicks":[2219360,2219460,2219560,2219760,2220060,2220160,2220260,2220360],"lateCpuRange":[41.692330999998376,77.91327199997613],"rollingCpuRange":[46.926386277456075,67.86380301455142]},
+  "postProbe": {"enabledAt":2221028,"until":2222228,"expiredConfirmedAt":2222411,"enabled":false,"stopReason":"EXPIRED","sampleCountBefore":54,"sampleCountAfter":65,"errorCount":0,"additionalOptionalSkips":1,"observedSampleTicks":[2221029,2221129,2221329,2221429,2221529,2221629,2221729,2221829,2221929,2222029,2222129],"lateCpuRange":[43.30931500000588,78.30547200000728],"rollingCpuRange":[45.09138402266793,67.9341822256025]},
+  "checks": {"stagedPass":299,"finalPass":299,"parsedModules":116}
+}

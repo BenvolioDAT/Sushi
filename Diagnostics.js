@@ -116,7 +116,7 @@ function record(category, severity, event, room, data = {}) {
         const roomName = typeof room === 'string' ? room.slice(0, 24) : null;
         const key = category + ':' + severity + ':' + name + ':' + roomName + ':' + encode(clean);
         const previous = h.dedup.get(key);
-        if (previous && tick() - previous.lastTick <= c.duplicateWindow && h.rows.some(r => r.e === previous)) {
+        if (previous && previous.resolvedAt === undefined && tick() - previous.lastTick <= c.duplicateWindow && h.rows.some(r => r.e === previous)) {
             previous.count = Math.min(1e9, previous.count + 1); previous.lastTick = tick();
             insert(h, previous); h.dirty = true; trim(h, c); fallback(h, c); return false;
         }
@@ -201,6 +201,7 @@ function finish(cpu) {
                 rooms: Object.keys(Game.rooms || {}).length });
             for (const name of h.rooms.keys()) {
                 const view = roomReader(name);
+                if (view) resolveWarnings(h, name, view);
                 if (view) record('ECONOMY', 'INFO', 'ROOM_HEALTH_SNAPSHOT', name, {
                     state: view.state, activeWork: view.activeWork, requiredWork: view.requiredWork,
                     spawningWork: view.spawningWork, queuedWork: view.queuedWork, energy: view.energy,
@@ -231,17 +232,80 @@ function events(count = 20, filter = {}) {
 }
 function summary(room) {
     try {
-        const h = current(); let warnings = 0, errors = 0, last = null, examined = 0;
-        for (let i = h.rows.length - 1; i >= 0 && examined < 200; i--, examined++) {
+        const h = current(); let warnings = 0, errors = 0, last = null, resolvedWarnings = 0, historicalWarnings = 0;
+        for (let i = h.rows.length - 1; i >= 0; i--) {
             const e = h.rows[i].e;
-            if (e.room && e.room !== room || tick() - e.lastTick > 1000) continue;
+            if (e.room && e.room !== room) continue;
+            if (e.severity === 'WARN' && e.resolvedAt !== undefined) { resolvedWarnings++; continue; }
+            if (tick() - e.lastTick > 1000) { if (e.severity === 'WARN') historicalWarnings++; continue; }
             if (e.severity === 'WARN') warnings++;
             if (e.severity === 'ERROR') errors++;
             if (!last && !e.event.endsWith('_SNAPSHOT') && e.severity !== 'DEBUG')
                 last = { event: e.event, tick: e.lastTick, severity: e.severity };
         }
-        return { warnings, errors, last };
+        return { warnings, errors, last, resolvedWarnings, historicalWarnings, windowTicks: 1000 };
     } catch (error) { return { warnings: 0, errors: 0, last: null }; }
+}
+// Resolve only symptoms disproved by current evidence. Keep the original row,
+// count and timestamps as history. Unknown warnings and all errors stay intact.
+function resolveWarnings(h, room, view) {
+    if (!view || view.tick !== tick() || view.economyTick !== tick()) return 0;
+    let resolved = 0;
+    for (const row of h.rows.slice()) {
+        const e = row.e;
+        if (e.room !== room || e.severity !== 'WARN' || e.resolvedAt !== undefined || e.lastTick >= tick()) continue;
+        let reason = null;
+        if (e.category === 'MOVEMENT' && e.data?.creep) {
+            const creep = Game.creeps[e.data.creep], actor = h.actors.get('move:' + e.data.creep);
+            const lifetime = creep?.body?.some(p => (p.type || p) === 'claim') ? 600 : 1500;
+            if (!creep) reason = 'ACTOR_GONE';
+            else if (Number.isFinite(creep.ticksToLive) && e.lastTick < tick() - lifetime + creep.ticksToLive) reason = 'OLD_CREEP_GENERATION';
+            else if (actor && actor.tick > e.lastTick && actor.tick >= tick() - 1 && actor.stuck < 5 && actor.failures < 3 &&
+                !actor.oscillating && actor.pos !== room + ':' + e.data.x + ':' + e.data.y) reason = 'MOVEMENT_RESUMED';
+        } else if (['ECONOMY_OBSERVED','ECONOMY_STATE_CHANGED','ECONOMY_CONSTRAINT_CHANGED','RECOVERY_ACTIVATED'].includes(e.event) &&
+            ['STABLE','SURPLUS'].includes(view.state)) reason = 'RECOVERY_COMPLETED';
+        else if (e.event === 'GROWTH_PAUSED' && view.growthAllowed === true) reason = 'GROWTH_RESUMED';
+        else if (e.event === 'SPAWN_ENERGY_STARVATION' && view.energy >= 200) reason = 'SPAWN_ENERGY_RESTORED';
+        else if (e.event === 'RESERVE_BELOW_TARGET' && view.energyAboveReserve > 0) reason = 'RESERVE_RESTORED';
+        else if (e.event === 'CRITICAL_HARVEST_CAPACITY_MISSING' && view.harvestHealth === 'HEALTHY') reason = 'HARVEST_RESTORED';
+        else if (e.event === 'HARVEST_PLAN_CHANGED') {
+            const source = view.sources?.find(s => s.id === e.data?.source);
+            if (source && source.activeWork >= source.requiredWork && source.income >= source.expectedIncome * 0.65)
+                reason = 'SOURCE_HARVEST_COVERED';
+        }
+        if (!reason) continue;
+        e.resolvedAt = tick(); e.resolution = reason;
+        insert(h, e); h.dirty = true; resolved++;
+    }
+    if (resolved) {
+        h.rows.sort((a,b) => (a.e.lastTick || a.e.tick) - (b.e.lastTick || b.e.tick) || a.e.id - b.e.id);
+        trim(h, config()); fallback(h, config());
+    }
+    return resolved;
+}
+function review(room) {
+    const h = current(), view = roomReader(room);
+    const resolved = resolveWarnings(h, room, view);
+    return { tick: tick(), resolved, ...summary(room) };
+}
+function report(room) {
+    const view = roomReader(room);
+    if (!view) return 'No colony information for ' + room;
+    const s = review(room), hauling = view.logistics?.local || {};
+    const rows = ['Sushi ' + room + ' | tick ' + tick(),
+        'Economy: ' + view.state + ' | ' + (view.reason || 'no current constraint'),
+        'Mining WORK: ' + view.activeWork + '/' + view.requiredWork + ' | Spawn energy: ' + view.energy + '/' + view.energyCapacity,
+        'Local CARRY: ' + (hauling.living ?? '?') + '/' + (hauling.required ?? '?') +
+            ' | idle: ' + (hauling.idleWorkers || 0) + ' | no progress: ' + (hauling.noProgressWorkers || 0),
+        'Source backlog: ' + (view.hauling?.backlog || 0) + ' energy',
+        'Recent unresolved warnings (1000 ticks): ' + s.warnings + ' | errors: ' + s.errors,
+        'Resolved warnings kept in history: ' + s.resolvedWarnings + ' | older warnings: ' + s.historicalWarnings];
+    const recent = events(1000, {room, severity:'WARN'}).filter(e => e.resolvedAt === undefined && tick() - e.lastTick <= 1000).slice(-5);
+    for (const e of recent) rows.push('#' + e.id + ' ' + e.event.replace(/_/g, ' ').toLowerCase() +
+        (e.data.creep ? ': ' + e.data.creep + ' at ' + e.data.x + ',' + e.data.y : '') +
+        (e.data.reason ? ': ' + String(e.data.reason).replace(/_/g, ' ').toLowerCase() : '') +
+        ' | last seen ' + (tick() - e.lastTick) + ' ticks ago');
+    return rows.join('\n');
 }
 function status() {
     try { const h = current(), c = config(); return { tick: tick(), mode: c.mode, storage: h.storage,
@@ -276,7 +340,8 @@ function observeEconomy(room, snapshot) {
             [s.id, s.constraint, s.planningReason, s.replacementStatus, s.maxAchievableWork, s.seatCount].join(':')).join('|');
         if (!old || old.sourceSignature !== sourceSignature) {
             for (const source of snapshot.harvest.sources || []) record('SPAWNING',
-                source.constraint === 'COVERED' ? 'INFO' : 'WARN', 'HARVEST_PLAN_CHANGED', room,
+                source.constraint === 'COVERED' || source.workActive >= source.workRequired &&
+                source.estimatedIncome >= source.expectedIncome * 0.65 && !source.replacementRisk ? 'INFO' : 'WARN', 'HARVEST_PLAN_CHANGED', room,
                 { source: source.id, required: source.workRequired, active: source.workActive,
                     stationed: source.stationedWork, maximum: source.maxAchievableWork, seats: source.seatCount,
                     replacement: source.replacementStatus, constraint: source.constraint,
@@ -320,9 +385,10 @@ function movement(creep, result, destination) {
             record('MOVEMENT', 'WARN', oscillating ? 'ROOM_EXIT_OSCILLATION' : result === -7 || result === -10 ?
                 'MOVEMENT_INVALID_DESTINATION' : failures >= 3 ? 'MOVEMENT_REPEATED_FAILURE' : 'MOVEMENT_PERSISTENT_BLOCK',
                 creep.pos.roomName, { creep: creep.name, role: creep.memory && creep.memory.role, result,
-                    destination: destination && destination.roomName, x: creep.pos.x, y: creep.pos.y });
+                    destination: destination && destination.roomName, x: creep.pos.x, y: creep.pos.y,
+                    targetX: destination && destination.x, targetY: destination && destination.y, stuckTicks: stuck });
         }
-        h.actors.set(key, { tick: tick(), pos, stuck, failures, rooms });
+        h.actors.set(key, { tick: tick(), pos, stuck, failures, rooms, oscillating });
         if (h.actors.size > 600) h.actors.delete(h.actors.keys().next().value);
     } catch (error) { /* No movement side effects. */ }
 }
@@ -399,6 +465,7 @@ function install(readRoom, readCpu, readPixels) {
     if (readPixels) pixelReader = readPixels;
     if (!global.Sushi || typeof global.Sushi !== 'object') global.Sushi = {};
     global.Sushi.debug = { status, build: () => require('Runtime.Build'),
+        report, review,
         probe: (on, options) => require('Diagnostics.Probe').toggle(on, options),
         probeReport: () => require('Diagnostics.Probe').report(),
         pixels: () => ({ current: pixelReader(), last: Memory.hive?.telemetry?.pixels || null }),
@@ -417,4 +484,4 @@ function install(readRoom, readCpu, readPixels) {
     } catch (error) { /* A conflicting console global cannot affect colony work. */ }
 }
 module.exports = { DEFAULTS, config, record, begin, finish, events, status, exception, observeEconomy,
-    movement, observeJobs, summary, install, clear, exportHistory, measureOperation, operationProfile };
+    movement, observeJobs, summary, review, report, install, clear, exportHistory, measureOperation, operationProfile };
