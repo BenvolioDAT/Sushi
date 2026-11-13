@@ -1,0 +1,4 @@
+PASS a mature colony immediately enters bootstrap when its core harvest disappears
+PASS a mature colony without a spawn still enters the owned-no-spawn state
+PASS restored mature economy advances through normal lifecycle steps and hysteresis
+Colony lifecycle recovery scenarios passed: 3

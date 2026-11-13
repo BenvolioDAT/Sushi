@@ -1,5 +1,11 @@
 # Sushi architecture handoff
 
+## Local startup audit — November 12, 2026, evening
+
+This session verified the desktop client's **Open local folder** as `192_168_0_217___21025/Sushi`, matching the 116-module running baseline `4d8b6c0841cde31ab8008c1edfaebf412d65d25620e5ccb06e0108790178f85f`. Historical local-folder ownership below describes earlier sessions. The small GC correction builds as `744e6480d2d774a20a97302b4ad03134cee7c3d2e64d089b238c234e3e55ffa3`; only this requested local branch receives it.
+
+`HiveMind.MemoryGC.protectedRooms` now separates root home names from derived room protection. Protection for transit, remote work or an NPC mission does not authorize a former colony's historical planner to protect its obsolete remote portfolio. Current homes, HOME/OWNED_BOOTSTRAP identity and visible ownership still establish planner authority. Existing strategic protection, domain retention, durable planner/layout preservation and remembered dangers remain unchanged. No persistent field or migration is added. The final suite has **285 PASS checks**; the console confirmed this build at tick 2,183,828. Observation across 3,082 console-measured ticks established RCL1-to-RCL2 growth, 550 energy capacity and an automatically expired 500-tick probe with zero exceptions. Remote harvest/delivery and live combat remain unverified. See [STARTUP-AUDIT-2026-11-12.md](STARTUP-AUDIT-2026-11-12.md) and `validation/startup-20261113/` for evidence and limitations.
+
 ## Full automation audit - November 12, 2026, late afternoon
 
 Current local runtime is **115 modules**, build `75288eb7ceb96f921dd3fe66efe285262e9ce63ea2c9da51b247f19e9ccc4c07`, with **260 PASS checks**. Earlier fingerprints/counts below are historical. The user explicitly selected the running `127_0_0_1___21025/Sushi` copy over the older IP directory. See [FULL-AUTOMATION-AUDIT-2026-11-12.md](FULL-AUTOMATION-AUDIT-2026-11-12.md) for live evidence and capability limits.

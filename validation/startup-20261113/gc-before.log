@@ -1,0 +1,29 @@
+PASS selected remote sources and transit intel survive an age-based sweep
+PASS removing a strategic reference releases ordinary expired intel for cleanup
+PASS established suspended remotes and active operation rooms remain protected
+PASS lost colonies cannot retain every old remote as an active parent forever
+PASS owned rooms without a spawn still retain their remote intelligence
+node:assert:150
+  throw new AssertionError(obj);
+  ^
+
+AssertionError [ERR_ASSERTION]: transit protection does not establish a current parent
+    at C:\Users\xbenv\AppData\Local\Screeps\scripts\192_168_0_217___21025\Sushi\validation\startup-20261113\stage\test\memory-gc-protection.js:62:12
+    at test (C:\Users\xbenv\AppData\Local\Screeps\scripts\192_168_0_217___21025\Sushi\validation\startup-20261113\stage\test\memory-gc-protection.js:16:27)
+    at Object.<anonymous> (C:\Users\xbenv\AppData\Local\Screeps\scripts\192_168_0_217___21025\Sushi\validation\startup-20261113\stage\test\memory-gc-protection.js:53:1)
+    at Module._compile (node:internal/modules/cjs/loader:1781:14)
+    at Object..js (node:internal/modules/cjs/loader:1913:10)
+    at Module.load (node:internal/modules/cjs/loader:1505:32)
+    at Function._load (node:internal/modules/cjs/loader:1309:12)
+    at wrapModuleLoad (node:internal/modules/cjs/loader:254:19)
+    at Function.executeUserEntryPoint [as runMain] (node:internal/modules/run_main:171:5)
+    at node:internal/main/run_main_module:36:49 {
+  generatedMessage: false,
+  code: 'ERR_ASSERTION',
+  actual: { source: { pos: { x: 10, y: 10 } } },
+  expected: undefined,
+  operator: '==',
+  diff: 'simple'
+}
+
+Node.js v22.23.2

@@ -1,0 +1,13 @@
+{
+  "build": {
+    "id": "744e6480d2d774a20a97302b4ad03134cee7c3d2e64d089b238c234e3e55ffa3",
+    "modules": 116
+  },
+  "modules": 116,
+  "changed": [
+    "HiveMind.MemoryGC.js",
+    "Runtime.Build.js"
+  ],
+  "backup": "C:\\Users\\xbenv\\AppData\\Local\\Screeps\\scripts\\192_168_0_217___21025\\Sushi\\validation\\startup-20261113\\release\\backup",
+  "verifiedAt": "2026-11-13T00:55:46.846Z"
+}

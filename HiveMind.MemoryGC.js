@@ -3,7 +3,8 @@ const HiveMemory = require('HiveMind.Memory');
 const TERMINAL = new Set(['COMPLETE', 'ABORTED']);
 
 function protectedRooms(hive) {
-    const names = new Set(hive.homeRooms && hive.homeRooms.names || []);
+    const homes = new Set(hive.homeRooms && hive.homeRooms.names || []);
+    const names = new Set(homes);
     for (const [name, record] of Object.entries(Memory.rooms || {})) {
         if (record && record.identity && ['HOME', 'OWNED_BOOTSTRAP', 'REMOTE'].includes(record.identity.type)) names.add(name);
         for (const mission of [record && record.keeperOperation, record && record.npcCoreOperation]) {
@@ -15,7 +16,9 @@ function protectedRooms(hive) {
         // A selected remote and its transit rooms remain strategic references
         // even when their last observation is old or civilians are suspended.
         const planner = record && record.remotePlanner;
-        if (!names.has(name) && !['HOME', 'OWNED_BOOTSTRAP'].includes(record?.identity?.type) &&
+        // Protection as transit/mission/remote intel does not grant this room
+        // authority to protect a former colony's obsolete remote portfolio.
+        if (!homes.has(name) && !['HOME', 'OWNED_BOOTSTRAP'].includes(record?.identity?.type) &&
             !Game.rooms[name]?.controller?.my) continue;
         const selected = new Set(planner && planner.activeSourceIds || []);
         for (const [id, source] of Object.entries(planner && planner.sourceInfos || {})) {

@@ -1,0 +1,466 @@
+[
+  {
+    "Path": "C:\\Users\\xbenv\\AppData\\Local\\Screeps\\scripts\\192_168_0_217___21025\\Sushi\\BodyProfiles.js",
+    "Hash": "06E65906F0FBB341CAB382F7270064C57B28B537102E7FE0E00874E6D7DC8AEC"
+  },
+  {
+    "Path": "C:\\Users\\xbenv\\AppData\\Local\\Screeps\\scripts\\192_168_0_217___21025\\Sushi\\Combat.Math.js",
+    "Hash": "125110A7F530CD19904638765DFD218C7F61A819EEE786073843E7B1DBD5ED34"
+  },
+  {
+    "Path": "C:\\Users\\xbenv\\AppData\\Local\\Screeps\\scripts\\192_168_0_217___21025\\Sushi\\Combat.Operations.js",
+    "Hash": "0196A619C3FB6035575D132878EB8CEC87295A384346AE98E6490DF1BBAF54A8"
+  },
+  {
+    "Path": "C:\\Users\\xbenv\\AppData\\Local\\Screeps\\scripts\\192_168_0_217___21025\\Sushi\\Combat.Policy.js",
+    "Hash": "0F8CFB29ECB5B2092BD08F6DA4E773B4A8D49DAAB0CCE092D6161F13B1427FAB"
+  },
+  {
+    "Path": "C:\\Users\\xbenv\\AppData\\Local\\Screeps\\scripts\\192_168_0_217___21025\\Sushi\\Combat.Roles.js",
+    "Hash": "FFEF13529824BDD197AAC8C0F23DE629F1C023DCF84AC35245B7A884131E4A4F"
+  },
+  {
+    "Path": "C:\\Users\\xbenv\\AppData\\Local\\Screeps\\scripts\\192_168_0_217___21025\\Sushi\\Combat.Stronghold.js",
+    "Hash": "F8F2B8093B2D306CB9A90F5E8150A99E8ADCC0A8ED7AD6053BD965C1E6C736B0"
+  },
+  {
+    "Path": "C:\\Users\\xbenv\\AppData\\Local\\Screeps\\scripts\\192_168_0_217___21025\\Sushi\\Combat.ThreatLedger.js",
+    "Hash": "60EFCF572304BDC0C3FD4CF090A9BC4814977C8169F643BAFABA405B923F0126"
+  },
+  {
+    "Path": "C:\\Users\\xbenv\\AppData\\Local\\Screeps\\scripts\\192_168_0_217___21025\\Sushi\\CPU.Status.js",
+    "Hash": "F1C8B3212957FE9D4433902E89BAA30DF677121901127E4F06CF75A7A90E5C03"
+  },
+  {
+    "Path": "C:\\Users\\xbenv\\AppData\\Local\\Screeps\\scripts\\192_168_0_217___21025\\Sushi\\Defense.Demand.js",
+    "Hash": "788E30DA397309A1F70553AEC537E3826140367E17903146A3DF7B84F1F2792B"
+  },
+  {
+    "Path": "C:\\Users\\xbenv\\AppData\\Local\\Screeps\\scripts\\192_168_0_217___21025\\Sushi\\Diagnostics.js",
+    "Hash": "C227080E0DB53A6AC811DE3E61583E554B17E4F7C173A9190071BB6F7133851F"
+  },
+  {
+    "Path": "C:\\Users\\xbenv\\AppData\\Local\\Screeps\\scripts\\192_168_0_217___21025\\Sushi\\Diagnostics.Probe.js",
+    "Hash": "6360CDC1C767026740D39C31FFC6741EA95724A226866FBFEBD6D002F041B69F"
+  },
+  {
+    "Path": "C:\\Users\\xbenv\\AppData\\Local\\Screeps\\scripts\\192_168_0_217___21025\\Sushi\\Diagnostics.View.js",
+    "Hash": "12B727B21B8D2FB378CC287E5F90BB224BA70E5354DB39DFD699F7175B211B8D"
+  },
+  {
+    "Path": "C:\\Users\\xbenv\\AppData\\Local\\Screeps\\scripts\\192_168_0_217___21025\\Sushi\\Freighter.Renewal.js",
+    "Hash": "D8367421D8DEB6AAB2D09AF9EBD1B412A91E580351305315B5B847F2DD6A8D72"
+  },
+  {
+    "Path": "C:\\Users\\xbenv\\AppData\\Local\\Screeps\\scripts\\192_168_0_217___21025\\Sushi\\Harvest.Planning.js",
+    "Hash": "087B1A7464D2CEC95753ED2CEC7E9E6AA09FF72ACC1600A92E4531C14E2237C5"
+  },
+  {
+    "Path": "C:\\Users\\xbenv\\AppData\\Local\\Screeps\\scripts\\192_168_0_217___21025\\Sushi\\HiveMind.Capacity.js",
+    "Hash": "C6417B306AB8F8F4BF0D3D18CA9658FB61943B89EC896D09A92D4641240CE69E"
+  },
+  {
+    "Path": "C:\\Users\\xbenv\\AppData\\Local\\Screeps\\scripts\\192_168_0_217___21025\\Sushi\\HiveMind.ColonyState.js",
+    "Hash": "18114AABC3984B79496A83C84539CD6E740FD09EC8DCB35E7292F06F005B8378"
+  },
+  {
+    "Path": "C:\\Users\\xbenv\\AppData\\Local\\Screeps\\scripts\\192_168_0_217___21025\\Sushi\\HiveMind.Economy.js",
+    "Hash": "26845F93CCAC4AB03E79A16AF3F2E8F4F715CB85F42FEEA0F4738D8474D2558A"
+  },
+  {
+    "Path": "C:\\Users\\xbenv\\AppData\\Local\\Screeps\\scripts\\192_168_0_217___21025\\Sushi\\HiveMind.Index.js",
+    "Hash": "8A9C309857A750EE3F178407918E1129B343A3825A5CC684A356FF3D6DFF7F30"
+  },
+  {
+    "Path": "C:\\Users\\xbenv\\AppData\\Local\\Screeps\\scripts\\192_168_0_217___21025\\Sushi\\HiveMind.Memory.js",
+    "Hash": "BF1CEF9B086D0E729BDDD68D170EABD3F96086221DE0DD46A43F9295DAE9418F"
+  },
+  {
+    "Path": "C:\\Users\\xbenv\\AppData\\Local\\Screeps\\scripts\\192_168_0_217___21025\\Sushi\\HiveMind.MemoryGC.js",
+    "Hash": "A2141A24907E0F28962CD846DD3F37185B0C3409EAF8E2A9CD1820B5C5173C2E"
+  },
+  {
+    "Path": "C:\\Users\\xbenv\\AppData\\Local\\Screeps\\scripts\\192_168_0_217___21025\\Sushi\\HiveMind.Operations.js",
+    "Hash": "9812E86122E0C00FB077FF12FD0099A97B7009C554ED55804ED2923F217C8DCA"
+  },
+  {
+    "Path": "C:\\Users\\xbenv\\AppData\\Local\\Screeps\\scripts\\192_168_0_217___21025\\Sushi\\HiveMind.Scheduler.js",
+    "Hash": "82CED737E67CDF0115F4F72E4DE9FD1CE2A652FF837C8DAEECEB6F19DCB317E0"
+  },
+  {
+    "Path": "C:\\Users\\xbenv\\AppData\\Local\\Screeps\\scripts\\192_168_0_217___21025\\Sushi\\HiveMind.Strategy.js",
+    "Hash": "85B7329E8C56B8DEF088358D3847E40FFA7547A9FB2BBE31B29C81AAF9E5F810"
+  },
+  {
+    "Path": "C:\\Users\\xbenv\\AppData\\Local\\Screeps\\scripts\\192_168_0_217___21025\\Sushi\\HiveMind.Surplus.js",
+    "Hash": "F3360101A6A3707D73F152C4507FFB87E1EBB7CFCEF4D8BBF3BA3891E03AC86E"
+  },
+  {
+    "Path": "C:\\Users\\xbenv\\AppData\\Local\\Screeps\\scripts\\192_168_0_217___21025\\Sushi\\HiveMind.Telemetry.js",
+    "Hash": "30B0056716C8B54A95F2C16C84B9E951006FA7345A600937CA89F227CD594573"
+  },
+  {
+    "Path": "C:\\Users\\xbenv\\AppData\\Local\\Screeps\\scripts\\192_168_0_217___21025\\Sushi\\HiveMind.Utility.js",
+    "Hash": "B41A664AB91B0BCBA3B6AC8CE5A6CDB014A5500D2A30081D5025E74C0024525F"
+  },
+  {
+    "Path": "C:\\Users\\xbenv\\AppData\\Local\\Screeps\\scripts\\192_168_0_217___21025\\Sushi\\Keeper.Combat.js",
+    "Hash": "4BEE5AF3E1AD68F6387B18EECC915DB193B60700424EDDE8FA7F2B4A69639C70"
+  },
+  {
+    "Path": "C:\\Users\\xbenv\\AppData\\Local\\Screeps\\scripts\\192_168_0_217___21025\\Sushi\\Keeper.Intel.js",
+    "Hash": "88570B3B11D8800BCB2A835CF5C9F24987F016AA597EBC4B910A1365A096262E"
+  },
+  {
+    "Path": "C:\\Users\\xbenv\\AppData\\Local\\Screeps\\scripts\\192_168_0_217___21025\\Sushi\\Keeper.Operations.js",
+    "Hash": "E7592B0C1E1BD3FB6AC8105B471E496C619F76D1F14816D5ED01F2259F628873"
+  },
+  {
+    "Path": "C:\\Users\\xbenv\\AppData\\Local\\Screeps\\scripts\\192_168_0_217___21025\\Sushi\\Logic.Expansion.js",
+    "Hash": "78504EA0B60F5736E4AEE264E98591C80C9BB4AEFBB09550E6DD1FFA320ADD8E"
+  },
+  {
+    "Path": "C:\\Users\\xbenv\\AppData\\Local\\Screeps\\scripts\\192_168_0_217___21025\\Sushi\\Logic.Tower.js",
+    "Hash": "07C79AD39490EC070C6D9188756773E820E81D90716B392227B7F3E836AC4314"
+  },
+  {
+    "Path": "C:\\Users\\xbenv\\AppData\\Local\\Screeps\\scripts\\192_168_0_217___21025\\Sushi\\Logic.WarRoom.js",
+    "Hash": "5CAC2013F9DA879CC2B5D4EE0DFE5F78DC8F507C25FB1CA77F8DF72E416D95CD"
+  },
+  {
+    "Path": "C:\\Users\\xbenv\\AppData\\Local\\Screeps\\scripts\\192_168_0_217___21025\\Sushi\\Logistics.Index.js",
+    "Hash": "394F32520FF902F3555D39386281BAA6E1A1DF970A7DF20373EC6F1730CBC2AC"
+  },
+  {
+    "Path": "C:\\Users\\xbenv\\AppData\\Local\\Screeps\\scripts\\192_168_0_217___21025\\Sushi\\Logistics.Jobs.js",
+    "Hash": "AEE2E6147F5428777CA33F2B633961DC3E754F10FBC3F958BDCEAE9FEC168FB3"
+  },
+  {
+    "Path": "C:\\Users\\xbenv\\AppData\\Local\\Screeps\\scripts\\192_168_0_217___21025\\Sushi\\main.js",
+    "Hash": "6E34E16CC2F5E14E165F1F35F8017D402CE94C010DA861E1831B80903C5A2D79"
+  },
+  {
+    "Path": "C:\\Users\\xbenv\\AppData\\Local\\Screeps\\scripts\\192_168_0_217___21025\\Sushi\\NPC.Operations.js",
+    "Hash": "A7CB90BD38326339166B947EDF670A537FAC91D27BAC8E87ACE3A65D9A74D4E5"
+  },
+  {
+    "Path": "C:\\Users\\xbenv\\AppData\\Local\\Screeps\\scripts\\192_168_0_217___21025\\Sushi\\NPC.Policy.js",
+    "Hash": "59D1A6E07A903AE9D20A3C7C8B75CB4546200A247A224080ADDE95609A044E20"
+  },
+  {
+    "Path": "C:\\Users\\xbenv\\AppData\\Local\\Screeps\\scripts\\192_168_0_217___21025\\Sushi\\Planner.Brain.js",
+    "Hash": "25413C197772B2E867618A7AD0FB370CFB6D66C37E2394CF24E25BBA5B49557C"
+  },
+  {
+    "Path": "C:\\Users\\xbenv\\AppData\\Local\\Screeps\\scripts\\192_168_0_217___21025\\Sushi\\Planner.Container.js",
+    "Hash": "0DCC00297B60B20A074D2AD106BF2A0FFF074C15477D7D68D62266DDE7D1362D"
+  },
+  {
+    "Path": "C:\\Users\\xbenv\\AppData\\Local\\Screeps\\scripts\\192_168_0_217___21025\\Sushi\\Planner.Extension.js",
+    "Hash": "4B90AEFADFE5CB4BF771C882369D35E0EB3CA93A8981D4F7C763E13BE7D8C464"
+  },
+  {
+    "Path": "C:\\Users\\xbenv\\AppData\\Local\\Screeps\\scripts\\192_168_0_217___21025\\Sushi\\Planner.Extractor.js",
+    "Hash": "0FF8B0E8BAD612019D6F9C0867AB71F20A8B714A44B96E3B1F6DFAE4B03C8D81"
+  },
+  {
+    "Path": "C:\\Users\\xbenv\\AppData\\Local\\Screeps\\scripts\\192_168_0_217___21025\\Sushi\\Planner.Factory.js",
+    "Hash": "401B26049D075349E5849C3CBAF5FDB684BA75A8D0908BF6AAC46AC6FFD95336"
+  },
+  {
+    "Path": "C:\\Users\\xbenv\\AppData\\Local\\Screeps\\scripts\\192_168_0_217___21025\\Sushi\\Planner.Lab.js",
+    "Hash": "91480887B2F684AE98EB5AD71AFF8A9562D109FF0156FFC4598E2E585DDF6D2E"
+  },
+  {
+    "Path": "C:\\Users\\xbenv\\AppData\\Local\\Screeps\\scripts\\192_168_0_217___21025\\Sushi\\Planner.Link.js",
+    "Hash": "B7B0782D2570AC12464AFA3D7AA2EE1BBF93C555BD72C83D79A16B7369707161"
+  },
+  {
+    "Path": "C:\\Users\\xbenv\\AppData\\Local\\Screeps\\scripts\\192_168_0_217___21025\\Sushi\\Planner.Nuker.js",
+    "Hash": "C3EBDD73EE0CC1C1A9D7FA7B990FA5A151B4C6E2AB1998322166488F2D6B6777"
+  },
+  {
+    "Path": "C:\\Users\\xbenv\\AppData\\Local\\Screeps\\scripts\\192_168_0_217___21025\\Sushi\\Planner.Observer.js",
+    "Hash": "12C579272B52B2AD4C4A9C3E7B55170E4B1744D40D9A8F658B49C6B6BE2B3213"
+  },
+  {
+    "Path": "C:\\Users\\xbenv\\AppData\\Local\\Screeps\\scripts\\192_168_0_217___21025\\Sushi\\Planner.PowerSpawn.js",
+    "Hash": "992E941CAC989883F571E5FF7C214C220D9537D87F12430A8C8E72604CF57638"
+  },
+  {
+    "Path": "C:\\Users\\xbenv\\AppData\\Local\\Screeps\\scripts\\192_168_0_217___21025\\Sushi\\Planner.Rampart.js",
+    "Hash": "8D6EB0F19DF356F6C04F968AB2DE36CE5FF399029CE774CF0031112035379D27"
+  },
+  {
+    "Path": "C:\\Users\\xbenv\\AppData\\Local\\Screeps\\scripts\\192_168_0_217___21025\\Sushi\\Planner.Remote.js",
+    "Hash": "2805F83A2891F5B7BFEFAEE0143BA6AE8798B749D61A9639B795793E74129DDB"
+  },
+  {
+    "Path": "C:\\Users\\xbenv\\AppData\\Local\\Screeps\\scripts\\192_168_0_217___21025\\Sushi\\Planner.Road.js",
+    "Hash": "E4083C14C96DE24395CE078FE642745536BE4073F7AAA2EFA76F754864180A7E"
+  },
+  {
+    "Path": "C:\\Users\\xbenv\\AppData\\Local\\Screeps\\scripts\\192_168_0_217___21025\\Sushi\\Planner.Roads.js",
+    "Hash": "E7F42AA004FC4A22C47543FFB27918BB81552CD877CABAA8CAAE8893C6856F19"
+  },
+  {
+    "Path": "C:\\Users\\xbenv\\AppData\\Local\\Screeps\\scripts\\192_168_0_217___21025\\Sushi\\Planner.Spawn.js",
+    "Hash": "945D12AE0AA503DE65D01A641CCB46A09D7703619ACD22AA06B01F5B77B4110C"
+  },
+  {
+    "Path": "C:\\Users\\xbenv\\AppData\\Local\\Screeps\\scripts\\192_168_0_217___21025\\Sushi\\Planner.Storage.js",
+    "Hash": "F346E7A50C458531BFAC972025DD513E94B64033E5F3FB0986507E8133907913"
+  },
+  {
+    "Path": "C:\\Users\\xbenv\\AppData\\Local\\Screeps\\scripts\\192_168_0_217___21025\\Sushi\\Planner.Terminal.js",
+    "Hash": "B4FA851BFC78F8764E8C650F235B4E79E5A161DFDBA74D050DC38F23995A2546"
+  },
+  {
+    "Path": "C:\\Users\\xbenv\\AppData\\Local\\Screeps\\scripts\\192_168_0_217___21025\\Sushi\\Planner.Tower.js",
+    "Hash": "0FA9F8AFDD523B4E2050B7580C6F2661D170B6186FEE70A7C1D3A15881BC31B3"
+  },
+  {
+    "Path": "C:\\Users\\xbenv\\AppData\\Local\\Screeps\\scripts\\192_168_0_217___21025\\Sushi\\Planner.Util.js",
+    "Hash": "00A40B0A0C3468A601632B5B9CB46F08A633091870860405047EF6C9CDFF3883"
+  },
+  {
+    "Path": "C:\\Users\\xbenv\\AppData\\Local\\Screeps\\scripts\\192_168_0_217___21025\\Sushi\\Power.Intel.js",
+    "Hash": "91FE29510C59DB30CE11ADADE99896E1EDF36C6D80F7F9154DF26DB1808CD69C"
+  },
+  {
+    "Path": "C:\\Users\\xbenv\\AppData\\Local\\Screeps\\scripts\\192_168_0_217___21025\\Sushi\\Power.Manager.js",
+    "Hash": "F77732517AB8E221B10B6012BBFA6D3D8B9C4D19A80341EC0138E5E56F768D16"
+  },
+  {
+    "Path": "C:\\Users\\xbenv\\AppData\\Local\\Screeps\\scripts\\192_168_0_217___21025\\Sushi\\Power.Operations.js",
+    "Hash": "050DECB8FE23F5DB91F8681C5412D498AC75806942E67828095C4A47B51A521C"
+  },
+  {
+    "Path": "C:\\Users\\xbenv\\AppData\\Local\\Screeps\\scripts\\192_168_0_217___21025\\Sushi\\Remote.Accounting.js",
+    "Hash": "1FDAE87555196ADE253027209FB526D9FA9BC62D4657E06B422E56F2C52983A8"
+  },
+  {
+    "Path": "C:\\Users\\xbenv\\AppData\\Local\\Screeps\\scripts\\192_168_0_217___21025\\Sushi\\Remote.Intel.js",
+    "Hash": "14543D201B60DCDA96D829C17B5F35C4E5C16C417D11886EBE02EC03A4416095"
+  },
+  {
+    "Path": "C:\\Users\\xbenv\\AppData\\Local\\Screeps\\scripts\\192_168_0_217___21025\\Sushi\\Resource.Labs.js",
+    "Hash": "F3ED6DC124101460E6826BC1E93B51DA3B9484CB057441253F266083525C9986"
+  },
+  {
+    "Path": "C:\\Users\\xbenv\\AppData\\Local\\Screeps\\scripts\\192_168_0_217___21025\\Sushi\\Resource.Links.js",
+    "Hash": "D8DB5264E3D9562D659964C724BC857E062058A227B51C056D3BAFDA647CFDEC"
+  },
+  {
+    "Path": "C:\\Users\\xbenv\\AppData\\Local\\Screeps\\scripts\\192_168_0_217___21025\\Sushi\\Resource.Manager.js",
+    "Hash": "7D3BFAAAB34F00FE283FD1DD42BAC1B93CF4564DD7631D5C241B19CF7BA31662"
+  },
+  {
+    "Path": "C:\\Users\\xbenv\\AppData\\Local\\Screeps\\scripts\\192_168_0_217___21025\\Sushi\\Resource.Minerals.js",
+    "Hash": "6A656AA8F95EC76196D518168AEBD90C3C5F35528F4CFD7021F9019AD9A29198"
+  },
+  {
+    "Path": "C:\\Users\\xbenv\\AppData\\Local\\Screeps\\scripts\\192_168_0_217___21025\\Sushi\\Resource.Observer.js",
+    "Hash": "52C2D0FFF0BAECB8380DC8ECEE8AE02EB61B49F6BC5A9A914E8DD7DFF4F116E4"
+  },
+  {
+    "Path": "C:\\Users\\xbenv\\AppData\\Local\\Screeps\\scripts\\192_168_0_217___21025\\Sushi\\Resource.Policy.js",
+    "Hash": "F79BB24FD6D685F2B6008BB6AB746A0636BF6C889D02ACC797374E1626B44AFF"
+  },
+  {
+    "Path": "C:\\Users\\xbenv\\AppData\\Local\\Screeps\\scripts\\192_168_0_217___21025\\Sushi\\Resource.Storage.js",
+    "Hash": "F8A9BC018A1C1CC366B3A5D84832F2EBF48C3E1E6505CCD65977A9FF5C0A1231"
+  },
+  {
+    "Path": "C:\\Users\\xbenv\\AppData\\Local\\Screeps\\scripts\\192_168_0_217___21025\\Sushi\\Resource.Terminals.js",
+    "Hash": "53F8D566B37F2E93ACE9264D08FDFF14D6D60B92309A4D782950509A3FF2EE33"
+  },
+  {
+    "Path": "C:\\Users\\xbenv\\AppData\\Local\\Screeps\\scripts\\192_168_0_217___21025\\Sushi\\role.Annex.js",
+    "Hash": "9DC0E8322D476396993EB093AB7392A6D83603B4C5B6CF6F85B186B583A4DD4C"
+  },
+  {
+    "Path": "C:\\Users\\xbenv\\AppData\\Local\\Screeps\\scripts\\192_168_0_217___21025\\Sushi\\role.Artificer.js",
+    "Hash": "223BDC7BD3CBFD1C46B357D320D47D75582F2EF98C8D9E4C4540F49D81D8B991"
+  },
+  {
+    "Path": "C:\\Users\\xbenv\\AppData\\Local\\Screeps\\scripts\\192_168_0_217___21025\\Sushi\\role.Cleric.js",
+    "Hash": "95BD81E44AC8681BD9869DD6067C3EC538710DFC9AB73788B2846A9C46C27089"
+  },
+  {
+    "Path": "C:\\Users\\xbenv\\AppData\\Local\\Screeps\\scripts\\192_168_0_217___21025\\Sushi\\role.CoreBreaker.js",
+    "Hash": "87FA486AAB2BF85DB01007613808CB6816D76612953A169562B987A5F5D729DB"
+  },
+  {
+    "Path": "C:\\Users\\xbenv\\AppData\\Local\\Screeps\\scripts\\192_168_0_217___21025\\Sushi\\role.creepBodyConfig.js",
+    "Hash": "42D40675C01BC7022D1126AE79A5CB7D5429F9B78235A71AC82622F1209D7DA7"
+  },
+  {
+    "Path": "C:\\Users\\xbenv\\AppData\\Local\\Screeps\\scripts\\192_168_0_217___21025\\Sushi\\role.Extractor.js",
+    "Hash": "5A9B25E3C837B4253561180F2A2461E41DEF633AAF2EA0A008D924B3B44581ED"
+  },
+  {
+    "Path": "C:\\Users\\xbenv\\AppData\\Local\\Screeps\\scripts\\192_168_0_217___21025\\Sushi\\role.Foreman.js",
+    "Hash": "53BF510FB665AA0F859C2239620ECBBC1534637B7BA28390016D1454BC62B98E"
+  },
+  {
+    "Path": "C:\\Users\\xbenv\\AppData\\Local\\Screeps\\scripts\\192_168_0_217___21025\\Sushi\\role.Freighter.js",
+    "Hash": "607CBF0292C2BA05B77B48C75F241F8DD1DFF92B9F81DCA225742E0ACDEA4F50"
+  },
+  {
+    "Path": "C:\\Users\\xbenv\\AppData\\Local\\Screeps\\scripts\\192_168_0_217___21025\\Sushi\\role.MineralMiner.js",
+    "Hash": "FDC7A18BABDA08F05146748CA2CF3E9A9EC11DAA99EB8E9C7E4429CFB5F38967"
+  },
+  {
+    "Path": "C:\\Users\\xbenv\\AppData\\Local\\Screeps\\scripts\\192_168_0_217___21025\\Sushi\\role.Pioneer.js",
+    "Hash": "1EAD30601A5AE92532B97D11413B23367AE900E1C50EF79EDA2EF26AD21C43A0"
+  },
+  {
+    "Path": "C:\\Users\\xbenv\\AppData\\Local\\Screeps\\scripts\\192_168_0_217___21025\\Sushi\\role.ResourceCourier.js",
+    "Hash": "DF68004F298A9A83F7361223D769C05130C26F2ACF0339BB3B419A3196B8EFCC"
+  },
+  {
+    "Path": "C:\\Users\\xbenv\\AppData\\Local\\Screeps\\scripts\\192_168_0_217___21025\\Sushi\\role.Ronin.js",
+    "Hash": "93BBD12F276B00B75D26C865A1B34BFA1F78EEA1E2665307C08C508350722F81"
+  },
+  {
+    "Path": "C:\\Users\\xbenv\\AppData\\Local\\Screeps\\scripts\\192_168_0_217___21025\\Sushi\\role.Scout.js",
+    "Hash": "1C9301BF38D939317F9E3DD789F760A0800690580590A366D90388FCEF69FD6C"
+  },
+  {
+    "Path": "C:\\Users\\xbenv\\AppData\\Local\\Screeps\\scripts\\192_168_0_217___21025\\Sushi\\role.SupplyRunner.js",
+    "Hash": "FC2E0F7A2B5E8D64C6E51F8BF9102C6849B6347FFB8876B6B77C881B29578B57"
+  },
+  {
+    "Path": "C:\\Users\\xbenv\\AppData\\Local\\Screeps\\scripts\\192_168_0_217___21025\\Sushi\\role.Tech.js",
+    "Hash": "47C8FBE6C50D4D28FBC02F5C2A78C67C1A0C4E2FF1A58EA084887FDA6C26199E"
+  },
+  {
+    "Path": "C:\\Users\\xbenv\\AppData\\Local\\Screeps\\scripts\\192_168_0_217___21025\\Sushi\\role.Volley.js",
+    "Hash": "8CFE7AFAE8869F9AB058C6449FC33EDBE706B0C3113EF9A82A2755A7D4CF857A"
+  },
+  {
+    "Path": "C:\\Users\\xbenv\\AppData\\Local\\Screeps\\scripts\\192_168_0_217___21025\\Sushi\\Runtime.Build.js",
+    "Hash": "3C6FA859532A19DFB6523F4EF96316B0FE393F8D607215DF9D68B25840326E4B"
+  },
+  {
+    "Path": "C:\\Users\\xbenv\\AppData\\Local\\Screeps\\scripts\\192_168_0_217___21025\\Sushi\\SafeMode.Policy.js",
+    "Hash": "1489B4534FE91B9415A76A9557BC90E269BA4E7F0EBC38E072B1C5FC6CE79306"
+  },
+  {
+    "Path": "C:\\Users\\xbenv\\AppData\\Local\\Screeps\\scripts\\192_168_0_217___21025\\Sushi\\Scout.Economy.js",
+    "Hash": "839956D7A0C81E2099D0101A34BEE6F7C3467C7737F548921408794607340580"
+  },
+  {
+    "Path": "C:\\Users\\xbenv\\AppData\\Local\\Screeps\\scripts\\192_168_0_217___21025\\Sushi\\Season.Retirement.js",
+    "Hash": "40D7BBD097B7A7A4E5C0BFCB30B93D12ED5415AB55B8A2687703C7B8854C7BF4"
+  },
+  {
+    "Path": "C:\\Users\\xbenv\\AppData\\Local\\Screeps\\scripts\\192_168_0_217___21025\\Sushi\\Spawn.Arbiter.js",
+    "Hash": "FDB2E7407A66E5F94F097D547DABCACC2FE9D0D9F112258A14BE926E7D9FCABE"
+  },
+  {
+    "Path": "C:\\Users\\xbenv\\AppData\\Local\\Screeps\\scripts\\192_168_0_217___21025\\Sushi\\Spawn.Context.js",
+    "Hash": "473CF8B334DB6E379237245A97062AC3777DE0AD4231A71C3CB4C1D4227708D5"
+  },
+  {
+    "Path": "C:\\Users\\xbenv\\AppData\\Local\\Screeps\\scripts\\192_168_0_217___21025\\Sushi\\Spawn.DemandBoard.js",
+    "Hash": "77DA841A4850E0FF932EDDD286697FC78A898987EEB277C6AB436F02F62BFF7B"
+  },
+  {
+    "Path": "C:\\Users\\xbenv\\AppData\\Local\\Screeps\\scripts\\192_168_0_217___21025\\Sushi\\Spawn.Intents.js",
+    "Hash": "497F97CB7F3687D247460E042EB52FA3D0DC3ADC519A11879F97DB09D956D8E0"
+  },
+  {
+    "Path": "C:\\Users\\xbenv\\AppData\\Local\\Screeps\\scripts\\192_168_0_217___21025\\Sushi\\spawn.manager.js",
+    "Hash": "BB55658771C1664F9BEEA090824F14BA3039D9C580043C959C3D907A202C5B79"
+  },
+  {
+    "Path": "C:\\Users\\xbenv\\AppData\\Local\\Screeps\\scripts\\192_168_0_217___21025\\Sushi\\Spawn.Policy.js",
+    "Hash": "C533D92B2840203C387FFB6D8A2D4501858CB5A72EA3AEE4031CCF70D98C39F1"
+  },
+  {
+    "Path": "C:\\Users\\xbenv\\AppData\\Local\\Screeps\\scripts\\192_168_0_217___21025\\Sushi\\spawn.request.manager.js",
+    "Hash": "C8ED7483E03A83DE196BF340F85B47F5F59F88B307A109EEE9C4F634279BE3F4"
+  },
+  {
+    "Path": "C:\\Users\\xbenv\\AppData\\Local\\Screeps\\scripts\\192_168_0_217___21025\\Sushi\\Spawn.Sizing.js",
+    "Hash": "443A4A5E2B06DD45DD62186A499552647F6E87D13F53FC1FE682265C282F2E9E"
+  },
+  {
+    "Path": "C:\\Users\\xbenv\\AppData\\Local\\Screeps\\scripts\\192_168_0_217___21025\\Sushi\\Squad.Controller.js",
+    "Hash": "C8BCBD5DCC17DDD991B94338808683DF8F346D0C98250670D530AE35FCA010E4"
+  },
+  {
+    "Path": "C:\\Users\\xbenv\\AppData\\Local\\Screeps\\scripts\\192_168_0_217___21025\\Sushi\\Squad.Quad.js",
+    "Hash": "53554CD0F84537BAD5EF729B48D238FEE5A75DF2D59766DA7534C325E3ED0B29"
+  },
+  {
+    "Path": "C:\\Users\\xbenv\\AppData\\Local\\Screeps\\scripts\\192_168_0_217___21025\\Sushi\\Squad.Tactics.js",
+    "Hash": "3BB34D9D30E8FC76460A321BEAAF9DFBA061F828A4044BBF3CD6D1F3CD297862"
+  },
+  {
+    "Path": "C:\\Users\\xbenv\\AppData\\Local\\Screeps\\scripts\\192_168_0_217___21025\\Sushi\\Strategy.Provider.js",
+    "Hash": "B2A51C71BD62186066AF8ABF516DD53ED9647E925CD0D6C1CFB0C94012D1291B"
+  },
+  {
+    "Path": "C:\\Users\\xbenv\\AppData\\Local\\Screeps\\scripts\\192_168_0_217___21025\\Sushi\\Tick.Bootstrap.js",
+    "Hash": "58F85D120AA8E1B77171AD85968D9384304CABF0BA80A326821D1089DF747DA4"
+  },
+  {
+    "Path": "C:\\Users\\xbenv\\AppData\\Local\\Screeps\\scripts\\192_168_0_217___21025\\Sushi\\Tick.Creeps.js",
+    "Hash": "2B4D30B22CE17C84934AC2AB3D8622B15EDF4A84D59B6D72470961996B7740EB"
+  },
+  {
+    "Path": "C:\\Users\\xbenv\\AppData\\Local\\Screeps\\scripts\\192_168_0_217___21025\\Sushi\\Tick.Finalize.js",
+    "Hash": "8F55D60ACEB8653B437576A1DF2F9FC0B100B766DE767F8177D516CBA2AA2E46"
+  },
+  {
+    "Path": "C:\\Users\\xbenv\\AppData\\Local\\Screeps\\scripts\\192_168_0_217___21025\\Sushi\\Tick.Planning.js",
+    "Hash": "0F5C7BFD13C0475FF6B01A85959644A07B86A3467FBD6169D3CA55E1460AB8CE"
+  },
+  {
+    "Path": "C:\\Users\\xbenv\\AppData\\Local\\Screeps\\scripts\\192_168_0_217___21025\\Sushi\\Tick.Rooms.js",
+    "Hash": "259ABA3EFE142FD34E143C4CF0ECC8B743E07F006D0905069A38EAB608BDCBC6"
+  },
+  {
+    "Path": "C:\\Users\\xbenv\\AppData\\Local\\Screeps\\scripts\\192_168_0_217___21025\\Sushi\\traffic_manager.js",
+    "Hash": "7A119C31F25132435E70ACBDFEC1D7965576446A23A6B979BEA4B5ED332A8F93"
+  },
+  {
+    "Path": "C:\\Users\\xbenv\\AppData\\Local\\Screeps\\scripts\\192_168_0_217___21025\\Sushi\\Traveler.js",
+    "Hash": "BD6547F79A5D43F4ABBDD52B2B01F816A3B5D05AE5D7AC7AC38491ED6AB34AC9"
+  },
+  {
+    "Path": "C:\\Users\\xbenv\\AppData\\Local\\Screeps\\scripts\\192_168_0_217___21025\\Sushi\\utility.Creep.js",
+    "Hash": "5760084B7DB472BAA52462751D9F2C4E9367F0C60AEE6005B1C4574428CE8277"
+  },
+  {
+    "Path": "C:\\Users\\xbenv\\AppData\\Local\\Screeps\\scripts\\192_168_0_217___21025\\Sushi\\utility.js",
+    "Hash": "C8A630A17E4A9E69CFB2B2DBC26FB99EBF29DE4BAB6C7B7B03A8E7E19F99FD6B"
+  },
+  {
+    "Path": "C:\\Users\\xbenv\\AppData\\Local\\Screeps\\scripts\\192_168_0_217___21025\\Sushi\\utility.spawn.js",
+    "Hash": "2814414536244BC7E8E2A0491628ACB7D14C04B7C97C1C9A7D40061B761FAB9D"
+  },
+  {
+    "Path": "C:\\Users\\xbenv\\AppData\\Local\\Screeps\\scripts\\192_168_0_217___21025\\Sushi\\utility.Travel.Creep.js",
+    "Hash": "18CD65CE9B12880EB6EC6575EEE93F2C97368C72BA5766A2DEAB07C817D38F9F"
+  },
+  {
+    "Path": "C:\\Users\\xbenv\\AppData\\Local\\Screeps\\scripts\\192_168_0_217___21025\\Sushi\\utility.Visual.js",
+    "Hash": "1D11BEE59F04707B45F5D0A09BF0F0A8609819781B1EB2DB050F88B3A1DE362F"
+  },
+  {
+    "Path": "C:\\Users\\xbenv\\AppData\\Local\\Screeps\\scripts\\192_168_0_217___21025\\Sushi\\Visual.Dashboard.js",
+    "Hash": "5028D4A2EC87CDDEE40C075C0D36E43D69BD2901E8BED37FFD5AE49F64554C03"
+  },
+  {
+    "Path": "C:\\Users\\xbenv\\AppData\\Local\\Screeps\\scripts\\192_168_0_217___21025\\Sushi\\Visual.Layout.js",
+    "Hash": "954EE5E43B5C73A8B3FCD1BFBAE6452A543D788C1EE9EDB3788798FD70D69EEF"
+  },
+  {
+    "Path": "C:\\Users\\xbenv\\AppData\\Local\\Screeps\\scripts\\192_168_0_217___21025\\Sushi\\Visual.Planner.Structures.js",
+    "Hash": "72D8C3D2E62F0F69CB95BAC51E1E9398A83C957F232ABF5A115F5C14F1E6CAD5"
+  }
+]

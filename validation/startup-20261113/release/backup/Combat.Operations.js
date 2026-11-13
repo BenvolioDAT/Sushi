@@ -1,0 +1,386 @@
+const HiveMemory = require('HiveMind.Memory');
+const Operations = require('HiveMind.Operations');
+const CombatPolicy = require('Combat.Policy');
+const CombatMath = require('Combat.Math');
+const Utility = require('HiveMind.Utility');
+const TickIndex = require('HiveMind.Index');
+
+const OFFENSIVE_TYPES = Object.freeze(['ATTACK_PLAYER', 'RAID_REMOTE', 'CLEAR_NPC_STRONGHOLD']);
+const OBJECTIVES = Object.freeze([
+    'REMOTE_DEFENSE', 'REMOTE_DENIAL', 'HARASSMENT',
+    'TOWER_SIEGE', 'DISMANTLE_BREACH'
+]);
+const HARD_FAILURES = new Set([
+    'ALLY_TARGET', 'NO_DIRECTIVE', 'OUTHEALED', 'UNBREAKABLE',
+    'UNSURVIVABLE', 'NO_RETREAT_PATH'
+]);
+
+function safeFind(room, constant) {
+    if (!room || typeof room.find !== 'function' || constant === undefined) return [];
+    try {
+        return room.find(constant) || [];
+    }
+    catch (error) {
+        return [];
+    }
+}
+
+function ownerName(subject) {
+    if (typeof subject === 'string') return subject;
+    return subject && subject.owner && subject.owner.username || null;
+}
+
+function operationDirective(operation) {
+    if (operation.type === 'CLEAR_NPC_STRONGHOLD') return operation.npcOnly === true;
+    return operation.manualDirective === true;
+}
+
+function roomSnapshot(operation) {
+    const room = operation.targetRoom && Game.rooms && Game.rooms[operation.targetRoom];
+    if (!room) return { visible: false };
+    const index = TickIndex.get();
+    const hostileCreeps = index.hostilesByRoom.get(room.name) || safeFind(room,
+        typeof FIND_HOSTILE_CREEPS !== 'undefined' ? FIND_HOSTILE_CREEPS : undefined);
+    const byType = index.structuresByRoom.get(room.name);
+    const indexedStructures = byType ? Array.from(byType.values()).flat() : [];
+    const hostileStructures = indexedStructures.length ? indexedStructures.filter(structure => structure.my === false) :
+        safeFind(room, typeof FIND_HOSTILE_STRUCTURES !== 'undefined' ? FIND_HOSTILE_STRUCTURES : undefined);
+    const towerType = typeof STRUCTURE_TOWER !== 'undefined' ? STRUCTURE_TOWER : 'tower';
+    const rampartType = typeof STRUCTURE_RAMPART !== 'undefined' ? STRUCTURE_RAMPART : 'rampart';
+    const wallType = typeof STRUCTURE_WALL !== 'undefined' ? STRUCTURE_WALL : 'constructedWall';
+    const towers = hostileStructures.filter(structure => structure.structureType === towerType &&
+        (!structure.store || (structure.store[RESOURCE_ENERGY] || 0) > 0));
+    const barriers = hostileStructures.filter(structure =>
+        structure.structureType === rampartType || structure.structureType === wallType);
+    const hostileAnalyses = hostileCreeps.map(creep => CombatMath.analyzeBody(creep));
+    const enemyDamage = hostileAnalyses.reduce((sum, analysis) => sum + analysis.melee + analysis.ranged, 0);
+    const enemyHealing = hostileAnalyses.reduce((sum, analysis) => sum + analysis.heal, 0);
+    const repairPower = typeof REPAIR_POWER !== 'undefined' && Number.isFinite(REPAIR_POWER) ? REPAIR_POWER : 100;
+    const enemyRepair = hostileCreeps.reduce((sum, creep) => {
+        if (!creep || !Array.isArray(creep.body)) return sum;
+        return sum + creep.body.filter(part => part && part.hits > 0 &&
+            part.type === (typeof WORK !== 'undefined' ? WORK : 'work')).length * repairPower;
+    }, 0);
+    const targetPosition = operation.targetPosition && new RoomPosition(
+        operation.targetPosition.x, operation.targetPosition.y, operation.targetPosition.roomName || operation.targetRoom
+    );
+    const sampleTarget = { pos: targetPosition || new RoomPosition(25, 25, operation.targetRoom) };
+    const towerDamage = towers.reduce((sum, tower) => sum + CombatMath.towerDamage(tower, sampleTarget), 0);
+    const controllerSafeMode = room.controller && Math.max(0, room.controller.safeMode || 0);
+    return {
+        visible: true,
+        room,
+        hostileStructures,
+        hostileCreeps,
+        towers,
+        barriers,
+        enemyDamage,
+        enemyHealing,
+        enemyRepair,
+        towerDamage,
+        controllerSafeMode,
+        minimumBarrierHits: barriers.length ? Math.min(...barriers.map(barrier => barrier.hits || 0)) : 0
+    };
+}
+
+function retreatRouteAvailable(operation) {
+    const destination = operation.retreatRoom || operation.originRoom;
+    if (!operation.targetRoom || !destination || operation.targetRoom === destination) return true;
+    if (!Game.map || typeof Game.map.findRoute !== 'function') return true;
+    if (!global.__sushiOffenseRoutes) global.__sushiOffenseRoutes = {};
+    const key = `${operation.targetRoom}>${destination}`;
+    const cached = global.__sushiOffenseRoutes[key];
+    if (cached && cached.expires >= Game.time) return cached.available;
+    try {
+        const route = Game.map.findRoute(operation.targetRoom, destination);
+        const noPath = typeof ERR_NO_PATH !== 'undefined' ? ERR_NO_PATH : -2;
+        const available = Array.isArray(route) && route !== noPath;
+        global.__sushiOffenseRoutes[key] = { available, expires: Game.time + 100 };
+        return available;
+    }
+    catch (error) {
+        global.__sushiOffenseRoutes[key] = { available: false, expires: Game.time + 25 };
+        return false;
+    }
+}
+
+function countBoostUnits(operation) {
+    let units = 0;
+    const requirements = operation.boostRequirements || {};
+    for (const list of Object.values(requirements)) {
+        for (const requirement of list || []) {
+            units += (typeof requirement === 'object' && requirement.parts || 1) * 30;
+        }
+    }
+    return units;
+}
+
+function evaluate(operation) {
+    if (!operation || !OFFENSIVE_TYPES.includes(operation.type)) {
+        return { allowed: false, viable: false, code: 'NOT_OFFENSE', reason: 'Not an offensive operation' };
+    }
+    if (operation.type === 'CLEAR_NPC_STRONGHOLD') {
+        const assessment = assessStronghold(operation);
+        if (!assessment.viable) return { allowed: false, viable: false,
+            wait: assessment.status === 'NEEDS_INTEL', code: 'NPC_CLEAR_UNSUPPORTED', reason: assessment.reason };
+    }
+    const directive = operationDirective(operation);
+    const snapshot = roomSnapshot(operation);
+    let targetOwner = operation.targetOwner || null;
+    if (!targetOwner && snapshot.visible) {
+        targetOwner = ownerName(snapshot.hostileStructures[0]) || ownerName(snapshot.hostileCreeps[0]) ||
+            ownerName(snapshot.room.controller);
+    }
+    const subject = targetOwner || operation.targetOwner || null;
+    if (operation.type === 'CLEAR_NPC_STRONGHOLD' && subject && !['Invader', 'Source Keeper'].includes(subject)) {
+        return { allowed: false, viable: false, code: 'HUMAN_TARGET', reason: 'Stronghold operation is NPC-only', targetOwner: subject };
+    }
+    if (subject && CombatPolicy.isAlly(subject)) {
+        return { allowed: false, viable: false, code: 'ALLY_TARGET', reason: `${subject} is configured as an ally`, targetOwner };
+    }
+    if (!directive) {
+        return { allowed: false, viable: false, code: 'NO_DIRECTIVE', reason: 'Offense requires an explicit directive', targetOwner };
+    }
+    if (subject && !CombatPolicy.mayLaunchOffense(subject, true)) {
+        return { allowed: false, viable: false, code: 'POLICY_REJECTED', reason: 'Diplomacy policy rejected target', targetOwner };
+    }
+    const desired = operation.desiredCapabilities || {};
+    const expectedDamage = Math.max(0, desired.damage || desired.ranged || desired.melee || 0);
+    const expectedDismantle = Math.max(0, desired.dismantle || 0);
+    const expectedHealing = Math.max(0, desired.healing || 0);
+    const distance = operation.originRoom && operation.targetRoom && Game.map &&
+        typeof Game.map.getRoomLinearDistance === 'function' ?
+        Game.map.getRoomLinearDistance(operation.originRoom, operation.targetRoom) : 0;
+    const metrics = {
+        targetOwner,
+        targetValue: Utility.normalize(operation.targetValue || 50),
+        travelTime: Math.max(0, distance * 50),
+        expectedDamage,
+        expectedDismantle,
+        expectedHealing,
+        boostMineralCost: countBoostUnits(operation),
+        enemyTowers: snapshot.towers && snapshot.towers.length || 0,
+        enemyTowerDamage: snapshot.towerDamage || 0,
+        enemyCreepDamage: snapshot.enemyDamage || 0,
+        enemyHealing: snapshot.enemyHealing || 0,
+        enemyRepair: snapshot.enemyRepair || 0,
+        minimumBarrierHits: snapshot.minimumBarrierHits || 0,
+        safeModeTicks: snapshot.controllerSafeMode || 0,
+        visible: snapshot.visible,
+        retreatRouteAvailable: retreatRouteAvailable(operation)
+    };
+    metrics.expectedLossPressure = Math.max(0,
+        metrics.enemyTowerDamage + metrics.enemyCreepDamage - expectedHealing);
+    const utility = Utility.score({
+        urgency: operation.priority || 50,
+        expectedValue: metrics.targetValue,
+        strategicValue: 50,
+        energyCost: Utility.normalize(metrics.boostMineralCost / 30),
+        spawnCost: operation.preferredSquadType === 'SIEGE_QUAD' ? 55 : 40,
+        travelTime: Utility.normalize(distance * 5),
+        risk: Utility.normalize(metrics.expectedLossPressure / 20 + metrics.enemyHealing / 10),
+        opportunityCost: Utility.normalize(operation.opportunityCost || 10)
+    });
+    if (!snapshot.visible) {
+        return { allowed: true, viable: true, wait: true, code: 'NEEDS_INTEL', reason: 'Target room is not visible; await scout intel', metrics, utility };
+    }
+    if (metrics.safeModeTicks > 0) {
+        return { allowed: true, viable: true, wait: true, code: 'SAFE_MODE', reason: `Target safe mode has ${metrics.safeModeTicks} ticks remaining`, metrics, utility };
+    }
+    if (!metrics.retreatRouteAvailable) {
+        return { allowed: true, viable: false, code: 'NO_RETREAT_PATH', reason: 'No route from target to the configured retreat room', metrics, utility };
+    }
+    if (snapshot.hostileCreeps.length && expectedDamage > 0 && expectedDamage <= metrics.enemyHealing) {
+        return { allowed: true, viable: false, code: 'OUTHEALED', reason: `Expected damage ${expectedDamage} cannot beat healing ${metrics.enemyHealing}`, metrics, utility };
+    }
+    if (metrics.minimumBarrierHits > 0 && expectedDamage + expectedDismantle <= metrics.enemyRepair) {
+        return { allowed: true, viable: false, code: 'UNBREAKABLE', reason: `Breach power ${expectedDamage + expectedDismantle} cannot beat repair ${metrics.enemyRepair}`, metrics, utility };
+    }
+    if (metrics.enemyTowerDamage > 0 && expectedHealing > 0 && metrics.enemyTowerDamage > expectedHealing * 4) {
+        return { allowed: true, viable: false, code: 'UNSURVIVABLE', reason: `Tower damage ${metrics.enemyTowerDamage} overwhelms healing ${expectedHealing}`, metrics, utility };
+    }
+    return { allowed: true, viable: true, wait: false, code: 'APPROVED', reason: 'Explicit offensive directive passes diplomacy and viability policy', metrics, utility };
+}
+
+function strongholdCore(room) {
+    if (!room || typeof room.find !== 'function') return null;
+    const type = typeof STRUCTURE_INVADER_CORE !== 'undefined' ? STRUCTURE_INVADER_CORE : 'invaderCore';
+    const structures = safeFind(room, typeof FIND_STRUCTURES !== 'undefined' ? FIND_STRUCTURES : undefined);
+    return structures.find(structure => structure && structure.structureType === type &&
+        ownerName(structure) === 'Invader') || null;
+}
+
+function assessStronghold(operation) {
+    const room = operation && operation.targetRoom && Game.rooms && Game.rooms[operation.targetRoom];
+    if (!room) return { status: 'NEEDS_INTEL', viable: false, reason: 'Stronghold room is not visible' };
+    const core = strongholdCore(room);
+    if (!core) return { status: 'NOT_VIABLE', viable: false, reason: 'No visible Invader Core' };
+    const snapshot = roomSnapshot(operation);
+    const level = Number.isFinite(core.level) ? core.level : null;
+    const barriers = snapshot.barriers || [];
+    const hostile = snapshot.hostileCreeps || [];
+    const enemyDamage = snapshot.enemyDamage || 0;
+    const enemyHealing = snapshot.enemyHealing || 0;
+    const towerDamage = snapshot.towerDamage || 0;
+    const requiredDamage = Math.max(50, enemyHealing + towerDamage * 0.25 + (level || 1) * 20);
+    const requiredHealing = Math.max(12, towerDamage * 0.25 + enemyDamage * 0.15);
+    const requiredDismantle = barriers.reduce((sum, barrier) => sum + Math.max(0, barrier.hits || 0), 0) > 0 ?
+        Math.max(50, Math.min(5000, Math.max(...barriers.map(barrier => barrier.hits || 0)) / 20)) : 0;
+    const assessment = {
+        status: 'NOT_VIABLE', viable: false,
+        reason: level === 0 ? 'Lesser core detected; no validated core-clearing force implementation' :
+            'Stronghold detected; automatic siege is unsupported',
+        coreId: core.id || null, coreLevel: level, coreHits: core.hits || 0,
+        enemyDps: enemyDamage, enemyHealing, towerDps: towerDamage,
+        barrierEstimate: requiredDismantle, requiredDps: requiredDamage,
+        requiredHealing, requiredDismantle, defenderCount: hostile.length,
+        ticksToDeploy: core.ticksToDeploy || 0, visible: true
+    };
+    if ((core.ticksToDeploy || 0) > 0 || (core.effects || []).some(effect =>
+        effect.effect === (typeof EFFECT_INVULNERABILITY !== 'undefined' ? EFFECT_INVULNERABILITY : 1001) && effect.ticksRemaining > 0)) {
+        assessment.status = 'NEEDS_INTEL'; assessment.viable = false;
+        assessment.reason = 'Invader Core is still deploying and invulnerable';
+    }
+    operation.targetId = core.id || operation.targetId;
+    operation.targetOwner = 'Invader';
+    operation.npcOnly = true;
+    operation.strongholdAssessment = assessment;
+    operation.desiredCapabilities = { damage: requiredDamage, ranged: requiredDamage,
+        healing: requiredHealing, dismantle: requiredDismantle };
+    assessment.assignedSquads = (operation.assignedSquads || []).slice();
+    assessment.breacherCount = (operation.assignedCreeps || [])
+        .map(name => Game.creeps && Game.creeps[name]).filter(creep => creep &&
+            ['CoreBreaker', 'Breacher'].includes(creep.memory && creep.memory.role)).length;
+    return assessment;
+}
+
+function createStronghold(options = {}) {
+    if (!options.targetRoom) return { ok: false, reason: 'A targetRoom is required' };
+    const operation = Operations.create('CLEAR_NPC_STRONGHOLD', {
+        ...options, id: options.id || `clear_npc_stronghold:${options.targetRoom}`,
+        state: options.state || 'PENDING', priority: Number.isFinite(options.priority) ? options.priority : 65,
+        preferredSquadType: 'RANGED_QUAD', requestedSquadSize: 4,
+        objective: 'NPC_STRONGHOLD', npcOnly: true,
+        debugReason: options.debugReason || 'NPC stronghold objective'
+    });
+    operation.npcOnly = true;
+    operation.manualDirective = options.manualDirective === true;
+    operation.strongholdRelevant = options.strongholdRelevant === true || operation.manualDirective;
+    operation.retreatRoom = options.retreatRoom || options.originRoom || null;
+    operation.spawnDemands = [];
+    return { ok: true, operation };
+}
+
+function applyAssessment(operation, assessment) {
+    operation.offensiveAssessment = {
+        tick: Game.time,
+        allowed: assessment.allowed,
+        viable: assessment.viable,
+        wait: assessment.wait === true,
+        code: assessment.code,
+        reason: assessment.reason,
+        metrics: assessment.metrics || null,
+        utility: assessment.utility || null
+    };
+    operation.policyApproved = assessment.allowed && assessment.viable && !assessment.wait;
+    operation.updatedTick = Game.time;
+    if (assessment.utility) operation.utility = assessment.utility;
+    if (HARD_FAILURES.has(assessment.code)) {
+        Operations.abort(operation.id, assessment.reason);
+    }
+    else if (assessment.wait && operation.state === 'ACTIVE') {
+        Operations.transition(operation, 'RECOVERING', assessment.reason);
+    }
+    else if (!assessment.wait && assessment.allowed && assessment.viable && operation.state === 'RECOVERING') {
+        Operations.transition(operation, 'ACTIVE', assessment.reason);
+    }
+    return assessment;
+}
+
+function run() {
+    const results = {};
+    for (const operation of Object.values(HiveMemory.ensure().operations)) {
+        if (!operation || !OFFENSIVE_TYPES.includes(operation.type) ||
+            operation.state === 'COMPLETE' || operation.state === 'ABORTED') continue;
+        if (operation.type === 'CLEAR_NPC_STRONGHOLD') {
+            const assessment = assessStronghold(operation);
+            const room = operation.targetRoom && Game.rooms && Game.rooms[operation.targetRoom];
+            const remainingNpc = room && safeFind(room, typeof FIND_HOSTILE_CREEPS !== 'undefined' ? FIND_HOSTILE_CREEPS : undefined)
+                .filter(creep => ['Invader', 'Source Keeper'].includes(ownerName(creep)) && creep.hits > 0);
+            if (room && !strongholdCore(room) && remainingNpc.length === 0) {
+                Operations.transition(operation, 'COMPLETE', 'Invader Core destroyed and dangerous NPC presence cleared');
+                operation.strongholdState = 'COMPLETE';
+                continue;
+            }
+            // Revoke previously approved legacy missions through the existing
+            // abort/retreat flow. Desired DPS is not evidence of a ready army.
+            operation.policyApproved = false;
+            operation.spawnDemands = [];
+            operation.offensiveAssessment = { tick: Game.time, allowed: false, viable: false,
+                code: 'NPC_CLEAR_UNSUPPORTED', reason: assessment.reason };
+            Operations.abort(operation.id, assessment.reason);
+            results[operation.id] = operation.offensiveAssessment;
+            continue;
+        }
+        results[operation.id] = applyAssessment(operation, evaluate(operation));
+    }
+    return results;
+}
+
+function createManual(type, options = {}) {
+    if (!OFFENSIVE_TYPES.includes(type)) {
+        return { ok: false, reason: `Expected one of ${OFFENSIVE_TYPES.join(', ')}` };
+    }
+    if (!options.targetRoom) return { ok: false, reason: 'A targetRoom is required' };
+    if (options.targetOwner && CombatPolicy.isAlly(options.targetOwner)) {
+        return { ok: false, reason: `${options.targetOwner} is configured as an ally` };
+    }
+    const objective = OBJECTIVES.includes(options.objective) ? options.objective :
+        'HARASSMENT';
+    const preferredSquadType = options.squadType === 'SIEGE_QUAD' ? 'SIEGE_QUAD' : 'RANGED_QUAD';
+    const operation = Operations.create(type, {
+        ...options,
+        id: options.id || `manual:${type.toLowerCase()}:${options.targetRoom}`,
+        state: 'PENDING',
+        priority: Number.isFinite(options.priority) ? options.priority : 75,
+        desiredCapabilities: options.desiredCapabilities || (preferredSquadType === 'SIEGE_QUAD' ?
+            { melee: 240, dismantle: 0, healing: 144, damage: 240 } :
+            { ranged: 100, healing: 144, damage: 100 }),
+        debugReason: `Manual ${objective.toLowerCase().replace(/_/g, ' ')} directive`
+    });
+    operation.manualDirective = true;
+    operation.objective = objective;
+    operation.targetOwner = options.targetOwner || null;
+    operation.targetValue = Number.isFinite(options.targetValue) ? options.targetValue : 50;
+    operation.preferredSquadType = preferredSquadType;
+    operation.requestedSquadSize = 4;
+    operation.retreatRoom = options.retreatRoom || options.originRoom || null;
+    operation.minimumSquadComposition = preferredSquadType === 'SIEGE_QUAD' ?
+        { striker: 2, healer: 2 } : { ranged: 2, healer: 2 };
+    operation.boostRequirements = options.boostRequirements || {};
+    operation.policyApproved = false;
+    return { ok: true, operation };
+}
+
+function setManualTarget(operationId, target) {
+    const operation = Operations.get(operationId);
+    if (!operation || !OFFENSIVE_TYPES.includes(operation.type)) return false;
+    operation.targetId = typeof target === 'string' ? target : target && target.id || null;
+    const pos = target && target.pos;
+    if (pos) operation.targetPosition = { x: pos.x, y: pos.y, roomName: pos.roomName };
+    operation.updatedTick = Game.time;
+    operation.debugReason = 'Manual target directive updated';
+    return true;
+}
+
+module.exports = {
+    OFFENSIVE_TYPES,
+    OBJECTIVES,
+    evaluate,
+    run,
+    createManual,
+    createStronghold,
+    assessStronghold,
+    setManualTarget,
+    roomSnapshot
+};

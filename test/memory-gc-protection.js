@@ -50,4 +50,23 @@ test('owned rooms without a spawn still retain their remote intelligence',()=>{
     assert.strictEqual(Memory.rooms.home.identity.type,'OWNED_BOOTSTRAP');
     assert.strictEqual(Memory.rooms.remote.identity.type,'REMOTE');assert(Memory.rooms.remote.sources);
 });
+test('protecting an abandoned home as a transit room cannot protect its obsolete remote portfolio',()=>{
+    const gc=fixture();
+    Memory.rooms.home.remotePlanner.sourceInfos.s.route.roomSequence.push('formerHome');
+    Memory.rooms.formerHome={identity:{type:'INTEL'},lastScanned:1,structurePlanner:{durable:true},
+        remotePlanner:{activeSourceIds:['obsolete'],sourceInfos:{obsolete:{roomName:'abandoned',active:true,
+            route:{roomSequence:['formerHome','abandoned']}}}}};
+    gc.run({force:true});
+    assert(Memory.rooms.remote.sources,'current portfolio stays protected');
+    assert(Memory.rooms.formerHome.remotePlanner,'durable historical planner is retained');
+    assert.equal(Memory.rooms.abandoned.sources,undefined,'transit protection does not establish a current parent');
+});
+test('mission protection cannot turn a former colony into an active remote parent',()=>{
+    const gc=fixture();
+    Memory.rooms.formerHome={identity:{type:'INTEL'},keeperOperation:{phase:'SUSPENDED'},
+        remotePlanner:{activeSourceIds:['obsolete'],sourceInfos:{obsolete:{roomName:'abandoned',active:true}}}};
+    gc.run({force:true});
+    assert(gc.protectedRooms(require('HiveMind.Memory').ensure()).has('formerHome'));
+    assert.equal(Memory.rooms.abandoned.sources,undefined);
+});
 console.log('Memory protection scenarios passed: ' + passed);
