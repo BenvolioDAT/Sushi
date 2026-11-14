@@ -1,0 +1,30 @@
+{
+  "start": 2243569,
+  "n": 676,
+  "sum": 32151.88184300011,
+  "max": 94.9242749999994,
+  "spikes": 5,
+  "phases": {
+    "diagnostics": 4969.288798999982,
+    "bootstrapIndex": 872.7911199999126,
+    "combat": 694.7401460001147,
+    "remoteAccounting": 398.6415940000006,
+    "economy": 3209.8384849999675,
+    "colonyState": 364.96247099998436,
+    "capacity": 130.880323999987,
+    "npcOperations": 720.510809000034,
+    "remotePlanning": 311.97113699989313,
+    "roomPlanning": 41.518008999984886,
+    "roadPlanning": 197.95340400001623,
+    "hiveMindStrategy": 215.11490400007824,
+    "planning": 5628.1657669999895,
+    "spawnPlanning": 4031.8876649999,
+    "roomStructures": 336.56123200000366,
+    "creepExecution": 10676.859561000076,
+    "traffic": 3712.241246000036,
+    "visuals": 1009.113524000104,
+    "pixels": 0.9349959999635757,
+    "telemetry": 74.73248100007368
+  },
+  "end": 2244245
+}

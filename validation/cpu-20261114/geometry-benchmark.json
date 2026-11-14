@@ -1,0 +1,66 @@
+{
+  "iterations": 10000,
+  "pathLength": 40,
+  "rounds": [
+    {
+      "round": 0,
+      "name": "before",
+      "ms": 37.51999999999998,
+      "allocations": 410000
+    },
+    {
+      "round": 0,
+      "name": "after",
+      "ms": 4.903399999999976,
+      "allocations": 41
+    },
+    {
+      "round": 1,
+      "name": "before",
+      "ms": 32.332899999999995,
+      "allocations": 410000
+    },
+    {
+      "round": 1,
+      "name": "after",
+      "ms": 4.223299999999995,
+      "allocations": 0
+    },
+    {
+      "round": 2,
+      "name": "before",
+      "ms": 36.1542,
+      "allocations": 410000
+    },
+    {
+      "round": 2,
+      "name": "after",
+      "ms": 3.844699999999989,
+      "allocations": 0
+    },
+    {
+      "round": 3,
+      "name": "before",
+      "ms": 31.23629999999997,
+      "allocations": 410000
+    },
+    {
+      "round": 3,
+      "name": "after",
+      "ms": 3.0399999999999636,
+      "allocations": 0
+    },
+    {
+      "round": 4,
+      "name": "before",
+      "ms": 31.47030000000001,
+      "allocations": 410000
+    },
+    {
+      "round": 4,
+      "name": "after",
+      "ms": 2.5679000000000087,
+      "allocations": 0
+    }
+  ]
+}

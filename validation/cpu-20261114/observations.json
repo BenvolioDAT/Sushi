@@ -1,0 +1,129 @@
+{
+  "deploymentReceipt": {
+    "tick": 2243429,
+    "build": "1a74aee1a982e0da4c6080b39d81f5575a2869fcbf5aa115fd9e484e09e149b5",
+    "errors": []
+  },
+  "memoryLoad": {
+    "samples": 100,
+    "sum": 745.4735280000095,
+    "max": 13.254869000000326
+  },
+  "checkpoints": [
+    {
+      "tick": 2243310,
+      "progress": 122899,
+      "work": [
+        10,
+        10
+      ],
+      "localCarry": [
+        23,
+        23
+      ],
+      "counts": {
+        "Extractor": 5,
+        "Tech": 4,
+        "Freighter": 14,
+        "Artificer": 5,
+        "Foreman": 1,
+        "Ronin": 1,
+        "Annex": 3,
+        "Scout": 1
+      },
+      "errors": []
+    },
+    {
+      "tick": 2243881,
+      "progress": 127454,
+      "work": null,
+      "events": {
+        "attack": 1,
+        "harvest": 674,
+        "repair": 42,
+        "upgrade": 177,
+        "transfer": 176
+      },
+      "errors": []
+    },
+    {
+      "tick": 2244009,
+      "progress": 129011,
+      "work": [
+        10,
+        10
+      ],
+      "localCarry": [
+        23,
+        22
+      ],
+      "localIdleWorkers": 0,
+      "localNoProgressWorkers": 0,
+      "counts": {
+        "Tech": 5,
+        "Freighter": 13,
+        "Artificer": 5,
+        "Extractor": 5,
+        "Ronin": 1,
+        "Annex": 4,
+        "Foreman": 1,
+        "Scout": 1
+      },
+      "remoteAccounting": {
+        "interval": [
+          2243750,
+          2243999
+        ],
+        "harvested": 2370,
+        "delivered": 146
+      },
+      "errors": []
+    }
+  ],
+  "final": {
+    "observedAt": 2244277,
+    "progress": 131382,
+    "errors": [],
+    "build": "1a74aee1a982e0da4c6080b39d81f5575a2869fcbf5aa115fd9e484e09e149b5"
+  },
+  "health": {
+    "start": 2243746,
+    "end": 2244246,
+    "n": 500,
+    "events": {
+      "attack": 4,
+      "objectDestroyed": 15,
+      "harvest": 2476,
+      "repair": 429,
+      "pickup": 1461,
+      "upgrade": 1687,
+      "reserveController": 89,
+      "transfer": 639
+    },
+    "recorderCpu": 5.438079000021389,
+    "scope": "All events in visible rooms; attack events do not prove friendly actors."
+  },
+  "liveDecodeBenchmark": {
+    "tick": 2244339,
+    "reads": 200,
+    "steps": 40,
+    "before": 8.248453000000154,
+    "after": 0.2803270000003977,
+    "method": "Original-loop reproduction vs current warm cache, same tick and valid lane; after observation windows"
+  },
+  "profilerCleanup": {
+    "tick": 2244394,
+    "loopRestored": true,
+    "errors": []
+  },
+  "normalRuntimeVerification": {
+    "tick": 2244458,
+    "loopRestored": true,
+    "beginWrapped": false,
+    "configWrapped": false,
+    "build": "1a74aee1a982e0da4c6080b39d81f5575a2869fcbf5aa115fd9e484e09e149b5",
+    "rollingCpu": 44.82491317530366,
+    "progress": 132631,
+    "errors": []
+  }
+}

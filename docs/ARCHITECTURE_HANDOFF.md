@@ -1,5 +1,13 @@
 # Sushi architecture handoff
 
+## CPU movement audit - November 14, 2026
+
+`utility.Travel.Creep.getRoutePositions` caches immutable decoded same-room lane geometry in a module-local Map, capped at 256 entries with oldest-insertion eviction. The key includes origin room/coordinates and serialized directions, so Memory reparsing can reuse geometry while changed paths naturally miss. Only RoomPositions and the frozen position array are shared; occupancy, obstacles, protected mining stations, stuck handling and creep progress are still checked live. Nothing new is persisted in Memory. A reset or eviction simply decodes the lane again.
+
+`traffic_manager.search` directly accepts a root creep's vacant, legal first-choice tile before enumerating remote sidesteps. Shared `canMove`/`legalPrimary` checks preserve fatigue, spawning, active MOVE, adjacency, terrain, structures and explicit exits. Occupied destinations and recursive displacement keep the complete existing resolver, including head-on side preferences, working-area constraints and miner locks. No planning cadence, spawn admission or economic policy changes.
+
+The local-only release has 116 modules, build `1a74aee1a982e0da4c6080b39d81f5575a2869fcbf5aa115fd9e484e09e149b5`, confirmed by the desktop console at tick 2,243,429. All 303 automated checks pass; an additional audit comparison produced identical destinations over 200 seeded crowded traffic scenes. Baseline, staged sources, test logs, runtime backup and measurement evidence are under `validation/cpu-20261114/`. CPU results and verification limits are documented in [CPU-AUDIT-2026-11-14.md](CPU-AUDIT-2026-11-14.md). Matching 676-tick windows measured mean loop CPU 49.1806 to 47.5620 and traffic 5.9674 to 5.4915; both windows had five ticks >=80 CPU. These are modest observations under changing workloads, not a controlled replay. First Memory access measured 7.4547 CPU over 100 ticks. Harvest/hauling/upgrading/repair/scouting/remote activity continued without recorded exceptions; live construction and comprehensive combat remain unverified. Temporary profiling hooks were removed.
+
 ## Controller approach positions - November 12, 2026, night
 
 Local runtime is 116 modules, build `59f4701b7b83691828b9caeeb5fd6e46dee6b0759ee87677a71af649c2b2de3e`, confirmed by the desktop console at tick 2,220,842. The suite has **299 PASS checks**. Only the requested IP-folder local branch was deployed; the diagnostics and protected-miner routing changes below remain present.

@@ -1,0 +1,14 @@
+const fs=require('fs'),path=require('path'),assert=require('assert');
+const root=path.resolve(__dirname,'../..');
+assert.equal(root,path.resolve('C:/Users/xbenv/AppData/Local/Screeps/scripts/192_168_0_217___21025/Sushi'));
+const Build=require(path.join(root,'tools/runtime-build')),Deploy=require(path.join(root,'tools/deploy-runtime'));
+const stage=path.join(__dirname,'stage'),log=fs.readFileSync(path.join(stage,'staged-tests.log'),'utf8');
+assert.equal(log.split(/\r?\n/).filter(l=>l.startsWith('PASS ')).length,303);
+assert(log.includes('CPU movement scenarios passed: 4'));
+assert.deepStrictEqual(Build.inventory(root),Build.inventory(path.join(__dirname,'baseline')),'Runtime drift requires review');
+const plan=Deploy.makePlan(stage,root,path.join(__dirname,'release'));
+assert.deepStrictEqual(plan.changed.slice().sort(),['traffic_manager.js','utility.Travel.Creep.js','Runtime.Build.js'].sort());
+const result=Deploy.apply(plan);
+for(const name of ['package.json','test/cpu-movement.js'])fs.copyFileSync(path.join(stage,name),path.join(root,name));
+fs.writeFileSync(path.join(__dirname,'release/result.json'),JSON.stringify(result,null,2)+'\n');
+console.log(JSON.stringify(result,null,2));

@@ -478,11 +478,18 @@ function serializeDirectionPath(startPos, path) {
     return serializedPath;
 }
 
+// Only immutable geometry lives here, never game objects or traffic decisions.
+// Memory recreates route objects each tick, so key by content rather than identity.
+const decodedRoutes = new Map();
+const MAX_DECODED_ROUTES = 256;
 function getRoutePositions(route) {
     if (!route || !route.from || !route.path) {
         return [];
     }
 
+    const key = [route.from.roomName, route.from.x, route.from.y, route.path].join(':');
+    const cached = decodedRoutes.get(key);
+    if (cached) return cached;
     var positions = [makeRoomPosition(route.from)];
     var pos = positions[0];
 
@@ -501,6 +508,12 @@ function getRoutePositions(route) {
         pos = nextPos;
     }
 
+    // Freeze the shared result: consumers may inspect positions but cannot
+    // corrupt a lane used by another creep or by next tick's deserialized route.
+    positions.forEach(Object.freeze);
+    Object.freeze(positions);
+    if (decodedRoutes.size >= MAX_DECODED_ROUTES) decodedRoutes.delete(decodedRoutes.keys().next().value);
+    decodedRoutes.set(key, positions);
     return positions;
 }
 

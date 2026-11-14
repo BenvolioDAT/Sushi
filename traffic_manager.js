@@ -235,12 +235,24 @@ function isLegalAlternate(creep, coord, costs, threshold) {
     return !costs || costs.get(coord.x, coord.y) < threshold;
 }
 
+function canMove(creep) {
+    return !creep.spawning && !(creep.fatigue > 0) && (!Array.isArray(creep.body) ||
+        creep.body.some(part => (part.type || part) === MOVE && part.hits !== 0));
+}
+
+function legalPrimary(creep, coord, costs) {
+    if (Math.max(Math.abs(coord.x - creep.pos.x), Math.abs(coord.y - creep.pos.y)) !== 1) return false;
+    // Explicit exit steps retain the existing cross-room movement policy.
+    if (coord.x < 0 || coord.x > 49 || coord.y < 0 || coord.y > 49) return true;
+    return Game.map.getRoomTerrain(creep.room.name).get(coord.x, coord.y) !== TERRAIN_MASK_WALL &&
+        (!costs || costs.get(coord.x, coord.y) < 255);
+}
+
 function getPossibleMoves(creep, costs, threshold = 255) {
     if (creep._cachedMoveOptions) return creep._cachedMoveOptions;
     // The resolver issues directional moves, including for displaced actors.
     // A spawning or MOVE-less actor cannot vacate its tile for a movement chain.
-    if (creep.spawning || creep.fatigue > 0 || Array.isArray(creep.body) &&
-        !creep.body.some(part => (part.type || part) === MOVE && part.hits !== 0)) {
+    if (!canMove(creep)) {
         return (creep._cachedMoveOptions = []);
     }
 
@@ -254,11 +266,7 @@ function getPossibleMoves(creep, costs, threshold = 255) {
         const unique = Array.from(new Set(packed)).map(unpackCoordinates);
         return (creep._cachedMoveOptions = unique.filter((coord, index) => {
             if (index !== 0) return isLegalAlternate(creep, coord, costs, threshold);
-            if (Math.max(Math.abs(coord.x - creep.pos.x), Math.abs(coord.y - creep.pos.y)) !== 1) return false;
-            // Keep explicit outward border steps; sidesteps must stay inside.
-            if (coord.x < 0 || coord.x > 49 || coord.y < 0 || coord.y > 49) return true;
-            return Game.map.getRoomTerrain(creep.room.name).get(coord.x, coord.y) !== TERRAIN_MASK_WALL &&
-                (!costs || costs.get(coord.x, coord.y) < 255);
+            return legalPrimary(creep, coord, costs);
         }));
     }
 
@@ -291,6 +299,18 @@ function assign(context, creep, coord) {
 function search(context, creep, rootPriority, visited) {
     if (!creep || creep.my === false || visited.has(creep.name)) return false;
     visited.add(creep.name);
+
+    // The first choice wins when vacant. Avoid generating/sorting eight remote
+    // sidesteps and hazard maps for ordinary unobstructed movement. Recursive
+    // pushes still use the full resolver, including its head-on side preference.
+    const intent = creep._trafficIntent;
+    if (context.root === creep && intent && !context.occupancy.has(intent.packedTarget) && canMove(creep)) {
+        const primary = unpackCoordinates(intent.packedTarget);
+        if (legalPrimary(creep, primary, context.costs)) {
+            assign(context, creep, primary);
+            return true;
+        }
+    }
 
     let moves = getPossibleMoves(creep, context.costs, context.threshold);
     // On a highway head-on, prefer a free side tile over a lower-priority swap.

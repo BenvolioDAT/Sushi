@@ -1,0 +1,14 @@
+{
+  "build": {
+    "id": "1a74aee1a982e0da4c6080b39d81f5575a2869fcbf5aa115fd9e484e09e149b5",
+    "modules": 116
+  },
+  "modules": 116,
+  "changed": [
+    "traffic_manager.js",
+    "utility.Travel.Creep.js",
+    "Runtime.Build.js"
+  ],
+  "backup": "C:\\Users\\xbenv\\AppData\\Local\\Screeps\\scripts\\192_168_0_217___21025\\Sushi\\validation\\cpu-20261114\\release\\backup",
+  "verifiedAt": "2026-11-14T15:32:00.022Z"
+}

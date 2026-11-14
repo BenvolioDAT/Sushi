@@ -1,0 +1,1474 @@
+[
+  {
+    "name": "BodyProfiles.js",
+    "lines": 95,
+    "bytes": 6859,
+    "imports": [
+      "Combat.Roles",
+      "HiveMind.Index",
+      "CPU.Status"
+    ],
+    "pathCalls": 0
+  },
+  {
+    "name": "Combat.Math.js",
+    "lines": 181,
+    "bytes": 7930,
+    "imports": [],
+    "pathCalls": 0
+  },
+  {
+    "name": "Combat.Operations.js",
+    "lines": 387,
+    "bytes": 20809,
+    "imports": [
+      "HiveMind.Memory",
+      "HiveMind.Operations",
+      "Combat.Policy",
+      "Combat.Math",
+      "HiveMind.Utility",
+      "HiveMind.Index"
+    ],
+    "pathCalls": 0
+  },
+  {
+    "name": "Combat.Policy.js",
+    "lines": 193,
+    "bytes": 8157,
+    "imports": [
+      "HiveMind.Memory"
+    ],
+    "pathCalls": 0
+  },
+  {
+    "name": "Combat.Roles.js",
+    "lines": 4,
+    "bytes": 220,
+    "imports": [],
+    "pathCalls": 0
+  },
+  {
+    "name": "Combat.Stronghold.js",
+    "lines": 57,
+    "bytes": 2637,
+    "imports": [
+      "HiveMind.Memory"
+    ],
+    "pathCalls": 0
+  },
+  {
+    "name": "Combat.ThreatLedger.js",
+    "lines": 338,
+    "bytes": 17329,
+    "imports": [
+      "Remote.Intel",
+      "HiveMind.Memory",
+      "HiveMind.Index",
+      "Combat.Math",
+      "Combat.Policy",
+      "Keeper.Intel",
+      "HiveMind.Economy"
+    ],
+    "pathCalls": 0
+  },
+  {
+    "name": "CPU.Status.js",
+    "lines": 138,
+    "bytes": 5452,
+    "imports": [
+      "HiveMind.Memory"
+    ],
+    "pathCalls": 0
+  },
+  {
+    "name": "Defense.Demand.js",
+    "lines": 73,
+    "bytes": 3651,
+    "imports": [
+      "HiveMind.Index",
+      "Combat.ThreatLedger",
+      "Combat.Math"
+    ],
+    "pathCalls": 0
+  },
+  {
+    "name": "Diagnostics.js",
+    "lines": 488,
+    "bytes": 31564,
+    "imports": [
+      "Diagnostics.Probe",
+      "Diagnostics.Probe",
+      "Runtime.Build",
+      "Diagnostics.Probe",
+      "Diagnostics.Probe"
+    ],
+    "pathCalls": 0
+  },
+  {
+    "name": "Diagnostics.Probe.js",
+    "lines": 92,
+    "bytes": 5764,
+    "imports": [],
+    "pathCalls": 0
+  },
+  {
+    "name": "Diagnostics.View.js",
+    "lines": 122,
+    "bytes": 10246,
+    "imports": [
+      "HiveMind.Economy",
+      "HiveMind.Index",
+      "HiveMind.ColonyState",
+      "Logistics.Index"
+    ],
+    "pathCalls": 0
+  },
+  {
+    "name": "Freighter.Renewal.js",
+    "lines": 161,
+    "bytes": 9547,
+    "imports": [
+      "BodyProfiles",
+      "HiveMind.Index",
+      "Spawn.Intents"
+    ],
+    "pathCalls": 0
+  },
+  {
+    "name": "Harvest.Planning.js",
+    "lines": 142,
+    "bytes": 10988,
+    "imports": [
+      "BodyProfiles",
+      "HiveMind.Index",
+      "utility",
+      "utility",
+      "Spawn.Intents",
+      "utility"
+    ],
+    "pathCalls": 0
+  },
+  {
+    "name": "HiveMind.Capacity.js",
+    "lines": 294,
+    "bytes": 21943,
+    "imports": [
+      "HiveMind.Memory",
+      "HiveMind.Index",
+      "CPU.Status",
+      "BodyProfiles",
+      "HiveMind.Economy",
+      "Combat.Roles",
+      "Spawn.Intents",
+      "Spawn.Intents",
+      "Spawn.Intents",
+      "role.creepBodyConfig",
+      "HiveMind.Economy",
+      "HiveMind.Economy",
+      "HiveMind.Economy",
+      "HiveMind.Surplus",
+      "Spawn.Intents",
+      "Spawn.Context",
+      "HiveMind.Economy",
+      "HiveMind.Economy",
+      "HiveMind.Economy",
+      "HiveMind.Economy"
+    ],
+    "pathCalls": 0
+  },
+  {
+    "name": "HiveMind.ColonyState.js",
+    "lines": 311,
+    "bytes": 17919,
+    "imports": [
+      "HiveMind.Memory",
+      "HiveMind.Index",
+      "HiveMind.Economy",
+      "Combat.Roles",
+      "Strategy.Provider"
+    ],
+    "pathCalls": 0
+  },
+  {
+    "name": "HiveMind.Economy.js",
+    "lines": 1481,
+    "bytes": 83506,
+    "imports": [
+      "Remote.Intel",
+      "HiveMind.Memory",
+      "HiveMind.Index",
+      "Resource.Links",
+      "Harvest.Planning",
+      "Combat.Roles",
+      "Remote.Accounting",
+      "Spawn.Intents",
+      "Keeper.Intel",
+      "NPC.Policy",
+      "Spawn.Intents",
+      "Spawn.Intents",
+      "Freighter.Renewal",
+      "Freighter.Renewal",
+      "utility",
+      "utility",
+      "Diagnostics",
+      "Spawn.Intents",
+      "Scout.Economy"
+    ],
+    "pathCalls": 1
+  },
+  {
+    "name": "HiveMind.Index.js",
+    "lines": 176,
+    "bytes": 7000,
+    "imports": [],
+    "pathCalls": 0
+  },
+  {
+    "name": "HiveMind.Memory.js",
+    "lines": 455,
+    "bytes": 22465,
+    "imports": [
+      "Season.Retirement"
+    ],
+    "pathCalls": 0
+  },
+  {
+    "name": "HiveMind.MemoryGC.js",
+    "lines": 137,
+    "bytes": 7734,
+    "imports": [
+      "HiveMind.Memory"
+    ],
+    "pathCalls": 0
+  },
+  {
+    "name": "HiveMind.Operations.js",
+    "lines": 292,
+    "bytes": 14537,
+    "imports": [
+      "HiveMind.Memory",
+      "HiveMind.Utility",
+      "Spawn.DemandBoard",
+      "HiveMind.Economy",
+      "HiveMind.Index"
+    ],
+    "pathCalls": 0
+  },
+  {
+    "name": "HiveMind.Scheduler.js",
+    "lines": 59,
+    "bytes": 1911,
+    "imports": [
+      "CPU.Status"
+    ],
+    "pathCalls": 0
+  },
+  {
+    "name": "HiveMind.Strategy.js",
+    "lines": 50,
+    "bytes": 2818,
+    "imports": [
+      "HiveMind.Memory",
+      "HiveMind.Scheduler",
+      "HiveMind.Utility",
+      "HiveMind.Operations",
+      "Logic.Expansion",
+      "Combat.Operations",
+      "Combat.Stronghold",
+      "Power.Intel",
+      "Power.Operations"
+    ],
+    "pathCalls": 0
+  },
+  {
+    "name": "HiveMind.Surplus.js",
+    "lines": 113,
+    "bytes": 7891,
+    "imports": [
+      "HiveMind.Memory",
+      "HiveMind.Economy",
+      "Strategy.Provider",
+      "HiveMind.Economy"
+    ],
+    "pathCalls": 0
+  },
+  {
+    "name": "HiveMind.Telemetry.js",
+    "lines": 192,
+    "bytes": 10080,
+    "imports": [
+      "CPU.Status",
+      "HiveMind.Memory",
+      "HiveMind.Economy",
+      "Diagnostics",
+      "Diagnostics"
+    ],
+    "pathCalls": 0
+  },
+  {
+    "name": "HiveMind.Utility.js",
+    "lines": 26,
+    "bytes": 1090,
+    "imports": [],
+    "pathCalls": 0
+  },
+  {
+    "name": "Keeper.Combat.js",
+    "lines": 163,
+    "bytes": 9924,
+    "imports": [
+      "Keeper.Intel",
+      "Combat.Math",
+      "HiveMind.Index",
+      "Squad.Tactics",
+      "utility.Travel.Creep",
+      "NPC.Policy",
+      "Remote.Intel"
+    ],
+    "pathCalls": 0
+  },
+  {
+    "name": "Keeper.Intel.js",
+    "lines": 115,
+    "bytes": 6407,
+    "imports": [
+      "HiveMind.Index",
+      "Combat.Math"
+    ],
+    "pathCalls": 0
+  },
+  {
+    "name": "Keeper.Operations.js",
+    "lines": 198,
+    "bytes": 12772,
+    "imports": [
+      "HiveMind.Memory",
+      "Keeper.Intel",
+      "Keeper.Combat",
+      "NPC.Policy",
+      "HiveMind.Index",
+      "Planner.Remote",
+      "HiveMind.Economy",
+      "Spawn.DemandBoard",
+      "Remote.Intel",
+      "Combat.Math"
+    ],
+    "pathCalls": 0
+  },
+  {
+    "name": "Logic.Expansion.js",
+    "lines": 1783,
+    "bytes": 54433,
+    "imports": [
+      "spawn.manager",
+      "role.creepBodyConfig",
+      "Spawn.DemandBoard",
+      "HiveMind.Index",
+      "HiveMind.Memory",
+      "Strategy.Provider",
+      "Resource.Policy",
+      "Resource.Policy",
+      "HiveMind.Surplus",
+      "HiveMind.Economy",
+      "HiveMind.Capacity",
+      "BodyProfiles"
+    ],
+    "pathCalls": 0
+  },
+  {
+    "name": "Logic.Tower.js",
+    "lines": 200,
+    "bytes": 10353,
+    "imports": [
+      "HiveMind.Index",
+      "HiveMind.Memory",
+      "Combat.Math",
+      "Combat.ThreatLedger",
+      "HiveMind.Economy",
+      "Combat.Policy"
+    ],
+    "pathCalls": 0
+  },
+  {
+    "name": "Logic.WarRoom.js",
+    "lines": 884,
+    "bytes": 23774,
+    "imports": [
+      "utility.Travel.Creep",
+      "Combat.Math",
+      "Combat.Policy",
+      "Combat.ThreatLedger",
+      "HiveMind.Memory",
+      "HiveMind.Memory"
+    ],
+    "pathCalls": 1
+  },
+  {
+    "name": "Logistics.Index.js",
+    "lines": 203,
+    "bytes": 10838,
+    "imports": [
+      "HiveMind.Index",
+      "HiveMind.Index",
+      "Diagnostics",
+      "HiveMind.Index"
+    ],
+    "pathCalls": 0
+  },
+  {
+    "name": "Logistics.Jobs.js",
+    "lines": 54,
+    "bytes": 3109,
+    "imports": [],
+    "pathCalls": 0
+  },
+  {
+    "name": "main.js",
+    "lines": 44,
+    "bytes": 2312,
+    "imports": [
+      "Tick.Bootstrap",
+      "Tick.Planning",
+      "Tick.Rooms",
+      "Tick.Creeps",
+      "Tick.Finalize",
+      "HiveMind.Telemetry",
+      "Diagnostics",
+      "Diagnostics.View",
+      "Resource.Manager"
+    ],
+    "pathCalls": 0
+  },
+  {
+    "name": "NPC.Operations.js",
+    "lines": 155,
+    "bytes": 10288,
+    "imports": [
+      "HiveMind.Memory",
+      "HiveMind.Index",
+      "Combat.Math",
+      "HiveMind.Economy",
+      "Spawn.DemandBoard",
+      "Remote.Intel",
+      "utility.Travel.Creep",
+      "Combat.Policy",
+      "Planner.Remote"
+    ],
+    "pathCalls": 0
+  },
+  {
+    "name": "NPC.Policy.js",
+    "lines": 94,
+    "bytes": 5973,
+    "imports": [
+      "Keeper.Intel",
+      "HiveMind.Index",
+      "Combat.Math",
+      "HiveMind.Memory"
+    ],
+    "pathCalls": 0
+  },
+  {
+    "name": "Planner.Brain.js",
+    "lines": 2652,
+    "bytes": 76920,
+    "imports": [
+      "Planner.Util",
+      "Planner.Extension",
+      "Planner.Road",
+      "Planner.Tower",
+      "Planner.Lab",
+      "Planner.Spawn",
+      "Planner.Storage",
+      "Planner.Link",
+      "Planner.Container",
+      "Planner.Extractor",
+      "Planner.Rampart",
+      "Planner.Terminal",
+      "Planner.Factory",
+      "Planner.PowerSpawn",
+      "Planner.Nuker",
+      "Planner.Observer"
+    ],
+    "pathCalls": 0
+  },
+  {
+    "name": "Planner.Container.js",
+    "lines": 18,
+    "bytes": 551,
+    "imports": [],
+    "pathCalls": 0
+  },
+  {
+    "name": "Planner.Extension.js",
+    "lines": 234,
+    "bytes": 6542,
+    "imports": [
+      "Planner.Util",
+      "Planner.Road"
+    ],
+    "pathCalls": 0
+  },
+  {
+    "name": "Planner.Extractor.js",
+    "lines": 8,
+    "bytes": 177,
+    "imports": [],
+    "pathCalls": 0
+  },
+  {
+    "name": "Planner.Factory.js",
+    "lines": 6,
+    "bytes": 110,
+    "imports": [],
+    "pathCalls": 0
+  },
+  {
+    "name": "Planner.Lab.js",
+    "lines": 32,
+    "bytes": 972,
+    "imports": [],
+    "pathCalls": 0
+  },
+  {
+    "name": "Planner.Link.js",
+    "lines": 18,
+    "bytes": 509,
+    "imports": [],
+    "pathCalls": 0
+  },
+  {
+    "name": "Planner.Nuker.js",
+    "lines": 6,
+    "bytes": 108,
+    "imports": [],
+    "pathCalls": 0
+  },
+  {
+    "name": "Planner.Observer.js",
+    "lines": 6,
+    "bytes": 111,
+    "imports": [],
+    "pathCalls": 0
+  },
+  {
+    "name": "Planner.PowerSpawn.js",
+    "lines": 6,
+    "bytes": 114,
+    "imports": [],
+    "pathCalls": 0
+  },
+  {
+    "name": "Planner.Rampart.js",
+    "lines": 35,
+    "bytes": 1125,
+    "imports": [],
+    "pathCalls": 0
+  },
+  {
+    "name": "Planner.Remote.js",
+    "lines": 3267,
+    "bytes": 140380,
+    "imports": [
+      "utility.Travel.Creep",
+      "Remote.Intel",
+      "HiveMind.Index",
+      "Logistics.Index",
+      "role.creepBodyConfig",
+      "utility",
+      "HiveMind.Economy",
+      "HiveMind.Memory",
+      "HiveMind.Scheduler",
+      "Keeper.Intel",
+      "NPC.Policy",
+      "HiveMind.Index",
+      "Combat.Policy",
+      "Remote.Accounting",
+      "Remote.Accounting",
+      "Keeper.Combat",
+      "Scout.Economy"
+    ],
+    "pathCalls": 3
+  },
+  {
+    "name": "Planner.Road.js",
+    "lines": 259,
+    "bytes": 7234,
+    "imports": [
+      "Planner.Util"
+    ],
+    "pathCalls": 0
+  },
+  {
+    "name": "Planner.Roads.js",
+    "lines": 1042,
+    "bytes": 29452,
+    "imports": [
+      "HiveMind.Memory"
+    ],
+    "pathCalls": 1
+  },
+  {
+    "name": "Planner.Spawn.js",
+    "lines": 64,
+    "bytes": 2045,
+    "imports": [],
+    "pathCalls": 0
+  },
+  {
+    "name": "Planner.Storage.js",
+    "lines": 8,
+    "bytes": 166,
+    "imports": [],
+    "pathCalls": 0
+  },
+  {
+    "name": "Planner.Terminal.js",
+    "lines": 6,
+    "bytes": 111,
+    "imports": [],
+    "pathCalls": 0
+  },
+  {
+    "name": "Planner.Tower.js",
+    "lines": 21,
+    "bytes": 430,
+    "imports": [],
+    "pathCalls": 0
+  },
+  {
+    "name": "Planner.Util.js",
+    "lines": 107,
+    "bytes": 2335,
+    "imports": [],
+    "pathCalls": 0
+  },
+  {
+    "name": "Power.Intel.js",
+    "lines": 115,
+    "bytes": 4910,
+    "imports": [
+      "HiveMind.Memory",
+      "HiveMind.Index"
+    ],
+    "pathCalls": 0
+  },
+  {
+    "name": "Power.Manager.js",
+    "lines": 138,
+    "bytes": 6631,
+    "imports": [
+      "HiveMind.Memory",
+      "HiveMind.Index",
+      "HiveMind.Economy",
+      "Resource.Manager",
+      "Power.Intel",
+      "utility.Travel.Creep"
+    ],
+    "pathCalls": 0
+  },
+  {
+    "name": "Power.Operations.js",
+    "lines": 122,
+    "bytes": 6769,
+    "imports": [
+      "HiveMind.Memory",
+      "Spawn.DemandBoard",
+      "HiveMind.Economy",
+      "Power.Intel"
+    ],
+    "pathCalls": 0
+  },
+  {
+    "name": "Remote.Accounting.js",
+    "lines": 132,
+    "bytes": 7186,
+    "imports": [
+      "HiveMind.Index"
+    ],
+    "pathCalls": 0
+  },
+  {
+    "name": "Remote.Intel.js",
+    "lines": 69,
+    "bytes": 3315,
+    "imports": [],
+    "pathCalls": 0
+  },
+  {
+    "name": "Resource.Labs.js",
+    "lines": 402,
+    "bytes": 18630,
+    "imports": [
+      "HiveMind.Memory",
+      "HiveMind.Index",
+      "Resource.Storage"
+    ],
+    "pathCalls": 0
+  },
+  {
+    "name": "Resource.Links.js",
+    "lines": 89,
+    "bytes": 4273,
+    "imports": [
+      "HiveMind.Index"
+    ],
+    "pathCalls": 0
+  },
+  {
+    "name": "Resource.Manager.js",
+    "lines": 224,
+    "bytes": 9887,
+    "imports": [
+      "HiveMind.Memory",
+      "HiveMind.Index",
+      "Spawn.DemandBoard",
+      "HiveMind.Economy",
+      "Resource.Minerals",
+      "Resource.Links",
+      "Resource.Labs",
+      "Resource.Terminals",
+      "Resource.Observer",
+      "Strategy.Provider",
+      "Diagnostics",
+      "Diagnostics",
+      "Resource.Policy",
+      "Resource.Policy"
+    ],
+    "pathCalls": 0
+  },
+  {
+    "name": "Resource.Minerals.js",
+    "lines": 157,
+    "bytes": 6997,
+    "imports": [
+      "HiveMind.Memory",
+      "HiveMind.Index",
+      "Spawn.DemandBoard",
+      "Resource.Policy",
+      "Strategy.Provider"
+    ],
+    "pathCalls": 0
+  },
+  {
+    "name": "Resource.Observer.js",
+    "lines": 68,
+    "bytes": 2769,
+    "imports": [
+      "HiveMind.Memory"
+    ],
+    "pathCalls": 0
+  },
+  {
+    "name": "Resource.Policy.js",
+    "lines": 186,
+    "bytes": 11862,
+    "imports": [
+      "HiveMind.Memory",
+      "HiveMind.Index",
+      "HiveMind.Economy",
+      "Resource.Labs",
+      "Resource.Storage",
+      "Strategy.Provider"
+    ],
+    "pathCalls": 0
+  },
+  {
+    "name": "Resource.Storage.js",
+    "lines": 37,
+    "bytes": 2561,
+    "imports": [
+      "HiveMind.Memory"
+    ],
+    "pathCalls": 0
+  },
+  {
+    "name": "Resource.Terminals.js",
+    "lines": 196,
+    "bytes": 11731,
+    "imports": [
+      "HiveMind.Memory",
+      "HiveMind.Economy",
+      "HiveMind.Index",
+      "Strategy.Provider",
+      "Resource.Policy",
+      "Resource.Policy",
+      "Resource.Policy",
+      "Resource.Policy"
+    ],
+    "pathCalls": 0
+  },
+  {
+    "name": "role.Annex.js",
+    "lines": 318,
+    "bytes": 10525,
+    "imports": [
+      "utility.Travel.Creep",
+      "HiveMind.Memory",
+      "Planner.Remote",
+      "Remote.Intel"
+    ],
+    "pathCalls": 0
+  },
+  {
+    "name": "role.Artificer.js",
+    "lines": 1710,
+    "bytes": 57070,
+    "imports": [
+      "utility.Creep",
+      "utility.Travel.Creep",
+      "HiveMind.Economy",
+      "HiveMind.Memory",
+      "HiveMind.ColonyState",
+      "role.Tech",
+      "Planner.Remote",
+      "Diagnostics"
+    ],
+    "pathCalls": 9
+  },
+  {
+    "name": "role.Cleric.js",
+    "lines": 177,
+    "bytes": 4612,
+    "imports": [
+      "Logic.WarRoom",
+      "utility.Travel.Creep"
+    ],
+    "pathCalls": 0
+  },
+  {
+    "name": "role.CoreBreaker.js",
+    "lines": 31,
+    "bytes": 1761,
+    "imports": [
+      "HiveMind.Memory",
+      "Combat.Math",
+      "utility.Travel.Creep"
+    ],
+    "pathCalls": 0
+  },
+  {
+    "name": "role.creepBodyConfig.js",
+    "lines": 562,
+    "bytes": 16923,
+    "imports": [
+      "BodyProfiles",
+      "BodyProfiles",
+      "BodyProfiles",
+      "BodyProfiles"
+    ],
+    "pathCalls": 0
+  },
+  {
+    "name": "role.Extractor.js",
+    "lines": 817,
+    "bytes": 27265,
+    "imports": [
+      "utility",
+      "utility.Creep",
+      "utility.Travel.Creep",
+      "Planner.Remote",
+      "HiveMind.Economy"
+    ],
+    "pathCalls": 2
+  },
+  {
+    "name": "role.Foreman.js",
+    "lines": 52,
+    "bytes": 1725,
+    "imports": [
+      "utility",
+      "utility.Creep"
+    ],
+    "pathCalls": 0
+  },
+  {
+    "name": "role.Freighter.js",
+    "lines": 1478,
+    "bytes": 50613,
+    "imports": [
+      "utility.Travel.Creep",
+      "utility",
+      "Planner.Remote",
+      "HiveMind.Economy",
+      "Logistics.Jobs",
+      "Logistics.Index",
+      "NPC.Policy",
+      "Keeper.Intel",
+      "Freighter.Renewal",
+      "Diagnostics",
+      "HiveMind.Index",
+      "HiveMind.Index",
+      "CPU.Status",
+      "HiveMind.Index"
+    ],
+    "pathCalls": 0
+  },
+  {
+    "name": "role.MineralMiner.js",
+    "lines": 50,
+    "bytes": 2278,
+    "imports": [
+      "utility.Travel.Creep",
+      "Resource.Policy"
+    ],
+    "pathCalls": 0
+  },
+  {
+    "name": "role.Pioneer.js",
+    "lines": 393,
+    "bytes": 9921,
+    "imports": [
+      "utility.Travel.Creep",
+      "utility.Creep",
+      "HiveMind.Economy",
+      "HiveMind.Memory"
+    ],
+    "pathCalls": 8
+  },
+  {
+    "name": "role.ResourceCourier.js",
+    "lines": 142,
+    "bytes": 7457,
+    "imports": [
+      "Resource.Manager",
+      "utility.Travel.Creep",
+      "HiveMind.Economy",
+      "utility.Creep",
+      "HiveMind.Memory",
+      "HiveMind.Memory",
+      "HiveMind.Memory"
+    ],
+    "pathCalls": 0
+  },
+  {
+    "name": "role.Ronin.js",
+    "lines": 241,
+    "bytes": 7079,
+    "imports": [
+      "Logic.WarRoom",
+      "utility.Travel.Creep",
+      "NPC.Operations",
+      "HiveMind.Memory"
+    ],
+    "pathCalls": 0
+  },
+  {
+    "name": "role.Scout.js",
+    "lines": 615,
+    "bytes": 19418,
+    "imports": [
+      "utility",
+      "Remote.Intel",
+      "utility.Travel.Creep",
+      "Planner.Remote",
+      "Strategy.Provider",
+      "Power.Intel",
+      "Keeper.Intel",
+      "Keeper.Combat",
+      "NPC.Policy"
+    ],
+    "pathCalls": 1
+  },
+  {
+    "name": "role.SupplyRunner.js",
+    "lines": 370,
+    "bytes": 9853,
+    "imports": [
+      "utility.Travel.Creep",
+      "utility.Creep",
+      "HiveMind.Economy",
+      "HiveMind.Memory"
+    ],
+    "pathCalls": 1
+  },
+  {
+    "name": "role.Tech.js",
+    "lines": 402,
+    "bytes": 16446,
+    "imports": [
+      "utility.Creep",
+      "utility.Travel.Creep",
+      "HiveMind.Economy",
+      "HiveMind.ColonyState",
+      "HiveMind.Index"
+    ],
+    "pathCalls": 3
+  },
+  {
+    "name": "role.Volley.js",
+    "lines": 242,
+    "bytes": 6689,
+    "imports": [
+      "Logic.WarRoom",
+      "utility.Travel.Creep",
+      "Combat.Math",
+      "Squad.Tactics",
+      "Combat.Policy",
+      "Keeper.Combat"
+    ],
+    "pathCalls": 0
+  },
+  {
+    "name": "Runtime.Build.js",
+    "lines": 3,
+    "bytes": 200,
+    "imports": [],
+    "pathCalls": 0
+  },
+  {
+    "name": "SafeMode.Policy.js",
+    "lines": 82,
+    "bytes": 4430,
+    "imports": [
+      "HiveMind.Memory",
+      "HiveMind.Index",
+      "Combat.ThreatLedger",
+      "Combat.Math"
+    ],
+    "pathCalls": 0
+  },
+  {
+    "name": "Scout.Economy.js",
+    "lines": 55,
+    "bytes": 4334,
+    "imports": [
+      "HiveMind.Index",
+      "utility"
+    ],
+    "pathCalls": 0
+  },
+  {
+    "name": "Season.Retirement.js",
+    "lines": 75,
+    "bytes": 5336,
+    "imports": [],
+    "pathCalls": 0
+  },
+  {
+    "name": "Spawn.Arbiter.js",
+    "lines": 224,
+    "bytes": 14286,
+    "imports": [
+      "HiveMind.Memory",
+      "Spawn.Context",
+      "Spawn.Policy",
+      "HiveMind.Economy",
+      "HiveMind.Economy",
+      "BodyProfiles",
+      "HiveMind.Index",
+      "HiveMind.Economy",
+      "HiveMind.Surplus",
+      "HiveMind.Economy",
+      "BodyProfiles",
+      "Spawn.Intents",
+      "HiveMind.Economy",
+      "HiveMind.Economy"
+    ],
+    "pathCalls": 0
+  },
+  {
+    "name": "Spawn.Context.js",
+    "lines": 130,
+    "bytes": 6037,
+    "imports": [
+      "HiveMind.Memory",
+      "HiveMind.Index",
+      "Combat.Roles",
+      "Spawn.Intents",
+      "Spawn.Intents",
+      "Spawn.Intents"
+    ],
+    "pathCalls": 0
+  },
+  {
+    "name": "Spawn.DemandBoard.js",
+    "lines": 400,
+    "bytes": 20137,
+    "imports": [
+      "HiveMind.Memory",
+      "HiveMind.Index",
+      "spawn.manager",
+      "role.creepBodyConfig",
+      "HiveMind.Economy",
+      "Spawn.Arbiter",
+      "Strategy.Provider",
+      "Strategy.Provider",
+      "Strategy.Provider",
+      "Spawn.Intents",
+      "HiveMind.Surplus",
+      "BodyProfiles",
+      "Spawn.Intents"
+    ],
+    "pathCalls": 0
+  },
+  {
+    "name": "Spawn.Intents.js",
+    "lines": 22,
+    "bytes": 923,
+    "imports": [],
+    "pathCalls": 0
+  },
+  {
+    "name": "spawn.manager.js",
+    "lines": 929,
+    "bytes": 38084,
+    "imports": [
+      "utility.spawn",
+      "role.creepBodyConfig",
+      "HiveMind.Economy",
+      "HiveMind.Memory",
+      "Spawn.Arbiter",
+      "Spawn.Intents",
+      "Harvest.Planning",
+      "BodyProfiles",
+      "BodyProfiles",
+      "BodyProfiles",
+      "Harvest.Planning",
+      "HiveMind.Index",
+      "Spawn.Policy",
+      "Spawn.Context",
+      "Spawn.Policy",
+      "Spawn.Sizing",
+      "Remote.Accounting",
+      "Diagnostics"
+    ],
+    "pathCalls": 0
+  },
+  {
+    "name": "Spawn.Policy.js",
+    "lines": 207,
+    "bytes": 14533,
+    "imports": [
+      "HiveMind.Memory",
+      "HiveMind.Economy",
+      "HiveMind.ColonyState",
+      "Spawn.Context",
+      "role.creepBodyConfig",
+      "HiveMind.Capacity",
+      "HiveMind.Surplus",
+      "BodyProfiles",
+      "Remote.Intel",
+      "HiveMind.Index",
+      "utility",
+      "HiveMind.Index",
+      "NPC.Policy"
+    ],
+    "pathCalls": 0
+  },
+  {
+    "name": "spawn.request.manager.js",
+    "lines": 4119,
+    "bytes": 140998,
+    "imports": [
+      "spawn.manager",
+      "role.creepBodyConfig",
+      "Planner.Remote",
+      "utility.Creep",
+      "CPU.Status",
+      "Strategy.Provider",
+      "HiveMind.Index",
+      "Defense.Demand",
+      "Spawn.DemandBoard",
+      "Squad.Controller",
+      "HiveMind.Memory",
+      "HiveMind.Economy",
+      "Spawn.Arbiter",
+      "HiveMind.ColonyState",
+      "Spawn.Context",
+      "HiveMind.Capacity",
+      "HiveMind.Surplus",
+      "HiveMind.Capacity",
+      "HiveMind.Surplus",
+      "HiveMind.Surplus",
+      "Spawn.Policy",
+      "HiveMind.Surplus",
+      "HiveMind.Surplus",
+      "HiveMind.Capacity",
+      "Keeper.Intel",
+      "Scout.Economy",
+      "Harvest.Planning",
+      "Harvest.Planning",
+      "utility",
+      "Diagnostics",
+      "HiveMind.Capacity",
+      "HiveMind.Surplus"
+    ],
+    "pathCalls": 0
+  },
+  {
+    "name": "Spawn.Sizing.js",
+    "lines": 49,
+    "bytes": 3750,
+    "imports": [
+      "BodyProfiles",
+      "Harvest.Planning",
+      "HiveMind.Economy"
+    ],
+    "pathCalls": 0
+  },
+  {
+    "name": "Squad.Controller.js",
+    "lines": 625,
+    "bytes": 28258,
+    "imports": [
+      "HiveMind.Memory",
+      "HiveMind.Index",
+      "Spawn.DemandBoard",
+      "Combat.Math",
+      "Logic.WarRoom",
+      "Squad.Tactics",
+      "utility.Travel.Creep",
+      "Resource.Labs",
+      "Squad.Quad"
+    ],
+    "pathCalls": 0
+  },
+  {
+    "name": "Squad.Quad.js",
+    "lines": 947,
+    "bytes": 45031,
+    "imports": [
+      "HiveMind.Memory",
+      "HiveMind.Index",
+      "Spawn.DemandBoard",
+      "HiveMind.Operations",
+      "Combat.Math",
+      "Logic.WarRoom",
+      "Squad.Tactics",
+      "Resource.Labs",
+      "utility.Travel.Creep"
+    ],
+    "pathCalls": 0
+  },
+  {
+    "name": "Squad.Tactics.js",
+    "lines": 267,
+    "bytes": 12715,
+    "imports": [
+      "Combat.Math"
+    ],
+    "pathCalls": 0
+  },
+  {
+    "name": "Strategy.Provider.js",
+    "lines": 97,
+    "bytes": 4362,
+    "imports": [],
+    "pathCalls": 0
+  },
+  {
+    "name": "Tick.Bootstrap.js",
+    "lines": 89,
+    "bytes": 4114,
+    "imports": [
+      "utility.Travel.Creep",
+      "CPU.Status",
+      "HiveMind.Index",
+      "HiveMind.Memory",
+      "Spawn.DemandBoard",
+      "HiveMind.Economy"
+    ],
+    "pathCalls": 0
+  },
+  {
+    "name": "Tick.Creeps.js",
+    "lines": 83,
+    "bytes": 4432,
+    "imports": [
+      "role.Foreman",
+      "role.Extractor",
+      "role.Tech",
+      "role.Freighter",
+      "role.Annex",
+      "role.Artificer",
+      "role.Pioneer",
+      "role.SupplyRunner",
+      "role.Scout",
+      "role.Ronin",
+      "role.Volley",
+      "role.Cleric",
+      "role.MineralMiner",
+      "role.ResourceCourier",
+      "role.CoreBreaker",
+      "role.CoreBreaker",
+      "HiveMind.Index",
+      "Squad.Controller",
+      "HiveMind.Memory",
+      "Diagnostics",
+      "Diagnostics",
+      "HiveMind.Telemetry"
+    ],
+    "pathCalls": 0
+  },
+  {
+    "name": "Tick.Finalize.js",
+    "lines": 106,
+    "bytes": 4264,
+    "imports": [
+      "traffic_manager",
+      "Visual.Dashboard",
+      "Visual.Planner.Structures",
+      "Tick.Rooms",
+      "HiveMind.Index",
+      "HiveMind.Scheduler",
+      "HiveMind.Memory",
+      "HiveMind.MemoryGC"
+    ],
+    "pathCalls": 0
+  },
+  {
+    "name": "Tick.Planning.js",
+    "lines": 76,
+    "bytes": 3136,
+    "imports": [
+      "Logic.WarRoom",
+      "spawn.manager",
+      "spawn.request.manager",
+      "Planner.Remote",
+      "Planner.Brain",
+      "Planner.Roads",
+      "HiveMind.Scheduler",
+      "HiveMind.Telemetry",
+      "Combat.ThreatLedger",
+      "HiveMind.Strategy",
+      "Spawn.DemandBoard",
+      "Squad.Controller",
+      "Resource.Manager",
+      "HiveMind.Economy",
+      "HiveMind.Memory",
+      "HiveMind.ColonyState",
+      "Power.Manager",
+      "Keeper.Operations",
+      "NPC.Operations",
+      "Remote.Accounting",
+      "HiveMind.Capacity",
+      "Diagnostics"
+    ],
+    "pathCalls": 0
+  },
+  {
+    "name": "Tick.Rooms.js",
+    "lines": 40,
+    "bytes": 1580,
+    "imports": [
+      "Logic.Tower",
+      "utility.Visual",
+      "HiveMind.Index",
+      "SafeMode.Policy",
+      "Resource.Manager",
+      "Power.Manager"
+    ],
+    "pathCalls": 0
+  },
+  {
+    "name": "traffic_manager.js",
+    "lines": 454,
+    "bytes": 21620,
+    "imports": [
+      "utility"
+    ],
+    "pathCalls": 0
+  },
+  {
+    "name": "Traveler.js",
+    "lines": 694,
+    "bytes": 28323,
+    "imports": [
+      "Traveler.js",
+      "Diagnostics"
+    ],
+    "pathCalls": 2
+  },
+  {
+    "name": "utility.Creep.js",
+    "lines": 2259,
+    "bytes": 64946,
+    "imports": [
+      "utility",
+      "utility.Travel.Creep",
+      "HiveMind.Index",
+      "Harvest.Planning",
+      "Harvest.Planning",
+      "Diagnostics",
+      "Diagnostics"
+    ],
+    "pathCalls": 14
+  },
+  {
+    "name": "utility.js",
+    "lines": 1115,
+    "bytes": 36315,
+    "imports": [
+      "HiveMind.Index"
+    ],
+    "pathCalls": 0
+  },
+  {
+    "name": "utility.spawn.js",
+    "lines": 87,
+    "bytes": 2766,
+    "imports": [
+      "Spawn.Intents"
+    ],
+    "pathCalls": 0
+  },
+  {
+    "name": "utility.Travel.Creep.js",
+    "lines": 1397,
+    "bytes": 42783,
+    "imports": [
+      "Traveler",
+      "HiveMind.Memory",
+      "HiveMind.Index",
+      "traffic_manager",
+      "HiveMind.Index",
+      "traffic_manager",
+      "Diagnostics",
+      "Diagnostics",
+      "Diagnostics",
+      "Diagnostics",
+      "Diagnostics",
+      "Diagnostics",
+      "Diagnostics",
+      "Diagnostics"
+    ],
+    "pathCalls": 1
+  },
+  {
+    "name": "utility.Visual.js",
+    "lines": 78,
+    "bytes": 2319,
+    "imports": [],
+    "pathCalls": 0
+  },
+  {
+    "name": "Visual.Dashboard.js",
+    "lines": 108,
+    "bytes": 7297,
+    "imports": [
+      "HiveMind.Memory",
+      "HiveMind.Index",
+      "Diagnostics.View",
+      "Diagnostics",
+      "Visual.Layout"
+    ],
+    "pathCalls": 0
+  },
+  {
+    "name": "Visual.Layout.js",
+    "lines": 45,
+    "bytes": 3024,
+    "imports": [],
+    "pathCalls": 0
+  },
+  {
+    "name": "Visual.Planner.Structures.js",
+    "lines": 221,
+    "bytes": 5884,
+    "imports": [
+      "HiveMind.Memory"
+    ],
+    "pathCalls": 0
+  }
+]

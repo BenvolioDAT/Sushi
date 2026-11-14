@@ -1,0 +1,13 @@
+{
+  "source": "Captured tool result from staged execution of test/cpu-movement.js before release",
+  "seededTrafficScenes": 200,
+  "matchedDestinations": true,
+  "checks": [
+    "shared lane geometry survives Memory reparsing without reallocating positions",
+    "changed route content invalidates geometry and malformed paths still fail",
+    "geometry heap is bounded and evicts old lanes without changing their result",
+    "optimized traffic preserves baseline destinations over 200 crowded seeded scenes",
+    "an unobstructed remote move avoids alternate hazard scans"
+  ],
+  "passed": 5
+}
